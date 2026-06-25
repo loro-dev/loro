@@ -5077,6 +5077,48 @@ mod test {
     }
 
     #[test]
+    fn cross_doc_txn_is_rejected() {
+        // `insert_with_txn`/`delete_with_txn` are public API, so a transaction
+        // from one document can be fed to another document's handler. That must
+        // be rejected with `UnmatchedContext` rather than silently stamping the
+        // target doc's state/oplog with the wrong peer+counter. Regression test
+        // for the always-on (release included) context check in
+        // `Transaction::apply_local_op`.
+        let doc_a = LoroDoc::new();
+        doc_a.set_peer_id(1).unwrap();
+        let doc_b = LoroDoc::new();
+        doc_b.set_peer_id(2).unwrap();
+
+        // Seed doc_b so it has real state we can prove stays untouched.
+        {
+            let mut txn_b = doc_b.txn().unwrap();
+            doc_b
+                .get_text("text")
+                .insert_with_txn(&mut txn_b, 0, "ok", PosType::Unicode)
+                .unwrap();
+            txn_b.commit().unwrap();
+        }
+        let vv_before = doc_b.oplog_vv();
+
+        // Feed doc_a's transaction to doc_b's handler.
+        let mut txn_a = doc_a.txn().unwrap();
+        let text_b = doc_b.get_text("text");
+        let insert_err = text_b
+            .insert_with_txn(&mut txn_a, 0, "x", PosType::Unicode)
+            .unwrap_err();
+        assert!(matches!(insert_err, LoroError::UnmatchedContext { .. }));
+        let delete_err = text_b
+            .delete_with_txn(&mut txn_a, 0, 1, PosType::Unicode)
+            .unwrap_err();
+        assert!(matches!(delete_err, LoroError::UnmatchedContext { .. }));
+        txn_a.commit().unwrap();
+
+        // doc_b is unchanged: content and version vector identical.
+        assert_eq!(&**text_b.get_value().as_string().unwrap(), "ok");
+        assert_eq!(doc_b.oplog_vv(), vv_before);
+    }
+
+    #[test]
     fn list_import_batch_stays_consistent_after_repeated_tail_splits() {
         let doc_a = LoroDoc::new();
         doc_a.set_peer_id(1).unwrap();

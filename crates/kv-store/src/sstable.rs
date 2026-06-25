@@ -341,17 +341,12 @@ impl SsTable {
         SsTableIter::new(self)
     }
 
-    /// When `validate_blocks` is true, this eagerly decodes every block to
-    /// validate block metadata and key ordering, and verifies each block's
-    /// checksum.
+    /// Import an SsTable, verifying every block's checksum. This is the safe
+    /// default for callers that don't have an outer integrity guarantee.
     ///
-    /// Pass `false` only when the blob's integrity is already guaranteed by an
-    /// outer checksum (e.g. Loro verifies a document-wide checksum over the whole
-    /// snapshot body in `parse_header_and_body` before reaching here). In that
-    /// case per-block validation is skipped, since re-hashing every block would
-    /// redundantly cover bytes the outer checksum already protects — this was
-    /// ~38% of B4 snapshot-import time. The cheap structural `validate_block_ranges`
-    /// check below always runs.
+    /// `validate_blocks` additionally eagerly decodes every block to validate
+    /// block metadata and key ordering. The cheap structural
+    /// `validate_block_ranges` check always runs regardless.
     ///
     /// # Errors
     /// - [LoroError::DecodeChecksumMismatchError]
@@ -359,6 +354,26 @@ impl SsTable {
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
     pub fn import_all(bytes: Bytes, validate_blocks: bool) -> LoroResult<Self> {
+        Self::import_all_with(bytes, validate_blocks, true)
+    }
+
+    /// Import without per-block checksum verification (and without eager block
+    /// validation).
+    ///
+    /// Only use this when the blob's integrity is already guaranteed by an outer
+    /// checksum — e.g. Loro verifies a document-wide checksum over the whole
+    /// snapshot body in `parse_header_and_body` before reaching here, so
+    /// re-hashing every block would redundantly cover bytes the outer checksum
+    /// already protects (this was ~38% of B4 snapshot-import time).
+    pub fn import_all_unchecked(bytes: Bytes) -> LoroResult<Self> {
+        Self::import_all_with(bytes, false, false)
+    }
+
+    fn import_all_with(
+        bytes: Bytes,
+        validate_blocks: bool,
+        check_checksum: bool,
+    ) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid sstable bytes".into()));
@@ -389,6 +404,8 @@ impl SsTable {
         Self::validate_block_ranges(&meta, meta_offset)?;
         if validate_blocks {
             Self::validate_blocks(&meta, &bytes, meta_offset)?;
+        }
+        if check_checksum {
             Self::check_block_checksum(&meta, &bytes, meta_offset)?;
         }
         let first_key = meta
@@ -1382,11 +1399,12 @@ mod test {
     }
 
     #[test]
-    fn sstable_import_block_checksum_only_checked_when_validating() {
-        // A corrupted block checksum is detected when `validate_blocks = true`,
-        // and intentionally skipped when `false` (the caller is then responsible
-        // for integrity via an outer checksum). This is the redundant-checksum
-        // skip that makes full snapshot import faster.
+    fn sstable_import_block_checksum_only_skipped_when_unchecked() {
+        // The public `import_all` always verifies per-block checksums (with or
+        // without the heavier `validate_blocks` decode). Only the explicit
+        // `import_all_unchecked` fast path skips them, and its caller is then
+        // responsible for integrity via an outer checksum — that is the
+        // redundant-checksum skip that makes full snapshot import faster.
         let first_key = Bytes::from_static(b"key");
         let mut block_bytes = normal_block_bytes(b"key", b"value");
         *block_bytes.last_mut().unwrap() ^= 0xff;
@@ -1399,7 +1417,11 @@ mod test {
         }];
 
         let bytes = malformed_sstable_bytes(&block_bytes, &meta);
+        // Full validation catches the corrupted checksum.
         assert!(SsTable::import_all(bytes.clone(), true).is_err());
-        assert!(SsTable::import_all(bytes, false).is_ok());
+        // The cheap per-block checksum (always on for the public API) catches it too.
+        assert!(SsTable::import_all(bytes.clone(), false).is_err());
+        // Only the explicit unchecked fast path skips the check.
+        assert!(SsTable::import_all_unchecked(bytes).is_ok());
     }
 }
