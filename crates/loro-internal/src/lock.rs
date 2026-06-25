@@ -21,6 +21,7 @@
 #![cfg_attr(not(debug_assertions), allow(dead_code))]
 use crate::sync::ThreadLocal;
 use crate::sync::{Mutex, MutexGuard};
+#[cfg(debug_assertions)]
 use std::backtrace::Backtrace;
 use std::fmt::{Debug, Display};
 use std::ops::{Deref, DerefMut};
