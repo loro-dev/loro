@@ -638,8 +638,11 @@ mod mut_external_kv {
                 kv_store.len() <= 2,
                 "kv store should be empty when using decode_all"
             );
+            // The snapshot/update body is already integrity-checked by the
+            // document-level checksum in `parse_header_and_body(.., true)` before
+            // we reach here, so skip the redundant per-block checksum.
             kv_store
-                .import_all(bytes)
+                .import_all_unchecked(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
             drop(kv_store);
             let vv_bytes = self.external_kv.lock().get(VV_KEY).unwrap_or_default();

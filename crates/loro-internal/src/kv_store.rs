@@ -21,6 +21,13 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     fn size(&self) -> usize;
     fn export_all(&mut self) -> Bytes;
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String>;
+    /// Like [`Self::import_all`], but for callers that already guarantee the
+    /// blob's integrity via an outer checksum, so per-block checksums may be
+    /// skipped. The default falls back to the checked [`Self::import_all`]; only
+    /// override it where the fast path is safe (e.g. SsTable-backed stores).
+    fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.import_all(bytes)
+    }
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
 }
 
@@ -89,6 +96,10 @@ impl KvStore for MemKvStore {
 
     fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
         self.import_all(bytes)
+    }
+
+    fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.import_all_unchecked(bytes)
     }
 
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {

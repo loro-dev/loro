@@ -553,21 +553,25 @@ impl Transaction {
         // check whether context and txn are referring to the same state context
         doc: &LoroDoc,
     ) -> LoroResult<()> {
-        // TODO: need to check if the doc is the same
-        let this_doc = self.doc.upgrade().unwrap();
-        if Arc::as_ptr(&this_doc.state) != Arc::as_ptr(&doc.state) {
-            return Err(LoroError::UnmatchedContext {
-                expected: this_doc
-                    .state
-                    .lock()
-                    .peer
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                found: doc
-                    .state
-                    .lock()
-                    .peer
-                    .load(std::sync::atomic::Ordering::Relaxed),
-            });
+        // A transaction must be applied to the document it was created for.
+        // `insert_with_txn`/`delete_with_txn` are public API, so this guards
+        // against misuse (passing one doc's txn to another doc's handler), which
+        // would otherwise stamp the target doc's state/oplog with the wrong
+        // peer+counter. Compare doc identity via the `Weak` pointer (no atomic
+        // upgrade) on the hot path; only upgrade to fill in the error on the
+        // rare mismatch.
+        if self.doc.as_ptr() != Arc::as_ptr(&doc.inner) {
+            let found = doc
+                .state
+                .lock()
+                .peer
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let expected = self
+                .doc
+                .upgrade()
+                .map(|d| d.state.lock().peer.load(std::sync::atomic::Ordering::Relaxed))
+                .unwrap_or(found);
+            return Err(LoroError::UnmatchedContext { expected, found });
         }
 
         let len = content.content_len();
@@ -610,7 +614,9 @@ impl Transaction {
                 self.next_lamport,
                 len,
             );
-            oplog.refresh_visible_op_count();
+            // Local ops are always visible; bump the cached count incrementally
+            // instead of recomputing it from the version vectors every op.
+            oplog.inc_visible_op_count(len);
             self.next_lamport += len as Lamport;
             // set frontiers to the last op id
             let last_id = start_id.inc(len as Counter - 1);

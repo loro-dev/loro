@@ -15,8 +15,13 @@
 //! The actual locking is backed by [`crate::sync::Mutex`], which resolves to
 //! `std::sync::Mutex` in normal builds and `loom::sync::Mutex` under loom. This
 //! keeps the code testable with loom while maintaining the same API.
+//!
+//! The per-thread order tracking is debug-only; in release builds those fields
+//! and helpers are unused, hence the release-only `allow(dead_code)`.
+#![cfg_attr(not(debug_assertions), allow(dead_code))]
 use crate::sync::ThreadLocal;
 use crate::sync::{Mutex, MutexGuard};
+#[cfg(debug_assertions)]
 use std::backtrace::Backtrace;
 use std::fmt::{Debug, Display};
 use std::ops::{Deref, DerefMut};
@@ -132,29 +137,45 @@ impl<T> LoroMutex<T> {
     /// - If the current thread already holds a lock with kind `>= self.kind`.
     /// - If the guard is later dropped out of acquisition order.
     pub fn lock(&self) -> LoroMutexGuard<'_, T> {
-        let caller = Location::caller();
-        let v = self.currently_locked_in_this_thread.get_or_default();
-        let last = *v.lock();
-        let this = LockInfo {
-            kind: self.kind,
-            caller_location: Some(caller),
-        };
-        if last.kind >= self.kind {
-            panic!(
-                "Locking order violation. Current lock: {}, New lock: {}",
-                last, this
-            );
-        }
+        // Lock-order tracking is a debug-only deadlock-prevention aid. In release
+        // builds it is compiled out entirely: per-op locking is on the hot path
+        // (each local op takes the OpLog + DocState locks) and the per-thread
+        // bookkeeping (a ThreadLocal lookup plus an inner mutex acquired several
+        // times per lock/unlock) was measured at ~30% of B4 local-edit time.
+        #[cfg(debug_assertions)]
+        {
+            let caller = Location::caller();
+            let v = self.currently_locked_in_this_thread.get_or_default();
+            let last = *v.lock();
+            let this = LockInfo {
+                kind: self.kind,
+                caller_location: Some(caller),
+            };
+            if last.kind >= self.kind {
+                panic!(
+                    "Locking order violation. Current lock: {}, New lock: {}",
+                    last, this
+                );
+            }
 
-        let guard = self.lock.lock_with_kind("LoroMutex");
-        *v.lock() = this;
-        LoroMutexGuard {
-            guard,
-            _inner: LoroMutexGuardInner {
-                inner: self,
-                this,
-                last,
-            },
+            let guard = self.lock.lock_with_kind("LoroMutex");
+            *v.lock() = this;
+            LoroMutexGuard {
+                guard,
+                _inner: LoroMutexGuardInner {
+                    inner: self,
+                    this,
+                    last,
+                },
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let guard = self.lock.lock_with_kind("LoroMutex");
+            LoroMutexGuard {
+                guard,
+                _inner: LoroMutexGuardInner { inner: self },
+            }
         }
     }
 
@@ -173,9 +194,20 @@ impl<T> LoroMutex<T> {
     /// This only checks the order tracker for the current thread. It does not
     /// guarantee that acquiring the underlying mutex will be non-blocking.
     pub(crate) fn can_lock_in_this_thread(&self) -> bool {
-        let v = self.currently_locked_in_this_thread.get_or_default();
-        let last = *v.lock();
-        last.kind < self.kind
+        #[cfg(debug_assertions)]
+        {
+            let v = self.currently_locked_in_this_thread.get_or_default();
+            let last = *v.lock();
+            last.kind < self.kind
+        }
+        // Without lock-order tracking (release) we cannot tell whether acquiring
+        // this lock would be reentrant/out-of-order, so we conservatively report
+        // "no" and let callers use their lock-free fallback (e.g. the cached
+        // `visible_op_count`, which is kept exact incrementally).
+        #[cfg(not(debug_assertions))]
+        {
+            false
+        }
     }
 }
 
@@ -191,10 +223,14 @@ pub struct LoroMutexGuard<'a, T> {
 
 /// RAII helper that updates the per-thread lock info on drop.
 ///
-/// This is an implementation detail of [`LoroMutexGuard`].
+/// This is an implementation detail of [`LoroMutexGuard`]. The order-tracking
+/// fields exist only in debug builds; in release the inner is a thin wrapper.
 struct LoroMutexGuardInner<'a, T> {
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     inner: &'a LoroMutex<T>,
+    #[cfg(debug_assertions)]
     this: LockInfo,
+    #[cfg(debug_assertions)]
     last: LockInfo,
 }
 
@@ -237,6 +273,10 @@ impl<'a, T> LoroMutexGuard<'a, T> {
 }
 
 impl<T> Drop for LoroMutexGuardInner<'_, T> {
+    #[cfg(not(debug_assertions))]
+    fn drop(&mut self) {}
+
+    #[cfg(debug_assertions)]
     fn drop(&mut self) {
         let cur = self.inner.currently_locked_in_this_thread.get_or_default();
         let current_lock_info = *cur.lock();
@@ -253,7 +293,9 @@ impl<T> Drop for LoroMutexGuardInner<'_, T> {
     }
 }
 
-#[cfg(test)]
+// These tests exercise the lock-order instrumentation, which is only compiled
+// in debug builds. Skip them under `cargo test --release`.
+#[cfg(all(test, debug_assertions))]
 mod tests {
     use super::*;
 
