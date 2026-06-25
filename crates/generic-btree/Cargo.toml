@@ -1,0 +1,35 @@
+[package]
+name = "generic-btree"
+version = "0.10.7"
+edition = "2021"
+authors = ["zxch3n <remch183@outlook.com>"]
+description = "Generic BTree for versatile purposes"
+homepage = "https://github.com/loro-dev/generic-btree"
+documentation = "https://docs.rs/generic-btree"
+readme = "README.md"
+keywords = ["btree", "data-structure"]
+license = "MIT"
+repository = "https://github.com/loro-dev/generic-btree"
+
+# Vendored into the loro workspace (fork of crates.io generic-btree 0.10.7) so we
+# can evolve the b-tree (e.g. deferred cache propagation). Redirected from
+# crates.io via [patch.crates.io] in the root Cargo.toml.
+
+[features]
+test = []
+
+[lib]
+name = "generic_btree"
+path = "src/lib.rs"
+
+[dependencies]
+arref = "0.1.0"
+heapless = "0.9.1"
+itertools = "0.11.0"
+proc-macro2 = "1.0.67"
+rustc-hash = "2.1.1"
+thunderdome = { version = "0.6.2", package = "loro-thunderdome" }
+
+[dev-dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+rand = "0.8.5"
