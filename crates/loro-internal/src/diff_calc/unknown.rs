@@ -8,7 +8,14 @@ use super::{DiffCalcVersionInfo, DiffCalculatorTrait, DiffMode};
 pub struct UnknownDiffCalculator;
 
 impl DiffCalculatorTrait for UnknownDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, _mode: DiffMode) {}
+    fn start_tracking(
+        &mut self,
+        _idx: ContainerIdx,
+        _oplog: &OpLog,
+        _vv: &crate::VersionVector,
+        _mode: DiffMode,
+    ) {
+    }
 
     fn apply_change(
         &mut self,

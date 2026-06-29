@@ -6,7 +6,6 @@ use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
 
 use crate::{
     container::list::list_op::InnerListOp,
-    dag::DagUtils,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::container_store::FRONTIERS_KEY,
     version::{Frontiers, VersionVector},
@@ -38,26 +37,14 @@ pub(crate) fn export_shallow_snapshot_inner(
     let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
-        start_vv.insert(id.peer, id.counter);
+        start_vv.extend_to_include_last_id(id);
     }
 
     #[cfg(debug_assertions)]
     {
-        use crate::dag::Dag;
         if !start_from.is_empty() {
-            assert!(start_from.len() == 1);
-            let id = start_from.as_single().unwrap();
-            let node = oplog.dag.get(id).unwrap();
-            if id.counter == node.cnt {
-                let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
-                assert_eq!(vv, start_vv);
-            } else {
-                let vv = oplog
-                    .dag()
-                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
-                    .unwrap();
-                assert_eq!(vv, start_vv);
-            }
+            let vv = oplog.dag().frontiers_to_vv(&start_from).unwrap();
+            assert_eq!(vv, start_vv);
         }
     }
 
@@ -206,7 +193,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
-        start_vv.insert(id.peer, id.counter);
+        start_vv.extend_to_include_last_id(id);
     }
 
     loro_common::debug!(

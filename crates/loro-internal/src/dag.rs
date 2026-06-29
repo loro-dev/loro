@@ -61,6 +61,7 @@ pub(crate) trait Dag: Debug {
 }
 
 pub(crate) trait DagUtils: Dag {
+    #[allow(unused)]
     fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
     /// Slow, should probably only use on dev
     #[allow(unused)]
@@ -316,6 +317,7 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
+#[allow(unused)]
 fn find_common_ancestor<'a, F, D>(
     get: &'a F,
     a_id: &Frontiers,
@@ -330,6 +332,30 @@ where
     }
 
     _find_common_ancestor_new(get, a_id, b_id)
+}
+
+pub(crate) fn find_common_ancestor_with_trimmed_deps<'a, F, D, G>(
+    get: &'a F,
+    a_id: &Frontiers,
+    b_id: &Frontiers,
+    trimmed_boundary: &Frontiers,
+    is_trimmed_dep: &G,
+) -> (Frontiers, DiffMode)
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<D>,
+    G: Fn(ID) -> bool,
+{
+    if b_id.is_empty() {
+        return (Default::default(), DiffMode::Checkout);
+    }
+
+    _find_common_ancestor_new_with_trimmed_deps(
+        get,
+        a_id,
+        b_id,
+        Some((trimmed_boundary, is_trimmed_dep)),
+    )
 }
 
 /// - deep whether keep searching until the min of non-shared node is found
@@ -494,8 +520,42 @@ where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
 {
+    _find_common_ancestor_new_with_trimmed_deps::<F, D, fn(ID) -> bool>(get, left, right, None)
+}
+
+fn _find_common_ancestor_new_with_trimmed_deps<'a, F, D, G>(
+    get: &'a F,
+    left: &Frontiers,
+    right: &Frontiers,
+    trimmed_deps: Option<(&Frontiers, &G)>,
+) -> (Frontiers, DiffMode)
+where
+    D: DagNode + 'a,
+    F: Fn(ID) -> Option<D>,
+    G: Fn(ID) -> bool,
+{
     if right.is_empty() {
         return (Default::default(), DiffMode::Checkout);
+    }
+
+    let is_trimmed_boundary = |frontiers: &Frontiers| {
+        let Some((trimmed_boundary, is_trimmed_dep)) = trimmed_deps else {
+            return false;
+        };
+
+        frontiers == trimmed_boundary
+            && frontiers
+                .iter()
+                .all(|id| get(id).is_none() && is_trimmed_dep(id))
+    };
+
+    let left_is_trimmed_boundary = is_trimmed_boundary(left);
+    let right_is_trimmed_boundary = is_trimmed_boundary(right);
+    match (left_is_trimmed_boundary, right_is_trimmed_boundary) {
+        (true, true) => return (left.clone(), DiffMode::Linear),
+        (true, false) => return (left.clone(), DiffMode::ImportGreaterUpdates),
+        (false, true) => return (right.clone(), DiffMode::Checkout),
+        (false, false) => {}
     }
 
     if left.is_empty() {
@@ -637,7 +697,22 @@ where
             if let Some(deps) = ids_to_ord_id_spans(node[0].deps.as_ref(), get) {
                 queue.push((deps, node_type));
             } else {
-                // dep on trimmed history
+                if let Some((trimmed_boundary, is_trimmed_dep)) = trimmed_deps {
+                    let missing_deps_are_trimmed = node[0]
+                        .deps
+                        .iter()
+                        .filter(|id| get(*id).is_none())
+                        .all(is_trimmed_dep);
+                    if missing_deps_are_trimmed {
+                        ans = trimmed_boundary.clone();
+                        if node_type == NodeType::A {
+                            is_right_greater = false;
+                        }
+                        is_linear = false;
+                        break;
+                    }
+                }
+
                 panic!("deps on trimmed history");
             }
 

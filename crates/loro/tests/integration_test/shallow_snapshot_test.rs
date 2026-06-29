@@ -148,7 +148,7 @@ fn shallow_on_the_given_version_when_feasible() -> anyhow::Result<()> {
     let bytes = doc.export(loro::ExportMode::shallow_snapshot_since(ID::new(1, 31)));
     let new_doc = LoroDoc::new();
     new_doc.import(&bytes.unwrap())?;
-    assert_eq!(new_doc.shallow_since_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(new_doc.shallow_since_vv().get(&1).copied().unwrap(), 32);
     Ok(())
 }
 
@@ -171,12 +171,12 @@ fn export_snapshot_on_a_shallow_doc() -> anyhow::Result<()> {
     // Import into a new document
     let shallow_doc = LoroDoc::new();
     shallow_doc.import(&bytes.unwrap())?;
-    assert_eq!(shallow_doc.shallow_since_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(shallow_doc.shallow_since_vv().get(&1).copied().unwrap(), 32);
     let new_snapshot = shallow_doc.export(loro::ExportMode::Snapshot);
 
     let new_doc = LoroDoc::new();
     new_doc.import(&new_snapshot.unwrap())?;
-    assert_eq!(new_doc.shallow_since_vv().get(&1).copied().unwrap(), 31);
+    assert_eq!(new_doc.shallow_since_vv().get(&1).copied().unwrap(), 32);
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
     new_doc.checkout(&frontiers)?;
     assert_eq!(new_doc.get_deep_value(), old_value);

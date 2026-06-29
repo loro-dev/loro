@@ -151,6 +151,20 @@ impl AppDag {
         &self.shallow_since_frontiers
     }
 
+    pub(crate) fn find_common_ancestor(
+        &self,
+        a_id: &Frontiers,
+        b_id: &Frontiers,
+    ) -> (Frontiers, crate::diff_calc::DiffMode) {
+        crate::dag::find_common_ancestor_with_trimmed_deps(
+            &|id| self.get(id),
+            a_id,
+            b_id,
+            &self.shallow_since_frontiers,
+            &|id| self.shallow_since_vv.includes_id(id),
+        )
+    }
+
     pub(crate) fn begin_import_rollback(&mut self) {
         let old_vv_is_empty = self.vv.is_empty();
         let mut rollback = self.import_rollback.lock();
@@ -324,7 +338,10 @@ impl AppDag {
             // We may not need to push new element to dag because it only depends on itself
             inserted =
                 self.with_last_mut_of_peer(change.id.peer, record_old_node_before_merge, |last| {
-                    let (_, last) = last.unwrap();
+                    let Some((_, last)) = last else {
+                        return false;
+                    };
+
                     if last.has_succ {
                         // Don't merge the node if there are other nodes depending on it
                         return false;
@@ -634,15 +651,19 @@ impl AppDag {
         self.vv = v.vv;
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
+            self.shallow_since_vv = ImVersionVector::from_vv(&vv);
             if !f.is_empty() {
                 assert!(f.len() == 1);
                 let id = f.as_single().unwrap();
-                let node = self.get(id).unwrap();
-                assert!(node.cnt == id.counter);
-                self.shallow_root_frontiers_deps = node.deps.clone();
+                if self.shallow_since_vv.includes_id(id) {
+                    self.shallow_root_frontiers_deps = f.clone();
+                } else {
+                    let node = self.get(id).unwrap();
+                    assert!(node.cnt == id.counter);
+                    self.shallow_root_frontiers_deps = node.deps.clone();
+                }
             }
             self.shallow_since_frontiers = f;
-            self.shallow_since_vv = ImVersionVector::from_vv(&vv);
         }
     }
 
@@ -779,15 +800,15 @@ impl AppDag {
             return true;
         }
 
-        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
-            return true;
-        }
-
         if deps
             .iter()
             .any(|x| self.shallow_since_frontiers.contains(&x))
         {
             return deps != &self.shallow_since_frontiers;
+        }
+
+        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
+            return true;
         }
 
         false
@@ -1045,6 +1066,10 @@ impl AppDag {
     /// get the version vector for a certain op.
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
+        if self.shallow_since_vv.includes_id(id) {
+            return Some(self.shallow_since_vv.clone());
+        }
+
         self.get(id).map(|x| {
             let mut vv = self.ensure_vv_for(&x);
             vv.insert(id.peer, id.counter + 1);
@@ -1074,6 +1099,10 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         if node.vv.get().is_none() {
                             if all_deps_processed {
@@ -1090,6 +1119,15 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
+                        if self.shallow_since_vv.includes_id(id) {
+                            if ans_vv.is_empty() {
+                                ans_vv = self.shallow_since_vv.clone();
+                            } else {
+                                ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                            }
+                            continue;
+                        }
+
                         let node = self.get(id).expect("deps should be in the dag");
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
@@ -1138,6 +1176,10 @@ impl AppDag {
     pub fn get_change_lamport_from_deps(&self, deps: &Frontiers) -> Option<Lamport> {
         let mut lamport = 0;
         for id in deps.iter() {
+            if self.shallow_since_vv.includes_id(id) {
+                continue;
+            }
+
             let x = self.get_lamport(&id)?;
             lamport = lamport.max(x + 1);
         }
@@ -1261,22 +1303,18 @@ impl AppDag {
             return 0;
         }
 
-        let mut iter = frontiers.iter();
-        let mut lamport = {
-            let id = iter.next().unwrap();
-            let Some(x) = self.get(id) else {
-                unreachable!()
-            };
-            assert!(id.counter >= x.cnt);
-            (id.counter - x.cnt) as Lamport + x.lamport + 1
-        };
+        let mut lamport = 0;
+        for id in frontiers.iter() {
+            if let Some(x) = self.get(id) {
+                assert!(id.counter >= x.cnt);
+                lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
+            } else {
+                if self.shallow_since_vv.includes_id(id) {
+                    continue;
+                }
 
-        for id in iter {
-            let Some(x) = self.get(id) else {
                 unreachable!()
-            };
-            assert!(id.counter >= x.cnt);
-            lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
+            }
         }
 
         lamport
@@ -1384,5 +1422,22 @@ mod ensure_vv_for_tests {
         assert_eq!(vv.get(&1).copied(), Some(1));
         assert_eq!(vv.get(&2).copied(), Some(1));
         assert!(vv.get(&3).is_none());
+    }
+
+    #[test]
+    fn shallow_dep_ensure_vv_for_uses_shallow_baseline() {
+        let change_store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let mut dag = AppDag::new(change_store);
+        dag.shallow_since_vv.insert(1, 10);
+
+        let node = make_dag_node(2, 0, 1, Frontiers::from_id(ID::new(1, 5)));
+        {
+            let mut map = dag.map.lock();
+            map.insert(node.id_start(), node.clone());
+        }
+
+        let vv = dag.ensure_vv_for(&node);
+        assert_eq!(vv.get(&1).copied(), Some(10));
+        assert!(vv.get(&2).is_none());
     }
 }

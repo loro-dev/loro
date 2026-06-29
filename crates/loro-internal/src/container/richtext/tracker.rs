@@ -61,8 +61,7 @@ impl Tracker {
         this
     }
 
-    #[allow(unused)]
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             rope: CrdtRope::new(),
             id_to_cursor: IdToCursor::default(),
