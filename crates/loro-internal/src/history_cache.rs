@@ -346,6 +346,37 @@ impl ContainerHistoryCache {
         ans
     }
 
+    pub(crate) fn text_shallow_root_chunks_in_order(
+        &self,
+        idx: ContainerIdx,
+    ) -> Vec<RichtextStateChunk> {
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut binding = state.store.lock();
+        let Some(text) = binding.get_mut(idx) else {
+            return Vec::new();
+        };
+
+        let text_state = text
+            .get_state(
+                idx,
+                ContainerCreationContext {
+                    configure: &Default::default(),
+                    peer: 0,
+                },
+            )
+            .as_richtext_state()
+            .unwrap();
+
+        let mut ans = Vec::new();
+        text_state.iter_raw(&mut |chunk| {
+            ans.push(chunk.clone());
+        });
+        ans
+    }
+
     pub(crate) fn find_list_chunks_in(
         &self,
         idx: ContainerIdx,

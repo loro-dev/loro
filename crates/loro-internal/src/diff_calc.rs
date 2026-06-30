@@ -1084,6 +1084,67 @@ impl RichtextDiffCalculator {
             }
         }
     }
+
+    fn seed_tracker_from_shallow_root(
+        idx: ContainerIdx,
+        oplog: &OpLog,
+        tracker: &mut RichtextTracker,
+        styles: &mut Vec<(StyleOp, usize)>,
+        shallow_root_vv: &VersionVector,
+    ) {
+        let chunks = oplog.with_history_cache(|h| h.text_shallow_root_chunks_in_order(idx));
+        let mut style_ids = FxHashMap::<(PeerID, Counter), usize>::default();
+        let mut spans = Vec::with_capacity(chunks.len());
+        let mut pos = 0;
+
+        for chunk in chunks {
+            match chunk {
+                RichtextStateChunk::Text(text) => {
+                    let len = text.rle_len();
+                    spans.push((text.id_full(), RichtextChunk::new_unknown(len as u32)));
+                    pos += len;
+                }
+                RichtextStateChunk::Style { style, anchor_type } => {
+                    let style_key = (style.peer, style.cnt);
+                    let style_id = match style_ids.get(&style_key) {
+                        Some(id) => *id,
+                        None => {
+                            let id = styles.len();
+                            styles.push(((*style).clone(), pos));
+                            style_ids.insert(style_key, id);
+                            id
+                        }
+                    };
+
+                    if matches!(anchor_type, AnchorType::End) {
+                        styles[style_id].1 = pos;
+                    }
+
+                    let anchor_offset: Counter = if matches!(anchor_type, AnchorType::End) {
+                        1
+                    } else {
+                        0
+                    };
+                    let lamport_offset: Lamport = if matches!(anchor_type, AnchorType::End) {
+                        1
+                    } else {
+                        0
+                    };
+                    spans.push((
+                        IdFull::new(
+                            style.peer,
+                            style.cnt + anchor_offset,
+                            style.lamport + lamport_offset,
+                        ),
+                        RichtextChunk::new_style_anchor(style_id as u32, anchor_type),
+                    ));
+                    pos += 1;
+                }
+            }
+        }
+
+        tracker.seed_from_ordered_spans(shallow_root_vv, spans);
+    }
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {
@@ -1139,12 +1200,30 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         covered_vv.merge(&target_vv);
                     }
                 } else {
-                    if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
-                        **tracker = RichtextTracker::new_with_unknown();
+                    if !vv.includes_vv(start_vv) || !covered_vv.includes_vv(vv) {
+                        **tracker = RichtextTracker::new();
                         styles.clear();
+                        let shallow_root_vv = oplog.shallow_since_vv().to_vv();
+                        Self::seed_tracker_from_shallow_root(
+                            idx,
+                            oplog,
+                            tracker,
+                            styles,
+                            &shallow_root_vv,
+                        );
+                        let vv_frontiers = oplog.dag.vv_to_frontiers(vv);
+                        Self::apply_crdt_ops_between(
+                            idx,
+                            oplog,
+                            tracker,
+                            styles,
+                            &shallow_root_vv,
+                            vv,
+                            &vv_frontiers,
+                        );
                         *start_vv = vv.clone();
                         *covered_vv = vv.clone();
-                        *uses_unknown_base = true;
+                        *uses_unknown_base = false;
                     }
                 }
 
