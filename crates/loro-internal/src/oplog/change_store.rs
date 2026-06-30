@@ -661,7 +661,12 @@ mod mut_external_kv {
             {
                 // This is for tests
                 for (peer, cnt) in vv.iter() {
-                    self.get_change(ID::new(*peer, *cnt - 1))
+                    let id = ID::new(*peer, *cnt - 1);
+                    if start_vv.includes_id(id) {
+                        continue;
+                    }
+
+                    self.get_change(id)
                         .ok_or(LoroError::DecodeDataCorruptionError)?;
                 }
             }
@@ -689,6 +694,10 @@ mod mut_external_kv {
             let mut max_lamport = None;
             let mut max_timestamp = 0;
             for id in frontiers.iter() {
+                if start_vv.includes_id(id) {
+                    continue;
+                }
+
                 let c = self
                     .get_change(id)
                     .ok_or(LoroError::DecodeDataCorruptionError)?;

@@ -7,7 +7,6 @@ use rustc_hash::FxHashMap;
 
 use crate::{
     container::{idx::ContainerIdx, tree::tree_op::TreeOp},
-    dag::DagUtils,
     delta::{TreeDelta, TreeDeltaItem, TreeInternalDiff},
     event::InternalDiff,
     state::TreeParentId,
@@ -31,7 +30,13 @@ enum TreeDiffCalculatorMode {
 }
 
 impl DiffCalculatorTrait for TreeDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, _vv: &crate::VersionVector, mode: DiffMode) {
+    fn start_tracking(
+        &mut self,
+        _idx: ContainerIdx,
+        _oplog: &OpLog,
+        _vv: &crate::VersionVector,
+        mode: DiffMode,
+    ) {
         match mode {
             DiffMode::Checkout => {
                 self.mode = TreeDiffCalculatorMode::Crdt;
