@@ -1119,13 +1119,40 @@ impl LoroDoc {
     /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
-    #[instrument(level = "info", skip_all)]
+    #[inline]
     pub fn undo_internal(
         &self,
         id_span: IdSpan,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
+    ) -> LoroResult<CommitWhenDrop<'_>> {
+        // Tracing instrumentation lives on `undo_internal_with_scope`; keeping
+        // it off this thin wrapper avoids duplicate spans for direct callers.
+        self.undo_internal_with_scope(
+            id_span,
+            container_remap,
+            post_transform_base,
+            before_diff,
+            None,
+        )
+    }
+
+    /// Like [`Self::undo_internal`], but additionally accepts a `scope_filter`.
+    ///
+    /// When `scope_filter` is `Some`, the diff computed for the undo is masked
+    /// so only containers in the set are mutated. This lets callers (notably
+    /// [`UndoManager`] with [`crate::UndoScope::Containers`]) revert just the
+    /// in-scope portion of a commit even when the original commit also touched
+    /// out-of-scope containers.
+    #[instrument(level = "info", skip_all)]
+    pub fn undo_internal_with_scope(
+        &self,
+        id_span: IdSpan,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        post_transform_base: Option<&DiffBatch>,
+        before_diff: &mut dyn FnMut(&DiffBatch),
+        scope_filter: Option<&FxHashSet<ContainerID>>,
     ) -> LoroResult<CommitWhenDrop<'_>> {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
@@ -1173,6 +1200,26 @@ impl LoroDoc {
         }
         drop(txn);
         self.start_auto_commit();
+
+        // If a scope filter was supplied (UndoManager with UndoScope::Containers),
+        // mask the diff so only in-scope containers are reverted. This is what
+        // makes mixed commits — single commits touching both in-scope and
+        // out-of-scope containers — undo only their in-scope portion.
+        // The filter walks container_remap so a remapped target counts as in-scope
+        // when the remap destination is in scope, mirroring _apply_diff's own walk.
+        let mut diff = diff;
+        if let Some(scope) = scope_filter {
+            let in_scope = |cid: &ContainerID| -> bool {
+                let mut id = cid.clone();
+                while let Some(rid) = container_remap.get(&id) {
+                    id = rid.clone();
+                }
+                scope.contains(&id)
+            };
+            diff.cid_to_events.retain(|cid, _| in_scope(cid));
+            diff.order.retain(|cid| in_scope(cid));
+        }
+
         // Try applying the diff, but ignore the error if it happens.
         // MovableList's undo behavior is too tricky to handle in a collaborative env
         // so in edge cases this may be an Error
