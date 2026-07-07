@@ -7,6 +7,7 @@ use loro_common::{Counter, IdFull, IdSpan, LoroError, LoroResult, LoroValue, ID}
 use query::{ByteQuery, ByteQueryT};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
+use smallvec::SmallVec;
 use std::{
     fmt::{Display, Formatter},
     ops::{Bound, RangeBounds},
@@ -16,7 +17,6 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
-use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{
@@ -1237,9 +1237,17 @@ impl BTreeTrait for RichtextTreeTrait {
 
 // This query implementation will prefer right element when both left element and right element are valid.
 mod query {
+    use std::marker::PhantomData;
+
+    use generic_btree::{FindResult, Query};
+
     use crate::utils::query_by_len::{IndexQuery, QueryByLen};
 
     use super::*;
+
+    pub(super) trait RichtextQueryByLen: QueryByLen<RichtextTreeTrait> {
+        const POS_TYPE: PosType;
+    }
 
     #[cfg(not(feature = "wasm"))]
     pub(super) type EventIndexQuery = UnicodeQuery;
@@ -1287,6 +1295,10 @@ mod query {
         }
     }
 
+    impl RichtextQueryByLen for UnicodeQueryT {
+        const POS_TYPE: PosType = PosType::Unicode;
+    }
+
     pub(crate) struct Utf16QueryT;
     pub(crate) type Utf16Query = IndexQuery<Utf16QueryT, RichtextTreeTrait>;
 
@@ -1325,6 +1337,10 @@ mod query {
         fn get_cache_entity_len(cache: &<RichtextTreeTrait as BTreeTrait>::Cache) -> usize {
             cache.entity_len as usize
         }
+    }
+
+    impl RichtextQueryByLen for Utf16QueryT {
+        const POS_TYPE: PosType = PosType::Utf16;
     }
 
     pub(super) struct EntityQueryT;
@@ -1369,6 +1385,10 @@ mod query {
         }
     }
 
+    impl RichtextQueryByLen for EntityQueryT {
+        const POS_TYPE: PosType = PosType::Entity;
+    }
+
     pub(super) struct ByteQueryT;
     pub(super) type ByteQuery = IndexQuery<ByteQueryT, RichtextTreeTrait>;
     impl QueryByLen<RichtextTreeTrait> for ByteQueryT {
@@ -1406,6 +1426,84 @@ mod query {
             cache.entity_len as usize
         }
     }
+
+    impl RichtextQueryByLen for ByteQueryT {
+        const POS_TYPE: PosType = PosType::Bytes;
+    }
+
+    pub(super) struct StyleFreeIndexQuery<T: RichtextQueryByLen> {
+        pub(super) left: usize,
+        pub(super) entity_index: usize,
+        pub(super) event_index: usize,
+        pub(super) boundary_error: bool,
+        _data: PhantomData<T>,
+    }
+
+    impl<T: RichtextQueryByLen> Query<RichtextTreeTrait> for StyleFreeIndexQuery<T> {
+        type QueryArg = usize;
+
+        fn init(target: &Self::QueryArg) -> Self {
+            Self {
+                left: *target,
+                entity_index: 0,
+                event_index: 0,
+                boundary_error: false,
+                _data: PhantomData,
+            }
+        }
+
+        fn find_node(
+            &mut self,
+            _: &Self::QueryArg,
+            child_caches: &[generic_btree::Child<RichtextTreeTrait>],
+        ) -> FindResult {
+            let mut last_left = self.left;
+            let mut last_entity_index = self.entity_index;
+            let mut last_event_index = self.event_index;
+            for (i, cache) in child_caches.iter().enumerate() {
+                let len = T::get_cache_len(&cache.cache);
+                if self.left >= len {
+                    last_left = self.left;
+                    last_entity_index = self.entity_index;
+                    last_event_index = self.event_index;
+                    self.entity_index += cache.cache.entity_len as usize;
+                    self.event_index += cache.cache.event_len() as usize;
+                    self.left -= len;
+                } else {
+                    return FindResult::new_found(i, self.left);
+                }
+            }
+
+            self.left = last_left;
+            self.entity_index = last_entity_index;
+            self.event_index = last_event_index;
+            FindResult::new_missing(child_caches.len() - 1, last_left)
+        }
+
+        fn confirm_elem(
+            &mut self,
+            _q: &Self::QueryArg,
+            elem: &RichtextStateChunk,
+        ) -> (usize, bool) {
+            let Some(entity_offset) =
+                pos_type_offset_to_entity_offset(T::POS_TYPE, elem, self.left)
+            else {
+                self.boundary_error = true;
+                return (0, false);
+            };
+
+            self.entity_index += entity_offset;
+            self.event_index +=
+                entity_offset_to_pos_type_offset(PosType::Event, elem, entity_offset);
+            (entity_offset, true)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StyleFreeTextInsertPosition {
+    pub(crate) entity_index: usize,
+    pub(crate) event_index: usize,
 }
 
 impl RichtextState {
@@ -1458,6 +1556,83 @@ impl RichtextState {
         };
         self.check_cache();
         result
+    }
+
+    pub(crate) fn get_style_free_text_insert_position(
+        &mut self,
+        pos: usize,
+        pos_type: PosType,
+    ) -> Result<Option<StyleFreeTextInsertPosition>, LoroError> {
+        self.check_cache();
+        let result = {
+            if self.has_styles() || self.len_entity() != self.len_unicode() {
+                return Ok(None);
+            }
+
+            let len = self.len(pos_type);
+            if pos > len {
+                return Err(LoroError::OutOfBound {
+                    pos,
+                    len,
+                    info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                });
+            }
+
+            if self.tree.is_empty() {
+                return Ok(Some(StyleFreeTextInsertPosition {
+                    entity_index: 0,
+                    event_index: 0,
+                }));
+            }
+
+            let position = match pos_type {
+                PosType::Unicode if cfg!(not(feature = "wasm")) => StyleFreeTextInsertPosition {
+                    entity_index: pos,
+                    event_index: pos,
+                },
+                PosType::Event if cfg!(not(feature = "wasm")) => StyleFreeTextInsertPosition {
+                    entity_index: pos,
+                    event_index: pos,
+                },
+                PosType::Bytes => {
+                    self.query_style_free_insert_position::<query::ByteQueryT>(pos)?
+                }
+                PosType::Unicode => {
+                    self.query_style_free_insert_position::<query::UnicodeQueryT>(pos)?
+                }
+                PosType::Utf16 => {
+                    self.query_style_free_insert_position::<query::Utf16QueryT>(pos)?
+                }
+                PosType::Event => {
+                    self.query_style_free_insert_position::<query::EventIndexQueryT>(pos)?
+                }
+                PosType::Entity => {
+                    self.query_style_free_insert_position::<query::EntityQueryT>(pos)?
+                }
+            };
+
+            Ok(Some(position))
+        };
+        self.check_cache();
+        result
+    }
+
+    fn query_style_free_insert_position<T: query::RichtextQueryByLen>(
+        &self,
+        pos: usize,
+    ) -> Result<StyleFreeTextInsertPosition, LoroError> {
+        let (_, finder) = self
+            .tree
+            .query_with_finder_return::<query::StyleFreeIndexQuery<T>>(&pos);
+
+        if finder.boundary_error {
+            return Err(text_boundary_error(pos, T::POS_TYPE));
+        }
+
+        Ok(StyleFreeTextInsertPosition {
+            entity_index: finder.entity_index,
+            event_index: finder.event_index,
+        })
     }
 
     pub(crate) fn has_styles(&self) -> bool {
@@ -2938,7 +3113,7 @@ fn pos_type_offset_to_entity_offset(
             RichtextStateChunk::Text(t) => {
                 if cfg!(feature = "wasm") {
                     t.utf16_offset_to_unicode(offset).ok()
-                } else if offset < t.unicode_len() as usize {
+                } else if offset <= t.unicode_len() as usize {
                     Some(offset)
                 } else {
                     None
@@ -2951,6 +3126,19 @@ fn pos_type_offset_to_entity_offset(
                     Some(0)
                 }
             }
+        },
+    }
+}
+
+fn text_boundary_error(pos: usize, pos_type: PosType) -> LoroError {
+    match pos_type {
+        PosType::Bytes => LoroError::UTF8InUnicodeCodePoint { pos },
+        PosType::Utf16 => LoroError::UTF16InUnicodeCodePoint { pos },
+        PosType::Event if cfg!(feature = "wasm") => LoroError::UTF16InUnicodeCodePoint { pos },
+        _ => LoroError::OutOfBound {
+            pos,
+            len: 0,
+            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         },
     }
 }
@@ -3094,6 +3282,47 @@ mod test {
         }
     }
 
+    fn slow_insert_position(
+        state: &mut RichtextState,
+        pos: usize,
+        pos_type: PosType,
+    ) -> Result<StyleFreeTextInsertPosition, LoroError> {
+        let (entity_index, cursor) = state.get_entity_index_for_text_insert(pos, pos_type)?;
+        let event_index = match cursor {
+            Some(cursor) if pos_type == PosType::Event => {
+                debug_assert_eq!(
+                    state.get_index_from_cursor(cursor, PosType::Event),
+                    Some(pos)
+                );
+                pos
+            }
+            Some(cursor) => state.cursor_to_event_index_cached(cursor),
+            None => 0,
+        };
+
+        Ok(StyleFreeTextInsertPosition {
+            entity_index,
+            event_index,
+        })
+    }
+
+    fn expect_fast_boundary_error(state: &mut RichtextState, pos: usize, pos_type: PosType) {
+        let err = state
+            .get_style_free_text_insert_position(pos, pos_type)
+            .unwrap_err();
+        match pos_type {
+            PosType::Bytes => assert!(
+                matches!(err, LoroError::UTF8InUnicodeCodePoint { pos: p } if p == pos),
+                "{pos_type:?} pos {pos} returned {err:?}"
+            ),
+            PosType::Utf16 | PosType::Event => assert!(
+                matches!(err, LoroError::UTF16InUnicodeCodePoint { pos: p } if p == pos),
+                "{pos_type:?} pos {pos} returned {err:?}"
+            ),
+            _ => unreachable!(),
+        }
+    }
+
     fn bold(n: isize) -> Arc<StyleOp> {
         Arc::new(StyleOp::new_for_test(
             n,
@@ -3177,6 +3406,64 @@ mod test {
                 }
 
             ])
+        );
+    }
+
+    #[test]
+    fn style_free_insert_position_matches_slow_path_for_all_position_types() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "A");
+        wrapper.insert(1, "😀");
+        wrapper.insert(2, "中");
+        wrapper.insert(3, "Bé");
+        let text = wrapper.state.to_string();
+
+        for pos_type in [
+            PosType::Bytes,
+            PosType::Unicode,
+            PosType::Utf16,
+            PosType::Event,
+            PosType::Entity,
+        ] {
+            let len = wrapper.state.len(pos_type);
+            for pos in 0..=len {
+                let is_boundary = match pos_type {
+                    PosType::Bytes => utf8_to_unicode_index(&text, pos).is_ok(),
+                    PosType::Utf16 => utf16_to_unicode_index(&text, pos).is_ok(),
+                    PosType::Event if cfg!(feature = "wasm") => {
+                        utf16_to_unicode_index(&text, pos).is_ok()
+                    }
+                    _ => true,
+                };
+
+                if is_boundary {
+                    let mut fast_state = wrapper.state.clone();
+                    let mut slow_state = wrapper.state.clone();
+                    let fast = fast_state
+                        .get_style_free_text_insert_position(pos, pos_type)
+                        .unwrap()
+                        .unwrap();
+                    let slow = slow_insert_position(&mut slow_state, pos, pos_type).unwrap();
+                    assert_eq!(fast, slow, "{pos_type:?} pos {pos}");
+                } else {
+                    expect_fast_boundary_error(&mut wrapper.state.clone(), pos, pos_type);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn style_free_insert_position_is_disabled_when_style_anchors_exist() {
+        let mut wrapper = SimpleWrapper::default();
+        wrapper.insert(0, "Hello");
+        wrapper.mark(0..5, bold(0));
+
+        assert_eq!(
+            wrapper
+                .state
+                .get_style_free_text_insert_position(3, PosType::Unicode)
+                .unwrap(),
+            None
         );
     }
 

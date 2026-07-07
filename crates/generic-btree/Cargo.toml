@@ -11,9 +11,8 @@ keywords = ["btree", "data-structure"]
 license = "MIT"
 repository = "https://github.com/loro-dev/generic-btree"
 
-# Vendored into the loro workspace (fork of crates.io generic-btree 0.10.7) so we
-# can evolve the b-tree (e.g. deferred cache propagation). Redirected from
-# crates.io via [patch.crates.io] in the root Cargo.toml.
+# Managed in the loro workspace (fork of crates.io generic-btree 0.10.7) so we
+# can evolve and publish the b-tree with Loro's normal Rust release flow.
 
 [features]
 test = []

@@ -12,9 +12,7 @@ use crate::{
         list::list_op,
         richtext::{
             config::StyleConfigMap,
-            richtext_state::{
-                DrainInfo, EntityRanges, IterRangeItem, PosType, RichtextStateChunk,
-            },
+            richtext_state::{DrainInfo, EntityRanges, IterRangeItem, PosType, RichtextStateChunk},
             AnchorType, RichtextState as InnerState, StyleKey, StyleOp, Styles,
         },
     },
@@ -991,6 +989,20 @@ impl RichtextState {
         self.state
             .get_mut()
             .get_entity_index_for_text_insert(index, pos_type)
+    }
+
+    #[inline]
+    pub(crate) fn get_style_free_text_insert_position(
+        &mut self,
+        index: usize,
+        pos_type: PosType,
+    ) -> Result<
+        Option<crate::container::richtext::richtext_state::StyleFreeTextInsertPosition>,
+        LoroError,
+    > {
+        self.state
+            .get_mut()
+            .get_style_free_text_insert_position(index, pos_type)
     }
 
     #[inline]

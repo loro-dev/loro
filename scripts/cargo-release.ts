@@ -3,6 +3,10 @@
 import { defineCommand, runMain } from "npm:citty";
 import { readFileSync, writeFileSync } from "node:fs";
 import { compare as semverCompare, parse as semverParse } from "npm:semver";
+import {
+  parseReleasePlan,
+  selectExcludedCrates,
+} from "./cargo-release-plan.ts";
 
 async function runCargoRelease(version: string): Promise<string> {
   const process = new Deno.Command("cargo", {
@@ -10,22 +14,6 @@ async function runCargoRelease(version: string): Promise<string> {
   });
   const output = await process.output();
   return new TextDecoder().decode(output.stderr);
-}
-
-function parseNoChangesCrates(output: string): string[] {
-  const lines = output.split("\n");
-  const noChangesCrates: string[] = [];
-
-  for (const line of lines) {
-    if (line.includes("despite no changes made since tag")) {
-      const match = line.match(/updating ([^ ]+) to/);
-      if (match) {
-        noChangesCrates.push(match[1]);
-      }
-    }
-  }
-
-  return noChangesCrates;
 }
 
 function generateOptimizedCommand(
@@ -59,7 +47,9 @@ function syncRustVersionFile(version: string) {
   if (semverCompare(version, versionFileVersion) > 0) {
     writeFileSync(rustVersionFile, version);
   } else {
-    throw new Error(`input version ${version} is not higher than the version in the file ${versionFileVersion}`);
+    throw new Error(
+      `input version ${version} is not higher than the version in the file ${versionFileVersion}`,
+    );
   }
 }
 
@@ -83,14 +73,18 @@ const main = defineCommand({
     }
     syncRustVersionFile(version);
     const output = await runCargoRelease(version);
-    console.log("output")
-    const noChangesCrates = parseNoChangesCrates(output);
-    console.log("noChangesCrates", noChangesCrates);
-    const excludeFlags = noChangesCrates.map((crate) => `--exclude ${crate}`).join(
-      " ",
-    );
+    console.log("output");
+    const plan = parseReleasePlan(output);
+    const excludedCrates = selectExcludedCrates(plan);
+    console.log("noChangesCrates", plan.noChangesCrates);
+    console.log("dependencyUpdates", plan.dependencyUpdates);
+    console.log("excludedCrates", excludedCrates);
+    const excludeFlags = excludedCrates.map((crate) => `--exclude ${crate}`)
+      .join(
+        " ",
+      );
     console.log("excludeFlags", excludeFlags);
-    const cmd = generateOptimizedCommand(version, noChangesCrates);
+    const cmd = generateOptimizedCommand(version, excludedCrates);
     console.log("cmd", cmd);
     const p1 = new Deno.Command("cargo", {
       args: cmd.split(" ").slice(1),
@@ -101,4 +95,6 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+if (import.meta.main) {
+  runMain(main);
+}

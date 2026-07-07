@@ -1854,12 +1854,9 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn splice(&self, pos: usize, len: usize, s: &str, pos_type: PosType) -> LoroResult<String> {
-        let end = checked_range_end(
-            pos,
-            len,
-            self.len(pos_type),
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, self.len(pos_type), || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
         let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
         self.insert(pos, s, pos_type)?;
@@ -1968,12 +1965,9 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        let end = checked_range_end(
-            pos,
-            len,
-            text_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, text_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
 
@@ -2019,32 +2013,25 @@ impl TextHandler {
             return Ok(Vec::new());
         }
 
-        // Fast path: plain-text insert into a style-free document (non-wasm).
-        // With no style anchors, entity_index == unicode pos and the event index
-        // equals the unicode index, so bounds + no-styles are checked in a single
-        // state access and the entire read phase (cursor location + two
-        // visit_previous_caches walks + styles lookup) is skipped; apply_local_op
-        // then locates the cursor exactly once.
-        #[cfg(not(feature = "wasm"))]
-        if attr.is_none() && pos_type == PosType::Unicode {
+        // Fast path: plain-text insert into a style-free document. With no
+        // style anchors, entity_index is just the unicode position; for
+        // byte/utf16/event coordinates, resolve entity + event indexes with one
+        // BTree query and skip the style-anchor scan plus styles lookup.
+        if attr.is_none() {
             let inner = self.inner.try_attached_state()?;
             let fast = inner.with_state(|state| {
-                let rt = state.as_richtext_state_mut().unwrap();
-                if rt.has_styles() {
-                    return Ok(false);
-                }
-                let len = rt.len_unicode();
-                if pos > len {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-                Ok(true)
+                state
+                    .as_richtext_state_mut()
+                    .unwrap()
+                    .get_style_free_text_insert_position(pos, pos_type)
             })?;
-            if fast {
+            if let Some(fast) = fast {
                 let unicode_len = s.chars().count();
+                let event_len = if cfg!(feature = "wasm") {
+                    count_utf16_len(s.as_bytes())
+                } else {
+                    unicode_len
+                };
                 txn.apply_local_op(
                     inner.container_idx,
                     crate::op::RawOpContent::List(
@@ -2053,16 +2040,14 @@ impl TextHandler {
                                 str: Cow::Borrowed(s),
                                 unicode_len,
                             },
-                            // entity_index == unicode pos (no style anchors)
-                            pos,
+                            pos: fast.entity_index,
                         },
                     ),
                     EventHint::InsertText {
-                        // event index == unicode index (non-wasm)
-                        pos: pos as u32,
+                        pos: fast.event_index as u32,
                         styles: StyleMeta::empty(),
                         unicode_len: unicode_len as u32,
-                        event_len: unicode_len as u32,
+                        event_len: event_len as u32,
                     },
                     &inner.doc,
                 )?;
@@ -2236,12 +2221,9 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        let end = checked_range_end(
-            pos,
-            len,
-            text_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )
+        let end = checked_range_end(pos, len, text_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })
         .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
@@ -3245,12 +3227,9 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                let end = checked_range_end(
-                    pos,
-                    len,
-                    list.value.len(),
-                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                )?;
+                let end = checked_range_end(pos, len, list.value.len(), || {
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+                })?;
                 list.value.drain(pos..end);
                 Ok(())
             }
@@ -3264,12 +3243,9 @@ impl ListHandler {
         }
 
         let list_len = self.len();
-        let end = checked_range_end(
-            pos,
-            len,
-            list_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, list_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
 
         let inner = self.inner.try_attached_state()?;
         let ids: Vec<_> = inner.with_state(|state| {
@@ -3919,12 +3895,9 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
-                let end = checked_range_end(
-                    pos,
-                    len,
-                    d.value.len(),
-                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                )?;
+                let end = checked_range_end(pos, len, d.value.len(), || {
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+                })?;
                 d.value.drain(pos..end);
                 Ok(())
             }
@@ -3939,12 +3912,9 @@ impl MovableListHandler {
         }
 
         let list_len = self.len();
-        let end = checked_range_end(
-            pos,
-            len,
-            list_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, list_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
 
         let (ids, new_poses) = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();
@@ -4951,7 +4921,10 @@ pub mod counter {
 
 #[cfg(test)]
 mod test {
-    use std::borrow::Cow;
+    use std::{
+        borrow::Cow,
+        sync::{Arc, Mutex},
+    };
 
     use super::{
         Handler, HandlerTrait, ListHandler, MapHandler, MovableListHandler, TextDelta, TextHandler,
@@ -5010,6 +4983,33 @@ mod test {
             &inner.doc,
         )
         .unwrap();
+    }
+
+    fn assert_style_free_insert_event(pos: usize, pos_type: PosType, expected_retain: usize) {
+        let doc = LoroDoc::new_auto_commit();
+        let text = doc.get_text("text");
+        text.insert(0, "a😀b", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        let captured = Arc::new(Mutex::new(None));
+        let captured_for_sub = captured.clone();
+        let _sub = doc.subscribe(
+            &text.id(),
+            Arc::new(move |e| {
+                let delta = e.events[0].diff.as_text().unwrap();
+                *captured_for_sub.lock().unwrap() = Some(delta.to_json_value());
+            }),
+        );
+
+        text.insert(pos, "X", pos_type).unwrap();
+        doc.commit_then_renew();
+
+        let expected = if expected_retain == 0 {
+            json!([{ "insert": "X" }])
+        } else {
+            json!([{ "retain": expected_retain }, { "insert": "X" }])
+        };
+        assert_eq!(*captured.lock().unwrap(), Some(expected), "{pos_type:?}");
     }
 
     #[test]
@@ -5269,6 +5269,46 @@ mod test {
 
         assert_eq!(text.get_delta().len(), 2);
         assert!(text.attached_handler().unwrap().has_decoded_state());
+    }
+
+    #[test]
+    fn style_free_insert_accepts_utf8_and_utf16_positions() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "a😀文", PosType::Unicode).unwrap();
+
+        text.insert(1, "X", PosType::Bytes).unwrap();
+        assert_eq!(text.to_string(), "aX😀文");
+
+        text.insert(4, "Y", PosType::Utf16).unwrap();
+        assert_eq!(text.to_string(), "aX😀Y文");
+    }
+
+    #[test]
+    fn style_free_insert_rejects_utf8_and_utf16_mid_code_point_positions() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "a😀文", PosType::Unicode).unwrap();
+
+        assert!(matches!(
+            text.insert(2, "X", PosType::Bytes),
+            Err(LoroError::UTF8InUnicodeCodePoint { pos: 2 })
+        ));
+        assert!(matches!(
+            text.insert(2, "Y", PosType::Utf16),
+            Err(LoroError::UTF16InUnicodeCodePoint { pos: 2 })
+        ));
+        assert_eq!(text.to_string(), "a😀文");
+    }
+
+    #[test]
+    fn style_free_insert_event_positions_match_event_coordinate_system() {
+        let expected_event_pos = if cfg!(feature = "wasm") { 3 } else { 2 };
+        assert_style_free_insert_event(2, PosType::Unicode, expected_event_pos);
+        assert_style_free_insert_event("a😀".len(), PosType::Bytes, expected_event_pos);
+        assert_style_free_insert_event(3, PosType::Utf16, expected_event_pos);
+        assert_style_free_insert_event(expected_event_pos, PosType::Event, expected_event_pos);
+        assert_style_free_insert_event(2, PosType::Entity, expected_event_pos);
     }
 
     #[test]

@@ -17,23 +17,23 @@
 
 # Release Rust Crates
 
-- Run `pnpm release-rust <target-version>` to get the command that can update the version of the rust crates.
+- Run `pnpm release-rust <target-version>` to update Rust crate versions and print the optimized `--exclude` flags. Use the printed flags for publish and tag; do not copy the example flags below blindly.
 
 ```
-cargo release version -x --workspace 1.4.1 --exclude loro-rle --exclude loro-delta --exclude loro_fractional_index        
+pnpm release-rust 1.4.1
 ```
 
-- Commit the changes
-- Replace the `version` command with `publish`
+- Commit the generated version changes.
+- Publish with the printed `--exclude` flags.
 
 ```
-cargo release publish -x --workspace --exclude loro-rle --exclude loro-delta --exclude loro_fractional_index        
+cargo release publish -x --workspace <printed --exclude flags>
 ```
 
-- Add git tags by replacing `publish` with `tag`
+- Add git tags with the same printed `--exclude` flags.
 
 ```
-cargo release tag -x --workspace --exclude loro-rle --exclude loro-delta --exclude loro_fractional_index        
+cargo release tag -x --workspace <printed --exclude flags>
 ```
 
 - Push the changes

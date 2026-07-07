@@ -11,9 +11,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - `crates/loro-wasm`: `loro-crdt` WASM/TypeScript package. Read its
   [AGENTS.md](crates/loro-wasm/AGENTS.md) before changing bindings, exports,
   wrappers, or build scripts.
-- `crates/delta`, `crates/rle`, `crates/kv-store`, `crates/fractional_index`,
-  `crates/loro-common`, and `packages/fractional-index`: shared primitives and
-  packages.
+- `crates/generic-btree`, `crates/delta`, `crates/rle`, `crates/kv-store`,
+  `crates/fractional_index`, `crates/loro-common`, and
+  `packages/fractional-index`: shared primitives and packages.
 - `moon/`: MoonBit Loro binary codec; use [skills/moonbit/SKILL.md](skills/moonbit/SKILL.md).
 
 ## Context Index
@@ -61,6 +61,9 @@ Use narrow checks first. Ask before broad fuzzing or long browser matrices.
 - Add a changeset for publishing behavior or package output changes.
 - Do not hand-edit generated WASM package output; regenerate it with package
   scripts.
+- Keep in-tree Rust crates that publish to crates.io wired through normal
+  `path` + `version` dependencies, not root `[patch.crates-io]`; patches are not
+  inherited by downstream users.
 
 ## Self-Maintained Agent Context
 

@@ -17,11 +17,6 @@ members = [
 ]
 resolver = "2"
 
-# Use the in-tree fork of generic-btree (loro-dev maintains it). This redirects
-# every `generic-btree` dependency in the graph to the workspace crate.
-[patch.crates-io]
-generic-btree = { path = "crates/generic-btree" }
-
 [workspace.dependencies]
 enum_dispatch = "0.3.11"
 enum-as-inner = "0.6.0"
