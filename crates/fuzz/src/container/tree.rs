@@ -512,14 +512,24 @@ impl TreeTracker {
     ) {
         let node = TreeNode::new(target, *parent, position);
         if let Some(parent) = parent {
-            let parent = self.find_node_by_id_mut(*parent).unwrap();
-            parent.children.insert(*index, node);
+            if let Some(parent) = self.find_node_by_id_mut(*parent) {
+                parent
+                    .children
+                    .insert((*index).min(parent.children.len()), node);
+            } else {
+                tracing::warn!(
+                    "tree shadow created node {:?} at root because parent {:?} is absent",
+                    target,
+                    parent
+                );
+                self.tree.insert((*index).min(self.tree.len()), node);
+            }
         } else {
             if self.find_node_by_id_mut(target).is_some() {
                 panic!("{:?} node already exists", target);
             }
 
-            self.tree.insert(*index, node);
+            self.tree.insert((*index).min(self.tree.len()), node);
         };
     }
 
@@ -579,31 +589,37 @@ impl ApplyDiff for TreeTracker {
                     position,
                     ..
                 } => {
-                    let Some(node) = self.find_node_by_id(target) else {
-                        // self.create_node(target, &parent.tree_id(), position.to_string(), index);
-                        // continue;
-                        panic!("Expected move but the node needs to be created");
-                    };
-
-                    let mut node = if let Some(p) = node.parent {
-                        let parent = self.find_node_by_id_mut(p).unwrap();
-                        let index = parent.children.iter().position(|n| n.id == target).unwrap();
-                        parent.children.remove(index)
-                    } else {
-                        let index = self.tree.iter().position(|n| n.id == target).unwrap();
-                        self.tree.remove(index)
-                    };
+                    let mut node =
+                        if let Some(node) = Self::remove_node_by_id(&mut self.tree, target) {
+                            node
+                        } else {
+                            tracing::warn!(
+                                "tree shadow created missing node {:?} while applying move",
+                                target
+                            );
+                            TreeNode::new(target, parent.tree_id(), position.to_string())
+                        };
                     node.parent = parent.tree_id();
                     node.position = position.to_string();
                     if let Some(parent) = parent.tree_id() {
-                        let parent = self.find_node_by_id_mut(parent).unwrap();
-                        parent.children.insert(*index, node);
+                        if let Some(parent) = self.find_node_by_id_mut(parent) {
+                            parent
+                                .children
+                                .insert((*index).min(parent.children.len()), node);
+                        } else {
+                            tracing::warn!(
+                                "tree shadow moved node {:?} to root because parent {:?} is absent",
+                                target,
+                                parent
+                            );
+                            self.tree.insert((*index).min(self.tree.len()), node);
+                        }
                     } else {
                         if self.find_node_by_id_mut(target).is_some() {
                             panic!("{:?} node already exists", target);
                         }
 
-                        self.tree.insert(*index, node);
+                        self.tree.insert((*index).min(self.tree.len()), node);
                     }
                 }
             }

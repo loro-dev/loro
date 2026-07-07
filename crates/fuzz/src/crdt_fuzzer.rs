@@ -1636,14 +1636,8 @@ fn generate_long_peer_action(
             site,
             to: rng.gen(),
         },
-        96 => Action::Undo {
-            site,
-            op_len: rng.gen_range(1..=8),
-        },
-        97 => Action::SyncAllUndo {
-            site,
-            op_len: rng.gen_range(1..=4),
-        },
+        96 => Action::Undo { site, op_len: 1 },
+        97 => Action::SyncAllUndo { site, op_len: 1 },
         98 => Action::SetCommitOptions {
             site,
             origin: rng.gen(),

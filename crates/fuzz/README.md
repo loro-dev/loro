@@ -50,6 +50,10 @@ Useful options:
 - `--full-final-check` runs the heavier final snapshot/json/history checks.
   Without it, the long runner ends with an updates-based convergence/deep-value
   check, which is the intended mode for multi-hour runs.
+- The long runner still generates undo and sync-all-then-undo actions, but caps
+  each generated undo to one step. Multi-step tree undo can spend many minutes
+  in a single `TreeDiff::transform`, which is better handled as a targeted
+  performance repro than as the default multi-hour convergence run.
 - `--artifact-dir <path>` chooses where crash repro files are written.
 - `--minimize-secs <u64>` controls the best-effort shrinking budget after a
   crash.
