@@ -436,6 +436,54 @@ impl ContainerDiffCalculator {
     }
 }
 
+trait RebuildOpVisitor {
+    fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>);
+}
+
+#[cold]
+#[inline(never)]
+fn replay_container_ops_from_empty(
+    idx: ContainerIdx,
+    oplog: &OpLog,
+    vv: &VersionVector,
+    visitor: &mut dyn RebuildOpVisitor,
+) {
+    let empty_vv = VersionVector::default();
+    let empty_frontiers = Frontiers::default();
+    let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+    let (_, _, iter) =
+        oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+
+    for (change, (start_counter, end_counter), vv) in iter {
+        let iter_start = change
+            .ops
+            .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+            .unwrap_or_else(|e| e);
+        for mut op in &change.ops.vec()[iter_start..] {
+            if op.counter >= end_counter {
+                break;
+            }
+
+            if op.container != idx || op.ctr_last() < start_counter {
+                continue;
+            }
+
+            let stack_sliced_op;
+            if op.counter < start_counter || op.ctr_end() > end_counter {
+                stack_sliced_op = Some(op.slice(
+                    (start_counter as usize).saturating_sub(op.counter as usize),
+                    op.atom_len().min((end_counter - op.counter) as usize),
+                ));
+                op = stack_sliced_op.as_ref().unwrap();
+            }
+
+            let vv = &mut vv.borrow_mut();
+            vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
+            visitor.visit(vv, RichOp::new_by_change(&change, op));
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
@@ -585,7 +633,8 @@ impl ListDiffCalculator {
         self.source_not_in_op_context = true;
     }
 
-    fn apply_op_to_tracker(tracker: &mut RichtextTracker, op: crate::op::RichOp) {
+    #[inline(never)]
+    fn apply_op_to_tracker(tracker: &mut RichtextTracker, op: &crate::op::RichOp<'_>) {
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { slice, pos } => {
@@ -606,46 +655,25 @@ impl ListDiffCalculator {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn build_full_tracker(idx: ContainerIdx, oplog: &OpLog, vv: &VersionVector) -> RichtextTracker {
-        let mut tracker = RichtextTracker::new_with_unknown();
-        let empty_vv = VersionVector::default();
-        let empty_frontiers = Frontiers::default();
-        let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-        let (_, _, iter) =
-            oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+        struct ListRebuildVisitor<'a> {
+            tracker: &'a mut RichtextTracker,
+        }
 
-        for (change, (start_counter, end_counter), vv) in iter {
-            let iter_start = change
-                .ops
-                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
-                .unwrap_or_else(|e| e);
-            for mut op in &change.ops.vec()[iter_start..] {
-                if op.counter >= end_counter {
-                    break;
-                }
-
-                if op.container != idx || op.ctr_last() < start_counter {
-                    continue;
-                }
-
-                let stack_sliced_op;
-                if op.counter < start_counter || op.ctr_end() > end_counter {
-                    stack_sliced_op = Some(op.slice(
-                        (start_counter as usize).saturating_sub(op.counter as usize),
-                        op.atom_len().min((end_counter - op.counter) as usize),
-                    ));
-                    op = stack_sliced_op.as_ref().unwrap();
-                }
-
-                let vv = &mut vv.borrow_mut();
-                vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                tracker.checkout(vv);
-                Self::apply_op_to_tracker(
-                    &mut tracker,
-                    crate::op::RichOp::new_by_change(&change, op),
-                );
+        impl RebuildOpVisitor for ListRebuildVisitor<'_> {
+            fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
+                self.tracker.checkout(vv);
+                ListDiffCalculator::apply_op_to_tracker(self.tracker, &op);
             }
         }
+
+        let mut tracker = RichtextTracker::new_with_unknown();
+        let mut visitor = ListRebuildVisitor {
+            tracker: &mut tracker,
+        };
+        replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
         tracker
     }
@@ -692,7 +720,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             self.tracker.checkout(vv);
         }
 
-        Self::apply_op_to_tracker(&mut self.tracker, op);
+        Self::apply_op_to_tracker(&mut self.tracker, &op);
     }
 
     fn finish_this_round(&mut self) {}
@@ -1108,6 +1136,8 @@ impl RichtextDiffCalculator {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn seed_tracker_from_shallow_root(
         idx: ContainerIdx,
         oplog: &OpLog,
@@ -1266,57 +1296,43 @@ impl RichtextDiffCalculator {
         tracker.mark_shallow_root_applied(seed_vv);
     }
 
+    #[cold]
+    #[inline(never)]
     fn build_full_crdt_tracker(
         idx: ContainerIdx,
         oplog: &OpLog,
         vv: &VersionVector,
     ) -> (RichtextTracker, Vec<(StyleOp, usize)>) {
+        struct RichtextRebuildVisitor<'a> {
+            oplog: &'a OpLog,
+            tracker: &'a mut RichtextTracker,
+            styles: &'a mut Vec<(StyleOp, usize)>,
+        }
+
+        impl RebuildOpVisitor for RichtextRebuildVisitor<'_> {
+            fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
+                self.tracker.checkout(vv);
+                RichtextDiffCalculator::apply_crdt_op_to_tracker(
+                    self.oplog,
+                    self.tracker,
+                    self.styles,
+                    op,
+                );
+            }
+        }
+
         let mut tracker = RichtextTracker::new_with_unknown();
         let mut styles = Vec::new();
         if !oplog.shallow_since_vv().is_empty() {
             Self::seed_tracker_from_shallow_root(idx, oplog, &mut tracker, &mut styles, vv);
         }
 
-        let empty_vv = VersionVector::default();
-        let empty_frontiers = Frontiers::default();
-        let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-        let (_, _, iter) =
-            oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
-
-        for (change, (start_counter, end_counter), vv) in iter {
-            let iter_start = change
-                .ops
-                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
-                .unwrap_or_else(|e| e);
-            for mut op in &change.ops.vec()[iter_start..] {
-                if op.counter >= end_counter {
-                    break;
-                }
-
-                if op.container != idx || op.ctr_last() < start_counter {
-                    continue;
-                }
-
-                let stack_sliced_op;
-                if op.counter < start_counter || op.ctr_end() > end_counter {
-                    stack_sliced_op = Some(op.slice(
-                        (start_counter as usize).saturating_sub(op.counter as usize),
-                        op.atom_len().min((end_counter - op.counter) as usize),
-                    ));
-                    op = stack_sliced_op.as_ref().unwrap();
-                }
-
-                let vv = &mut vv.borrow_mut();
-                vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                tracker.checkout(vv);
-                Self::apply_crdt_op_to_tracker(
-                    oplog,
-                    &mut tracker,
-                    &mut styles,
-                    RichOp::new_by_change(&change, op),
-                );
-            }
-        }
+        let mut visitor = RichtextRebuildVisitor {
+            oplog,
+            tracker: &mut tracker,
+            styles: &mut styles,
+        };
+        replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
         (tracker, styles)
     }
@@ -1937,17 +1953,8 @@ impl MovableListDiffCalculator {
         let real_op = op.op();
         match &real_op.content {
             InnerContent::List(l) => match l {
-                InnerListOp::Insert { slice, pos } => {
-                    tracker.insert(op.id_full(), *pos, RichtextChunk::new_text(slice.0.clone()));
-                }
-                InnerListOp::Delete(del) => {
-                    tracker.delete(
-                        op.id_start(),
-                        del.id_start,
-                        del.start() as usize,
-                        del.atom_len(),
-                        del.is_reversed(),
-                    );
+                InnerListOp::Insert { .. } | InnerListOp::Delete(_) => {
+                    ListDiffCalculator::apply_op_to_tracker(tracker, op);
                 }
                 InnerListOp::Move { from, elem_id, to } => {
                     move_id_to_elem_id.insert(op.id(), *elem_id);
@@ -1976,50 +1983,36 @@ impl MovableListDiffCalculator {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn rebuild_full_tracker(&mut self, idx: ContainerIdx, oplog: &OpLog, vv: &VersionVector) {
-        let mut tracker = RichtextTracker::new_with_unknown();
-        let mut move_id_to_elem_id = FxHashMap::default();
-        let empty_vv = VersionVector::default();
-        let empty_frontiers = Frontiers::default();
-        let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-        let (_, _, iter) =
-            oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+        struct MovableListRebuildVisitor<'a> {
+            oplog: &'a OpLog,
+            tracker: &'a mut RichtextTracker,
+            move_id_to_elem_id: &'a mut FxHashMap<ID, IdLp>,
+        }
 
-        for (change, (start_counter, end_counter), vv) in iter {
-            let iter_start = change
-                .ops
-                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
-                .unwrap_or_else(|e| e);
-            for mut op in &change.ops.vec()[iter_start..] {
-                if op.counter >= end_counter {
-                    break;
-                }
-
-                if op.container != idx || op.ctr_last() < start_counter {
-                    continue;
-                }
-
-                let stack_sliced_op;
-                if op.counter < start_counter || op.ctr_end() > end_counter {
-                    stack_sliced_op = Some(op.slice(
-                        (start_counter as usize).saturating_sub(op.counter as usize),
-                        op.atom_len().min((end_counter - op.counter) as usize),
-                    ));
-                    op = stack_sliced_op.as_ref().unwrap();
-                }
-
-                let vv = &mut vv.borrow_mut();
-                vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
-                tracker.checkout(vv);
-                Self::apply_op_to_tracker(
-                    &mut tracker,
-                    &mut move_id_to_elem_id,
-                    oplog,
-                    &RichOp::new_by_change(&change, op),
+        impl RebuildOpVisitor for MovableListRebuildVisitor<'_> {
+            fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
+                self.tracker.checkout(vv);
+                MovableListDiffCalculator::apply_op_to_tracker(
+                    self.tracker,
+                    self.move_id_to_elem_id,
+                    self.oplog,
+                    &op,
                     true,
                 );
             }
         }
+
+        let mut tracker = RichtextTracker::new_with_unknown();
+        let mut move_id_to_elem_id = FxHashMap::default();
+        let mut visitor = MovableListRebuildVisitor {
+            oplog,
+            tracker: &mut tracker,
+            move_id_to_elem_id: &mut move_id_to_elem_id,
+        };
+        replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
         *self.list.tracker = tracker;
         self.inner.move_id_to_elem_id = move_id_to_elem_id;

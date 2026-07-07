@@ -15,7 +15,6 @@ use std::{
 use loro_common::IdSpanVector;
 use rle::{HasLength, Sliceable};
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 mod iter;
 mod mermaid;
 #[cfg(feature = "test_utils")]
@@ -550,13 +549,12 @@ where
     let mut is_right_greater = true;
     let mut has_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
-    let mut queue: BinaryHeap<(SmallVec<[OrdIdSpan; 1]>, NodeType)> = BinaryHeap::new();
 
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         ids: &Frontiers,
         get: &'a F,
-    ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
-        let mut ans: SmallVec<[OrdIdSpan<'a>; 1]> = SmallVec::with_capacity(ids.len());
+    ) -> Option<Vec<OrdIdSpan<'a>>> {
+        let mut ans = Vec::with_capacity(ids.len());
         for id in ids.iter() {
             if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
                 ans.push(node);
@@ -565,27 +563,13 @@ where
             }
         }
 
-        if ans.len() > 1 {
-            ans.sort_unstable_by(|a, b| b.cmp(a));
-        }
-
         Some(ans)
-    }
-
-    fn push_ord_id_spans<'a>(
-        queue: &mut BinaryHeap<(SmallVec<[OrdIdSpan<'a>; 1]>, NodeType)>,
-        spans: SmallVec<[OrdIdSpan<'a>; 1]>,
-        node_type: NodeType,
-    ) {
-        for span in spans {
-            queue.push((smallvec::smallvec![span], node_type));
-        }
     }
 
     fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         node: &OrdIdSpan<'a>,
         get: &'a F,
-    ) -> Option<SmallVec<[OrdIdSpan<'a>; 1]>> {
+    ) -> Option<Vec<OrdIdSpan<'a>>> {
         let mut deps = ids_to_ord_id_spans(node.deps.as_ref(), get)?;
         if node.id.counter > 0 {
             let prev = node.id.inc(-1);
@@ -594,10 +578,6 @@ where
                     deps.push(prev);
                 }
             }
-        }
-
-        if deps.len() > 1 {
-            deps.sort_unstable_by(|a, b| b.cmp(a));
         }
 
         Some(deps)
@@ -649,7 +629,7 @@ where
         target: &OrdIdSpan<'_>,
     ) -> bool {
         let mut visited = FxHashSet::default();
-        let mut pending = BinaryHeap::new();
+        let mut pending = Vec::new();
         let Some(node) = OrdIdSpan::from_dag_node(frontier, get) else {
             return false;
         };
@@ -660,7 +640,7 @@ where
             }
 
             if node.lamport_last() < target.lamport_last() {
-                break;
+                continue;
             }
 
             if !visited.insert(node.id_start()) {
@@ -677,23 +657,18 @@ where
         false
     }
 
-    push_ord_id_spans(
-        &mut queue,
-        ids_to_ord_id_spans(left, get).unwrap(),
-        NodeType::A,
-    );
-    push_ord_id_spans(
-        &mut queue,
-        ids_to_ord_id_spans(right, get).unwrap(),
-        NodeType::B,
-    );
+    let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
+    for span in ids_to_ord_id_spans(left, get).unwrap() {
+        queue.push((span, NodeType::A));
+    }
+
+    for span in ids_to_ord_id_spans(right, get).unwrap() {
+        queue.push((span, NodeType::B));
+    }
+
     while let Some((mut node, mut node_type)) = queue.pop() {
         while let Some((other_node, other_type)) = queue.peek() {
-            if node == *other_node
-                || (node.len() == 1
-                    && other_node.len() == 1
-                    && node[0].id_last() == other_node[0].id_last())
-            {
+            if node == *other_node || node.id_last() == other_node.id_last() {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
                 }
@@ -705,9 +680,7 @@ where
         }
 
         if node_type == NodeType::Shared {
-            for id in node.iter().map(|x| x.id_last()) {
-                ans.push(id);
-            }
+            ans.push(node.id_last());
             continue;
         }
 
@@ -722,26 +695,16 @@ where
             is_right_greater = false;
         }
 
-        if node.len() > 1 {
-            for node in node.drain(1..node.len()) {
-                queue.push((smallvec::smallvec![node], node_type));
-            }
-        }
-
         if let Some(other) = queue.peek() {
-            if other.0.len() == 1
-                && node[0].contains_id(other.0[0].id_last())
-                && node_type != other.1
-            {
-                node[0].len = (other.0[0].id_last().counter - node[0].id.counter + 1) as usize;
+            if node.contains_id(other.0.id_last()) && node_type != other.1 {
+                node.len = (other.0.id_last().counter - node.id.counter + 1) as usize;
                 queue.push((node, node_type));
                 continue;
             }
 
-            if node[0].len > 1 {
-                node[0].len = if other.0[0].lamport_last() >= node[0].lamport {
-                    (other.0[0].lamport_last() - node[0].lamport + 1).min(node[0].len as u32 - 1)
-                        as usize
+            if node.len > 1 {
+                node.len = if other.0.lamport_last() >= node.lamport {
+                    (other.0.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
                 } else {
                     1
                 };
@@ -750,9 +713,11 @@ where
             }
         }
 
-        if let Some(deps) = deps_to_ord_id_spans(&node[0], get) {
+        if let Some(deps) = deps_to_ord_id_spans(&node, get) {
             if !deps.is_empty() {
-                push_ord_id_spans(&mut queue, deps, node_type);
+                for dep in deps {
+                    queue.push((dep, node_type));
+                }
                 is_linear = false;
                 continue;
             }
