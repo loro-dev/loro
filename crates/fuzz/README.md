@@ -27,7 +27,7 @@ pnpm long-peer-fuzz -- \
   --duration-secs 36000 \
   --sync-barrier-every 5000 \
   --check-every 20000 \
-  --history-limit 64 \
+  --history-limit 8 \
   --minimize-secs 120
 ```
 
@@ -45,7 +45,8 @@ Useful options:
 - `--check-every <u64>` runs tracker and slow state checks after every N ops.
 - `--history-limit <usize>` caps the historical checkout points kept per peer.
   Long runs should keep this bounded so final history checks do not retain every
-  old deep value.
+  old deep value. The runner always keeps at least one point so checkout and
+  fork actions have a valid history target.
 - `--full-final-check` runs the heavier final snapshot/json/history checks.
   Without it, the long runner ends with an updates-based convergence check plus
   tracker checks, which is the intended mode for multi-hour runs.

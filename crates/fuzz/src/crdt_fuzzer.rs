@@ -873,7 +873,7 @@ impl Default for LongPeerFuzzConfig {
             duration: None,
             sync_barrier_every: 2_000,
             check_every: 5_000,
-            history_limit: 64,
+            history_limit: 8,
             full_final_check: false,
             recent_actions: 64,
             include_nested_containers: false,

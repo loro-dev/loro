@@ -137,7 +137,7 @@ Options:
   --duration-secs <u64>        Time cap; if --ops is omitted, run until this cap
   --sync-barrier-every <u64>   Force SyncAll every N ops, 0 disables (default: 2000)
   --check-every <u64>          Slow local checks every N ops, 0 disables (default: 5000)
-  --history-limit <usize>      Historical checkout points kept per peer (default: 64)
+  --history-limit <usize>      Historical checkout points kept per peer (default: 8)
   --full-final-check           Run heavy snapshot/json/history checks at the end
   --recent-actions <usize>     Actions printed on failure (default: 64)
   --nested-containers          Also insert child containers into maps/lists/tree meta

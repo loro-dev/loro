@@ -334,6 +334,7 @@ impl Actor {
     }
 
     pub fn prune_history(&mut self, max_entries: usize) {
+        let max_entries = max_entries.max(1);
         while self.history.len() > max_entries {
             let Some(key) = self.history.keys().next().cloned() else {
                 return;
