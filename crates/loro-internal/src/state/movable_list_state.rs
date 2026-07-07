@@ -1216,12 +1216,10 @@ impl ContainerState for MovableListState {
                     }
                     None => {
                         // Need to create new element
-                        let result = self.create_new_elem(
-                            elem_id,
-                            pos.unwrap(),
-                            value.clone(),
-                            value_id.unwrap(),
-                        );
+                        let (Some(pos), Some(value_id)) = (pos, value_id) else {
+                            continue;
+                        };
+                        let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
                         // Composing events
                         let result = self.inner.convert_update_to_event_pos(result);
                         // Create event for pos change and value change
