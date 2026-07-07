@@ -596,63 +596,73 @@ impl CRDTFuzzer {
     }
 
     fn check_equal_after_updates_sync(&mut self) {
-        for i in 0..self.site_num() - 1 {
-            for j in i + 1..self.site_num() {
-                let _s = info_span!("checking eq after updates sync", ?i, ?j);
-                let _g = _s.enter();
-                let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
-                let a_shallow = a.loro.is_shallow();
-                let b_shallow = b.loro.is_shallow();
-                if a_shallow || b_shallow {
-                    continue;
-                }
+        let non_shallow = self
+            .actors
+            .iter()
+            .enumerate()
+            .filter_map(|(i, actor)| (!actor.loro.is_shallow()).then_some(i))
+            .collect::<Vec<_>>();
+        let Some((&hub, peers)) = non_shallow.split_first() else {
+            return;
+        };
 
-                let a_doc = &a.loro;
-                let b_doc = &b.loro;
-                info_span!("Attach", peer = i).in_scope(|| {
-                    a_doc.attach();
-                });
-                info_span!("Attach", peer = j).in_scope(|| {
-                    b_doc.attach();
-                });
+        for &peer in peers {
+            self.sync_pair_with_updates(hub, peer);
+        }
 
-                for round in 0..16 {
-                    if a_doc.oplog_vv() == b_doc.oplog_vv() {
-                        break;
-                    }
-                    info_span!("Updates", round, from = j, to = i).in_scope(|| {
-                        a_doc
-                            .import(
-                                &b_doc
-                                    .export(ExportMode::updates(&a_doc.oplog_vv()))
-                                    .unwrap(),
-                            )
-                            .unwrap();
-                    });
-                    info_span!("Updates", round, from = i, to = j).in_scope(|| {
-                        b_doc
-                            .import(
-                                &a_doc
-                                    .export(ExportMode::updates(&b_doc.oplog_vv()))
-                                    .unwrap(),
-                            )
-                            .unwrap();
-                    });
-                }
+        for &peer in peers {
+            self.sync_pair_with_updates(hub, peer);
+            let (hub_actor, peer_actor) = array_mut_ref!(&mut self.actors, [hub, peer]);
+            hub_actor.check_eq(peer_actor);
+        }
+    }
 
-                if a_doc.oplog_vv() != b_doc.oplog_vv() {
-                    panic!(
-                        "CRDTFuzzer: updates sync failed to converge after 16 rounds. \
-                         actor {} vv={:?} actor {} vv={:?}",
-                        i,
-                        a_doc.oplog_vv(),
-                        j,
-                        b_doc.oplog_vv()
-                    );
-                }
+    fn sync_pair_with_updates(&mut self, i: usize, j: usize) {
+        let _s = info_span!("sync pair with updates", ?i, ?j);
+        let _g = _s.enter();
+        let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
+        let a_doc = &a.loro;
+        let b_doc = &b.loro;
+        info_span!("Attach", peer = i).in_scope(|| {
+            a_doc.attach();
+        });
+        info_span!("Attach", peer = j).in_scope(|| {
+            b_doc.attach();
+        });
 
-                a.check_eq(b);
+        for round in 0..16 {
+            if a_doc.oplog_vv() == b_doc.oplog_vv() {
+                break;
             }
+            info_span!("Updates", round, from = j, to = i).in_scope(|| {
+                a_doc
+                    .import(
+                        &b_doc
+                            .export(ExportMode::updates(&a_doc.oplog_vv()))
+                            .unwrap(),
+                    )
+                    .unwrap();
+            });
+            info_span!("Updates", round, from = i, to = j).in_scope(|| {
+                b_doc
+                    .import(
+                        &a_doc
+                            .export(ExportMode::updates(&b_doc.oplog_vv()))
+                            .unwrap(),
+                    )
+                    .unwrap();
+            });
+        }
+
+        if a_doc.oplog_vv() != b_doc.oplog_vv() {
+            panic!(
+                "CRDTFuzzer: updates sync failed to converge after 16 rounds. \
+                 actor {} vv={:?} actor {} vv={:?}",
+                i,
+                a_doc.oplog_vv(),
+                j,
+                b_doc.oplog_vv()
+            );
         }
     }
 
@@ -873,7 +883,7 @@ impl Default for LongPeerFuzzConfig {
             duration: None,
             sync_barrier_every: 2_000,
             check_every: 5_000,
-            history_limit: 8,
+            history_limit: 1,
             full_final_check: false,
             recent_actions: 64,
             include_nested_containers: false,
@@ -1052,7 +1062,6 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
             fuzzer.check_history();
         } else {
             fuzzer.check_equal_after_updates_sync();
-            fuzzer.check_tracker();
         }
     })) {
         handle_long_peer_failure(

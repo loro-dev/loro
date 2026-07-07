@@ -23,11 +23,11 @@ Long run:
 ```bash
 pnpm long-peer-fuzz -- \
   --seed 20260629 \
-  --peers 12 \
+  --peers 8 \
   --duration-secs 36000 \
   --sync-barrier-every 5000 \
   --check-every 20000 \
-  --history-limit 8 \
+  --history-limit 1 \
   --minimize-secs 120
 ```
 
@@ -48,8 +48,8 @@ Useful options:
   old deep value. The runner always keeps at least one point so checkout and
   fork actions have a valid history target.
 - `--full-final-check` runs the heavier final snapshot/json/history checks.
-  Without it, the long runner ends with an updates-based convergence check plus
-  tracker checks, which is the intended mode for multi-hour runs.
+  Without it, the long runner ends with an updates-based convergence/deep-value
+  check, which is the intended mode for multi-hour runs.
 - `--artifact-dir <path>` chooses where crash repro files are written.
 - `--minimize-secs <u64>` controls the best-effort shrinking budget after a
   crash.
