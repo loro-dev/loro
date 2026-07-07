@@ -39,7 +39,11 @@ impl KvWrapper {
 
     pub fn import(&self, bytes: Bytes) -> Result<(), String> {
         let mut kv = self.kv.lock();
-        kv.import_all(bytes)
+        // Only reached while decoding a snapshot/state blob whose integrity is
+        // already guaranteed by the document-level checksum in
+        // `parse_header_and_body(.., true)`, so skip the redundant per-block
+        // checksum.
+        kv.import_all_unchecked(bytes)
     }
 
     pub fn export(&self) -> Bytes {
