@@ -130,6 +130,23 @@ impl OpLog {
         count
     }
 
+    /// Incrementally bump the cached visible op count for newly applied *local*
+    /// ops. Local ops are always visible (never behind the shallow root), so the
+    /// visible count grows by exactly `delta`. This avoids a per-op full
+    /// recompute via [`Self::calc_visible_op_count`], which iterates the version
+    /// vectors and heap-allocates an `im::HashMap` iterator on every call.
+    #[inline]
+    pub(crate) fn inc_visible_op_count(&self, delta: usize) {
+        self.visible_op_count
+            .fetch_add(delta, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_visible_op_count(&self) -> usize {
+        self.visible_op_count
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     #[inline]
     pub fn dag(&self) -> &AppDag {
         &self.dag
@@ -950,4 +967,52 @@ pub(crate) fn local_op_to_remote(
 
 pub(crate) fn get_timestamp_now_txn() -> Timestamp {
     (get_sys_timestamp() as Timestamp + 500) / 1000
+}
+
+#[cfg(test)]
+mod visible_op_count_tests {
+    use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
+
+    /// The cached `visible_op_count` (bumped incrementally for local ops, and
+    /// the only value read in release builds where `can_lock_in_this_thread`
+    /// returns false) must always equal a from-scratch recompute.
+    #[test]
+    fn cached_visible_op_count_matches_exact() {
+        let doc = LoroDoc::new();
+        let text = doc.get_text("text");
+        let mut txn = doc.txn().unwrap();
+        for i in 0..50 {
+            text.insert_with_txn(&mut txn, i, "a", PosType::Unicode)
+                .unwrap();
+        }
+        txn.commit().unwrap();
+        {
+            let oplog = doc.oplog().lock();
+            assert_eq!(
+                oplog.cached_visible_op_count(),
+                oplog.visible_op_count_exact(),
+                "after local edits"
+            );
+        }
+
+        // Import keeps the cached count exact via full refresh; subsequent local
+        // edits then increment from that exact base.
+        let doc2 = LoroDoc::new();
+        doc2.import(&doc.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        let text2 = doc2.get_text("text");
+        let mut txn2 = doc2.txn().unwrap();
+        text2
+            .insert_with_txn(&mut txn2, 0, "bbb", PosType::Unicode)
+            .unwrap();
+        txn2.commit().unwrap();
+        {
+            let oplog = doc2.oplog().lock();
+            assert_eq!(
+                oplog.cached_visible_op_count(),
+                oplog.visible_op_count_exact(),
+                "after import + local edits"
+            );
+        }
+    }
 }

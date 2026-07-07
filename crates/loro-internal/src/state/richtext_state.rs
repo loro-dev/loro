@@ -13,7 +13,7 @@ use crate::{
         richtext::{
             config::StyleConfigMap,
             richtext_state::{
-                DrainInfo, EntityRangeInfo, IterRangeItem, PosType, RichtextStateChunk,
+                DrainInfo, EntityRanges, IterRangeItem, PosType, RichtextStateChunk,
             },
             AnchorType, RichtextState as InnerState, StyleKey, StyleOp, Styles,
         },
@@ -995,10 +995,7 @@ impl RichtextState {
 
     #[inline]
     pub(crate) fn get_event_index_by_cursor(&mut self, cursor: Cursor) -> usize {
-        self.state
-            .get_mut()
-            .get_index_from_cursor(cursor, PosType::Event)
-            .unwrap()
+        self.state.get_mut().cursor_to_event_index_cached(cursor)
     }
 
     pub(crate) fn get_entity_range_and_styles_at_range(
@@ -1023,7 +1020,7 @@ impl RichtextState {
         &mut self,
         pos: usize,
         len: usize,
-    ) -> LoroResult<Vec<EntityRangeInfo>> {
+    ) -> LoroResult<EntityRanges> {
         self.state
             .get_mut()
             .get_text_entity_ranges(pos, len, PosType::Event)

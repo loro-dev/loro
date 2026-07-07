@@ -250,15 +250,29 @@ impl MemKvStore {
         ans
     }
 
-    /// We can import several times, the latter will override the former.
-    ///
-    /// The caller is expected to validate blob integrity before passing bytes here.
+    /// Import a serialized store, verifying every block's checksum. Can be
+    /// called multiple times; later imports override earlier keys.
     pub fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
         if bytes.is_empty() {
             return Ok(());
         }
 
         let ss_table = SsTable::import_all(bytes, false).map_err(|e| e.to_string())?;
+        self.ss_table.push(ss_table);
+        Ok(())
+    }
+
+    /// Like [`Self::import_all`] but skips per-block checksum verification.
+    ///
+    /// Only use this when the blob's integrity is already guaranteed by an outer
+    /// checksum (e.g. Loro's document-level snapshot checksum, verified before
+    /// the snapshot body is handed to the KV store).
+    pub fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        let ss_table = SsTable::import_all_unchecked(bytes).map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())
     }

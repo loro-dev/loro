@@ -16,6 +16,7 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
+use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{
@@ -202,13 +203,20 @@ mod cache {
         }
 
         pub(super) fn get_cache_entity_index(&mut self) -> Option<usize> {
+            self.get_cache_leaf_start_index(PosType::Entity)
+        }
+
+        /// Index (in `pos_type` units) of the start of the currently cached leaf,
+        /// computing it once via `get_index_from_cursor` and memoizing it on the
+        /// cached cursor for reuse by later same-leaf queries.
+        pub(super) fn get_cache_leaf_start_index(&mut self, pos_type: PosType) -> Option<usize> {
             let mut cursor = self.cached_cursor.take()?;
             let ans = {
                 let leaf = cursor.leaf;
-                match cursor.index.entry(PosType::Entity) {
+                match cursor.index.entry(pos_type) {
                     std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                        let index = self
-                            .get_index_from_cursor(Cursor { leaf, offset: 0 }, PosType::Entity)?;
+                        let index =
+                            self.get_index_from_cursor(Cursor { leaf, offset: 0 }, pos_type)?;
                         vacant_entry.insert(index);
                         index
                     }
@@ -220,6 +228,26 @@ mod cache {
 
             self.cached_cursor = Some(cursor);
             Some(ans)
+        }
+
+        /// Resolve the `pos_type` index of an arbitrary cursor using the cached
+        /// leaf, avoiding a full `visit_previous_caches` walk when the cursor
+        /// lands in the currently cached leaf. Returns `None` (miss) otherwise.
+        pub(super) fn cursor_index_via_cache(
+            &mut self,
+            cursor: Cursor,
+            pos_type: PosType,
+        ) -> Option<usize> {
+            match &self.cached_cursor {
+                Some(c) if c.leaf == cursor.leaf => {}
+                _ => return None,
+            }
+            let leaf_start = self.get_cache_leaf_start_index(pos_type)?;
+            if cursor.offset == 0 {
+                return Some(leaf_start);
+            }
+            let elem = self.tree.get_elem(cursor.leaf)?;
+            Some(leaf_start + entity_offset_to_pos_type_offset(pos_type, elem, cursor.offset))
         }
 
         pub(crate) fn check_cache(&self) {
@@ -1131,6 +1159,11 @@ pub(crate) struct EntityRangeInfo {
     pub event_len: usize,
 }
 
+/// Entity ranges produced by a single text query. Inline storage avoids a heap
+/// allocation on the per-op delete hot path, where a contiguous delete is
+/// usually a single merged range.
+pub(crate) type EntityRanges = SmallVec<[EntityRangeInfo; 2]>;
+
 impl EntityRangeInfo {
     pub fn entity_len(&self) -> usize {
         self.entity_end - self.entity_start
@@ -1603,6 +1636,26 @@ impl RichtextState {
         result
     }
 
+    /// Cache-aware (`&mut`) variant of [`Self::cursor_to_event_index`] for the
+    /// per-op insert hot path. When the cursor lands in the currently cached
+    /// leaf, this reuses the memoized event-index start instead of doing a fresh
+    /// `visit_previous_caches` walk on every insert.
+    pub(crate) fn cursor_to_event_index_cached(&mut self, cursor: Cursor) -> usize {
+        self.check_cache();
+        let ans = match self.cursor_index_via_cache(cursor, PosType::Event) {
+            Some(i) => {
+                debug_assert_eq!(
+                    i,
+                    self.get_index_from_cursor(cursor, PosType::Event).unwrap()
+                );
+                i
+            }
+            None => self.get_index_from_cursor(cursor, PosType::Event).unwrap(),
+        };
+        self.check_cache();
+        ans
+    }
+
     pub(crate) fn cursor_to_unicode_index(&self, cursor: Cursor) -> usize {
         self.check_cache();
         let result = self
@@ -1886,22 +1939,22 @@ impl RichtextState {
         pos: usize,
         len: usize,
         pos_type: PosType,
-    ) -> LoroResult<Vec<EntityRangeInfo>> {
+    ) -> LoroResult<EntityRanges> {
         self.check_cache();
         let result = {
             if self.tree.is_empty() {
-                return Ok(Vec::new());
+                return Ok(EntityRanges::new());
             }
 
             if len == 0 {
-                return Ok(Vec::new());
+                return Ok(EntityRanges::new());
             }
 
             if pos + len > self.len(pos_type) {
-                return Ok(Vec::new());
+                return Ok(EntityRanges::new());
             }
 
-            let mut ans: Vec<EntityRangeInfo> = Vec::new();
+            let mut ans: EntityRanges = SmallVec::new();
             let (start, end) = match pos_type {
                 PosType::Bytes => (
                     self.tree.query::<ByteQuery>(&pos).unwrap().cursor,

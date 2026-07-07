@@ -1,6 +1,7 @@
 use super::DocState;
 use crate::container::idx::ContainerIdx;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 #[derive(Default, Debug, Clone)]
 pub(super) struct DeadContainersCache {
@@ -27,7 +28,10 @@ impl DocState {
             }
         }
 
-        let mut visited = vec![idx];
+        // Parent chains are shallow (depth 1 for a root container), so inline
+        // storage avoids a heap allocation on this per-op check.
+        let mut visited: SmallVec<[ContainerIdx; 4]> = SmallVec::new();
+        visited.push(idx);
         let mut idx = idx;
         let mut depends_on_mergeable_edge = false;
         let is_deleted = loop {
