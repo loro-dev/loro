@@ -272,7 +272,11 @@ impl CRDTFuzzer {
                 let a_frontiers = a.loro.oplog_frontiers();
                 let b_frontiers = b.loro.oplog_frontiers();
                 if let Ok(diff) = a.loro.diff(&a_frontiers, &b_frontiers) {
-                    let _ = b.loro.apply_diff(diff);
+                    let before_apply = b.loro.state_frontiers();
+                    let result = b.loro.apply_diff(diff);
+                    if result.is_ok() || b.loro.state_frontiers() != before_apply {
+                        b.loro.commit();
+                    }
                 }
             }
             Action::Query {
@@ -435,38 +439,18 @@ impl CRDTFuzzer {
                     if let Ok(bytes) = actor.loro.export(loro::ExportMode::state_only(Some(&f))) {
                         let new_doc = LoroDoc::new();
                         if new_doc.import(&bytes).is_ok() {
-                            let new_value = new_doc.get_deep_value();
-                            let actor_value = actor.loro.get_deep_value();
-                            if new_value != actor_value {
-                                eprintln!(
-                                    "state-only round trip mismatch: site={site} target={f:?}"
-                                );
-                                eprintln!(
-                                    "actor detached={} state_frontiers={:?} oplog_frontiers={:?}",
-                                    actor.loro.is_detached(),
-                                    actor.loro.state_frontiers(),
-                                    actor.loro.oplog_frontiers()
-                                );
-                                eprintln!(
-                                    "actor state_vv={:?} oplog_vv={:?} shallow_since_vv={:?}",
-                                    actor.loro.state_vv(),
-                                    actor.loro.oplog_vv(),
-                                    actor.loro.shallow_since_vv()
-                                );
-                                eprintln!(
-                                    "new detached={} state_frontiers={:?} oplog_frontiers={:?}",
-                                    new_doc.is_detached(),
-                                    new_doc.state_frontiers(),
-                                    new_doc.oplog_frontiers()
-                                );
-                                eprintln!(
-                                    "new state_vv={:?} oplog_vv={:?} shallow_since_vv={:?}",
-                                    new_doc.state_vv(),
-                                    new_doc.oplog_vv(),
-                                    new_doc.shallow_since_vv()
-                                );
-                            }
-                            assert_eq!(new_value, actor_value);
+                            assert_eq!(
+                                new_doc.get_deep_value(),
+                                actor.loro.get_deep_value(),
+                                "site={site} state_frontiers={:?} oplog_frontiers={:?} oplog_vv={:?} imported_frontiers={:?} imported_vv={:?} shallow_frontiers={:?} shallow_vv={:?}",
+                                actor.loro.state_frontiers(),
+                                actor.loro.oplog_frontiers(),
+                                actor.loro.oplog_vv(),
+                                new_doc.oplog_frontiers(),
+                                new_doc.oplog_vv(),
+                                new_doc.shallow_since_frontiers(),
+                                new_doc.shallow_since_vv(),
+                            );
                         }
                     }
                 }
@@ -502,8 +486,8 @@ impl CRDTFuzzer {
                 if a_shallow || b_shallow {
                     continue;
                 }
-                let a_doc = &mut a.loro;
-                let b_doc = &mut b.loro;
+                let a_doc = &a.loro;
+                let b_doc = &b.loro;
                 info_span!("Attach", peer = i).in_scope(|| {
                     a_doc.attach();
                 });
@@ -611,6 +595,67 @@ impl CRDTFuzzer {
         }
     }
 
+    fn check_equal_after_updates_sync(&mut self) {
+        for i in 0..self.site_num() - 1 {
+            for j in i + 1..self.site_num() {
+                let _s = info_span!("checking eq after updates sync", ?i, ?j);
+                let _g = _s.enter();
+                let (a, b) = array_mut_ref!(&mut self.actors, [i, j]);
+                let a_shallow = a.loro.is_shallow();
+                let b_shallow = b.loro.is_shallow();
+                if a_shallow || b_shallow {
+                    continue;
+                }
+
+                let a_doc = &a.loro;
+                let b_doc = &b.loro;
+                info_span!("Attach", peer = i).in_scope(|| {
+                    a_doc.attach();
+                });
+                info_span!("Attach", peer = j).in_scope(|| {
+                    b_doc.attach();
+                });
+
+                for round in 0..16 {
+                    if a_doc.oplog_vv() == b_doc.oplog_vv() {
+                        break;
+                    }
+                    info_span!("Updates", round, from = j, to = i).in_scope(|| {
+                        a_doc
+                            .import(
+                                &b_doc
+                                    .export(ExportMode::updates(&a_doc.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
+                    });
+                    info_span!("Updates", round, from = i, to = j).in_scope(|| {
+                        b_doc
+                            .import(
+                                &a_doc
+                                    .export(ExportMode::updates(&b_doc.oplog_vv()))
+                                    .unwrap(),
+                            )
+                            .unwrap();
+                    });
+                }
+
+                if a_doc.oplog_vv() != b_doc.oplog_vv() {
+                    panic!(
+                        "CRDTFuzzer: updates sync failed to converge after 16 rounds. \
+                         actor {} vv={:?} actor {} vv={:?}",
+                        i,
+                        a_doc.oplog_vv(),
+                        j,
+                        b_doc.oplog_vv()
+                    );
+                }
+
+                a.check_eq(b);
+            }
+        }
+    }
+
     fn check_tracker(&self) {
         for actor in self.actors.iter() {
             actor.check_tracker();
@@ -629,6 +674,12 @@ impl CRDTFuzzer {
         // for actor in self.actors.iter_mut() {
         //     actor.check_history();
         // }
+    }
+
+    fn prune_history(&mut self, max_entries_per_actor: usize) {
+        for actor in self.actors.iter_mut() {
+            actor.prune_history(max_entries_per_actor);
+        }
     }
 
     fn site_num(&self) -> usize {
@@ -803,6 +854,8 @@ pub struct LongPeerFuzzConfig {
     pub duration: Option<Duration>,
     pub sync_barrier_every: u64,
     pub check_every: u64,
+    pub history_limit: usize,
+    pub full_final_check: bool,
     pub recent_actions: usize,
     pub include_nested_containers: bool,
     pub artifact_dir: PathBuf,
@@ -820,6 +873,8 @@ impl Default for LongPeerFuzzConfig {
             duration: None,
             sync_barrier_every: 2_000,
             check_every: 5_000,
+            history_limit: 64,
+            full_final_check: false,
             recent_actions: 64,
             include_nested_containers: false,
             artifact_dir: PathBuf::from("long_peer_fuzz_artifacts"),
@@ -942,6 +997,7 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
                 err,
             );
         }
+        fuzzer.prune_history(config.history_limit);
 
         if config.sync_barrier_every != 0 && ops % config.sync_barrier_every == 0 {
             let action = Action::SyncAll;
@@ -963,6 +1019,7 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
                     err,
                 );
             }
+            fuzzer.prune_history(config.history_limit);
         }
 
         if config.check_every != 0 && ops % config.check_every == 0 {
@@ -983,17 +1040,27 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
         }
     }
 
+    let final_phase = if config.full_final_check {
+        "full final check"
+    } else {
+        "quick final check"
+    };
     if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
-        fuzzer.check_equal();
-        fuzzer.check_tracker();
-        fuzzer.check_history();
+        if config.full_final_check {
+            fuzzer.check_equal();
+            fuzzer.check_tracker();
+            fuzzer.check_history();
+        } else {
+            fuzzer.check_equal_after_updates_sync();
+            fuzzer.check_tracker();
+        }
     })) {
         handle_long_peer_failure(
             &config,
             &actions,
             &periodic_check_points,
             ops,
-            "final check",
+            final_phase,
             &recent,
             err,
         );

@@ -151,20 +151,6 @@ impl AppDag {
         &self.shallow_since_frontiers
     }
 
-    pub(crate) fn find_common_ancestor(
-        &self,
-        a_id: &Frontiers,
-        b_id: &Frontiers,
-    ) -> (Frontiers, crate::diff_calc::DiffMode) {
-        crate::dag::find_common_ancestor_with_trimmed_deps(
-            &|id| self.get(id),
-            a_id,
-            b_id,
-            &self.shallow_since_frontiers,
-            &|id| self.shallow_since_vv.includes_id(id),
-        )
-    }
-
     pub(crate) fn begin_import_rollback(&mut self) {
         let old_vv_is_empty = self.vv.is_empty();
         let mut rollback = self.import_rollback.lock();
@@ -338,10 +324,7 @@ impl AppDag {
             // We may not need to push new element to dag because it only depends on itself
             inserted =
                 self.with_last_mut_of_peer(change.id.peer, record_old_node_before_merge, |last| {
-                    let Some((_, last)) = last else {
-                        return false;
-                    };
-
+                    let (_, last) = last.unwrap();
                     if last.has_succ {
                         // Don't merge the node if there are other nodes depending on it
                         return false;
@@ -651,19 +634,15 @@ impl AppDag {
         self.vv = v.vv;
         self.frontiers = v.frontiers;
         if let Some((vv, f)) = v.start_version {
-            self.shallow_since_vv = ImVersionVector::from_vv(&vv);
             if !f.is_empty() {
                 assert!(f.len() == 1);
                 let id = f.as_single().unwrap();
-                if self.shallow_since_vv.includes_id(id) {
-                    self.shallow_root_frontiers_deps = f.clone();
-                } else {
-                    let node = self.get(id).unwrap();
-                    assert!(node.cnt == id.counter);
-                    self.shallow_root_frontiers_deps = node.deps.clone();
-                }
+                let node = self.get(id).unwrap();
+                assert!(node.cnt == id.counter);
+                self.shallow_root_frontiers_deps = node.deps.clone();
             }
             self.shallow_since_frontiers = f;
+            self.shallow_since_vv = ImVersionVector::from_vv(&vv);
         }
     }
 
@@ -800,6 +779,10 @@ impl AppDag {
             return true;
         }
 
+        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
+            return true;
+        }
+
         if deps
             .iter()
             .any(|x| self.shallow_since_frontiers.contains(&x))
@@ -807,11 +790,35 @@ impl AppDag {
             return deps != &self.shallow_since_frontiers;
         }
 
-        if deps.iter().any(|x| self.shallow_since_vv.includes_id(x)) {
+        false
+    }
+
+    pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
+        if self.shallow_since_vv.is_empty() {
+            return false;
+        }
+
+        if deps.is_empty() {
             return true;
         }
 
-        false
+        let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
+        if let Some(vv) = self.frontiers_to_vv(deps) {
+            return !vv.includes_vv(&shallow_vv);
+        }
+
+        // Import only needs to reject updates whose causal source is older than
+        // the shallow root. A dependency set that touches the retained boundary
+        // can still be a valid post-root update, even when the rest of the deps
+        // are imported later in the same batch.
+        if deps
+            .iter()
+            .any(|id| self.shallow_since_frontiers.contains(&id))
+        {
+            return false;
+        }
+
+        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node
@@ -1066,10 +1073,6 @@ impl AppDag {
     /// get the version vector for a certain op.
     /// It's the version when the op is applied
     pub fn get_vv(&self, id: ID) -> Option<ImVersionVector> {
-        if self.shallow_since_vv.includes_id(id) {
-            return Some(self.shallow_since_vv.clone());
-        }
-
         self.get(id).map(|x| {
             let mut vv = self.ensure_vv_for(&x);
             vv.insert(id.peer, id.counter + 1);
@@ -1099,11 +1102,13 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
-                        if self.shallow_since_vv.includes_id(id) {
-                            continue;
-                        }
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
+                                continue;
+                            }
 
-                        let node = self.get(id).expect("deps should be in the dag");
+                            panic!("deps should be in the dag");
+                        };
                         if node.vv.get().is_none() {
                             if all_deps_processed {
                                 stack.push(top_node.clone());
@@ -1119,16 +1124,14 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
-                        if self.shallow_since_vv.includes_id(id) {
-                            if ans_vv.is_empty() {
-                                ans_vv = self.shallow_since_vv.clone();
-                            } else {
+                        let Some(node) = self.get(id) else {
+                            if self.shallow_since_vv.includes_id(id) {
                                 ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
+                                continue;
                             }
-                            continue;
-                        }
 
-                        let node = self.get(id).expect("deps should be in the dag");
+                            panic!("deps should be in the dag");
+                        };
                         let dep_vv = node.vv.get().unwrap();
                         if ans_vv.is_empty() {
                             ans_vv = dep_vv.clone();
@@ -1176,10 +1179,6 @@ impl AppDag {
     pub fn get_change_lamport_from_deps(&self, deps: &Frontiers) -> Option<Lamport> {
         let mut lamport = 0;
         for id in deps.iter() {
-            if self.shallow_since_vv.includes_id(id) {
-                continue;
-            }
-
             let x = self.get_lamport(&id)?;
             lamport = lamport.max(x + 1);
         }
@@ -1303,18 +1302,22 @@ impl AppDag {
             return 0;
         }
 
-        let mut lamport = 0;
-        for id in frontiers.iter() {
-            if let Some(x) = self.get(id) {
-                assert!(id.counter >= x.cnt);
-                lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
-            } else {
-                if self.shallow_since_vv.includes_id(id) {
-                    continue;
-                }
-
+        let mut iter = frontiers.iter();
+        let mut lamport = {
+            let id = iter.next().unwrap();
+            let Some(x) = self.get(id) else {
                 unreachable!()
-            }
+            };
+            assert!(id.counter >= x.cnt);
+            (id.counter - x.cnt) as Lamport + x.lamport + 1
+        };
+
+        for id in iter {
+            let Some(x) = self.get(id) else {
+                unreachable!()
+            };
+            assert!(id.counter >= x.cnt);
+            lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
         }
 
         lamport
@@ -1379,6 +1382,23 @@ mod ensure_vv_for_tests {
         .into()
     }
 
+    fn make_shallow_dag_for_import_deps() -> AppDag {
+        let change_store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let mut dag = AppDag::new(change_store);
+        let root_deps = Frontiers::from_id(ID::new(1, 1));
+        let boundary = make_dag_node(1, 2, 1, root_deps.clone());
+
+        {
+            let mut map = dag.map.lock();
+            map.insert(boundary.id_start(), boundary);
+        }
+
+        dag.shallow_since_vv.insert(1, 2);
+        dag.shallow_since_frontiers = Frontiers::from_id(ID::new(1, 2));
+        dag.shallow_root_frontiers_deps = root_deps;
+        dag
+    }
+
     /// Regression for loro-dev/loro#929: when computing the vv for a node
     /// whose DAG fan-in contains a shared ancestor reached through multiple
     /// paths, the iterative DFS used to push the shared ancestor onto the
@@ -1425,19 +1445,31 @@ mod ensure_vv_for_tests {
     }
 
     #[test]
-    fn shallow_dep_ensure_vv_for_uses_shallow_baseline() {
-        let change_store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
-        let mut dag = AppDag::new(change_store);
-        dag.shallow_since_vv.insert(1, 10);
+    fn import_deps_before_shallow_root_rejects_trimmed_history_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 0));
 
-        let node = make_dag_node(2, 0, 1, Frontiers::from_id(ID::new(1, 5)));
-        {
-            let mut map = dag.map.lock();
-            map.insert(node.id_start(), node.clone());
-        }
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(dag.import_deps_before_shallow_root(&deps));
+    }
 
-        let vv = dag.ensure_vv_for(&node);
-        assert_eq!(vv.get(&1).copied(), Some(10));
-        assert!(vv.get(&2).is_none());
+    #[test]
+    fn import_deps_before_shallow_root_allows_boundary_with_missing_peer() {
+        let dag = make_shallow_dag_for_import_deps();
+        let mut deps = Frontiers::default();
+        deps.push(ID::new(1, 2));
+        deps.push(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
+    }
+
+    #[test]
+    fn import_deps_before_shallow_root_allows_missing_non_trimmed_dep() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(2, 0));
+
+        assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(!dag.import_deps_before_shallow_root(&deps));
     }
 }

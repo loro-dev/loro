@@ -11,13 +11,15 @@ fn main() {
     });
 
     eprintln!(
-        "long_peer_fuzz start: seed={} peers={} max_ops={:?} duration={:?} sync_barrier_every={} check_every={} artifact_dir={} minimize={} minimize_time={:?}",
+        "long_peer_fuzz start: seed={} peers={} max_ops={:?} duration={:?} sync_barrier_every={} check_every={} history_limit={} full_final_check={} artifact_dir={} minimize={} minimize_time={:?}",
         config.seed,
         config.site_num,
         config.max_ops,
         config.duration,
         config.sync_barrier_every,
         config.check_every,
+        config.history_limit,
+        config.full_final_check,
         config.artifact_dir.display(),
         config.minimize_on_failure,
         config.minimize_time
@@ -65,6 +67,12 @@ fn parse_args() -> Result<LongPeerFuzzConfig, String> {
             }
             "--check-every" => {
                 config.check_every = parse_next(&mut args, "--check-every")?;
+            }
+            "--history-limit" => {
+                config.history_limit = parse_next(&mut args, "--history-limit")?;
+            }
+            "--full-final-check" => {
+                config.full_final_check = true;
             }
             "--recent-actions" => {
                 config.recent_actions = parse_next(&mut args, "--recent-actions")?;
@@ -129,6 +137,8 @@ Options:
   --duration-secs <u64>        Time cap; if --ops is omitted, run until this cap
   --sync-barrier-every <u64>   Force SyncAll every N ops, 0 disables (default: 2000)
   --check-every <u64>          Slow local checks every N ops, 0 disables (default: 5000)
+  --history-limit <usize>      Historical checkout points kept per peer (default: 64)
+  --full-final-check           Run heavy snapshot/json/history checks at the end
   --recent-actions <usize>     Actions printed on failure (default: 64)
   --nested-containers          Also insert child containers into maps/lists/tree meta
   --artifact-dir <path>        Repro output directory (default: long_peer_fuzz_artifacts)

@@ -756,6 +756,19 @@ impl MovableListState {
         self.inner.list()
     }
 
+    pub(crate) fn iter_list_item_ids_for_op(&self) -> impl Iterator<Item = IdFull> + '_ {
+        self.inner.list().iter().map(|list_item| list_item.id)
+    }
+
+    pub(crate) fn iter_list_items_for_op(
+        &self,
+    ) -> impl Iterator<Item = (IdFull, Option<CompactIdLp>)> + '_ {
+        self.inner
+            .list()
+            .iter()
+            .map(|list_item| (list_item.id, list_item.pointed_by))
+    }
+
     #[inline]
     pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()

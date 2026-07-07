@@ -61,51 +61,17 @@ impl Tracker {
         this
     }
 
-    pub(crate) fn new() -> Self {
+    #[allow(unused)]
+    fn new() -> Self {
+        Self::new_empty()
+    }
+
+    pub(crate) fn new_empty() -> Self {
         Self {
             rope: CrdtRope::new(),
             id_to_cursor: IdToCursor::default(),
             applied_vv: Default::default(),
             current_vv: Default::default(),
-        }
-    }
-
-    pub(crate) fn seed_from_ordered_spans(
-        &mut self,
-        vv: &VersionVector,
-        spans: impl IntoIterator<Item = (IdFull, RichtextChunk)>,
-    ) {
-        self.rope = CrdtRope::new();
-        self.id_to_cursor = IdToCursor::default();
-        self.applied_vv = vv.clone();
-        self.current_vv = vv.clone();
-
-        let mut cursors = Vec::new();
-        for (id, content) in spans {
-            let len = content.len();
-            if len == 0 {
-                continue;
-            }
-
-            let result = self.rope.tree.push(FugueSpan {
-                content,
-                id,
-                real_id: if id.peer == UNKNOWN_PEER_ID {
-                    None
-                } else {
-                    Some(id.id().try_into().unwrap())
-                },
-                status: Status::default(),
-                diff_status: None,
-                origin_left: None,
-                origin_right: None,
-            });
-            cursors.push((id.id(), id_to_cursor::Cursor::new_insert(result.leaf, len)));
-        }
-
-        cursors.sort_by_key(|(id, _)| (id.peer, id.counter));
-        for (id, cursor) in cursors {
-            self.id_to_cursor.insert(id, cursor);
         }
     }
 
@@ -148,6 +114,20 @@ impl Tracker {
     }
 
     fn _insert(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
+        self._insert_inner(pos, content, op_id, true);
+    }
+
+    pub(crate) fn insert_seeded(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
+        self._insert_inner(pos, content, op_id, false);
+    }
+
+    fn _insert_inner(
+        &mut self,
+        pos: usize,
+        content: RichtextChunk,
+        op_id: IdFull,
+        update_vv: bool,
+    ) {
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -172,9 +152,11 @@ impl Tracker {
 
         self.update_insert_by_split(&result.splitted.arr);
 
-        let end_id = op_id.inc(content.len() as Counter);
-        self.current_vv.extend_to_include_end_id(end_id.id());
-        self.applied_vv.extend_to_include_end_id(end_id.id());
+        if update_vv {
+            let end_id = op_id.inc(content.len() as Counter);
+            self.current_vv.extend_to_include_end_id(end_id.id());
+            self.applied_vv.extend_to_include_end_id(end_id.id());
+        }
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -236,76 +218,7 @@ impl Tracker {
 
         // tracing::info!("after forwarding pos={} len={}", pos, len);
 
-        if self.delete_by_id_if_present(target_start_id, len, reverse, op_id) {
-            return;
-        }
-
         self._delete(target_start_id, pos, len, reverse, op_id);
-    }
-
-    fn delete_by_id_if_present(
-        &mut self,
-        target_start_id: ID,
-        len: usize,
-        reverse: bool,
-        op_id: ID,
-    ) -> bool {
-        let target_span = IdSpan::new(
-            target_start_id.peer,
-            target_start_id.counter,
-            target_start_id.counter + len as Counter,
-        );
-        let mut pieces = Vec::new();
-        let mut expected_counter = target_span.counter.start;
-        for cursor in self.id_to_cursor.iter(target_span) {
-            let id_to_cursor::IterCursor::Insert { leaf, id_span } = cursor else {
-                return false;
-            };
-
-            if id_span.counter.start != expected_counter {
-                return false;
-            }
-
-            expected_counter = id_span.counter.end;
-            pieces.push((leaf, id_span));
-        }
-
-        if expected_counter != target_span.counter.end {
-            return false;
-        }
-
-        let updates = pieces
-            .iter()
-            .map(|(leaf, id_span)| crdt_rope::LeafUpdate {
-                leaf: *leaf,
-                id_span: *id_span,
-                set_future: None,
-                delete_times_diff: 1,
-            })
-            .collect();
-        let leaf_indexes = self.rope.update(updates, false);
-        self.update_insert_by_split(&leaf_indexes);
-
-        if reverse {
-            pieces.reverse();
-        }
-
-        let mut cur_id = op_id;
-        for (_, mut id_span) in pieces {
-            if reverse {
-                id_span.reverse();
-            }
-
-            let len = id_span.atom_len();
-            self.id_to_cursor
-                .insert(cur_id, id_to_cursor::Cursor::Delete(id_span));
-            cur_id = cur_id.inc(len as Counter);
-        }
-
-        let end_id = op_id.inc(len as Counter);
-        self.current_vv.extend_to_include_end_id(end_id);
-        self.applied_vv.extend_to_include_end_id(end_id);
-        true
     }
 
     fn _delete(&mut self, target_start_id: ID, pos: usize, len: usize, reverse: bool, op_id: ID) {
@@ -739,6 +652,61 @@ impl Tracker {
 
         self.rope.get_diff()
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.rope.len()
+    }
+
+    pub(crate) fn active_real_span_at(&self, pos: usize) -> Option<(ID, usize)> {
+        self.rope.active_real_span_at(pos)
+    }
+
+    pub(crate) fn active_segments_of_real_id_span(
+        &self,
+        target_start: ID,
+        len: usize,
+    ) -> Vec<(ID, usize, usize)> {
+        let target_end = target_start.counter + len as Counter;
+        let mut index = 0;
+        let mut ans = Vec::new();
+
+        for span in self.rope.tree().iter() {
+            if !span.is_activated() {
+                continue;
+            }
+
+            let span_len = span.rle_len();
+            let real_id = span.real_id();
+            if real_id.peer == UNKNOWN_PEER_ID {
+                index += span_len;
+                continue;
+            }
+
+            if real_id.peer == target_start.peer {
+                let span_end = real_id.counter + span_len as Counter;
+                let overlap_start = real_id.counter.max(target_start.counter);
+                let overlap_end = span_end.min(target_end);
+                if overlap_start < overlap_end {
+                    let offset = (overlap_start - real_id.counter) as usize;
+                    let len = (overlap_end - overlap_start) as usize;
+                    ans.push((
+                        ID::new(target_start.peer, overlap_start),
+                        index + offset,
+                        len,
+                    ));
+                }
+            }
+
+            index += span_len;
+        }
+
+        ans
+    }
+
+    pub(crate) fn mark_shallow_root_applied(&mut self, vv: &VersionVector) {
+        self.applied_vv = vv.clone();
+        self.current_vv = vv.clone();
+    }
 }
 
 #[cfg(test)]
@@ -776,32 +744,6 @@ mod test {
         assert_eq!(t.rope.len(), 0);
         t.checkout(&vv!(1 => 10, 2=>0));
         assert_eq!(t.rope.len(), 10);
-    }
-
-    #[test]
-    fn seeded_shallow_root_delete_uses_target_id_when_pos_is_stale() {
-        let mut t = Tracker::new();
-        let root_vv = vv!(4 => 6300, 8 => 2);
-        t.seed_from_ordered_spans(
-            &root_vv,
-            [
-                (IdFull::new(8, 0, 0), RichtextChunk::new_unknown(2)),
-                (IdFull::new(4, 6298, 10), RichtextChunk::new_unknown(2)),
-            ],
-        );
-        t.delete(ID::new(7, 6114), ID::new(4, 6298), 0, 2, false);
-        assert_eq!(t.rope.len(), 2);
-        assert_eq!(
-            t.get_target_id_latest_index_at_new_version(ID::new(4, 6299))
-                .unwrap()
-                .side,
-            crate::cursor::Side::Left
-        );
-
-        t.checkout(&root_vv);
-        assert_eq!(t.rope.len(), 4);
-        t.checkout(&vv!(4 => 6300, 7 => 6116, 8 => 2));
-        assert_eq!(t.rope.len(), 2);
     }
 
     #[test]

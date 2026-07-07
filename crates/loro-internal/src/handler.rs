@@ -83,18 +83,20 @@ fn checked_range_end(
     pos: usize,
     len: usize,
     container_len: usize,
-    info: Box<str>,
+    // Lazily built: this is on the per-op edit hot path, so the position-context
+    // string must only be allocated when a bound check actually fails.
+    info: impl Fn() -> Box<str>,
 ) -> LoroResult<usize> {
     let end = pos.checked_add(len).ok_or_else(|| LoroError::OutOfBound {
         pos: usize::MAX,
         len: container_len,
-        info: info.clone(),
+        info: info(),
     })?;
     if end > container_len {
         return Err(LoroError::OutOfBound {
             pos: end,
             len: container_len,
-            info,
+            info: info(),
         });
     }
 
@@ -1856,7 +1858,7 @@ impl TextHandler {
             pos,
             len,
             self.len(pos_type),
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
         let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
@@ -1970,7 +1972,7 @@ impl TextHandler {
             pos,
             len,
             text_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
@@ -2015,6 +2017,57 @@ impl TextHandler {
     ) -> Result<Vec<(InternalString, LoroValue)>, LoroError> {
         if s.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // Fast path: plain-text insert into a style-free document (non-wasm).
+        // With no style anchors, entity_index == unicode pos and the event index
+        // equals the unicode index, so bounds + no-styles are checked in a single
+        // state access and the entire read phase (cursor location + two
+        // visit_previous_caches walks + styles lookup) is skipped; apply_local_op
+        // then locates the cursor exactly once.
+        #[cfg(not(feature = "wasm"))]
+        if attr.is_none() && pos_type == PosType::Unicode {
+            let inner = self.inner.try_attached_state()?;
+            let fast = inner.with_state(|state| {
+                let rt = state.as_richtext_state_mut().unwrap();
+                if rt.has_styles() {
+                    return Ok(false);
+                }
+                let len = rt.len_unicode();
+                if pos > len {
+                    return Err(LoroError::OutOfBound {
+                        pos,
+                        len,
+                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    });
+                }
+                Ok(true)
+            })?;
+            if fast {
+                let unicode_len = s.chars().count();
+                txn.apply_local_op(
+                    inner.container_idx,
+                    crate::op::RawOpContent::List(
+                        crate::container::list::list_op::ListOp::Insert {
+                            slice: ListSlice::RawStr {
+                                str: Cow::Borrowed(s),
+                                unicode_len,
+                            },
+                            // entity_index == unicode pos (no style anchors)
+                            pos,
+                        },
+                    ),
+                    EventHint::InsertText {
+                        // event index == unicode index (non-wasm)
+                        pos: pos as u32,
+                        styles: StyleMeta::empty(),
+                        unicode_len: unicode_len as u32,
+                        event_len: unicode_len as u32,
+                    },
+                    &inner.doc,
+                )?;
+                return Ok(Vec::new());
+            }
         }
 
         match pos_type {
@@ -2187,7 +2240,7 @@ impl TextHandler {
             pos,
             len,
             text_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )
         .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
@@ -2200,9 +2253,20 @@ impl TextHandler {
         let mut event_len = 0;
         let ranges = inner.with_state(|state| {
             let richtext_state = state.as_richtext_state_mut().unwrap();
-            event_pos = richtext_state.index_to_event_index(pos, pos_type);
-            let event_end = richtext_state.index_to_event_index(end, pos_type);
-            event_len = event_end - event_pos;
+            // Fast path: with no style anchors (non-wasm), the event index equals
+            // the unicode index, so the two index_to_event_index walks collapse to
+            // identity.
+            let fast = cfg!(not(feature = "wasm"))
+                && pos_type == PosType::Unicode
+                && !richtext_state.has_styles();
+            if fast {
+                event_pos = pos;
+                event_len = len;
+            } else {
+                event_pos = richtext_state.index_to_event_index(pos, pos_type);
+                let event_end = richtext_state.index_to_event_index(end, pos_type);
+                event_len = event_end - event_pos;
+            }
 
             richtext_state.get_text_entity_ranges_in_event_index_range(event_pos, event_len)
         })?;
@@ -3185,7 +3249,7 @@ impl ListHandler {
                     pos,
                     len,
                     list.value.len(),
-                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 )?;
                 list.value.drain(pos..end);
                 Ok(())
@@ -3204,7 +3268,7 @@ impl ListHandler {
             pos,
             len,
             list_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
 
         let inner = self.inner.try_attached_state()?;
@@ -3859,7 +3923,7 @@ impl MovableListHandler {
                     pos,
                     len,
                     d.value.len(),
-                    format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
                 )?;
                 d.value.drain(pos..end);
                 Ok(())
@@ -3879,7 +3943,7 @@ impl MovableListHandler {
             pos,
             len,
             list_len,
-            format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
         )?;
 
         let (ids, new_poses) = self.with_state(|state| {
@@ -5010,6 +5074,48 @@ mod test {
             )
             .unwrap();
         }
+    }
+
+    #[test]
+    fn cross_doc_txn_is_rejected() {
+        // `insert_with_txn`/`delete_with_txn` are public API, so a transaction
+        // from one document can be fed to another document's handler. That must
+        // be rejected with `UnmatchedContext` rather than silently stamping the
+        // target doc's state/oplog with the wrong peer+counter. Regression test
+        // for the always-on (release included) context check in
+        // `Transaction::apply_local_op`.
+        let doc_a = LoroDoc::new();
+        doc_a.set_peer_id(1).unwrap();
+        let doc_b = LoroDoc::new();
+        doc_b.set_peer_id(2).unwrap();
+
+        // Seed doc_b so it has real state we can prove stays untouched.
+        {
+            let mut txn_b = doc_b.txn().unwrap();
+            doc_b
+                .get_text("text")
+                .insert_with_txn(&mut txn_b, 0, "ok", PosType::Unicode)
+                .unwrap();
+            txn_b.commit().unwrap();
+        }
+        let vv_before = doc_b.oplog_vv();
+
+        // Feed doc_a's transaction to doc_b's handler.
+        let mut txn_a = doc_a.txn().unwrap();
+        let text_b = doc_b.get_text("text");
+        let insert_err = text_b
+            .insert_with_txn(&mut txn_a, 0, "x", PosType::Unicode)
+            .unwrap_err();
+        assert!(matches!(insert_err, LoroError::UnmatchedContext { .. }));
+        let delete_err = text_b
+            .delete_with_txn(&mut txn_a, 0, 1, PosType::Unicode)
+            .unwrap_err();
+        assert!(matches!(delete_err, LoroError::UnmatchedContext { .. }));
+        txn_a.commit().unwrap();
+
+        // doc_b is unchanged: content and version vector identical.
+        assert_eq!(&**text_b.get_value().as_string().unwrap(), "ok");
+        assert_eq!(doc_b.oplog_vv(), vv_before);
     }
 
     #[test]

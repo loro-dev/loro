@@ -130,6 +130,23 @@ impl OpLog {
         count
     }
 
+    /// Incrementally bump the cached visible op count for newly applied *local*
+    /// ops. Local ops are always visible (never behind the shallow root), so the
+    /// visible count grows by exactly `delta`. This avoids a per-op full
+    /// recompute via [`Self::calc_visible_op_count`], which iterates the version
+    /// vectors and heap-allocates an `im::HashMap` iterator on every call.
+    #[inline]
+    pub(crate) fn inc_visible_op_count(&self, delta: usize) {
+        self.visible_op_count
+            .fetch_add(delta, std::sync::atomic::Ordering::Release);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_visible_op_count(&self) -> usize {
+        self.visible_op_count
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     #[inline]
     pub fn dag(&self) -> &AppDag {
         &self.dag
@@ -233,7 +250,7 @@ impl OpLog {
                 continue;
             }
 
-            if self.dag.is_before_shallow_root(&change.deps) {
+            if self.dag.import_deps_before_shallow_root(&change.deps) {
                 ans.has_deps_before_shallow_root = true;
                 continue;
             }
@@ -591,13 +608,23 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (common_ancestors, mut diff_mode) =
+        let (mut common_ancestors, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
 
-        let common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let mut common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let shallow_since_vv = self.dag.shallow_since_vv().to_vv();
+        if !common_ancestors_vv.includes_vv(&shallow_since_vv) {
+            // The replay base cannot point before shallow history because those
+            // ops are no longer available to the causal iterator.
+            common_ancestors = self.dag.shallow_since_frontiers().clone();
+            common_ancestors_vv = self
+                .dag
+                .frontiers_to_vv(&common_ancestors)
+                .unwrap_or(shallow_since_vv);
+        }
         // go from lca to merged_vv
         let diff = common_ancestors_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(common_ancestors, diff);
@@ -786,13 +813,7 @@ impl OpLog {
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
         let mut max_timestamp = Timestamp::default();
         for id in frontiers.iter() {
-            let Some(change) = self.get_change_at(id) else {
-                if self.dag.shallow_since_vv().includes_id(id) {
-                    continue;
-                }
-
-                unreachable!()
-            };
+            let change = self.get_change_at(id).unwrap();
             if change.timestamp > max_timestamp {
                 max_timestamp = change.timestamp;
             }
@@ -946,4 +967,52 @@ pub(crate) fn local_op_to_remote(
 
 pub(crate) fn get_timestamp_now_txn() -> Timestamp {
     (get_sys_timestamp() as Timestamp + 500) / 1000
+}
+
+#[cfg(test)]
+mod visible_op_count_tests {
+    use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
+
+    /// The cached `visible_op_count` (bumped incrementally for local ops, and
+    /// the only value read in release builds where `can_lock_in_this_thread`
+    /// returns false) must always equal a from-scratch recompute.
+    #[test]
+    fn cached_visible_op_count_matches_exact() {
+        let doc = LoroDoc::new();
+        let text = doc.get_text("text");
+        let mut txn = doc.txn().unwrap();
+        for i in 0..50 {
+            text.insert_with_txn(&mut txn, i, "a", PosType::Unicode)
+                .unwrap();
+        }
+        txn.commit().unwrap();
+        {
+            let oplog = doc.oplog().lock();
+            assert_eq!(
+                oplog.cached_visible_op_count(),
+                oplog.visible_op_count_exact(),
+                "after local edits"
+            );
+        }
+
+        // Import keeps the cached count exact via full refresh; subsequent local
+        // edits then increment from that exact base.
+        let doc2 = LoroDoc::new();
+        doc2.import(&doc.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        let text2 = doc2.get_text("text");
+        let mut txn2 = doc2.txn().unwrap();
+        text2
+            .insert_with_txn(&mut txn2, 0, "bbb", PosType::Unicode)
+            .unwrap();
+        txn2.commit().unwrap();
+        {
+            let oplog = doc2.oplog().lock();
+            assert_eq!(
+                oplog.cached_visible_op_count(),
+                oplog.visible_op_count_exact(),
+                "after import + local edits"
+            );
+        }
+    }
 }

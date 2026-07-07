@@ -333,6 +333,15 @@ impl Actor {
         self.history.insert(ids, value);
     }
 
+    pub fn prune_history(&mut self, max_entries: usize) {
+        while self.history.len() > max_entries {
+            let Some(key) = self.history.keys().next().cloned() else {
+                return;
+            };
+            self.history.remove(&key);
+        }
+    }
+
     pub fn register(&mut self, target: ContainerType) {
         match target {
             ContainerType::Map => {

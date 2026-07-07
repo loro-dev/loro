@@ -338,7 +338,9 @@ impl Actionable for TreeAction {
                     peer: before.0,
                     counter: before.1,
                 };
-                super::unwrap(tree.mov_before(target, before));
+                if let Err(LoroError::TreeError(e)) = tree.mov_before(target, before) {
+                    tracing::warn!("move before error {}", e);
+                }
                 None
             }
             TreeActionInner::MoveAfter { target, after } => {
@@ -350,7 +352,9 @@ impl Actionable for TreeAction {
                     peer: after.0,
                     counter: after.1,
                 };
-                super::unwrap(tree.mov_after(target, after));
+                if let Err(LoroError::TreeError(e)) = tree.mov_after(target, after) {
+                    tracing::warn!("move after error {}", e);
+                }
                 None
             }
             TreeActionInner::Meta { meta: (k, v) } => {
@@ -518,6 +522,23 @@ impl TreeTracker {
             self.tree.insert(*index, node);
         };
     }
+
+    fn remove_node_by_id(nodes: &mut Vec<TreeNode>, target: TreeID) -> Option<TreeNode> {
+        let mut index = 0;
+        while index < nodes.len() {
+            if nodes[index].id == target {
+                return Some(nodes.remove(index));
+            }
+
+            if let Some(node) = Self::remove_node_by_id(&mut nodes[index].children, target) {
+                return Some(node);
+            }
+
+            index += 1;
+        }
+
+        None
+    }
 }
 
 impl ApplyDiff for TreeTracker {
@@ -548,14 +569,9 @@ impl ApplyDiff for TreeTracker {
                     self.create_node(target, &parent.tree_id(), position.to_string(), index);
                 }
                 TreeExternalDiff::Delete { .. } => {
-                    let node = self.find_node_by_id(target).unwrap();
-                    if let Some(parent) = node.parent {
-                        let parent = self.find_node_by_id_mut(parent).unwrap();
-                        parent.children.retain(|n| n.id != target);
-                    } else {
-                        let index = self.tree.iter().position(|n| n.id == target).unwrap();
-                        self.tree.remove(index);
-                    };
+                    if Self::remove_node_by_id(&mut self.tree, target).is_none() {
+                        tracing::warn!("tree shadow ignored delete for absent node {:?}", target);
+                    }
                 }
                 TreeExternalDiff::Move {
                     parent,

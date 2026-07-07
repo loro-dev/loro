@@ -23,7 +23,7 @@
     "test-esbuild": "pnpm --dir examples/test-esbuild install --ignore-workspace --prefer-offline && pnpm --filter loro-test-esbuild serve",
     "test-bundlers": "pnpm --dir examples/bundler-smoke-tests run test:fast",
     "test-bundlers-next": "pnpm --dir examples/bundler-smoke-tests run test:next",
-    "run-fuzz-corpus": "cd crates/fuzz && cargo +nightly fuzz run all -- -max_total_time=1",
+    "run-fuzz-corpus": "node ./scripts/cargo-fuzz-run.mjs all -- -max_total_time=1",
     "long-peer-fuzz": "cargo run -p fuzz --release --bin long_peer_fuzz --",
     "fix": "cargo clippy --fix --features=test_utils",
     "vet": "cargo vet",
