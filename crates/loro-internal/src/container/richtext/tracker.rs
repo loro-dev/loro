@@ -63,6 +63,10 @@ impl Tracker {
 
     #[allow(unused)]
     fn new() -> Self {
+        Self::new_empty()
+    }
+
+    pub(crate) fn new_empty() -> Self {
         Self {
             rope: CrdtRope::new(),
             id_to_cursor: IdToCursor::default(),
@@ -110,6 +114,20 @@ impl Tracker {
     }
 
     fn _insert(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
+        self._insert_inner(pos, content, op_id, true);
+    }
+
+    pub(crate) fn insert_seeded(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
+        self._insert_inner(pos, content, op_id, false);
+    }
+
+    fn _insert_inner(
+        &mut self,
+        pos: usize,
+        content: RichtextChunk,
+        op_id: IdFull,
+        update_vv: bool,
+    ) {
         let result = self.rope.insert(
             pos,
             FugueSpan {
@@ -134,9 +152,11 @@ impl Tracker {
 
         self.update_insert_by_split(&result.splitted.arr);
 
-        let end_id = op_id.inc(content.len() as Counter);
-        self.current_vv.extend_to_include_end_id(end_id.id());
-        self.applied_vv.extend_to_include_end_id(end_id.id());
+        if update_vv {
+            let end_id = op_id.inc(content.len() as Counter);
+            self.current_vv.extend_to_include_end_id(end_id.id());
+            self.applied_vv.extend_to_include_end_id(end_id.id());
+        }
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
@@ -631,6 +651,61 @@ impl Tracker {
         // tracing::trace!("Trace::diff {:#?}, ", &self);
 
         self.rope.get_diff()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.rope.len()
+    }
+
+    pub(crate) fn active_real_span_at(&self, pos: usize) -> Option<(ID, usize)> {
+        self.rope.active_real_span_at(pos)
+    }
+
+    pub(crate) fn active_segments_of_real_id_span(
+        &self,
+        target_start: ID,
+        len: usize,
+    ) -> Vec<(ID, usize, usize)> {
+        let target_end = target_start.counter + len as Counter;
+        let mut index = 0;
+        let mut ans = Vec::new();
+
+        for span in self.rope.tree().iter() {
+            if !span.is_activated() {
+                continue;
+            }
+
+            let span_len = span.rle_len();
+            let real_id = span.real_id();
+            if real_id.peer == UNKNOWN_PEER_ID {
+                index += span_len;
+                continue;
+            }
+
+            if real_id.peer == target_start.peer {
+                let span_end = real_id.counter + span_len as Counter;
+                let overlap_start = real_id.counter.max(target_start.counter);
+                let overlap_end = span_end.min(target_end);
+                if overlap_start < overlap_end {
+                    let offset = (overlap_start - real_id.counter) as usize;
+                    let len = (overlap_end - overlap_start) as usize;
+                    ans.push((
+                        ID::new(target_start.peer, overlap_start),
+                        index + offset,
+                        len,
+                    ));
+                }
+            }
+
+            index += span_len;
+        }
+
+        ans
+    }
+
+    pub(crate) fn mark_shallow_root_applied(&mut self, vv: &VersionVector) {
+        self.applied_vv = vv.clone();
+        self.current_vv = vv.clone();
     }
 }
 

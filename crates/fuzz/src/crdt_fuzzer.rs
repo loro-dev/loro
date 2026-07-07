@@ -264,7 +264,11 @@ impl CRDTFuzzer {
                 let a_frontiers = a.loro.oplog_frontiers();
                 let b_frontiers = b.loro.oplog_frontiers();
                 if let Ok(diff) = a.loro.diff(&a_frontiers, &b_frontiers) {
-                    let _ = b.loro.apply_diff(diff);
+                    let before_apply = b.loro.state_frontiers();
+                    let result = b.loro.apply_diff(diff);
+                    if result.is_ok() || b.loro.state_frontiers() != before_apply {
+                        b.loro.commit();
+                    }
                 }
             }
             Action::Query {
@@ -427,7 +431,18 @@ impl CRDTFuzzer {
                     if let Ok(bytes) = actor.loro.export(loro::ExportMode::state_only(Some(&f))) {
                         let new_doc = LoroDoc::new();
                         if new_doc.import(&bytes).is_ok() {
-                            assert_eq!(new_doc.get_deep_value(), actor.loro.get_deep_value());
+                            assert_eq!(
+                                    new_doc.get_deep_value(),
+                                    actor.loro.get_deep_value(),
+                                    "site={site} state_frontiers={:?} oplog_frontiers={:?} oplog_vv={:?} imported_frontiers={:?} imported_vv={:?} shallow_frontiers={:?} shallow_vv={:?}",
+                                    actor.loro.state_frontiers(),
+                                    actor.loro.oplog_frontiers(),
+                                    actor.loro.oplog_vv(),
+                                    new_doc.oplog_frontiers(),
+                                    new_doc.oplog_vv(),
+                                    new_doc.shallow_since_frontiers(),
+                                    new_doc.shallow_since_vv(),
+                                );
                         }
                     }
                 }
@@ -463,8 +478,8 @@ impl CRDTFuzzer {
                 if a_shallow || b_shallow {
                     continue;
                 }
-                let a_doc = &mut a.loro;
-                let b_doc = &mut b.loro;
+                let a_doc = &a.loro;
+                let b_doc = &b.loro;
                 info_span!("Attach", peer = i).in_scope(|| {
                     a_doc.attach();
                 });
