@@ -617,6 +617,13 @@ impl CRDTFuzzer {
         }
     }
 
+    fn check_all_actor_state_correctness(&self) {
+        for actor in &self.actors {
+            actor.loro.attach();
+            actor.loro.check_state_correctness_slow();
+        }
+    }
+
     fn check_history(&mut self) {
         self.actors[0].check_history();
         // for actor in self.actors.iter_mut() {
@@ -727,6 +734,64 @@ pub fn test_multi_sites(site_num: u8, fuzz_targets: Vec<FuzzTarget>, actions: &m
     info_span!("check history").in_scope(|| {
         fuzzer.check_history();
     });
+}
+
+pub fn test_multi_sites_with_repro_checks(
+    site_num: u8,
+    fuzz_targets: Vec<FuzzTarget>,
+    actions: &mut [Action],
+    check_after_action_indices: &[usize],
+) {
+    let mut fuzzer = CRDTFuzzer::new(site_num, fuzz_targets);
+    let mut checks = check_after_action_indices.iter().copied().peekable();
+    for (index, action) in actions.iter_mut().enumerate() {
+        fuzzer.pre_process(action);
+        info_span!("ApplyAction", ?action).in_scope(|| {
+            fuzzer.apply_action(action);
+        });
+
+        let applied_len = index + 1;
+        while checks
+            .peek()
+            .is_some_and(|check_after| *check_after <= applied_len)
+        {
+            checks.next();
+            info_span!("repro periodic check", applied_len).in_scope(|| {
+                fuzzer.check_all_actor_state_correctness();
+            });
+        }
+    }
+
+    info_span!("check synced").in_scope(|| {
+        fuzzer.check_equal();
+    });
+    info_span!("check all actor state").in_scope(|| {
+        fuzzer.check_all_actor_state_correctness();
+    });
+    info_span!("check history").in_scope(|| {
+        fuzzer.check_history();
+    });
+}
+
+pub fn test_multi_sites_with_repro_check_every(
+    site_num: u8,
+    fuzz_targets: Vec<FuzzTarget>,
+    actions: &mut [Action],
+    check_every_actions: usize,
+) {
+    let check_after_action_indices = if check_every_actions == 0 {
+        Vec::new()
+    } else {
+        (check_every_actions..=actions.len())
+            .step_by(check_every_actions)
+            .collect()
+    };
+    test_multi_sites_with_repro_checks(
+        site_num,
+        fuzz_targets,
+        actions,
+        &check_after_action_indices,
+    );
 }
 
 #[derive(Debug, Clone)]
@@ -842,6 +907,7 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
     let mut fuzzer = CRDTFuzzer::new(config.site_num, config.fuzz_targets.clone());
     let mut recent = VecDeque::with_capacity(config.recent_actions);
     let mut actions = Vec::new();
+    let mut periodic_check_points = Vec::new();
     let mut journal = match LongPeerFuzzJournal::new(&config) {
         Ok(journal) => Some(journal),
         Err(err) => {
@@ -866,7 +932,15 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
         if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
             apply_raw_long_peer_action(&mut fuzzer, &action);
         })) {
-            handle_long_peer_failure(&config, &actions, ops, "apply action", &recent, err);
+            handle_long_peer_failure(
+                &config,
+                &actions,
+                &periodic_check_points,
+                ops,
+                "apply action",
+                &recent,
+                err,
+            );
         }
 
         if config.sync_barrier_every != 0 && ops % config.sync_barrier_every == 0 {
@@ -879,19 +953,32 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
             if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
                 apply_raw_long_peer_action(&mut fuzzer, &action);
             })) {
-                handle_long_peer_failure(&config, &actions, ops, "sync barrier", &recent, err);
+                handle_long_peer_failure(
+                    &config,
+                    &actions,
+                    &periodic_check_points,
+                    ops,
+                    "sync barrier",
+                    &recent,
+                    err,
+                );
             }
         }
 
         if config.check_every != 0 && ops % config.check_every == 0 {
+            periodic_check_points.push(actions.len());
             if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
-                fuzzer.check_tracker();
-                for actor in &fuzzer.actors {
-                    actor.loro.attach();
-                    actor.loro.check_state_correctness_slow();
-                }
+                fuzzer.check_all_actor_state_correctness();
             })) {
-                handle_long_peer_failure(&config, &actions, ops, "periodic check", &recent, err);
+                handle_long_peer_failure(
+                    &config,
+                    &actions,
+                    &periodic_check_points,
+                    ops,
+                    "periodic check",
+                    &recent,
+                    err,
+                );
             }
         }
     }
@@ -901,7 +988,15 @@ pub fn run_long_peer_fuzz(config: LongPeerFuzzConfig) -> LongPeerFuzzStats {
         fuzzer.check_tracker();
         fuzzer.check_history();
     })) {
-        handle_long_peer_failure(&config, &actions, ops, "final check", &recent, err);
+        handle_long_peer_failure(
+            &config,
+            &actions,
+            &periodic_check_points,
+            ops,
+            "final check",
+            &recent,
+            err,
+        );
     }
 
     if let Some(journal) = journal.as_mut() {
@@ -936,19 +1031,24 @@ fn apply_raw_long_peer_action(fuzzer: &mut CRDTFuzzer, raw_action: &Action) {
     fuzzer.apply_action(&action);
 }
 
-fn replay_long_peer_actions(config: &LongPeerFuzzConfig, actions: &[Action]) {
-    let mut fuzzer = CRDTFuzzer::new(config.site_num, config.fuzz_targets.clone());
-    for action in actions {
-        apply_raw_long_peer_action(&mut fuzzer, action);
-    }
-    fuzzer.check_equal();
-    fuzzer.check_tracker();
-    fuzzer.check_history();
+fn replay_long_peer_actions(
+    config: &LongPeerFuzzConfig,
+    actions: &[Action],
+    check_after_action_indices: &[usize],
+) {
+    let mut actions = actions.to_vec();
+    test_multi_sites_with_repro_checks(
+        config.site_num,
+        config.fuzz_targets.clone(),
+        &mut actions,
+        check_after_action_indices,
+    );
 }
 
 fn handle_long_peer_failure(
     config: &LongPeerFuzzConfig,
     actions: &[Action],
+    check_after_action_indices: &[usize],
     op: u64,
     phase: &str,
     recent: &VecDeque<(u64, Action)>,
@@ -963,7 +1063,8 @@ fn handle_long_peer_failure(
         eprintln!("  {recent_op}: {recent_action:?}");
     }
 
-    match write_long_peer_failure_artifacts(config, actions, op, phase) {
+    match write_long_peer_failure_artifacts(config, actions, check_after_action_indices, op, phase)
+    {
         Ok(dir) => {
             eprintln!("long_peer_fuzz repro artifacts: {}", dir.display());
         }
@@ -978,6 +1079,7 @@ fn handle_long_peer_failure(
 fn write_long_peer_failure_artifacts(
     config: &LongPeerFuzzConfig,
     actions: &[Action],
+    check_after_action_indices: &[usize],
     op: u64,
     phase: &str,
 ) -> io::Result<PathBuf> {
@@ -1002,21 +1104,36 @@ fn write_long_peer_failure_artifacts(
         &case_dir.join("full_repro.rs"),
         config,
         &full,
+        check_after_action_indices,
         &format!("repro_long_peer_fuzz_seed_{}_op_{}_full", config.seed, op),
     )?;
     write_rust_repro(
         &case_dir.join("minimal_repro.rs"),
         config,
         &full,
+        check_after_action_indices,
         &format!(
             "repro_long_peer_fuzz_seed_{}_op_{}_minimal",
             config.seed, op
         ),
     )?;
-    write_failure_readme(&case_dir, config, actions.len(), full.len(), op, phase)?;
+    write_failure_readme(
+        &case_dir,
+        config,
+        actions.len(),
+        full.len(),
+        check_after_action_indices,
+        op,
+        phase,
+    )?;
 
     let minimized = if config.minimize_on_failure {
-        minimize_long_peer_repro(config, full.clone(), config.minimize_time)
+        minimize_long_peer_repro(
+            config,
+            full.clone(),
+            check_after_action_indices,
+            config.minimize_time,
+        )
     } else {
         full.clone()
     };
@@ -1026,12 +1143,21 @@ fn write_long_peer_failure_artifacts(
         &case_dir.join("minimal_repro.rs"),
         config,
         &minimized,
+        &normalize_repro_check_points(check_after_action_indices, minimized.len()),
         &format!(
             "repro_long_peer_fuzz_seed_{}_op_{}_minimal",
             config.seed, op
         ),
     )?;
-    write_failure_readme(&case_dir, config, actions.len(), minimized.len(), op, phase)?;
+    write_failure_readme(
+        &case_dir,
+        config,
+        actions.len(),
+        minimized.len(),
+        check_after_action_indices,
+        op,
+        phase,
+    )?;
 
     Ok(case_dir)
 }
@@ -1049,6 +1175,7 @@ fn write_failure_readme(
     config: &LongPeerFuzzConfig,
     full_len: usize,
     minimized_len: usize,
+    check_after_action_indices: &[usize],
     op: u64,
     phase: &str,
 ) -> io::Result<()> {
@@ -1061,6 +1188,11 @@ fn write_failure_readme(
     writeln!(file, "- failed phase: {phase}")?;
     writeln!(file, "- full actions: {full_len}")?;
     writeln!(file, "- minimized actions: {minimized_len}")?;
+    writeln!(
+        file,
+        "- repro check points: {}",
+        check_after_action_indices.len()
+    )?;
     writeln!(file, "- targets: {:?}", config.fuzz_targets)?;
     writeln!(
         file,
@@ -1120,9 +1252,11 @@ fn write_journal_readme(case_dir: &Path, config: &LongPeerFuzzConfig) -> io::Res
 fn minimize_long_peer_repro(
     config: &LongPeerFuzzConfig,
     actions: Vec<Action>,
+    check_after_action_indices: &[usize],
     budget: Duration,
 ) -> Vec<Action> {
-    if actions.is_empty() || !long_peer_actions_fail(config, &actions) {
+    let check_points = normalize_repro_check_points(check_after_action_indices, actions.len());
+    if actions.is_empty() || !long_peer_actions_fail(config, &actions, &check_points) {
         return actions;
     }
 
@@ -1139,7 +1273,11 @@ fn minimize_long_peer_repro(
             let mut candidate = current.clone();
             candidate.drain(index..end);
 
-            if !candidate.is_empty() && long_peer_actions_fail(config, &candidate) {
+            let candidate_check_points =
+                normalize_repro_check_points(check_after_action_indices, candidate.len());
+            if !candidate.is_empty()
+                && long_peer_actions_fail(config, &candidate, &candidate_check_points)
+            {
                 current = candidate;
                 removed_any = true;
             } else {
@@ -1158,11 +1296,15 @@ fn minimize_long_peer_repro(
     current
 }
 
-fn long_peer_actions_fail(config: &LongPeerFuzzConfig, actions: &[Action]) -> bool {
+fn long_peer_actions_fail(
+    config: &LongPeerFuzzConfig,
+    actions: &[Action],
+    check_after_action_indices: &[usize],
+) -> bool {
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let failed = catch_unwind(AssertUnwindSafe(|| {
-        replay_long_peer_actions(config, actions);
+        replay_long_peer_actions(config, actions, check_after_action_indices);
     }))
     .is_err();
     std::panic::set_hook(old_hook);
@@ -1173,6 +1315,7 @@ fn write_rust_repro(
     path: &Path,
     config: &LongPeerFuzzConfig,
     actions: &[Action],
+    check_after_action_indices: &[usize],
     test_name: &str,
 ) -> io::Result<()> {
     write_rust_repro_header(path, config, test_name)?;
@@ -1180,7 +1323,7 @@ fn write_rust_repro(
     for action in actions {
         writeln!(file, "        {},", action_to_rust(action))?;
     }
-    write_rust_repro_footer_to(&mut file, config)?;
+    write_rust_repro_footer_to(&mut file, config, check_after_action_indices)?;
     Ok(())
 }
 
@@ -1194,7 +1337,7 @@ fn write_rust_repro_header(
     writeln!(file)?;
     writeln!(
         file,
-        "use fuzz::{{actions::{{ActionWrapper::Generic, GenericAction}}, crdt_fuzzer::{{test_multi_sites, Action::*, FuzzTarget, FuzzValue::*}}}};"
+        "use fuzz::{{actions::{{ActionWrapper::Generic, GenericAction}}, crdt_fuzzer::{{test_multi_sites_with_repro_checks, Action::*, FuzzTarget, FuzzValue::*}}}};"
     )?;
     writeln!(file, "use loro::ContainerType;")?;
     writeln!(file)?;
@@ -1206,22 +1349,48 @@ fn write_rust_repro_header(
 
 fn write_rust_repro_footer(path: &Path, config: &LongPeerFuzzConfig) -> io::Result<()> {
     let mut file = fs::File::create(path)?;
-    write_rust_repro_footer_to(&mut file, config)
+    write_rust_repro_footer_to(&mut file, config, &[])
 }
 
 fn write_rust_repro_footer_to(
     file: &mut impl Write,
     config: &LongPeerFuzzConfig,
+    check_after_action_indices: &[usize],
 ) -> io::Result<()> {
     writeln!(file, "    ];")?;
     writeln!(
         file,
-        "    test_multi_sites({}, {}, &mut actions);",
+        "    let check_after_action_indices = {};",
+        check_points_to_rust(check_after_action_indices)
+    )?;
+    writeln!(
+        file,
+        "    test_multi_sites_with_repro_checks({}, {}, &mut actions, &check_after_action_indices);",
         config.site_num,
         fuzz_targets_to_rust(&config.fuzz_targets)
     )?;
     writeln!(file, "}}")?;
     Ok(())
+}
+
+fn normalize_repro_check_points(check_points: &[usize], action_len: usize) -> Vec<usize> {
+    let mut normalized: Vec<_> = check_points
+        .iter()
+        .copied()
+        .filter(|point| *point != 0 && *point <= action_len)
+        .collect();
+    normalized.sort_unstable();
+    normalized.dedup();
+    normalized
+}
+
+fn check_points_to_rust(check_points: &[usize]) -> String {
+    let points = check_points
+        .iter()
+        .map(|point| format!("{point}usize"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("vec![{points}]")
 }
 
 fn action_to_rust(action: &Action) -> String {
