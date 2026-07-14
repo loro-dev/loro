@@ -985,10 +985,23 @@ mod mut_inner_kv {
             }
 
             let counter_end = upper_bound;
-            let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
 
-            let (id, bytes) = 'block_scan: {
+            // The answer may live only in `mem_parsed_kv` (e.g. local changes
+            // that have not been flushed to the external kv store yet) or only
+            // in `external_kv` (blocks that were never parsed into memory).
+            // Check both and use the block with the greatest start counter:
+            // within a peer, lamport grows with counter, so that block holds
+            // the greatest matching lamport.
+            let mem_block_id: Option<ID> = inner
+                .mem_parsed_kv
+                .range(ID::new(idlp.peer, 0)..ID::new(idlp.peer, counter_end))
+                .rev()
+                .find(|(_, block)| block.lamport_range.0 <= idlp.lamport)
+                .map(|(id, _)| *id);
+
+            let external_block = 'block_scan: {
                 let kv_store = &self.external_kv.lock();
+                let scan_end = ID::new(idlp.peer, counter_end).to_bytes();
                 let iter = kv_store
                     .scan(
                         Bound::Included(&ID::new(idlp.peer, 0).to_bytes()),
@@ -1011,14 +1024,36 @@ mod mut_inner_kv {
                         }
                     };
                     if lamport_start <= idlp.lamport {
-                        break 'block_scan (id, bytes);
+                        break 'block_scan Some((ID::from_bytes(&id), bytes));
                     }
                 }
 
-                return None;
+                None
             };
 
-            let block_id = ID::from_bytes(&id);
+            let use_external = match (mem_block_id, &external_block) {
+                (Some(mem_id), Some((external_id, _))) => external_id.counter > mem_id.counter,
+                (Some(_), None) => false,
+                (None, Some(_)) => true,
+                (None, None) => return None,
+            };
+
+            if !use_external {
+                let block_id = mem_block_id.unwrap();
+                let block = inner.mem_parsed_kv.get_mut(&block_id).unwrap();
+                if let Err(err) = block.ensure_changes(&self.arena) {
+                    warn!(?block_id, ?err, "failed to parse change block");
+                    return None;
+                }
+                let block = block.clone();
+                let index = block.get_change_index_by_lamport_lte(idlp.lamport)?;
+                return Some(BlockChangeRef {
+                    change_index: index,
+                    block,
+                });
+            }
+
+            let (block_id, bytes) = external_block.unwrap();
             let mut block = match ChangesBlock::from_bytes(bytes) {
                 Ok(block) => Arc::new(block),
                 Err(err) => {
@@ -1817,6 +1852,48 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    #[test]
+    fn lamport_lookup_finds_unflushed_mem_blocks() {
+        // Regression: when the lamport binary search bails out, the fallback
+        // used to scan only the external kv store. Local changes may exist
+        // solely in `mem_parsed_kv` before any flush, so a lookup targeting a
+        // lamport gap incorrectly returned `None`.
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("t");
+        text.insert(0, &"x".repeat(500), PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        // An independent large change from peer 2 pushes peer 1's next
+        // lamport far above its first change (gap > MAX_BLOCK_SIZE * 8, so
+        // lookups below engage the binary search path).
+        let doc2 = LoroDoc::new_auto_commit();
+        doc2.set_peer_id(2).unwrap();
+        let text2 = doc2.get_text("t2");
+        text2
+            .insert(0, &"y".repeat(3000), PosType::Unicode)
+            .unwrap();
+        doc2.commit_then_renew();
+        doc.import(&doc2.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        let text = doc.get_text("t");
+        text.insert(0, &"z".repeat(500), PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        // Query a lamport inside the gap between peer 1's two changes,
+        // without flushing the change store. The answer (the tail of peer 1's
+        // first commit) lives only in `mem_parsed_kv`.
+        let oplog = doc.oplog().lock();
+        let change = oplog
+            .change_store
+            .get_change_by_lamport_lte(IdLp::new(1, 700))
+            .expect("the change should be found in the unflushed mem blocks");
+        assert_eq!(change.id.peer, 1);
+        assert!(change.lamport <= 700);
+        assert_eq!(change.id.counter + change.atom_len() as Counter, 500);
     }
 
     #[test]
