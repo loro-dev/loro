@@ -879,7 +879,23 @@ mod mut_inner_kv {
             let mut lower_bound = 0;
             let mut upper_bound = i32::MAX;
             let mut is_binary_searching = false;
+            // The binary search below can stop making progress (e.g. when
+            // `(lower_bound + upper_bound) / 2` becomes a fixed point while the
+            // target block is missing from `mem_parsed_kv`, or when block
+            // metadata is inconsistent). Cap its steps and fall back to the
+            // external kv scan, which is always correct.
+            let mut binary_search_steps = 0;
             loop {
+                if is_binary_searching {
+                    binary_search_steps += 1;
+                    if binary_search_steps > 128 {
+                        warn!(
+                            "get_change_by_lamport_lte binary search did not converge; \
+                             falling back to kv scan"
+                        );
+                        break;
+                    }
+                }
                 match iter.next_back() {
                     Some((&id, block)) => {
                         if block.lamport_range.0 <= idlp.lamport
@@ -1329,13 +1345,30 @@ impl ChangesBlock {
                 LoroError::DecodeError("Decode block error: missing counters".into())
             })?,
         );
+        // `header.lamports` only stores the start lamport of each change (n entries),
+        // while `header.counters` has n + 1 entries ending with the block's end counter.
+        // The block's exclusive end lamport is the last change's start lamport plus its len.
+        let last_change_start = *header
+            .counters
+            .len()
+            .checked_sub(2)
+            .and_then(|i| header.counters.get(i))
+            .ok_or_else(|| LoroError::DecodeError("Decode block error: missing counters".into()))?;
+        let last_change_len = counter_range.1 - last_change_start;
         let lamport_range = (
             *header.lamports.first().ok_or_else(|| {
                 LoroError::DecodeError("Decode block error: missing lamports".into())
             })?,
-            *header.lamports.last().ok_or_else(|| {
-                LoroError::DecodeError("Decode block error: missing lamports".into())
-            })?,
+            header
+                .lamports
+                .last()
+                .ok_or_else(|| {
+                    LoroError::DecodeError("Decode block error: missing lamports".into())
+                })?
+                .checked_add(last_change_len as Lamport)
+                .ok_or_else(|| {
+                    LoroError::DecodeError("Decode block error: lamport overflow".into())
+                })?,
         );
         let content = ChangesBlockContent::Bytes(bytes);
         Ok(Self {
@@ -1726,6 +1759,64 @@ mod test {
             changes.push(convert_change_to_remote(&oplog.arena, c));
         });
         assert_eq!(changes_parsed, changes);
+    }
+
+    #[test]
+    fn decoded_block_lamport_range_matches_counter_range() {
+        // Regression test for a checkout hang after snapshot import.
+        // `ChangesBlock::from_bytes` used the start lamport of the block's last
+        // change as the block's end lamport, producing degenerate lamport
+        // ranges (empty for single-change blocks). The binary search in
+        // `get_change_by_lamport_lte` then misclassified the block containing
+        // the target lamport and looped forever.
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // One big commit that splits into many blocks, with enough ops that
+        // lamport lookups engage the binary search path
+        // (lamport gap > MAX_BLOCK_SIZE * 8).
+        for i in 0..100 {
+            let text = doc.get_text(format!("t{i}").as_str());
+            text.insert(0, &"x".repeat(30), PosType::Unicode).unwrap();
+        }
+        doc.commit_then_renew();
+
+        let (bytes, end_counter) = {
+            let oplog = doc.oplog().lock();
+            let end = oplog.vv().get(&1).copied().unwrap();
+            let bytes = oplog
+                .change_store
+                .encode_all(oplog.vv(), oplog.dag.frontiers());
+            (bytes, end)
+        };
+
+        let store = ChangeStore::new_for_test();
+        let _ = store.import_all(bytes).unwrap();
+        // Parse every block out of the external kv store
+        let mut c = 0;
+        while c < end_counter {
+            let change = store.get_change(ID::new(1, c)).unwrap();
+            c = change.id.counter + change.atom_len() as Counter;
+        }
+
+        {
+            let inner = store.inner.lock();
+            assert!(
+                inner.mem_parsed_kv.len() > 1,
+                "the change should be split into multiple blocks"
+            );
+            for (id, block) in inner.mem_parsed_kv.iter() {
+                // Single-peer linear history: lamport == counter for every op
+                assert_eq!(id.counter, block.counter_range.0);
+                assert_eq!(block.lamport_range.0 as Counter, block.counter_range.0);
+                assert_eq!(block.lamport_range.1 as Counter, block.counter_range.1);
+            }
+        }
+
+        for l in (0..end_counter as Lamport).step_by(7) {
+            let change = store.get_change_by_lamport_lte(IdLp::new(1, l)).unwrap();
+            assert!(change.lamport <= l);
+            assert!(l < change.lamport + change.atom_len() as Lamport);
+        }
     }
 
     #[test]
