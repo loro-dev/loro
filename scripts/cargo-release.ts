@@ -4,6 +4,8 @@ import { defineCommand, runMain } from "npm:citty";
 import { readFileSync, writeFileSync } from "node:fs";
 import { compare as semverCompare, parse as semverParse } from "npm:semver";
 
+const ALWAYS_EXCLUDED_CRATES = ["generic-btree"];
+
 async function runCargoRelease(version: string): Promise<string> {
   const process = new Deno.Command("cargo", {
     args: ["release", "version", "--workspace", version],
@@ -59,7 +61,9 @@ function syncRustVersionFile(version: string) {
   if (semverCompare(version, versionFileVersion) > 0) {
     writeFileSync(rustVersionFile, version);
   } else {
-    throw new Error(`input version ${version} is not higher than the version in the file ${versionFileVersion}`);
+    throw new Error(
+      `input version ${version} is not higher than the version in the file ${versionFileVersion}`,
+    );
   }
 }
 
@@ -83,14 +87,21 @@ const main = defineCommand({
     }
     syncRustVersionFile(version);
     const output = await runCargoRelease(version);
-    console.log("output")
+    console.log("output");
     const noChangesCrates = parseNoChangesCrates(output);
     console.log("noChangesCrates", noChangesCrates);
-    const excludeFlags = noChangesCrates.map((crate) => `--exclude ${crate}`).join(
-      " ",
-    );
+    const excludedCrates = [
+      ...new Set([
+        ...noChangesCrates,
+        ...ALWAYS_EXCLUDED_CRATES,
+      ]),
+    ];
+    const excludeFlags = excludedCrates.map((crate) => `--exclude ${crate}`)
+      .join(
+        " ",
+      );
     console.log("excludeFlags", excludeFlags);
-    const cmd = generateOptimizedCommand(version, noChangesCrates);
+    const cmd = generateOptimizedCommand(version, excludedCrates);
     console.log("cmd", cmd);
     const p1 = new Deno.Command("cargo", {
       args: cmd.split(" ").slice(1),
