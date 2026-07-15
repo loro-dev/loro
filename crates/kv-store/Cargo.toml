@@ -1,6 +1,6 @@
 [package]
 name = "loro-kv-store"
-version = "1.13.1"
+version = "1.13.7"
 edition = "2021"
 license = "MIT"
 description = "Key-value store component for Loro, a high-performance CRDTs framework"

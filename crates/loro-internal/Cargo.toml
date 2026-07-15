@@ -1,6 +1,6 @@
 [package]
 name = "loro-internal"
-version = "1.13.6"
+version = "1.13.7"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. Do not use it directly as it's not stable."
@@ -22,7 +22,7 @@ loro-common = { path = "../loro-common", version = "1.13.1" }
 fractional_index = { path = "../fractional_index", features = [
     "serde",
 ], version = "1.13.0", package = "loro_fractional_index" }
-loro-kv-store = { path = "../kv-store", version = "1.13.1" }
+loro-kv-store = { path = "../kv-store", version = "1.13.7" }
 rustc-hash = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
