@@ -1,6 +1,7 @@
 # Internal Encoding Context
 
-Verified against code 2026-06-16.
+Verified against code 2026-07-17 at commit
+`fd5a1fdab79142302f0c0fbceb8807128ec6d9cd`.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -25,9 +26,11 @@ If an agent asks "how does Loro encoding work?", start here:
   `encode_snapshot_at`.
 - [crates/loro-internal/src/encoding/json_schema.rs](../crates/loro-internal/src/encoding/json_schema.rs):
   `JsonSchema`, `export_json`, `decode_changes`, `redact`.
-- [docs/encoding.md](../docs/encoding.md) and
-  [docs/encoding-container-states.md](../docs/encoding-container-states.md):
-  external binary format references. Verify against code before changing them.
+- [docs/encoding.md](../docs/encoding.md),
+  [docs/encoding-container-states.md](../docs/encoding-container-states.md),
+  [docs/encoding-lz4.md](../docs/encoding-lz4.md), and
+  [docs/encoding-xxhash32.md](../docs/encoding-xxhash32.md): normative current
+  binary-format references, pinned to a verified code commit.
 
 ## Binary Envelope
 
@@ -70,8 +73,10 @@ still contains current helpers including `import_changes_to_oplog`, `encode_op`,
 `fast_snapshot.rs:Snapshot` has three body sections:
 
 1. `oplog_bytes`: KV-store encoded change history.
-2. `state_bytes`: KV-store encoded materialized state, or `EMPTY_MARK` when
-   omitted and state must be recalculated.
+2. `state_bytes`: KV-store encoded materialized state, or the one-byte
+   `EMPTY_MARK` (`E`) sentinel when a shallow snapshot omits its end-state
+   overlay and retained history must be replayed. A zero-byte state section is
+   an empty KV store, not `EMPTY_MARK`.
 3. `shallow_root_state_bytes`: KV-store encoded shallow root state; empty for a
    non-shallow snapshot.
 
@@ -91,17 +96,24 @@ a shallow root.
 
 ## Shallow, State-Only, And SnapshotAt
 
-All three use `FastSnapshot` mode:
+All three use `FastSnapshot` mode; there is no on-wire subtype field:
 
 - `ShallowSnapshot` retains history since a calculated shallow start frontier.
 - `StateOnly` is a shallow snapshot with minimal history at the target version.
 - `SnapshotAt` exports full history up to target frontiers plus state at that
-  version.
+  version, but only from a non-shallow source document; a shallow source
+  currently returns `NotImplemented`.
 
-`shallow_snapshot.rs` temporarily checks out versions and must restore the
-document's original state and attached/detached status. It must not split rich
-text style start/end ops across the shallow root. Unknown container types block
-shallow/state snapshot export through `LoroEncodeError::UnknownContainer`.
+For `ShallowSnapshot`, the requested frontier is reduced to a single valid
+history boundary, moved past a rich-text StyleStart when necessary, and clamped
+to an existing shallow root. The root state carries `fr`; a later state overlay
+does not. Import loads the root first and then either overlays the later state
+or replays retained changes when the state section is `E`. Unknown handling is
+path-dependent: rebuilding a root, or reusing a cached root to build an
+overlay, rejects unknown root containers; the cached-root replay-only `E` fast
+path reuses the root bytes without that check. Containers introduced after the
+root are not checked again and can survive either in retained operations (`E`)
+or as raw/lazy overlay state bytes.
 
 Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing

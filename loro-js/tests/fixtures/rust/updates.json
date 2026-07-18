@@ -1,0 +1,601 @@
+{
+  "changes": [
+    {
+      "deps": [],
+      "id": "0@0",
+      "lamport": 0,
+      "msg": "commit-8 seed=7 peer=1",
+      "ops": [
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "keep",
+            "type": "insert",
+            "value": 0
+          },
+          "counter": 0
+        },
+        {
+          "container": "cid:root-list:List",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              0
+            ]
+          },
+          "counter": 1
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "pos": 0,
+            "text": "hi😀",
+            "type": "insert"
+          },
+          "counter": 2
+        },
+        {
+          "container": "cid:root-mlist:MovableList",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              0
+            ]
+          },
+          "counter": 5
+        },
+        {
+          "container": "cid:root-tree:Tree",
+          "content": {
+            "fractional_index": "80",
+            "parent": null,
+            "target": "6@0",
+            "type": "create"
+          },
+          "counter": 6
+        },
+        {
+          "container": "cid:6@0:Map",
+          "content": {
+            "key": "title",
+            "type": "insert",
+            "value": "keep"
+          },
+          "counter": 7
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "end": 2,
+            "info": 132,
+            "start": 0,
+            "style_key": "bold",
+            "style_value": true,
+            "type": "mark"
+          },
+          "counter": 8
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "type": "mark_end"
+          },
+          "counter": 9
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "end": 5,
+            "info": 130,
+            "start": 2,
+            "style_key": "link",
+            "style_value": "https://example.com",
+            "type": "mark"
+          },
+          "counter": 10
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "type": "mark_end"
+          },
+          "counter": 11
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "end": 3,
+            "info": 132,
+            "start": 0,
+            "style_key": "bold",
+            "style_value": null,
+            "type": "mark"
+          },
+          "counter": 12
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "type": "mark_end"
+          },
+          "counter": 13
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "child_map",
+            "type": "insert",
+            "value": "🦜:cid:14@0:Map"
+          },
+          "counter": 14
+        },
+        {
+          "container": "cid:14@0:Map",
+          "content": {
+            "key": "a",
+            "type": "insert",
+            "value": 1
+          },
+          "counter": 15
+        },
+        {
+          "container": "cid:14@0:Map",
+          "content": {
+            "key": "t",
+            "type": "insert",
+            "value": "🦜:cid:16@0:Text"
+          },
+          "counter": 16
+        },
+        {
+          "container": "cid:16@0:Text",
+          "content": {
+            "pos": 0,
+            "text": "inner😀",
+            "type": "insert"
+          },
+          "counter": 17
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "child_list",
+            "type": "insert",
+            "value": "🦜:cid:23@0:List"
+          },
+          "counter": 23
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              "x"
+            ]
+          },
+          "counter": 24
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "child_mlist",
+            "type": "insert",
+            "value": "🦜:cid:25@0:MovableList"
+          },
+          "counter": 25
+        },
+        {
+          "container": "cid:25@0:MovableList",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              10,
+              20
+            ]
+          },
+          "counter": 26
+        },
+        {
+          "container": "cid:25@0:MovableList",
+          "content": {
+            "elem_id": "L26@0",
+            "from": 0,
+            "to": 1,
+            "type": "move"
+          },
+          "counter": 28
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "child_tree",
+            "type": "insert",
+            "value": "🦜:cid:29@0:Tree"
+          },
+          "counter": 29
+        },
+        {
+          "container": "cid:29@0:Tree",
+          "content": {
+            "fractional_index": "80",
+            "parent": null,
+            "target": "30@0",
+            "type": "create"
+          },
+          "counter": 30
+        },
+        {
+          "container": "cid:30@0:Map",
+          "content": {
+            "key": "m",
+            "type": "insert",
+            "value": 1
+          },
+          "counter": 31
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "len": 1,
+            "pos": 7,
+            "start_id": "4@0",
+            "type": "delete"
+          },
+          "counter": 32
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "len": 1,
+            "pos": 5,
+            "start_id": "3@0",
+            "type": "delete"
+          },
+          "counter": 33
+        },
+        {
+          "container": "cid:root-text:Text",
+          "content": {
+            "len": 1,
+            "pos": 2,
+            "start_id": "2@0",
+            "type": "delete"
+          },
+          "counter": 34
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "pos": 1,
+            "type": "insert",
+            "value": [
+              "🦜:cid:35@0:Map"
+            ]
+          },
+          "counter": 35
+        },
+        {
+          "container": "cid:root-mlist:MovableList",
+          "content": {
+            "elem_id": "L5@0",
+            "type": "set",
+            "value": 1363027663
+          },
+          "counter": 36
+        },
+        {
+          "container": "cid:root-list:List",
+          "content": {
+            "len": 1,
+            "pos": 0,
+            "start_id": "1@0",
+            "type": "delete"
+          },
+          "counter": 37
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "k2056569157",
+            "type": "insert",
+            "value": 1550436103
+          },
+          "counter": 38
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              -189298741
+            ]
+          },
+          "counter": 39
+        }
+      ],
+      "timestamp": 7
+    },
+    {
+      "deps": [
+        "39@0"
+      ],
+      "id": "0@1",
+      "lamport": 40,
+      "msg": "commit-16 seed=7 peer=2",
+      "ops": [
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "k3218958624",
+            "type": "insert",
+            "value": -1386934844
+          },
+          "counter": 0
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "len": 1,
+            "pos": 2,
+            "start_id": "35@0",
+            "type": "delete"
+          },
+          "counter": 1
+        },
+        {
+          "container": "cid:14@0:Map",
+          "content": {
+            "key": "v4156018216",
+            "type": "insert",
+            "value": "str😀"
+          },
+          "counter": 2
+        },
+        {
+          "container": "cid:16@0:Text",
+          "content": {
+            "end": 4,
+            "info": 130,
+            "start": 1,
+            "style_key": "link",
+            "style_value": "https://loro.dev",
+            "type": "mark"
+          },
+          "counter": 3
+        },
+        {
+          "container": "cid:16@0:Text",
+          "content": {
+            "type": "mark_end"
+          },
+          "counter": 4
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "k971802510",
+            "type": "insert",
+            "value": -559353519
+          },
+          "counter": 5
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "len": 1,
+            "pos": 1,
+            "start_id": "24@0",
+            "type": "delete"
+          },
+          "counter": 6
+        }
+      ],
+      "timestamp": 15
+    },
+    {
+      "deps": [
+        "6@1"
+      ],
+      "id": "7@1",
+      "lamport": 47,
+      "msg": "commit-24 seed=7 peer=2",
+      "ops": [
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "k2634094552",
+            "type": "insert",
+            "value": 1629349250
+          },
+          "counter": 7
+        },
+        {
+          "container": "cid:14@0:Map",
+          "content": {
+            "key": "v1476140860",
+            "type": "insert",
+            "value": [
+              0,
+              1,
+              2,
+              46
+            ]
+          },
+          "counter": 8
+        },
+        {
+          "container": "cid:14@0:Map",
+          "content": {
+            "key": "v4156018216",
+            "type": "delete"
+          },
+          "counter": 9
+        },
+        {
+          "container": "cid:25@0:MovableList",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              166163940
+            ]
+          },
+          "counter": 10
+        }
+      ],
+      "timestamp": 23
+    },
+    {
+      "deps": [
+        "10@1"
+      ],
+      "id": "40@0",
+      "lamport": 51,
+      "msg": "commit-32 seed=7 peer=1",
+      "ops": [
+        {
+          "container": "cid:root-mlist:MovableList",
+          "content": {
+            "elem_id": "L5@0",
+            "type": "set",
+            "value": -2001294147
+          },
+          "counter": 40
+        },
+        {
+          "container": "cid:root-tree:Tree",
+          "content": {
+            "fractional_index": "80",
+            "parent": "6@0",
+            "target": "41@0",
+            "type": "create"
+          },
+          "counter": 41
+        },
+        {
+          "container": "cid:16@0:Text",
+          "content": {
+            "len": 2,
+            "pos": 6,
+            "start_id": "21@0",
+            "type": "delete"
+          },
+          "counter": 42
+        },
+        {
+          "container": "cid:16@0:Text",
+          "content": {
+            "len": 1,
+            "pos": 4,
+            "start_id": "20@0",
+            "type": "delete"
+          },
+          "counter": 44
+        },
+        {
+          "container": "cid:30@0:Map",
+          "content": {
+            "key": "m205",
+            "type": "insert",
+            "value": -679124857
+          },
+          "counter": 45
+        }
+      ],
+      "timestamp": 31
+    },
+    {
+      "deps": [
+        "45@0"
+      ],
+      "id": "0@2",
+      "lamport": 57,
+      "msg": "commit-40 seed=7 peer=3",
+      "ops": [
+        {
+          "container": "cid:41@0:Map",
+          "content": {
+            "key": "m255",
+            "type": "insert",
+            "value": -2046072376
+          },
+          "counter": 0
+        },
+        {
+          "container": "cid:root-mlist:MovableList",
+          "content": {
+            "elem_id": "L5@0",
+            "type": "set",
+            "value": 2069818045
+          },
+          "counter": 1
+        },
+        {
+          "container": "cid:25@0:MovableList",
+          "content": {
+            "pos": 1,
+            "type": "insert",
+            "value": [
+              1551498871
+            ]
+          },
+          "counter": 2
+        },
+        {
+          "container": "cid:25@0:MovableList",
+          "content": {
+            "pos": 0,
+            "type": "insert",
+            "value": [
+              "🦜:cid:3@2:Text"
+            ]
+          },
+          "counter": 3
+        },
+        {
+          "container": "cid:root-mlist:MovableList",
+          "content": {
+            "len": 1,
+            "pos": 0,
+            "start_id": "5@0",
+            "type": "delete"
+          },
+          "counter": 4
+        },
+        {
+          "container": "cid:root-map:Map",
+          "content": {
+            "key": "k2136564730",
+            "type": "insert",
+            "value": true
+          },
+          "counter": 5
+        },
+        {
+          "container": "cid:23@0:List",
+          "content": {
+            "pos": 1,
+            "type": "insert",
+            "value": [
+              1853936343
+            ]
+          },
+          "counter": 6
+        }
+      ],
+      "timestamp": 39
+    }
+  ],
+  "peers": [
+    "1",
+    "2",
+    "3"
+  ],
+  "schema_version": 1,
+  "start_version": {}
+}

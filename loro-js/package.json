@@ -1,0 +1,68 @@
+{
+  "name": "loro-js",
+  "version": "0.0.0",
+  "description": "Pure TypeScript implementation of the Loro CRDT and binary format.",
+  "keywords": [
+    "crdt",
+    "loro",
+    "local-first",
+    "collaboration",
+    "typescript"
+  ],
+  "homepage": "https://loro.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/loro-dev/loro.git",
+    "directory": "loro-js"
+  },
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./codec": {
+      "types": "./dist/codec/index.d.ts",
+      "import": "./dist/codec/index.js",
+      "default": "./dist/codec/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "bench:b4": "pnpm build && node --expose-gc benchmarks/b4.mjs",
+    "bench:complexity": "pnpm build && node --expose-gc benchmarks/complexity.mjs",
+    "bench:subscribers": "pnpm build && node --expose-gc benchmarks/container-subscriber.mjs",
+    "build": "vp pack",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "clean": "rm -rf dist",
+    "format": "vp fmt",
+    "format:check": "vp fmt --check",
+    "fixtures:rewrite": "pnpm build && node scripts/rewrite-rust-fixture.mjs",
+    "lint": "vp lint",
+    "test": "vp test run",
+    "typecheck": "tsgo -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript/native-preview": "7.0.0-dev.20260506.1",
+    "typescript": "^5.6.3",
+    "vite": "8.0.10",
+    "vite-plus": "0.1.20",
+    "vitest": "^1.4.0"
+  }
+}

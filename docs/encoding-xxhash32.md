@@ -1,15 +1,32 @@
-# xxHash32 Algorithm Specification
+# xxHash32 in current Loro encodings
 
-This document provides the complete xxHash32 algorithm specification for implementors who need to verify Loro document checksums without external dependencies.
+Verified against code 2026-07-17 at commit
+`fd5a1fdab79142302f0c0fbceb8807128ec6d9cd` and locked dependency
+`xxhash-rust 0.8.15`.
+
+This document provides the complete xxHash32 algorithm for implementations that
+verify current Loro document and SSTable checksums without an external hash
+library.
 
 ## Overview
 
-xxHash32 is a fast, non-cryptographic hash function used by Loro for data integrity verification. Loro uses xxHash32 with the seed `0x4F524F4C` ("LORO" as little-endian u32).
+xxHash32 is a non-cryptographic integrity hash. Loro's document envelope,
+SSTable metadata, and SSTable block checksums use seed `0x4f524f4c`, obtained as
+`u32::from_le_bytes(*b"LORO")`.
 
-**Usage in Loro:**
-- Document header checksum (bytes 16-20)
-- SSTable block meta checksum
-- SSTable block checksums
+LZ4 frame-internal xxHash checks use seed zero and are a separate domain. See
+[encoding-lz4.md](./encoding-lz4.md). Neither form is a cryptographic
+authenticator.
+
+Current Loro-seeded usage:
+
+- mode-3/mode-4 document checksum at bytes 16..20;
+- SSTable block-metadata checksum; and
+- every normal or large SSTable block checksum.
+
+Dependency pin: [`Cargo.lock`](../Cargo.lock#L3738-L3744). The published crate
+archive's `.cargo_vcs_info.json` pins source revision
+`7026cd705195f502283f97aafc9ea41930099c68`.
 
 ## Algorithm Specification
 
@@ -149,16 +166,34 @@ xxHash32(new Uint8Array([
 ]), LORO_SEED) === 0x2EDAB25F  // 786084447
 ```
 
-## Usage in Loro Checksum Verification
+## Usage in Loro checksum verification
 
-### Document Header Checksum
+All stored Loro checksums below are fixed-width `u32le`, even though many
+neighboring fields use varints.
+
+### Document envelope checksum
+
+For current modes, the document must contain at least 22 bytes, have lowercase
+magic `loro`, and have big-endian mode 3 or 4. The stored checksum is bytes
+16..20. The hash input begins at byte 20, so it includes the two mode bytes and
+the complete body:
 
 ```javascript
 function verifyLoroDocument(bytes) {
+  if (bytes.length < 22) {
+    throw new Error("Document is shorter than the 22-byte header");
+  }
+
   // Check magic bytes
   const magic = String.fromCharCode(...bytes.slice(0, 4));
   if (magic !== "loro") {
     throw new Error("Invalid magic bytes");
+  }
+
+  // Current mode is u16 big-endian and must be FastSnapshot or FastUpdates.
+  const mode = (bytes[20] << 8) | bytes[21];
+  if (mode !== 3 && mode !== 4) {
+    throw new Error("Unsupported current encoding mode");
   }
 
   // Read stored checksum (bytes 16-20, little-endian)
@@ -176,12 +211,50 @@ function verifyLoroDocument(bytes) {
 }
 ```
 
-### SSTable Block Checksum
+The other 12 bytes in the 16-byte checksum field are written as zero by the
+current encoder and ignored by the current mode-3/mode-4 checksum reader.
 
-For SSTable blocks, the checksum is stored as the last 4 bytes:
+Writer/reader:
+[`encoding.rs::encode_with`](../crates/loro-internal/src/encoding.rs#L440-L459),
+[`ParsedHeaderAndBody::check_checksum`, `parse_header_and_body`](../crates/loro-internal/src/encoding.rs#L300-L384).
+
+### SSTable metadata checksum
+
+The metadata region has `u32le block_count`, zero or more metadata entries,
+then a final checksum. The hash excludes both the count and the checksum:
+
+```javascript
+function verifySSTableMeta(metaBytes) {
+  if (metaBytes.length < 8) {
+    throw new Error("Truncated SSTable metadata");
+  }
+
+  const checksumOffset = metaBytes.length - 4;
+  const stored = readU32LE(metaBytes, checksumOffset);
+  const entries = metaBytes.slice(4, checksumOffset);
+  return stored === xxHash32(entries, 0x4F524F4C);
+}
+```
+
+This covers every encoded entry byte beginning with the first block offset. It
+does not cover the leading block count, the final checksum itself, or the
+SSTable's trailing `meta_offset` field.
+
+Writer/reader:
+[`BlockMeta::encode_meta`, `decode_meta`](../crates/kv-store/src/sstable.rs#L49-L148).
+
+### SSTable block checksum
+
+Every normal or large SSTable block ends in a checksum over the stored body.
+When compression type is LZ4, “stored body” means the complete LZ4 frame, not
+the decompressed bytes:
 
 ```javascript
 function verifyBlock(blockBytes) {
+  if (blockBytes.length < 4) {
+    throw new Error("Truncated SSTable block");
+  }
+
   const dataLen = blockBytes.length - 4;
   const data = blockBytes.slice(0, dataLen);
   const storedChecksum = readU32LE(blockBytes, dataLen);
@@ -191,18 +264,30 @@ function verifyBlock(blockBytes) {
 }
 ```
 
-## Performance Notes
+Normal/large writers:
+[`block.rs`](../crates/kv-store/src/block.rs#L25-L116).
+Reader:
+[`SSTable::check_block_checksum`](../crates/kv-store/src/sstable.rs#L489-L518).
 
-- The algorithm is designed for speed, not cryptographic security
-- Larger inputs benefit from the 4-way parallel accumulator design
-- For JavaScript implementations, consider using `Uint8Array` for best performance
-- The `>>> 0` operations ensure unsigned 32-bit arithmetic in JavaScript
+## Domain summary
 
-## Reference
+| Domain | Stored form | Seed | Hash input |
+|---|---|---:|---|
+| current document | bytes 16..20, `u32le` | `0x4f524f4c` | document bytes 20..EOF |
+| SSTable metadata | last 4 metadata bytes, `u32le` | `0x4f524f4c` | metadata entries only; exclude count and checksum |
+| SSTable block | last 4 block bytes, `u32le` | `0x4f524f4c` | stored block body before checksum |
+| LZ4 header HC | one byte | 0 | LZ4 descriptor, then take hash bits 8..15 |
 
-- Original xxHash specification: https://github.com/Cyan4973/xxHash
-- xxHash32 is deterministic and platform-independent when following this specification
+Optional LZ4 block/content checksum domains also use seed zero and are not
+emitted by the current Loro writer. They are specified in the LZ4 document.
 
----
+## Reference and implementation notes
 
-**Source**: Based on xxHash specification and Loro's usage at `crates/kv-store/src/sstable.rs` and `crates/loro-internal/src/encoding.rs`
+- The JavaScript `mul32` helper deliberately returns the low 32 bits of the
+  product. `Math.imul(a, b) >>> 0` is an equivalent implementation.
+- The `>>> 0` conversions keep JavaScript arithmetic in the intended unsigned
+  32-bit domain.
+- Original algorithm: [xxHash](https://github.com/Cyan4973/xxHash).
+- Locked Rust implementation: `xxhash-rust 0.8.15`, feature `xxh32`.
+
+The test vectors above were checked against the locked Rust implementation.
