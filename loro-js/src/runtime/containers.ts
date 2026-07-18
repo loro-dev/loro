@@ -524,7 +524,14 @@ export class LoroList<T = unknown> extends LoroContainer {
           : {}),
       };
     });
-    insertFugueElements(this._sequence, position, elements, causalVersion);
+    insertFugueElements(
+      this._sequence,
+      position,
+      elements,
+      causalVersion,
+      // Moves break the origin-tree preorder used by the direct-child index.
+      !(this instanceof LoroMovableList),
+    );
     this._bindChildren(elements);
   }
 
@@ -625,6 +632,10 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
 
   get length(): number {
     return this.#length;
+  }
+
+  override idsAreUnique(): boolean {
+    return true;
   }
 
   elementAt(offset: number): TextElement {
@@ -1497,20 +1508,32 @@ export class LoroText extends LoroContainer {
     const authored = current ? undefined : this._sequence.causalView(causalVersion);
     const authoredLength = current ? this._sequence.visibleLength : authored!.length;
     const authoredPosition = Math.min(position, authoredLength);
+    const currentContext = current
+      ? this._sequence.visibleInsertionContext(authoredPosition)
+      : undefined;
     const authoredAt = (index: number): TextElement | undefined =>
       current ? this._sequence.atVisible(index) : authored!.at(index);
-    const inherited = new Map<string, TextStyleMeta>();
-    for (const [key, meta] of this._attributeMetasAt(
-      authoredAt(authoredPosition - 1),
+    const authoredLeft = currentContext?.left ?? authoredAt(authoredPosition - 1);
+    const insertion = fugueInsertion(
+      this._sequence,
+      position,
+      startId,
       causalVersion,
-    )) {
-      if ((meta.info & 0b100) !== 0) inherited.set(key, meta);
-    }
-    for (const [key, meta] of this._attributeMetasAt(
-      authoredAt(authoredPosition),
-      causalVersion,
-    )) {
-      if ((meta.info & 0b010) !== 0) inherited.set(key, meta);
+      true,
+      currentContext ?? { current: false, left: authoredLeft },
+    );
+    let inherited: Map<string, TextStyleMeta> | undefined;
+    if (!this._styleIndex.isEmpty) {
+      inherited = new Map();
+      for (const [key, meta] of this._attributeMetasAt(authoredLeft, causalVersion)) {
+        if ((meta.info & 0b100) !== 0) inherited.set(key, meta);
+      }
+      for (const [key, meta] of this._attributeMetasAt(
+        authoredAt(authoredPosition),
+        causalVersion,
+      )) {
+        if ((meta.info & 0b010) !== 0) inherited.set(key, meta);
+      }
     }
     const firstCodePoint = text.codePointAt(0)!;
     const singleScalar =
@@ -1522,13 +1545,13 @@ export class LoroText extends LoroContainer {
         id: { peer: startId.peer, counter: startId.counter },
         lamport,
         deleted: false,
-        originLeft: undefined,
-        originRight: undefined,
+        originLeft: insertion.originLeft,
+        originRight: insertion.originRight,
       };
-      insertFugueElements(this._sequence, position, [element], causalVersion);
+      this._sequence.insertAtPhysical(insertion.insertIndex, [element]);
+      recordFugueInsertion(this._sequence, insertion, [element.id]);
       insertedLength = 1;
     } else {
-      const insertion = fugueInsertion(this._sequence, position, startId, causalVersion);
       const span = TextSequenceSpan.fromText(
         text,
         startId,
@@ -1537,11 +1560,14 @@ export class LoroText extends LoroContainer {
         insertion.originRight,
       );
       this._sequence.insertSpanAtPhysical(insertion.insertIndex, span);
+      recordFugueInsertionRun(this._sequence, insertion, startId);
       insertedLength = span.length;
     }
-    const insertedRun = [{ start: { ...startId }, length: insertedLength }];
-    for (const [key, meta] of inherited) {
-      this._styleIndex.add(insertedRun, key, meta);
+    if (inherited !== undefined && inherited.size > 0) {
+      const insertedRun = [{ start: { ...startId }, length: insertedLength }];
+      for (const [key, meta] of inherited) {
+        this._styleIndex.add(insertedRun, key, meta);
+      }
     }
   }
 
@@ -2489,15 +2515,18 @@ function insertFugueElements<T extends SequenceElement>(
   position: number,
   inserted: T[],
   causalVersion: CausalVersion,
+  useOriginIndex = true,
 ): void {
   if (inserted.length === 0) return;
 
-  const { insertIndex, originLeft, originRight } = fugueInsertion(
+  const insertion = fugueInsertion(
     sequence,
     position,
     inserted[0]!.id,
     causalVersion,
+    useOriginIndex,
   );
+  const { insertIndex, originLeft, originRight } = insertion;
 
   for (let index = 0; index < inserted.length; index += 1) {
     inserted[index]!.originLeft = index === 0 ? originLeft : inserted[index - 1]!.id;
@@ -2505,41 +2534,122 @@ function insertFugueElements<T extends SequenceElement>(
   }
 
   sequence.insertAtPhysical(insertIndex, inserted);
+  recordFugueInsertion(
+    sequence,
+    insertion,
+    inserted.map((element) => element.id),
+  );
 }
+
+interface FugueOriginEntry {
+  readonly id: CodecId;
+  readonly originLeft: CodecId | undefined;
+  readonly originRight: CodecId | undefined;
+}
+
+interface FugueOriginIndex {
+  structureVersion: number;
+  readonly explicitChildren: Map<string, FugueOriginEntry[]>;
+}
+
+interface FugueInsertionResult {
+  readonly insertIndex: number;
+  readonly originLeft: CodecId | undefined;
+  readonly originRight: CodecId | undefined;
+  readonly indexUpdate?: FugueOriginIndex | undefined;
+}
+
+interface FuguePositionHint<T extends SequenceElement> {
+  readonly current: boolean;
+  readonly left: T | undefined;
+  readonly startIndex?: number | undefined;
+  readonly right?: T | undefined;
+}
+
+const fugueOriginIndexes = new WeakMap<object, FugueOriginIndex>();
 
 function fugueInsertion<T extends SequenceElement>(
   sequence: SequenceIndex<T>,
   position: number,
   insertedId: CodecId,
   causalVersion: CausalVersion,
-): {
-  readonly insertIndex: number;
-  readonly originLeft: CodecId | undefined;
-  readonly originRight: CodecId | undefined;
-} {
-  const current = sequence.isFullyIncluded(causalVersion);
-  const authoredVisible = current ? undefined : sequence.causalView(causalVersion);
-  const authoredLength = current ? sequence.visibleLength : authoredVisible!.length;
-  const authoredPosition = Math.min(position, authoredLength);
-  const authoredAt = (index: number): T | undefined =>
-    current ? sequence.atVisible(index) : authoredVisible!.at(index);
-  const originLeft = authoredAt(authoredPosition - 1)?.id;
+  useOriginIndex = true,
+  positionHint?: FuguePositionHint<T>,
+): FugueInsertionResult {
+  const current = positionHint?.current ?? sequence.isFullyIncluded(causalVersion);
+  const currentContext =
+    positionHint === undefined && current
+      ? sequence.visibleInsertionContext(Math.min(position, sequence.visibleLength))
+      : undefined;
+  const authoredVisible =
+    positionHint === undefined && !current
+      ? sequence.causalView(causalVersion)
+      : undefined;
+  const authoredLength = current ? sequence.visibleLength : authoredVisible?.length;
+  const authoredPosition = Math.min(position, authoredLength ?? position);
+  const left =
+    positionHint === undefined
+      ? current
+        ? currentContext?.left
+        : authoredVisible?.at(authoredPosition - 1)
+      : positionHint.left;
+  const originLeft = left?.id;
   const startIndex =
-    originLeft === undefined
-      ? 0
-      : (sequence.physicalIndexOf(sequence.findByIdRaw(originLeft)!) ?? -1) + 1;
-  const isIncluded = (id: CodecId): boolean =>
-    id.counter < (causalVersion.get(id.peer) ?? 0);
-  let originRightIndex = startIndex;
-  if (!current) {
-    while (
-      originRightIndex < sequence.allLength &&
-      !isIncluded(sequence.atPhysicalRaw(originRightIndex)!.id)
-    ) {
-      originRightIndex += 1;
-    }
+    positionHint?.startIndex ??
+    currentContext?.startIndex ??
+    (left === undefined ? 0 : (sequence.physicalIndexOf(left) ?? -1) + 1);
+  const currentRight = !current
+    ? undefined
+    : positionHint?.startIndex !== undefined
+      ? positionHint.right
+      : currentContext !== undefined
+        ? currentContext.right
+        : sequence.atPhysicalRaw(startIndex);
+  const right = current
+    ? currentRight === undefined
+      ? undefined
+      : { element: currentRight, index: startIndex }
+    : sequence.findNextIncludedPhysical(startIndex, causalVersion);
+  const originRightIndex = right?.index ?? sequence.allLength;
+  const originRight = right?.element.id;
+
+  // There is no concurrent/future interval to order. Avoid allocating and
+  // maintaining an origin index for the overwhelmingly common local-edit path;
+  // structureVersion will force a rebuild if a later merge needs the index.
+  if (startIndex === originRightIndex) {
+    return { insertIndex: startIndex, originLeft, originRight };
   }
-  const originRight = sequence.atPhysicalRaw(originRightIndex)?.id;
+
+  if (useOriginIndex) {
+    const indexed = indexedFugueInsertion(
+      sequence,
+      startIndex,
+      originRightIndex,
+      originLeft,
+      originRight,
+      insertedId,
+    );
+    if (indexed !== undefined) return indexed;
+  }
+
+  return scannedFugueInsertion(
+    sequence,
+    startIndex,
+    originRightIndex,
+    originLeft,
+    originRight,
+    insertedId,
+  );
+}
+
+function scannedFugueInsertion<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  startIndex: number,
+  originRightIndex: number,
+  originLeft: CodecId | undefined,
+  originRight: CodecId | undefined,
+  insertedId: CodecId,
+): FugueInsertionResult {
   const parentRightIndex = directRightParentIndex(sequence, originLeft, originRight);
 
   let insertIndex = startIndex;
@@ -2581,6 +2691,153 @@ function fugueInsertion<T extends SequenceElement>(
   return { insertIndex, originLeft, originRight };
 }
 
+function indexedFugueInsertion<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  startIndex: number,
+  originRightIndex: number,
+  originLeft: CodecId | undefined,
+  originRight: CodecId | undefined,
+  insertedId: CodecId,
+): FugueInsertionResult | undefined {
+  const originIndex = getFugueOriginIndex(sequence);
+  const children = fugueDirectChildren(sequence, originIndex, originLeft);
+  const positioned: { readonly entry: FugueOriginEntry; readonly index: number }[] = [];
+  for (const entry of children) {
+    const element = sequence.findByIdRaw(entry.id);
+    const index = element === undefined ? undefined : sequence.physicalIndexOf(element);
+    if (index === undefined) return undefined;
+    positioned.push({ entry, index });
+  }
+  positioned.sort((left, right) => left.index - right.index);
+
+  const candidates = positioned.filter(
+    (child) => child.index >= startIndex && child.index < originRightIndex,
+  );
+  const parentRightIndex = directRightParentIndex(sequence, originLeft, originRight);
+  let insertIndex = startIndex;
+  let scanning = false;
+  for (let childIndex = 0; childIndex < candidates.length; childIndex += 1) {
+    const { entry: other } = candidates[childIndex]!;
+    if (sameOptionalId(other.originRight, originRight)) {
+      if (other.id.peer > insertedId.peer) break;
+      scanning = false;
+    } else {
+      const otherParentRightIndex = directRightParentIndex(
+        sequence,
+        originLeft,
+        other.originRight,
+      );
+      const ordering = compareOptionalPositions(otherParentRightIndex, parentRightIndex);
+      if (ordering < 0) scanning = true;
+      else if (ordering === 0 && other.id.peer > insertedId.peer) break;
+      else scanning = false;
+    }
+
+    if (!scanning) {
+      insertIndex = candidates[childIndex + 1]?.index ?? originRightIndex;
+    }
+  }
+
+  return {
+    insertIndex,
+    originLeft,
+    originRight,
+    indexUpdate: originIndex,
+  };
+}
+
+function getFugueOriginIndex<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+): FugueOriginIndex {
+  const cached = fugueOriginIndexes.get(sequence);
+  if (cached?.structureVersion === sequence.structureVersion) return cached;
+
+  // Consecutive IDs form the common single-child Fugue chain, so derive those
+  // edges on lookup instead of allocating a map entry for every text scalar.
+  // Any untracked physical edit changes structureVersion and rebuilds the
+  // explicit branch index before it is queried again.
+  const rebuilt: FugueOriginIndex = {
+    structureVersion: sequence.structureVersion,
+    explicitChildren: new Map(),
+  };
+  sequence.forEachPhysicalRaw((element) => {
+    recordFugueOriginEntry(rebuilt, element.id, element.originLeft, element.originRight);
+  });
+  fugueOriginIndexes.set(sequence, rebuilt);
+  return rebuilt;
+}
+
+function fugueDirectChildren<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  index: FugueOriginIndex,
+  originLeft: CodecId | undefined,
+): FugueOriginEntry[] {
+  const children =
+    index.explicitChildren.get(optionalSequenceIdKey(originLeft))?.slice() ?? [];
+  if (originLeft === undefined) return children;
+
+  const implicitId = { peer: originLeft.peer, counter: originLeft.counter + 1 };
+  const implicit = sequence.findByIdRaw(implicitId);
+  if (implicit !== undefined && sameOptionalId(implicit.originLeft, originLeft)) {
+    children.push({
+      id: implicitId,
+      originLeft,
+      originRight: implicit.originRight,
+    });
+  }
+  return children;
+}
+
+function recordFugueInsertion<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  insertion: FugueInsertionResult,
+  insertedIds: readonly CodecId[],
+): void {
+  const index = insertion.indexUpdate;
+  if (index === undefined) return;
+  let originLeft = insertion.originLeft;
+  for (const id of insertedIds) {
+    recordFugueOriginEntry(index, id, originLeft, insertion.originRight);
+    originLeft = id;
+  }
+  index.structureVersion = sequence.structureVersion;
+}
+
+function recordFugueInsertionRun<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  insertion: FugueInsertionResult,
+  startId: CodecId,
+): void {
+  const index = insertion.indexUpdate;
+  if (index === undefined) return;
+  recordFugueOriginEntry(index, startId, insertion.originLeft, insertion.originRight);
+  index.structureVersion = sequence.structureVersion;
+}
+
+function recordFugueOriginEntry(
+  index: FugueOriginIndex,
+  id: CodecId,
+  originLeft: CodecId | undefined,
+  originRight: CodecId | undefined,
+): void {
+  if (
+    originLeft !== undefined &&
+    id.peer === originLeft.peer &&
+    id.counter === originLeft.counter + 1
+  ) {
+    return;
+  }
+  const key = optionalSequenceIdKey(originLeft);
+  const children = index.explicitChildren.get(key);
+  const entry = {
+    id: { ...id },
+    originLeft: originLeft === undefined ? undefined : { ...originLeft },
+    originRight: originRight === undefined ? undefined : { ...originRight },
+  };
+  if (children === undefined) index.explicitChildren.set(key, [entry]);
+  else children.push(entry);
+}
+
 function directRightParentIndex<T extends SequenceElement>(
   sequence: SequenceIndex<T>,
   originLeft: CodecId | undefined,
@@ -2607,6 +2864,10 @@ function compareOptionalPositions(
 
 function sequenceIdKey(id: CodecId): string {
   return `${id.peer}:${id.counter}`;
+}
+
+function optionalSequenceIdKey(id: CodecId | undefined): string {
+  return id === undefined ? "root" : `id:${sequenceIdKey(id)}`;
 }
 
 function compareWriters(left: LastWriter, right: LastWriter): number {

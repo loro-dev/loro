@@ -50,6 +50,10 @@ export abstract class SequenceSpan<T extends IndexedSequenceElement> {
   abstract metricsAt(offset: number): SequenceMetrics;
   abstract slice(start: number, end: number): SequenceSpan<T>;
 
+  idsAreUnique(): boolean {
+    return false;
+  }
+
   append(_other: SequenceSpan<T>): boolean {
     return false;
   }
@@ -142,6 +146,7 @@ const listMetrics = (): SequenceMetrics => ({ utf16: 1, utf8: 1 });
 export class SequenceIndex<T extends IndexedSequenceElement> {
   #root: SequenceNode<T> | undefined;
   #tail: SequenceNode<T> | undefined;
+  #structureVersion = 0;
   #randomState = 0x9e_37_79_b9;
   readonly #metrics: (element: T) => SequenceMetrics;
   readonly #locationsByPeer = new Map<bigint, CounterStore<SequenceLocation<T>>>();
@@ -186,6 +191,11 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       count += 1;
     });
     return count;
+  }
+
+  /** Changes whenever the physical order or membership changes. */
+  get structureVersion(): number {
+    return this.#structureVersion;
   }
 
   all(): T[] {
@@ -333,6 +343,31 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     return undefined;
   }
 
+  forEachPhysicalRaw(visit: (element: T, index: number) => boolean | void): void {
+    let index = 0;
+    let stopped = false;
+    visitInOrder(this.#root, (node) => {
+      if (stopped) return;
+      for (let offset = 0; offset < nodeLength(node); offset += 1) {
+        if (visit(nodeElement(node, offset), index) === false) {
+          stopped = true;
+          return;
+        }
+        index += 1;
+      }
+    });
+  }
+
+  findNextIncludedPhysical(
+    start: number,
+    version: ReadonlyMap<bigint, number>,
+  ): { readonly element: T; readonly index: number } | undefined {
+    if (!Number.isSafeInteger(start) || start < 0 || start >= this.allLength) {
+      return undefined;
+    }
+    return findNextIncludedPhysical(this.#root, 0, start, version);
+  }
+
   atVisible(index: number): T | undefined {
     if (!Number.isSafeInteger(index) || index < 0 || index >= this.visibleLength) {
       return undefined;
@@ -354,6 +389,58 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       node = node.right;
     }
     return undefined;
+  }
+
+  visibleInsertionContext(position: number): {
+    readonly current: true;
+    readonly left: T | undefined;
+    readonly startIndex: number;
+    readonly right: T | undefined;
+  } {
+    if (
+      !Number.isSafeInteger(position) ||
+      position < 0 ||
+      position > this.visibleLength
+    ) {
+      throw new RangeError(`visible sequence position ${position} is out of range`);
+    }
+    if (position === 0) {
+      return {
+        current: true,
+        left: undefined,
+        startIndex: 0,
+        right: firstPhysicalElement(this.#root),
+      };
+    }
+
+    let node = this.#root;
+    let remaining = position - 1;
+    let physicalBase = 0;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftPhysicalCount = allCount(node.left);
+      const leftVisibleCount = visibleCount(node.left);
+      if (remaining < leftVisibleCount) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftVisibleCount;
+      physicalBase += leftPhysicalCount;
+      if (remaining < ownVisibleCount(node)) {
+        const offset = physicalOffsetAtVisibleIndex(node, remaining);
+        const left = nodeElement(node, offset);
+        return {
+          current: true,
+          left,
+          startIndex: physicalBase + offset + 1,
+          right: nextPhysicalElement(node, offset),
+        };
+      }
+      remaining -= ownVisibleCount(node);
+      physicalBase += nodeLength(node);
+      node = node.right;
+    }
+    throw new Error("visible sequence insertion position is missing");
   }
 
   findById(id: SequenceId): T | undefined {
@@ -548,6 +635,19 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       if (this.#locationsByPeer.get(id.peer)?.has(id.counter) === true) {
         throw new Error(`duplicate sequence id ${id.counter}@${id.peer.toString()}`);
       }
+    } else if (elements.length <= MAX_SEQUENCE_SPAN) {
+      for (let index = 0; index < elements.length; index += 1) {
+        const id = elements[index]!.id;
+        if (this.#locationsByPeer.get(id.peer)?.has(id.counter) === true) {
+          throw new Error(`duplicate sequence id ${id.counter}@${id.peer.toString()}`);
+        }
+        for (let previous = 0; previous < index; previous += 1) {
+          const other = elements[previous]!.id;
+          if (other.peer === id.peer && other.counter === id.counter) {
+            throw new Error(`duplicate sequence id ${id.counter}@${id.peer.toString()}`);
+          }
+        }
+      }
     } else {
       const ids = new Set<string>();
       for (const element of elements) {
@@ -564,29 +664,44 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       }
     }
     this.#invalidateCausalView();
-    if (this.#appendToPreviousNode(position, elements)) return;
+    if (this.#appendToPreviousNode(position, elements)) {
+      this.#structureVersion += 1;
+      return;
+    }
     let insertedRoot: SequenceNode<T> | undefined;
-    for (let start = 0; start < elements.length; start += MAX_SEQUENCE_SPAN) {
-      insertedRoot = merge(
-        insertedRoot,
-        this.#newNode(elements.slice(start, start + MAX_SEQUENCE_SPAN), true),
-        this.#metrics,
-      );
+    if (elements.length <= MAX_SEQUENCE_SPAN) {
+      insertedRoot = this.#newNode(elements, true);
+    } else {
+      for (let start = 0; start < elements.length; start += MAX_SEQUENCE_SPAN) {
+        insertedRoot = merge(
+          insertedRoot,
+          this.#newNode(elements.slice(start, start + MAX_SEQUENCE_SPAN), true),
+          this.#metrics,
+        );
+      }
     }
     const appendAtTail = position === this.allLength;
     const previousTailElement =
       appendAtTail || this.#tail === undefined
         ? undefined
         : nodeElement(this.#tail, nodeLength(this.#tail) - 1);
-    const [left, right] = this.#split(this.#root, position);
-    const inserted = appendAtTail
-      ? this.#appendAtTail(left, insertedRoot)
-      : merge(left, insertedRoot, this.#metrics);
-    this.#root = merge(inserted, right, this.#metrics);
+    if (appendAtTail) {
+      this.#root = this.#appendAtTail(this.#root, insertedRoot);
+    } else if (
+      insertedRoot !== undefined &&
+      insertedRoot.left === undefined &&
+      insertedRoot.right === undefined
+    ) {
+      this.#root = this.#insertSingleNode(this.#root, position, insertedRoot);
+    } else {
+      const [left, right] = this.#split(this.#root, position);
+      this.#root = merge(merge(left, insertedRoot, this.#metrics), right, this.#metrics);
+    }
     if (this.#root !== undefined) this.#root.parent = undefined;
     if (previousTailElement !== undefined) {
       this.#tail = elementNode(previousTailElement)!;
     }
+    this.#structureVersion += 1;
   }
 
   insertSpanAtPhysical(position: number, span: SequenceSpan<T>): void {
@@ -599,6 +714,27 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const counter = span.counterAt(0);
       if (this.#locationsByPeer.get(peer)?.has(counter) === true) {
         throw new Error(`duplicate sequence id ${counter}@${peer.toString()}`);
+      }
+    } else if (span.idsAreUnique()) {
+      for (let offset = 0; offset < span.length; offset += 1) {
+        const peer = span.peerAt(offset);
+        const counter = span.counterAt(offset);
+        if (this.#locationsByPeer.get(peer)?.has(counter) === true) {
+          throw new Error(`duplicate sequence id ${counter}@${peer.toString()}`);
+        }
+      }
+    } else if (span.length <= MAX_SEQUENCE_SPAN) {
+      for (let offset = 0; offset < span.length; offset += 1) {
+        const peer = span.peerAt(offset);
+        const counter = span.counterAt(offset);
+        if (this.#locationsByPeer.get(peer)?.has(counter) === true) {
+          throw new Error(`duplicate sequence id ${counter}@${peer.toString()}`);
+        }
+        for (let previous = 0; previous < offset; previous += 1) {
+          if (span.peerAt(previous) === peer && span.counterAt(previous) === counter) {
+            throw new Error(`duplicate sequence id ${counter}@${peer.toString()}`);
+          }
+        }
       }
     } else {
       const ids = new Set<string>();
@@ -613,32 +749,47 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       }
     }
     this.#invalidateCausalView();
-    if (this.#appendSpanToPreviousNode(position, span)) return;
+    if (this.#appendSpanToPreviousNode(position, span)) {
+      this.#structureVersion += 1;
+      return;
+    }
     let insertedRoot: SequenceNode<T> | undefined;
-    for (let start = 0; start < span.length; start += MAX_SEQUENCE_SPAN) {
-      insertedRoot = merge(
-        insertedRoot,
-        this.#newNode(
-          span.slice(start, Math.min(span.length, start + MAX_SEQUENCE_SPAN)),
-          true,
-        ),
-        this.#metrics,
-      );
+    if (span.length <= MAX_SEQUENCE_SPAN) {
+      insertedRoot = this.#newNode(span, true);
+    } else {
+      for (let start = 0; start < span.length; start += MAX_SEQUENCE_SPAN) {
+        insertedRoot = merge(
+          insertedRoot,
+          this.#newNode(
+            span.slice(start, Math.min(span.length, start + MAX_SEQUENCE_SPAN)),
+            true,
+          ),
+          this.#metrics,
+        );
+      }
     }
     const appendAtTail = position === this.allLength;
     const previousTailElement =
       appendAtTail || this.#tail === undefined
         ? undefined
         : nodeElement(this.#tail, nodeLength(this.#tail) - 1);
-    const [left, right] = this.#split(this.#root, position);
-    const inserted = appendAtTail
-      ? this.#appendAtTail(left, insertedRoot)
-      : merge(left, insertedRoot, this.#metrics);
-    this.#root = merge(inserted, right, this.#metrics);
+    if (appendAtTail) {
+      this.#root = this.#appendAtTail(this.#root, insertedRoot);
+    } else if (
+      insertedRoot !== undefined &&
+      insertedRoot.left === undefined &&
+      insertedRoot.right === undefined
+    ) {
+      this.#root = this.#insertSingleNode(this.#root, position, insertedRoot);
+    } else {
+      const [left, right] = this.#split(this.#root, position);
+      this.#root = merge(merge(left, insertedRoot, this.#metrics), right, this.#metrics);
+    }
     if (this.#root !== undefined) this.#root.parent = undefined;
     if (previousTailElement !== undefined) {
       this.#tail = elementNode(previousTailElement)!;
     }
+    this.#structureVersion += 1;
   }
 
   setDeleted(element: T, deleted: boolean): void {
@@ -746,6 +897,28 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       );
     });
     if (elements.length === 0) return { found: false, changed: false };
+
+    if (elements.length <= MAX_SEQUENCE_SPAN) {
+      const materializedNodes: SequenceNode<T>[] = [];
+      for (const element of elements) {
+        const node = elementNode(element)!;
+        if (materializedNodes.includes(node)) continue;
+        materializedNodes.push(node);
+        materializeElementDeletion(element, this.#metrics);
+      }
+
+      const changedNodes: SequenceNode<T>[] = [];
+      for (const element of elements) {
+        if (element.deleted === deleted) continue;
+        element.deleted = deleted;
+        const node = elementNode(element)!;
+        if (!changedNodes.includes(node)) changedNodes.push(node);
+      }
+      if (changedNodes.length === 0) return { found: true, changed: false };
+      for (const node of changedNodes) recomputeOwn(node, this.#metrics);
+      for (const node of changedNodes) recomputeToRoot(node, this.#metrics, false);
+      return { found: true, changed: true };
+    }
 
     const materializedNodes = new Set<SequenceNode<T>>();
     for (const element of elements) {
@@ -920,6 +1093,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     this.#root = merge(merge(left, selected, this.#metrics), right, this.#metrics);
     if (this.#root !== undefined) this.#root.parent = undefined;
     this.#tail = this.#root === undefined ? undefined : rightmost(this.#root);
+    this.#structureVersion += 1;
   }
 
   moveBefore(element: T, before: T | undefined): void {
@@ -944,6 +1118,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     }
     if (this.#root !== undefined) this.#root.parent = undefined;
     this.#tail = this.#root === undefined ? undefined : rightmost(this.#root);
+    this.#structureVersion += 1;
   }
 
   nextVisible(element: T): T | undefined {
@@ -1147,6 +1322,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     this.#deletionRuns.reset();
     this.#maxCounterByPeer.clear();
     this.#hasLazyDeletions = false;
+    this.#structureVersion += 1;
   }
 
   #newNode(
@@ -1533,6 +1709,44 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     return true;
   }
 
+  #insertSingleNode(
+    root: SequenceNode<T> | undefined,
+    position: number,
+    inserted: SequenceNode<T>,
+  ): SequenceNode<T> {
+    if (root === undefined) {
+      inserted.parent = undefined;
+      return inserted;
+    }
+    pushNodeDeletion(root, this.#metrics);
+    if (inserted.priority < root.priority) {
+      const [left, right] = this.#split(root, position);
+      inserted.left = left;
+      inserted.right = right;
+      recompute(inserted, this.#metrics);
+      inserted.parent = undefined;
+      return inserted;
+    }
+
+    const leftCount = allCount(root.left);
+    const ownEnd = leftCount + nodeLength(root);
+    if (position <= leftCount) {
+      root.left = this.#insertSingleNode(root.left, position, inserted);
+      recompute(root, this.#metrics);
+      root.parent = undefined;
+      return root;
+    }
+    if (position >= ownEnd) {
+      root.right = this.#insertSingleNode(root.right, position - ownEnd, inserted);
+      recompute(root, this.#metrics);
+      root.parent = undefined;
+      return root;
+    }
+
+    const [left, right] = this.#split(root, position);
+    return merge(merge(left, inserted, this.#metrics), right, this.#metrics)!;
+  }
+
   #appendAtTail(
     left: SequenceNode<T> | undefined,
     right: SequenceNode<T> | undefined,
@@ -1660,6 +1874,55 @@ function nodeCounter<T extends IndexedSequenceElement>(
     : Array.isArray(node.element)
       ? (node.element as T[])[offset]!.id.counter
       : (node.element as T).id.counter;
+}
+
+function findNextIncludedPhysical<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+  nodeStart: number,
+  start: number,
+  version: ReadonlyMap<bigint, number>,
+): { readonly element: T; readonly index: number } | undefined {
+  if (node === undefined || nodeStart + node.allCount <= start) return undefined;
+  if (
+    node.idRunCount === 1 &&
+    (version.get(node.firstId.peer) ?? 0) <= node.firstId.counter
+  ) {
+    return undefined;
+  }
+
+  const leftCount = allCount(node.left);
+  const ownStart = nodeStart + leftCount;
+  const fromLeft = findNextIncludedPhysical(node.left, nodeStart, start, version);
+  if (fromLeft !== undefined) return fromLeft;
+
+  const offsetStart = Math.max(0, start - ownStart);
+  if (offsetStart < nodeLength(node)) {
+    if (node.ownIdRunCount === 1) {
+      const peer = nodePeer(node, offsetStart);
+      const counter = nodeCounter(node, offsetStart);
+      if (counter < (version.get(peer) ?? 0)) {
+        return {
+          element: nodeElement(node, offsetStart),
+          index: ownStart + offsetStart,
+        };
+      }
+    } else {
+      for (let offset = offsetStart; offset < nodeLength(node); offset += 1) {
+        const peer = nodePeer(node, offset);
+        const counter = nodeCounter(node, offset);
+        if (counter < (version.get(peer) ?? 0)) {
+          return { element: nodeElement(node, offset), index: ownStart + offset };
+        }
+      }
+    }
+  }
+
+  return findNextIncludedPhysical(
+    node.right,
+    ownStart + nodeLength(node),
+    start,
+    version,
+  );
 }
 
 function nodeLamport<T extends IndexedSequenceElement>(
@@ -2056,6 +2319,21 @@ function recompute<T extends IndexedSequenceElement>(
 ): void {
   const left = node.left;
   const right = node.right;
+  if (left === undefined && right === undefined) {
+    node.allCount = nodeLength(node);
+    node.visibleCount = node.ownVisibleCount;
+    node.visibleUtf16 = node.ownVisibleUtf16;
+    node.visibleUtf8 = node.ownVisibleUtf8;
+    node.firstVisibleId = node.ownFirstVisibleId;
+    node.lastVisibleId = node.ownLastVisibleId;
+    node.visibleIdRunCount = node.ownVisibleIdRunCount;
+    node.firstId = node.ownFirstId;
+    node.lastId = node.ownLastId;
+    node.idRunCount = node.ownIdRunCount;
+    node.allUtf16 = node.ownUtf16;
+    node.allUtf8 = node.ownUtf8;
+    return;
+  }
   node.allCount = (left?.allCount ?? 0) + nodeLength(node) + (right?.allCount ?? 0);
   node.allUtf16 = (left?.allUtf16 ?? 0) + node.ownUtf16 + (right?.allUtf16 ?? 0);
   node.allUtf8 = (left?.allUtf8 ?? 0) + node.ownUtf8 + (right?.allUtf8 ?? 0);
@@ -2730,6 +3008,29 @@ function appendSequenceIdRun(
   } else {
     output.push({ start: { ...start }, length });
   }
+}
+
+function firstPhysicalElement<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+): T | undefined {
+  if (node === undefined) return undefined;
+  while (node.left !== undefined) node = node.left;
+  return nodeElement(node, 0);
+}
+
+function nextPhysicalElement<T extends IndexedSequenceElement>(
+  node: SequenceNode<T>,
+  offset: number,
+): T | undefined {
+  if (offset + 1 < nodeLength(node)) return nodeElement(node, offset + 1);
+  const fromRight = firstPhysicalElement(node.right);
+  if (fromRight !== undefined) return fromRight;
+  let current = node;
+  while (current.parent !== undefined) {
+    if (current === current.parent.left) return nodeElement(current.parent, 0);
+    current = current.parent;
+  }
+  return undefined;
 }
 
 function firstVisibleElement<T extends IndexedSequenceElement>(

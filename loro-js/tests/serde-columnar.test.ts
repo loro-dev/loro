@@ -72,6 +72,20 @@ describe("serde-columnar", () => {
     ]);
   });
 
+  test("preserves the canonical literal DeltaRle encoding", () => {
+    expect(bytesToHex(encodeDeltaRleU32([10, 11, 12, 13, 15, 17]))).toBe(
+      "0b140202020404",
+    );
+    expect(bytesToHex(encodeDeltaRleI32([-2, -1, 0, 5, 3]))).toBe("090302020a03");
+  });
+
+  test("round trips the full i32 and u32 delta range", () => {
+    const unsigned = [0, 0xffff_ffff, 0, 0xffff_ffff];
+    const signed = [-0x8000_0000, 0x7fff_ffff, -0x8000_0000];
+    expect(decodeDeltaRleU32(encodeDeltaRleU32(unsigned))).toEqual(unsigned);
+    expect(decodeDeltaRleI32(encodeDeltaRleI32(signed))).toEqual(signed);
+  });
+
   test("round trips DeltaRle integer variants", () => {
     const unsigned = [0, 1, 2, 10, 11, 5];
     const signed = [-2, -1, 0, 5, 3];

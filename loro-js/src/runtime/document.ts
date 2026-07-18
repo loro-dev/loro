@@ -22,7 +22,7 @@ import {
   type ParsedDocument,
 } from "../codec/document";
 import { decodeChangeBlockKey, encodeChangeBlockKey } from "../codec/id";
-import { decodeSstable, encodeSstable } from "../codec/sstable";
+import { decodeSstable, encodeSstable, type SstableEntry } from "../codec/sstable";
 import {
   decodeStateSnapshotStore,
   encodeStateSnapshotStore,
@@ -138,7 +138,8 @@ let fallbackPeer = 1n;
 
 interface HistoryRecord {
   readonly change: DecodedChange;
-  readonly keys: readonly string[];
+  keys: readonly string[];
+  keyIndices?: Map<string, number>;
 }
 
 interface IntegrationResult {
@@ -153,6 +154,14 @@ interface DecodedImportData {
   readonly startVersion?: VersionVector;
   readonly startFrontiers?: CodecId[];
   readonly endVersion?: VersionVector;
+}
+
+interface DeferredSnapshotHistory {
+  readonly entries: readonly SstableEntry[];
+  readonly validatedBlocks: ReadonlyMap<SstableEntry, readonly HistoryRecord[]>;
+  readonly endVersion: VersionVector;
+  readonly frontiers: readonly CodecId[];
+  readonly operationCount: number;
 }
 
 interface IndexedHistoryOperation {
@@ -236,6 +245,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #containersWithOperations = new Set<string>();
   #containerKeys = new WeakMap<CodecContainerId, string>();
   #pendingHistory = new Map<string, HistoryRecord>();
+  #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
   #containers = new Map<string, LoroContainer>();
   #roots = new Map<string, LoroContainer>();
   #pending: PendingChange | undefined;
@@ -383,6 +393,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #containerHasOperations(id: CodecContainerId): boolean {
+    this.#materializeDeferredHistory();
     return this.#containersWithOperations.has(formatContainerId(id));
   }
 
@@ -477,12 +488,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#setHistoryRecord(changeKey(change.id), committedRecord, committedRecord);
       } else {
         const previousLength = changeLength(previous.change);
-        const merged = mergeHistoryRecords(previous, committedRecord);
-        this.#setHistoryRecord(changeKey(previous.change.id), merged, committedRecord);
-        updateRecord = {
-          keys: merged.keys,
-          change: sliceChange(merged.change, previousLength, previousLength + atomLength),
-        };
+        updateRecord = appendHistoryRecord(previous, committedRecord, previousLength);
+        this.#appendMergedHistoryRecord(previous, updateRecord, previousLength);
       }
       this.#nextCounter = change.id.counter + atomLength;
       if (this.#detached) {
@@ -592,11 +599,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   import(bytes: Uint8Array): ImportStatus {
     this.#commit({}, true);
     const before = this.#frontiersCodec();
+    const beforeVersion = this.#historyVersion();
     const parsed = decodeDocument(bytes);
+    if (this.#deferredSnapshotHistory !== undefined) {
+      this.#materializeDeferredHistory();
+    }
     const imported: HistoryRecord[] = [];
     let integration: IntegrationResult = { added: [], pending: [] };
     let beforeValues = new Map<string, unknown>();
     let preparedDiffs = new Map<string, Diff>();
+    let deferredChanged: Set<string> | undefined;
+    let deferredStatus: ImportStatus | undefined;
     if (parsed.mode === EncodeMode.FastUpdates) {
       for (const blockBytes of decodeFastUpdatesBody(parsed.body)) {
         imported.push(...this.#readChangeBlock(blockBytes));
@@ -617,27 +630,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     } else {
       const snapshot = decodeFastSnapshotBody(parsed.body);
+      const oplogEntries = decodeSstable(snapshot.oplog.slice());
       let encodedStartVersion: VersionVector | undefined;
       let encodedStartFrontiers: CodecId[] | undefined;
-      for (const entry of decodeSstable(snapshot.oplog)) {
+      let encodedEndVersion: VersionVector | undefined;
+      let encodedEndFrontiers: CodecId[] | undefined;
+      for (const entry of oplogEntries) {
         if (bytesEqual(entry.key, START_VERSION_KEY)) {
-          encodedStartVersion = new VersionVector(
-            new Map(
-              decodePostcardVersionVector(entry.value).map((id) => [
-                peerIdToString(id.peer),
-                id.counter,
-              ]),
-            ),
+          encodedStartVersion = versionVectorFromCodec(
+            decodePostcardVersionVector(entry.value),
           );
         } else if (bytesEqual(entry.key, START_FRONTIERS_KEY)) {
           encodedStartFrontiers = decodePostcardFrontiers(entry.value);
-        } else if (entry.key.length === 12) {
-          const expected = decodeChangeBlockKey(entry.key);
-          const records = this.#readChangeBlock(entry.value);
-          if (records[0] !== undefined && !idsEqual(records[0].change.id, expected)) {
-            throw new Error("snapshot change key does not match its block");
-          }
-          imported.push(...records);
+        } else if (bytesEqual(entry.key, VERSION_KEY)) {
+          encodedEndVersion = versionVectorFromCodec(
+            decodePostcardVersionVector(entry.value),
+          );
+        } else if (bytesEqual(entry.key, FRONTIERS_KEY)) {
+          encodedEndFrontiers = decodePostcardFrontiers(entry.value);
         }
       }
 
@@ -647,10 +657,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#shallowRootStore === undefined;
       const isShallowSnapshot = snapshot.shallowRootState.length > 0;
       let rootStore: StateSnapshotStore | undefined;
+      let stagedShallowStartVersion: VersionVector | undefined;
+      let stagedShallowRootVersion: VersionVector | undefined;
+      let stagedShallowRootFrontiers: CodecId[] | undefined;
+      let canonicalStartMetadata =
+        !isShallowSnapshot &&
+        encodedStartVersion === undefined &&
+        encodedStartFrontiers === undefined;
       if (initializeFromSnapshot && isShallowSnapshot) {
-        rootStore = decodeStateSnapshotStore(snapshot.shallowRootState);
+        rootStore = decodeStateSnapshotStore(snapshot.shallowRootState.slice());
         if (rootStore.kind !== "sstable") {
           throw new Error("shallow snapshot root state must be an SSTable");
+        }
+        if (
+          rootStore.frontiers !== undefined &&
+          encodedStartFrontiers !== undefined &&
+          !frontierSetsEqual(
+            rootStore.frontiers.map(formatOpId),
+            encodedStartFrontiers.map(formatOpId),
+          )
+        ) {
+          throw new Error("shallow snapshot start frontiers do not match root state");
         }
         const startFrontiers = encodedStartFrontiers ?? rootStore.frontiers ?? [];
         const startVersion = encodedStartVersion ?? new VersionVector();
@@ -658,30 +685,105 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         for (const frontier of startFrontiers) {
           rootVersion.set(frontier.peer, frontier.counter + 1);
         }
-        this.#shallowStartVersion = startVersion;
-        this.#shallowRootVersion = rootVersion;
-        this.#shallowRootFrontiers = startFrontiers.map((id) => ({ ...id }));
-        this.#shallowRootStore = rootStore;
+        stagedShallowStartVersion = startVersion;
+        stagedShallowRootVersion = rootVersion;
+        stagedShallowRootFrontiers = startFrontiers.map((id) => ({ ...id }));
+        canonicalStartMetadata =
+          encodedStartVersion !== undefined && encodedStartFrontiers !== undefined;
       }
 
-      if (!initializeFromSnapshot) this.#assertImportsNotOutdated(imported);
-      integration = this.#integrateHistory(imported);
-      if (!this.#detached) {
-        if (initializeFromSnapshot) {
+      const stateStore = decodeStateSnapshotStore(snapshot.state);
+      const hydratedStore =
+        rootStore === undefined
+          ? stateStore
+          : mergeStateSnapshotStores(rootStore, stateStore);
+      if (
+        stagedShallowRootVersion !== undefined &&
+        encodedEndVersion !== undefined &&
+        !versionIncludes(encodedEndVersion, stagedShallowRootVersion)
+      ) {
+        throw new Error("shallow snapshot root version exceeds its end version");
+      }
+      const installStagedShallowRoot = (): void => {
+        if (
+          rootStore === undefined ||
+          stagedShallowStartVersion === undefined ||
+          stagedShallowRootVersion === undefined ||
+          stagedShallowRootFrontiers === undefined
+        ) {
+          return;
+        }
+        this.#shallowStartVersion = stagedShallowStartVersion;
+        this.#shallowRootVersion = stagedShallowRootVersion;
+        this.#shallowRootFrontiers = stagedShallowRootFrontiers;
+        this.#shallowRootStore = rootStore;
+      };
+      const canDeferHistory =
+        initializeFromSnapshot &&
+        !this.#detached &&
+        canonicalStartMetadata &&
+        encodedEndVersion !== undefined &&
+        encodedEndFrontiers !== undefined &&
+        stateStore.kind === "sstable" &&
+        hydratedStore.kind === "sstable";
+
+      if (canDeferHistory) {
+        const endVersion = encodedEndVersion!;
+        const endFrontiers = encodedEndFrontiers!;
+        const validatedBlocks = this.#validateDeferredFrontierBlocks(
+          oplogEntries,
+          endVersion,
+          endFrontiers,
+        );
+        installStagedShallowRoot();
+        deferredChanged = new Set(
+          hydratedStore.containers.map(({ id }) => formatContainerId(id)),
+        );
+        if (this.#hasEventSubscribers()) {
+          beforeValues = this.#captureContainerEventValues(deferredChanged);
+        }
+        this.#hydrateState(hydratedStore);
+        this.#deferredSnapshotHistory = {
+          entries: oplogEntries,
+          validatedBlocks,
+          endVersion,
+          frontiers: endFrontiers.map((id) => ({ ...id })),
+          operationCount: versionDistance(
+            stagedShallowStartVersion ?? this.#shallowStartVersion,
+            endVersion,
+          ),
+        };
+        for (const { peer } of endVersion._codecEntriesUnsorted()) {
+          this.#seenCommittedPeers.add(peer);
+        }
+        deferredStatus = importStatusBetweenVersions(
+          beforeVersion,
+          stagedShallowStartVersion ?? this.#shallowStartVersion,
+          endVersion,
+        );
+      } else {
+        for (const entry of oplogEntries) {
+          if (entry.key.length !== 12) continue;
+          const expected = decodeChangeBlockKey(entry.key);
+          const records = this.#readChangeBlock(entry.value);
+          if (records[0] !== undefined && !idsEqual(records[0].change.id, expected)) {
+            throw new Error("snapshot change key does not match its block");
+          }
+          imported.push(...records);
+        }
+        installStagedShallowRoot();
+        if (!initializeFromSnapshot) this.#assertImportsNotOutdated(imported);
+        integration = this.#integrateHistory(imported);
+        if (!this.#detached && initializeFromSnapshot) {
           if (this.#hasEventSubscribers()) {
             beforeValues = this.#captureEventValues(integration.added);
           }
-          const stateStore = decodeStateSnapshotStore(snapshot.state);
           if (rootStore !== undefined && stateStore.kind === "empty") {
             this.#rebuildFromHistory();
           } else {
-            this.#hydrateState(
-              rootStore === undefined
-                ? stateStore
-                : mergeStateSnapshotStores(rootStore, stateStore),
-            );
+            this.#hydrateState(hydratedStore);
           }
-        } else if (integration.added.length > 0) {
+        } else if (!this.#detached && integration.added.length > 0) {
           const recording = this.#hasEventSubscribers()
             ? { beforeValues: new Map(), eventStates: new Map() }
             : undefined;
@@ -697,11 +799,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#nextCounter = this.oplogVersion().get(this.#peer) ?? 0;
     const changed = this.#detached
       ? new Set<string>()
-      : new Set(
+      : (deferredChanged ??
+        new Set(
           integration.added.flatMap(({ change }) =>
             change.operations.map((op) => formatContainerId(op.container)),
           ),
-        );
+        ));
     this.#emit(
       "import",
       undefined,
@@ -711,13 +814,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       beforeValues,
       preparedDiffs,
     );
-    return importStatus(integration.added, integration.pending);
+    return deferredStatus ?? importStatus(integration.added, integration.pending);
   }
 
   importBatch(blobs: readonly Uint8Array[]): ImportStatus {
     if (blobs.length === 0) return { success: new Map(), pending: null };
     if (blobs.length === 1) return this.import(blobs[0]!);
     this.#commit({}, true);
+    this.#materializeDeferredHistory();
     const before = this.#frontiersCodec();
     const ordered = blobs
       .map((blob) => this.#decodeImportData(decodeDocument(blob)))
@@ -1248,6 +1352,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #historyVersion(): VersionVector {
+    if (this.#deferredSnapshotHistory !== undefined) {
+      return this.#deferredSnapshotHistory.endVersion.clone();
+    }
     const version = this.#shallowStartVersion.clone();
     for (const [peer, end] of this.#historyEndByPeer) {
       if (end > (version.get(peer) ?? 0)) version.set(peer, end);
@@ -1260,6 +1367,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   oplogFrontiers(): Frontiers {
+    if (this.#deferredSnapshotHistory !== undefined) {
+      return [...this.#deferredSnapshotHistory.frontiers]
+        .sort(compareIds)
+        .map(formatOpId);
+    }
     return [...this.#historyFrontiers.values()].sort(compareIds).map(formatOpId);
   }
 
@@ -1305,6 +1417,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   changeCount(): number {
+    this.#materializeDeferredHistory();
     return this.#history.size;
   }
 
@@ -1313,7 +1426,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   opCount(): number {
-    return this.#historyOperationCount;
+    return this.#deferredSnapshotHistory?.operationCount ?? this.#historyOperationCount;
   }
 
   getAllChanges(): Map<PeerID, Change[]> {
@@ -1337,6 +1450,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   getChangeAtLamport(peer: PeerIdInput, lamport: number): Change | undefined {
+    this.#materializeDeferredHistory();
     const parsedPeer = parsePeerId(peer);
     const records = this.#historyByPeer.get(parsedPeer) ?? [];
     let low = 0;
@@ -1438,6 +1552,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   getChangedContainersIn(id: OpId, len: number): ContainerID[] {
     this.#commit({}, true);
+    this.#materializeDeferredHistory();
     if (!Number.isSafeInteger(len) || len < 0) {
       throw new RangeError(`change range length is out of range: ${len}`);
     }
@@ -1466,6 +1581,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #recordContaining(id: CodecId): HistoryRecord | undefined {
+    this.#materializeDeferredHistory();
     const records = this.#historyByPeer.get(id.peer);
     if (records === undefined) return undefined;
     const index = lowerBoundHistory(records, id.counter + 1) - 1;
@@ -1879,6 +1995,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   _undoIdSpan(peer: PeerID, range: CounterSpan): void {
     this.#commit({}, true);
+    this.#materializeDeferredHistory();
     const parsedPeer = parsePeerId(peer);
     const records = this.#historyByPeer.get(parsedPeer) ?? [];
     let recordIndex = Math.min(
@@ -2474,6 +2591,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #ensurePending(): PendingChange {
     if (this.#pending !== undefined) return this.#pending;
+    this.#materializeDeferredHistory();
     if (this.#detached && !this.#detachedEditing) {
       throw new Error("cannot edit a detached document; call attach() first");
     }
@@ -2528,7 +2646,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       preferredChild._attach(this, childId, container);
       this.#containers.set(preferredChild.id, preferredChild);
     }
-    pending.operations.push(operation);
+    if (!appendToTrailingListInsert(pending.operations, operation)) {
+      pending.operations.push(operation);
+    }
     pending.operationLength += operation.length;
     pending.changedContainers.add(container.id);
     const causalVersion = pending.causalVersion;
@@ -3302,6 +3422,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     mergeInterval: bigint | undefined = 0n,
   ): IntegrationResult {
     const added: HistoryRecord[] = [];
+    const addedRecordIndices = new Map<HistoryRecord, number>();
     for (const record of records) {
       const key = changeKey(record.change.id);
       const knownEnd = Math.max(
@@ -3364,12 +3485,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             : this.#mergeablePreviousRecord(change, mergeInterval);
         if (previous === undefined) {
           this.#setHistoryRecord(key, record, record);
+          addedRecordIndices.set(record, added.length);
         } else {
-          this.#setHistoryRecord(
-            changeKey(previous.change.id),
-            mergeHistoryRecords(previous, record),
-            record,
-          );
+          const addedPreviousIndex = addedRecordIndices.get(previous);
+          if (addedPreviousIndex !== undefined) {
+            added[addedPreviousIndex] = cloneHistoryRecord(previous);
+            addedRecordIndices.delete(previous);
+          }
+          const previousLength = changeLength(previous.change);
+          const appended = appendHistoryRecord(previous, record, previousLength);
+          this.#appendMergedHistoryRecord(previous, appended, previousLength);
         }
         version.set(change.id.peer, change.id.counter + changeLength(change));
         added.push(record);
@@ -4427,6 +4552,34 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#indexHistoryOperations(appended);
   }
 
+  #appendMergedHistoryRecord(
+    record: HistoryRecord,
+    appended: HistoryRecord,
+    previousLength: number,
+  ): void {
+    const appendedLength = changeLength(appended.change);
+    this.#historyOperationCount += appendedLength;
+    this.#historyEndByPeer.set(
+      record.change.id.peer,
+      record.change.id.counter + previousLength + appendedLength,
+    );
+
+    const previousLast = {
+      peer: record.change.id.peer,
+      counter: record.change.id.counter + previousLength - 1,
+    };
+    this.#historyFrontiers.delete(idKey(previousLast));
+    for (const dependency of appended.change.dependencies) {
+      this.#historyFrontiers.delete(idKey(dependency));
+    }
+    const lastId = {
+      peer: record.change.id.peer,
+      counter: record.change.id.counter + previousLength + appendedLength - 1,
+    };
+    this.#historyFrontiers.set(idKey(lastId), lastId);
+    this.#indexHistoryOperations(appended);
+  }
+
   #indexHistoryOperations(record: HistoryRecord): void {
     for (const operation of record.change.operations) {
       this.#containersWithOperations.add(this.#containerKey(operation.container));
@@ -4516,7 +4669,135 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
+  #validateDeferredFrontierBlocks(
+    entries: readonly SstableEntry[],
+    endVersion: VersionVector,
+    frontiers: readonly CodecId[],
+  ): ReadonlyMap<SstableEntry, readonly HistoryRecord[]> {
+    const changeEntriesByPeer = new Map<
+      bigint,
+      { readonly entry: SstableEntry; readonly start: CodecId }[]
+    >();
+    for (const entry of entries) {
+      if (entry.key.length !== 12) continue;
+      const start = decodeChangeBlockKey(entry.key);
+      const peerEntries = changeEntriesByPeer.get(start.peer);
+      if (peerEntries === undefined) {
+        changeEntriesByPeer.set(start.peer, [{ entry, start }]);
+      } else {
+        peerEntries.push({ entry, start });
+      }
+    }
+    for (const peerEntries of changeEntriesByPeer.values()) {
+      peerEntries.sort((left, right) => left.start.counter - right.start.counter);
+    }
+    const validated = new Map<SstableEntry, readonly HistoryRecord[]>();
+    const seenPeers = new Set<bigint>();
+    for (const frontier of frontiers) {
+      const peerEnd = endVersion.get(frontier.peer) ?? 0;
+      if (frontier.counter >= peerEnd) {
+        throw new Error("snapshot frontier exceeds its end version");
+      }
+      if (seenPeers.has(frontier.peer)) {
+        throw new Error("snapshot contains multiple frontiers for one peer");
+      }
+      seenPeers.add(frontier.peer);
+
+      const peerEntries = changeEntriesByPeer.get(frontier.peer) ?? [];
+      let low = 0;
+      let high = peerEntries.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (peerEntries[middle]!.start.counter <= frontier.counter) low = middle + 1;
+        else high = middle;
+      }
+      const candidate = peerEntries[low - 1];
+      if (candidate === undefined) {
+        throw new Error("snapshot frontier change block is missing");
+      }
+      let block = validated.get(candidate.entry);
+      if (block === undefined) {
+        block = this.#readChangeBlock(candidate.entry.value);
+        if (block[0] === undefined || !idsEqual(block[0].change.id, candidate.start)) {
+          throw new Error("snapshot change key does not match its block");
+        }
+        validated.set(candidate.entry, block);
+      }
+      if (
+        !block.some(
+          ({ change }) =>
+            change.id.peer === frontier.peer &&
+            change.id.counter <= frontier.counter &&
+            frontier.counter < change.id.counter + changeLength(change),
+        )
+      ) {
+        throw new Error("snapshot frontier is not covered by its change block");
+      }
+    }
+    return validated;
+  }
+
+  #materializeDeferredHistory(): void {
+    const deferred = this.#deferredSnapshotHistory;
+    if (deferred === undefined) return;
+
+    const records: HistoryRecord[] = [];
+    for (const entry of deferred.entries) {
+      if (entry.key.length !== 12) continue;
+      const expected = decodeChangeBlockKey(entry.key);
+      const decoded =
+        deferred.validatedBlocks.get(entry) ?? this.#readChangeBlock(entry.value);
+      if (decoded[0] !== undefined && !idsEqual(decoded[0].change.id, expected)) {
+        throw new Error("snapshot change key does not match its block");
+      }
+      records.push(...decoded.map(cloneHistoryRecord));
+    }
+
+    // Validate and build every history index on an isolated document. A malformed
+    // deferred block must not leave this document with half-installed history.
+    const staged = new LoroDoc();
+    staged.#shallowStartVersion = this.#shallowStartVersion.clone();
+    const integration = staged.#integrateHistory(records);
+    if (integration.pending.length > 0) {
+      throw new Error("snapshot history contains changes with missing dependencies");
+    }
+    if (staged.#historyVersion().compare(deferred.endVersion) !== 0) {
+      throw new Error("snapshot version does not match its history");
+    }
+    const actualFrontiers = [...staged.#historyFrontiers.values()]
+      .sort(compareIds)
+      .map(formatOpId);
+    const expectedFrontiers = [...deferred.frontiers].sort(compareIds).map(formatOpId);
+    if (!frontierSetsEqual(actualFrontiers, expectedFrontiers)) {
+      throw new Error("snapshot frontiers do not match its history");
+    }
+    if (staged.#historyOperationCount !== deferred.operationCount) {
+      throw new Error("snapshot operation count does not match its history");
+    }
+
+    // State was already hydrated from the latest-state SSTable. Installing these
+    // structures restores only history/DAG indexes; applying records would
+    // duplicate counters and sequence content.
+    this.#history = staged.#history;
+    this.#historyOrder = staged.#historyOrder;
+    this.#historyByPeer = staged.#historyByPeer;
+    this.#historyEndByPeer = staged.#historyEndByPeer;
+    this.#historyOperationCount = staged.#historyOperationCount;
+    this.#sortedHistoryCache = staged.#sortedHistoryCache;
+    this.#historyFrontiers = staged.#historyFrontiers;
+    this.#dependencyVersionCache = staged.#dependencyVersionCache;
+    this.#mapOperationHistory = staged.#mapOperationHistory;
+    this.#treeOperationHistory = staged.#treeOperationHistory;
+    this.#movableOrderHistory = staged.#movableOrderHistory;
+    this.#movableMovePeers = staged.#movableMovePeers;
+    this.#containersWithOperations = staged.#containersWithOperations;
+    this.#containerKeys = staged.#containerKeys;
+    this.#pendingHistory = staged.#pendingHistory;
+    this.#deferredSnapshotHistory = undefined;
+  }
+
   #sortedHistory(): HistoryRecord[] {
+    this.#materializeDeferredHistory();
     return (this.#sortedHistoryCache ??= this.#historyOrder.values());
   }
 
@@ -4525,6 +4806,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #recordsInVersionRange(from: VersionVector, to: VersionVector): HistoryRecord[] {
+    this.#materializeDeferredHistory();
     const selected: HistoryRecord[] = [];
     for (const { peer, counter: toCounter } of to._codecEntriesUnsorted()) {
       const fromCounter = from.get(peer) ?? 0;
@@ -4552,6 +4834,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #recordsInSpans(
     spans: readonly { readonly id: OpId; readonly len: number }[],
   ): HistoryRecord[] {
+    this.#materializeDeferredHistory();
     const spansByPeer = new Map<bigint, { start: number; end: number }[]>();
     for (const { id, len } of spans) {
       if (!Number.isSafeInteger(len) || len < 0) {
@@ -4708,6 +4991,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       for (const frontier of this.#frontiersForVersion(this.#checkoutVersion)) {
         candidates.set(idKey(frontier), frontier);
       }
+    } else if (this.#deferredSnapshotHistory !== undefined) {
+      for (const frontier of this.#deferredSnapshotHistory.frontiers) {
+        candidates.set(idKey(frontier), frontier);
+      }
     } else {
       for (const [key, frontier] of this.#historyFrontiers) {
         candidates.set(key, frontier);
@@ -4768,8 +5055,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       value: encodePostcardFrontiers(this.#frontiersCodec()),
     });
     const body = encodeFastSnapshotBody({
-      oplog: encodeSstable(historyEntries, { compression: "none" }),
-      state: encodeStateSnapshotStore(this.#buildStateStore(), { compression: "none" }),
+      oplog: encodeSstable(historyEntries, { compression: "auto" }),
+      state: encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" }),
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
@@ -4829,10 +5116,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return encodeDocument(
       EncodeMode.FastSnapshot,
       encodeFastSnapshotBody({
-        oplog: encodeSstable(historyEntries, { compression: "none" }),
-        state: encodeStateSnapshotStore(latestStore, { compression: "none" }),
+        oplog: encodeSstable(historyEntries, { compression: "auto" }),
+        state: encodeStateSnapshotStore(latestStore, { compression: "auto" }),
         shallowRootState: encodeStateSnapshotStore(rootStore, {
-          compression: "none",
+          compression: "auto",
         }),
       }),
     );
@@ -5821,11 +6108,23 @@ function canMergeChanges(
   );
 }
 
-function mergeHistoryRecords(left: HistoryRecord, right: HistoryRecord): HistoryRecord {
-  const keys = [...left.keys];
-  const keyIndices = new Map<string, number>();
-  for (const [index, key] of keys.entries()) {
-    if (!keyIndices.has(key)) keyIndices.set(key, index);
+function appendHistoryRecord(
+  left: HistoryRecord,
+  right: HistoryRecord,
+  leftLength: number,
+): HistoryRecord {
+  let keyIndices = left.keyIndices;
+  let keys: string[];
+  if (keyIndices === undefined) {
+    keys = [...left.keys];
+    keyIndices = new Map<string, number>();
+    for (const [index, key] of keys.entries()) {
+      if (!keyIndices.has(key)) keyIndices.set(key, index);
+    }
+    left.keys = keys;
+    left.keyIndices = keyIndices;
+  } else {
+    keys = left.keys as string[];
   }
   const remappedKeyIndices = right.keys.map((key) => {
     const existing = keyIndices.get(key);
@@ -5835,18 +6134,63 @@ function mergeHistoryRecords(left: HistoryRecord, right: HistoryRecord): History
     keyIndices.set(key, index);
     return index;
   });
-  return {
+
+  const appendedOperations = right.change.operations.map((operation) =>
+    remapOperationKeys(operation, remappedKeyIndices),
+  );
+  const mergedOperations = left.change.operations as DecodedOperation[];
+  for (const operation of appendedOperations) mergedOperations.push(operation);
+  const rightLength = changeLength(right.change);
+  changeLengthCache.set(left.change, leftLength + rightLength);
+
+  const appended = {
     keys,
     change: {
-      ...left.change,
-      operations: [
-        ...left.change.operations,
-        ...right.change.operations.map((operation) =>
-          remapOperationKeys(operation, remappedKeyIndices),
-        ),
-      ],
+      ...right.change,
+      timestamp: left.change.timestamp,
+      message: left.change.message,
+      operations: appendedOperations,
     },
   };
+  changeLengthCache.set(appended.change, rightLength);
+  return appended;
+}
+
+function cloneHistoryRecord(record: HistoryRecord): HistoryRecord {
+  return {
+    keys: record.keys,
+    change: { ...record.change, operations: [...record.change.operations] },
+  };
+}
+
+function appendToTrailingListInsert(
+  operations: DecodedOperation[],
+  operation: DecodedOperation,
+): boolean {
+  const content = operation.content;
+  if (content.type !== "list-insert" && content.type !== "movable-list-insert") {
+    return false;
+  }
+  const previousIndex = operations.length - 1;
+  const previous = operations[previousIndex];
+  if (
+    previous === undefined ||
+    previous.content.type !== content.type ||
+    !containerIdsEqual(previous.container, operation.container) ||
+    previous.counter + previous.length !== operation.counter ||
+    previous.content.position + previous.length !== content.position
+  ) {
+    return false;
+  }
+
+  const values = previous.content.values as ChangeLoroValue[];
+  for (const value of content.values) values.push(value);
+  operations[previousIndex] = {
+    ...previous,
+    length: previous.length + operation.length,
+    content: { ...previous.content, values },
+  };
+  return true;
 }
 
 function remapOperationKeys(
@@ -6062,6 +6406,14 @@ function historyVersionForRecords(
     }
   }
   return version;
+}
+
+function versionDistance(start: VersionVector, end: VersionVector): number {
+  let distance = 0;
+  for (const { peer, counter } of end._codecEntriesUnsorted()) {
+    distance += Math.max(0, counter - (start.get(peer) ?? 0));
+  }
+  return distance;
 }
 
 function mergeStateSnapshotStores(
@@ -7038,6 +7390,21 @@ function importStatus(
   }
   const pending = historySpans(pendingRecords);
   return { success, pending: pending.size === 0 ? null : pending };
+}
+
+function importStatusBetweenVersions(
+  before: VersionVector,
+  retainedStart: VersionVector,
+  end: VersionVector,
+): ImportStatus {
+  const success = new Map<PeerID, { start: number; end: number }>();
+  for (const { peer, counter } of end._codecEntriesUnsorted()) {
+    const start = Math.max(before.get(peer) ?? 0, retainedStart.get(peer) ?? 0);
+    if (counter > start) {
+      success.set(peerIdToString(peer), { start, end: counter });
+    }
+  }
+  return { success, pending: null };
 }
 
 function historySpans(

@@ -3,6 +3,15 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  decodeFastSnapshot,
+  decodePostcardVersionVector,
+  decodeSstable,
+  encodeFastSnapshot,
+  encodePostcardVersionVector,
+  encodeSstable,
+} from "../src/codec";
+
+import {
   Awareness,
   AwarenessWasm,
   Cursor,
@@ -831,6 +840,46 @@ describe("loro-wasm-compatible runtime", () => {
     expect(unmerged.getAllChanges().get("1")).toHaveLength(2);
   });
 
+  test("appends many merged commits without changing their public history", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    const updates: Uint8Array[] = [];
+    source.subscribeLocalUpdates((update) => updates.push(update));
+    const text = source.getText("text");
+
+    for (let index = 0; index < 512; index += 1) {
+      text.insert(index, "x");
+      source.commit();
+    }
+
+    expect(source.changeCount()).toBe(1);
+    expect(source.getAllChanges().get("1")).toEqual([
+      expect.objectContaining({ counter: 0, length: 512 }),
+    ]);
+
+    const target = new LoroDoc();
+    target.importBatch(updates);
+    expect(target.getText("text").toString()).toBe("x".repeat(512));
+    expect(target.changeCount()).toBe(1);
+  });
+
+  test("coalesces consecutive list inserts in one pending change", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    const list = source.getList("list");
+    for (let index = 0; index < 128; index += 1) list.insert(index, index);
+
+    expect(source.getUncommittedOpsAsJson()?.changes[0]?.ops).toHaveLength(1);
+    source.commit();
+    expect(source.exportJsonUpdates().changes[0]?.ops).toHaveLength(1);
+
+    const target = new LoroDoc();
+    target.import(source.export({ mode: "update" }));
+    expect(target.getList("list").toArray()).toEqual(
+      Array.from({ length: 128 }, (_, index) => index),
+    );
+  });
+
   test("preserves next commit options across implicit empty commits only", () => {
     const implicit = new LoroDoc();
     implicit.setPeerId(1);
@@ -957,6 +1006,183 @@ describe("loro-wasm-compatible runtime", () => {
     const target = LoroDoc.fromSnapshot(source.export({ mode: "snapshot" }));
     expect(target.toJSON()).toEqual(source.toJSON());
     expect(target.getAllChanges()).toEqual(source.getAllChanges());
+  });
+
+  test("keeps snapshot history lazy and owns the deferred bytes", () => {
+    const source = new LoroDoc();
+    source.setPeerId(7);
+    source.getText("text").insert(0, "snapshot");
+    source.getMap("meta").set("ready", true);
+    source.commit({ message: "seed" });
+    const expectedVersion = source.version().toJSON();
+    const expectedFrontiers = source.frontiers();
+    const expectedChanges = source.getAllChanges();
+    const snapshot = source.export({ mode: "snapshot" });
+
+    const target = new LoroDoc();
+    const events: LoroEventBatch[] = [];
+    target.subscribe((event) => events.push(event));
+    const status = target.import(snapshot);
+
+    expect(target.toJSON()).toEqual(source.toJSON());
+    expect(target.version().toJSON()).toEqual(expectedVersion);
+    expect(target.frontiers()).toEqual(expectedFrontiers);
+    expect(target.opCount()).toBe(source.opCount());
+    expect(status).toEqual({
+      success: new Map([["7", { start: 0, end: 9 }]]),
+      pending: null,
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ by: "import", from: [], to: expectedFrontiers });
+
+    snapshot.fill(0);
+    expect(target.getAllChanges()).toEqual(expectedChanges);
+    expect(target.changeCount()).toBe(source.changeCount());
+  });
+
+  test("materializes a snapshot before local edits without repeating first-peer events", () => {
+    const source = new LoroDoc();
+    source.setPeerId(7);
+    source.getText("text").insert(0, "a");
+    source.commit();
+
+    const target = new LoroDoc();
+    target.setPeerId(7);
+    target.import(source.export({ mode: "snapshot" }));
+    const firstPeers: string[] = [];
+    target.subscribeFirstCommitFromPeer(({ peer }) => firstPeers.push(peer));
+
+    target.getText("text").push("b");
+    target.commit();
+
+    expect(firstPeers).toEqual([]);
+    expect(target.getText("text").toString()).toBe("ab");
+    expect(target.version().get("7")).toBe(2);
+  });
+
+  test("materializes a lazy snapshot before importing a later update", () => {
+    const source = new LoroDoc();
+    source.setPeerId(9);
+    source.getText("text").insert(0, "a");
+    source.commit();
+    const snapshotVersion = source.version();
+    const snapshot = source.export({ mode: "snapshot" });
+    source.getText("text").push("b");
+    source.commit();
+    const update = source.export({ mode: "update", from: snapshotVersion });
+
+    const target = LoroDoc.fromSnapshot(snapshot);
+    const status = target.import(update);
+
+    expect(status).toEqual({
+      success: new Map([["9", { start: 1, end: 2 }]]),
+      pending: null,
+    });
+    expect(target.toJSON()).toEqual({ text: "ab" });
+    expect(target.getAllChanges()).toEqual(source.getAllChanges());
+  });
+
+  test("keeps deferred history atomic when snapshot metadata is inconsistent", () => {
+    const source = new LoroDoc();
+    source.setPeerId(11);
+    source.getText("text").insert(0, "seed");
+    source.commit();
+    const snapshot = decodeFastSnapshot(source.export({ mode: "snapshot" }));
+    const oplog = decodeSstable(snapshot.oplog).map((entry) => {
+      if (entry.key.length !== 2 || entry.key[0] !== 0x76 || entry.key[1] !== 0x76) {
+        return entry;
+      }
+      const version = decodePostcardVersionVector(entry.value).map((id) => ({
+        ...id,
+        counter: id.counter + 1,
+      }));
+      return { ...entry, value: encodePostcardVersionVector(version) };
+    });
+    const malformed = encodeFastSnapshot({
+      ...snapshot,
+      oplog: encodeSstable(oplog, { compression: "none" }),
+    });
+
+    const target = new LoroDoc();
+    target.import(malformed);
+    expect(target.toJSON()).toEqual({ text: "seed" });
+    expect(() => target.changeCount()).toThrow(/version does not match/u);
+    expect(target.toJSON()).toEqual({ text: "seed" });
+    expect(() => target.changeCount()).toThrow(/version does not match/u);
+  });
+
+  test("rejects a corrupt deferred frontier block before changing the document", () => {
+    const source = new LoroDoc();
+    source.setPeerId(12);
+    source.getText("text").insert(0, "seed");
+    source.commit();
+    const snapshot = decodeFastSnapshot(source.export({ mode: "snapshot" }));
+    const oplog = decodeSstable(snapshot.oplog).map((entry) =>
+      entry.key.length === 12 ? { ...entry, value: Uint8Array.of(0xff) } : entry,
+    );
+    const malformed = encodeFastSnapshot({
+      ...snapshot,
+      oplog: encodeSstable(oplog, { compression: "none" }),
+    });
+
+    const target = new LoroDoc();
+    const events: LoroEventBatch[] = [];
+    target.subscribe((event) => events.push(event));
+    expect(() => target.import(malformed)).toThrow(/unexpected end|change block/u);
+    expect(events).toEqual([]);
+    expect(target.version().toJSON()).toEqual(new Map());
+    expect(target.toJSON()).toEqual({});
+  });
+
+  test("owns shallow root bytes until deferred history is materialized", () => {
+    const source = new LoroDoc();
+    source.setPeerId(13);
+    const original = new Uint8Array(64);
+    let random = 0x1234_5678;
+    for (let index = 0; index < original.length; index += 1) {
+      random ^= random << 13;
+      random ^= random >>> 17;
+      random ^= random << 5;
+      original[index] = random & 0xff;
+    }
+    source.getMap("map").set("bytes", original);
+    source.commit();
+    const shallowRoot = source.frontiers();
+    source.getMap("map").set("bytes", Uint8Array.of(9));
+    source.commit();
+    const bytes = source.export({
+      mode: "shallow-snapshot",
+      frontiers: shallowRoot,
+    });
+
+    const target = LoroDoc.fromSnapshot(bytes);
+    expect(target.getMap("map").get("bytes")).toEqual(Uint8Array.of(9));
+    bytes.fill(0);
+    target.checkout(shallowRoot);
+    expect(target.getMap("map").get("bytes")).toEqual(original);
+  });
+
+  test("does not install shallow metadata before latest state decoding succeeds", () => {
+    const source = new LoroDoc();
+    source.setPeerId(14);
+    source.getText("text").insert(0, "a");
+    source.commit();
+    const shallowRoot = source.frontiers();
+    source.getText("text").push("b");
+    source.commit();
+    const snapshot = decodeFastSnapshot(
+      source.export({ mode: "shallow-snapshot", frontiers: shallowRoot }),
+    );
+    const malformed = encodeFastSnapshot({
+      ...snapshot,
+      state: Uint8Array.of(0xff),
+    });
+
+    const target = new LoroDoc();
+    expect(() => target.import(malformed)).toThrow(/SSTable is too short/u);
+    expect(target.isShallow()).toBe(false);
+    expect(target.version().toJSON()).toEqual(new Map());
+    expect(target.toJSON()).toEqual({});
   });
 
   test("exports and imports shallow snapshots at a partial change boundary", () => {
@@ -1511,5 +1737,10 @@ describe("loro-wasm-compatible runtime", () => {
     expect(actual.mlist).toEqual(expected.mlist);
     expect(actual.text).toEqual(expected.text);
     expect((actual.tree as unknown[]).length).toBe((expected.tree as unknown[]).length);
+
+    const version = doc.version().toJSON();
+    expect(doc.changeCount()).toBeGreaterThan(0);
+    expect(doc.version().toJSON()).toEqual(version);
+    expect(doc.toJSON()).toEqual(actual);
   });
 });

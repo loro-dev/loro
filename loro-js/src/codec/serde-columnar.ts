@@ -3,9 +3,9 @@ import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
 import { I64_MAX, I64_MIN, U64_MAX, readUlebNumber, writeUleb128 } from "./leb128";
 import { PostcardReader, PostcardWriter } from "./postcard";
 
-const U32_MAX = 0xffff_ffffn;
-const I32_MIN = -0x8000_0000n;
-const I32_MAX = 0x7fff_ffffn;
+const U32_MAX = 0xffff_ffff;
+const I32_MIN = -0x8000_0000;
+const I32_MAX = 0x7fff_ffff;
 const I128_MIN = -(1n << 127n);
 const I128_MAX = (1n << 127n) - 1n;
 const U128_MAX = (1n << 128n) - 1n;
@@ -170,43 +170,35 @@ export function takeAnyRleI32(bytes: Uint8Array, count: number): [number[], Uint
 }
 
 export function decodeDeltaRleU32(bytes: Uint8Array): number[] {
-  return accumulateDelta(decodeAnyRle(bytes, readPostcardI128), 0n, U32_MAX).map(Number);
+  return decodeDeltaNumber(bytes, 0, U32_MAX);
 }
 
 export function encodeDeltaRleU32(values: readonly number[]): Uint8Array {
-  return encodeDelta(values.map(assertU32));
+  return encodeDeltaNumber(values, assertU32);
 }
 
 export function decodeDeltaRleI32(bytes: Uint8Array): number[] {
-  return accumulateDelta(decodeAnyRle(bytes, readPostcardI128), I32_MIN, I32_MAX).map(
-    Number,
-  );
+  return decodeDeltaNumber(bytes, I32_MIN, I32_MAX);
 }
 
 export function encodeDeltaRleI32(values: readonly number[]): Uint8Array {
-  return encodeDelta(values.map(assertI32));
+  return encodeDeltaNumber(values, assertI32);
 }
 
 export function decodeDeltaRleUsize(bytes: Uint8Array): bigint[] {
-  return accumulateDelta(decodeAnyRle(bytes, readPostcardI128), 0n, U64_MAX);
+  return decodeDelta(bytes, 0n, U64_MAX, identity);
 }
 
 export function encodeDeltaRleUsize(values: readonly bigint[]): Uint8Array {
-  for (const value of values) {
-    assertBigIntRange(value, 0n, U64_MAX, "usize");
-  }
-  return encodeDelta(values);
+  return encodeDelta(values, assertUsize);
 }
 
 export function decodeDeltaRleIsize(bytes: Uint8Array): bigint[] {
-  return accumulateDelta(decodeAnyRle(bytes, readPostcardI128), I64_MIN, I64_MAX);
+  return decodeDelta(bytes, I64_MIN, I64_MAX, identity);
 }
 
 export function encodeDeltaRleIsize(values: readonly bigint[]): Uint8Array {
-  for (const value of values) {
-    assertBigIntRange(value, I64_MIN, I64_MAX, "isize");
-  }
-  return encodeDelta(values);
+  return encodeDelta(values, assertIsize);
 }
 
 export function decodeDeltaOfDeltaI64(bytes: Uint8Array): bigint[] {
@@ -375,25 +367,117 @@ function encodeAnyRleLiteral<T>(
   return writer.toUint8Array();
 }
 
-function encodeDelta(values: readonly bigint[]): Uint8Array {
-  const deltas: bigint[] = [];
+function encodeDelta<T>(
+  values: readonly T[],
+  toBigInt: (value: T) => bigint,
+): Uint8Array {
+  const writer = new ByteWriter();
+  if (values.length === 0) {
+    return writer.toUint8Array();
+  }
+  if (values.length > MAX_COLUMN_VALUES) {
+    throw new LoroEncodeError(`AnyRle input is too long: ${values.length}`);
+  }
+  writePostcardI64(writer, -BigInt(values.length));
   let previous = 0n;
-  for (const value of values) {
+  for (const input of values) {
+    const value = toBigInt(input);
     const delta = value - previous;
     assertBigIntRange(delta, I128_MIN, I128_MAX, "delta RLE delta");
-    deltas.push(delta);
+    writePostcardI128(writer, delta);
     previous = value;
   }
-  return encodeAnyRleLiteral(deltas, writePostcardI128);
+  return writer.toUint8Array();
 }
 
-function accumulateDelta(deltas: readonly bigint[], min: bigint, max: bigint): bigint[] {
-  const values: bigint[] = [];
+function decodeDelta<T>(
+  bytes: Uint8Array,
+  min: bigint,
+  max: bigint,
+  fromBigInt: (value: bigint) => T,
+): T[] {
+  const reader = new ByteReader(bytes);
+  const values: T[] = [];
   let value = 0n;
-  for (const delta of deltas) {
+  const append = (delta: bigint): void => {
+    value += delta;
+    decodeAssert(value >= min && value <= max, "delta RLE value is out of range");
+    values.push(fromBigInt(value));
+  };
+  while (reader.remaining > 0) {
+    const signedLength = readPostcardI64(reader);
+    decodeAssert(signedLength !== 0n, "AnyRle segment has zero length", reader.position);
+    const lengthBigInt = signedLength < 0n ? -signedLength : signedLength;
+    decodeAssert(lengthBigInt <= BigInt(MAX_COLUMN_VALUES), "AnyRle segment is too long");
+    const length = Number(lengthBigInt);
+    decodeAssert(
+      values.length + length <= MAX_COLUMN_VALUES,
+      "AnyRle has too many elements",
+    );
+    if (signedLength > 0n) {
+      const delta = readPostcardI128(reader);
+      for (let index = 0; index < length; index += 1) {
+        append(delta);
+      }
+    } else {
+      for (let index = 0; index < length; index += 1) {
+        append(readPostcardI128(reader));
+      }
+    }
+  }
+  return values;
+}
+
+function encodeDeltaNumber(
+  values: readonly number[],
+  validate: (value: number) => number,
+): Uint8Array {
+  const writer = new ByteWriter();
+  if (values.length === 0) {
+    return writer.toUint8Array();
+  }
+  if (values.length > MAX_COLUMN_VALUES) {
+    throw new LoroEncodeError(`AnyRle input is too long: ${values.length}`);
+  }
+  writePostcardI64(writer, -BigInt(values.length));
+  let previous = 0;
+  for (const input of values) {
+    const value = validate(input);
+    writePostcardI128Number(writer, value - previous);
+    previous = value;
+  }
+  return writer.toUint8Array();
+}
+
+function decodeDeltaNumber(bytes: Uint8Array, min: number, max: number): number[] {
+  const reader = new ByteReader(bytes);
+  const values: number[] = [];
+  let value = 0;
+  const append = (delta: number): void => {
     value += delta;
     decodeAssert(value >= min && value <= max, "delta RLE value is out of range");
     values.push(value);
+  };
+  while (reader.remaining > 0) {
+    const signedLength = readPostcardI64(reader);
+    decodeAssert(signedLength !== 0n, "AnyRle segment has zero length", reader.position);
+    const lengthBigInt = signedLength < 0n ? -signedLength : signedLength;
+    decodeAssert(lengthBigInt <= BigInt(MAX_COLUMN_VALUES), "AnyRle segment is too long");
+    const length = Number(lengthBigInt);
+    decodeAssert(
+      values.length + length <= MAX_COLUMN_VALUES,
+      "AnyRle has too many elements",
+    );
+    if (signedLength > 0n) {
+      const delta = readPostcardI128Number(reader);
+      for (let index = 0; index < length; index += 1) {
+        append(delta);
+      }
+    } else {
+      for (let index = 0; index < length; index += 1) {
+        append(readPostcardI128Number(reader));
+      }
+    }
   }
   return values;
 }
@@ -467,6 +551,41 @@ function writePostcardI128(writer: ByteWriter, value: bigint): void {
   assertBigIntRange(value, I128_MIN, I128_MAX, "i128");
   const encoded = value >= 0n ? value << 1n : (-value << 1n) - 1n;
   writeVarintU128(writer, encoded);
+}
+
+function readPostcardI128Number(reader: ByteReader): number {
+  const start = reader.position;
+  let encoded = 0;
+  let multiplier = 1;
+  for (let index = 0; index < 19; index += 1) {
+    const byte = reader.readU8();
+    const payload = byte & 0x7f;
+    if (payload !== 0 && multiplier > Number.MAX_SAFE_INTEGER / payload) {
+      throw new LoroDecodeError("i128 varint exceeds safe integer range", start);
+    }
+    encoded += payload * multiplier;
+    if (!Number.isSafeInteger(encoded)) {
+      throw new LoroDecodeError("i128 varint exceeds safe integer range", start);
+    }
+    if ((byte & 0x80) === 0) {
+      return encoded % 2 === 0 ? encoded / 2 : -(encoded + 1) / 2;
+    }
+    multiplier *= 128;
+  }
+  throw new LoroDecodeError("u128 varint overflow", start);
+}
+
+function writePostcardI128Number(writer: ByteWriter, value: number): void {
+  const encoded = value >= 0 ? value * 2 : -value * 2 - 1;
+  let remaining = encoded;
+  do {
+    let byte = remaining % 128;
+    remaining = Math.floor(remaining / 128);
+    if (remaining !== 0) {
+      byte |= 0x80;
+    }
+    writer.writeU8(byte);
+  } while (remaining !== 0);
 }
 
 function readVarintU128(reader: ByteReader): bigint {
@@ -629,18 +748,32 @@ function assertCount(count: number): void {
   }
 }
 
-function assertU32(value: number): bigint {
+function assertU32(value: number): number {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
     throw new LoroEncodeError(`u32 is out of range: ${value}`);
   }
-  return BigInt(value);
+  return value;
 }
 
-function assertI32(value: number): bigint {
+function assertI32(value: number): number {
   if (!Number.isSafeInteger(value) || value < -0x8000_0000 || value > 0x7fff_ffff) {
     throw new LoroEncodeError(`i32 is out of range: ${value}`);
   }
-  return BigInt(value);
+  return value;
+}
+
+function assertUsize(value: bigint): bigint {
+  assertBigIntRange(value, 0n, U64_MAX, "usize");
+  return value;
+}
+
+function assertIsize(value: bigint): bigint {
+  assertBigIntRange(value, I64_MIN, I64_MAX, "isize");
+  return value;
+}
+
+function identity<T>(value: T): T {
+  return value;
 }
 
 function assertBigIntRange(value: bigint, min: bigint, max: bigint, label: string): void {

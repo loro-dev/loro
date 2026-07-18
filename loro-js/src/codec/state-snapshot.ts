@@ -806,7 +806,7 @@ function validateDecodedText(
   }
   decodeAssert(markCount === marks.length, "text state mark count mismatch");
   decodeAssert(
-    Array.from(text).length === textLength,
+    unicodeScalarLength(text) === textLength,
     "text state Unicode length mismatch",
   );
 }
@@ -824,7 +824,7 @@ function validateEncodedText(state: TextStateSnapshot): void {
   }
   encodeAssert(markCount === state.marks.length, "text state mark count mismatch");
   encodeAssert(
-    Array.from(state.text).length === textLength,
+    unicodeScalarLength(state.text) === textLength,
     "text state Unicode length mismatch",
   );
   for (const mark of state.marks) {
@@ -833,6 +833,24 @@ function validateEncodedText(state: TextStateSnapshot): void {
       "text mark key index out of range",
     );
   }
+}
+
+function unicodeScalarLength(value: string): number {
+  let length = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (
+      codeUnit >= 0xd800 &&
+      codeUnit <= 0xdbff &&
+      index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc00 &&
+      value.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      index += 1;
+    }
+    length += 1;
+  }
+  return length;
 }
 
 function validateEncodedTree(state: TreeStateSnapshot): void {

@@ -4,6 +4,13 @@ import { xxhash32 } from "./xxhash32";
 
 const LZ4_MAGIC = 0x184d_2204;
 const WINDOW_SIZE = 65_536;
+const MAX_MATCH_DISTANCE = 0xffff;
+const MIN_MATCH_LENGTH = 4;
+const LAST_LITERALS = 5;
+const MATCH_FIND_LIMIT = 12;
+const HASH_LOG = 16;
+const MIN_HASH_LOG = 10;
+const HASH_MULTIPLIER = 0x9e37_79b1;
 
 export interface DecodeLz4Options {
   readonly checkChecksum?: boolean;
@@ -51,7 +58,7 @@ export function decodeLz4Frame(
     decodeAssert(flags === 0x60, "noncanonical LZ4 frame flags", descriptorStart);
   }
 
-  const output: number[] = [];
+  const output = new Lz4Output();
   for (;;) {
     const infoOffset = reader.position;
     const blockInfo = reader.readU32LE();
@@ -74,12 +81,14 @@ export function decodeLz4Frame(
     }
     const blockOutputStart = output.length;
     if (raw) {
-      appendBytes(output, block);
+      output.ensureCapacity(block.length);
+      output.writeBytes(block);
     } else {
+      output.ensureCapacity(maxBlockSize);
       const prefixStart = independentBlocks
         ? blockOutputStart
         : Math.max(0, blockOutputStart - WINDOW_SIZE);
-      decodeLz4BlockInto(block, output, prefixStart);
+      decodeLz4BlockInto(block, output, prefixStart, blockOutputStart + maxBlockSize);
     }
     decodeAssert(
       output.length - blockOutputStart <= maxBlockSize,
@@ -88,7 +97,7 @@ export function decodeLz4Frame(
     );
   }
 
-  const result = Uint8Array.from(output);
+  const result = output.finish();
   if (expectedContentSize !== undefined) {
     decodeAssert(
       expectedContentSize === BigInt(result.length),
@@ -122,23 +131,152 @@ export function encodeLz4FrameRaw(bytes: Uint8Array): Uint8Array {
   writer.writeU8((xxhash32(header, 0) >>> 8) & 0xff);
   for (let offset = 0; offset < bytes.length; offset += maxBlockSize) {
     const block = bytes.subarray(offset, Math.min(bytes.length, offset + maxBlockSize));
-    writer.writeU32LE((0x8000_0000 + block.length) >>> 0);
-    writer.writeBytes(block);
+    const compressed = encodeLz4Block(block);
+    if (compressed.length < block.length) {
+      writer.writeU32LE(compressed.length);
+      writer.writeBytes(compressed);
+    } else {
+      writer.writeU32LE((0x8000_0000 + block.length) >>> 0);
+      writer.writeBytes(block);
+    }
   }
   writer.writeU32LE(0);
   return writer.toUint8Array();
 }
 
+function encodeLz4Block(input: Uint8Array): Uint8Array {
+  if (input.length < MATCH_FIND_LIMIT + 1) {
+    return encodeLastLiterals(input);
+  }
+
+  const writer = new ByteWriter(input.length);
+  const hashLog = Math.min(
+    HASH_LOG,
+    Math.max(MIN_HASH_LOG, Math.ceil(Math.log2(input.length))),
+  );
+  const hashShift = 32 - hashLog;
+  const hashTable = new Uint32Array(1 << hashLog);
+  const lastMatchStart = input.length - MATCH_FIND_LIMIT;
+  const matchLimit = input.length - LAST_LITERALS;
+  let anchor = 0;
+  let position = 0;
+
+  while (position <= lastMatchStart) {
+    const hash = hashSequence(input, position, hashShift);
+    const candidateEntry = hashTable[hash]!;
+    hashTable[hash] = position + 1;
+    const candidate = candidateEntry - 1;
+
+    if (
+      candidateEntry === 0 ||
+      position - candidate > MAX_MATCH_DISTANCE ||
+      !equalFourBytes(input, candidate, position)
+    ) {
+      position += 1;
+      continue;
+    }
+
+    let matchEnd = position + MIN_MATCH_LENGTH;
+    let candidateEnd = candidate + MIN_MATCH_LENGTH;
+    while (matchEnd < matchLimit && input[candidateEnd] === input[matchEnd]) {
+      matchEnd += 1;
+      candidateEnd += 1;
+    }
+
+    writeSequence(
+      writer,
+      input.subarray(anchor, position),
+      position - candidate,
+      matchEnd - position,
+    );
+
+    for (let index = position + 1; index < matchEnd; index += 1) {
+      if (index + MIN_MATCH_LENGTH > input.length) {
+        break;
+      }
+      hashTable[hashSequence(input, index, hashShift)] = index + 1;
+    }
+    position = matchEnd;
+    anchor = matchEnd;
+  }
+
+  writeLastLiterals(writer, input.subarray(anchor));
+  return writer.toUint8Array();
+}
+
+function encodeLastLiterals(input: Uint8Array): Uint8Array {
+  const writer = new ByteWriter(input.length + 2);
+  writeLastLiterals(writer, input);
+  return writer.toUint8Array();
+}
+
+function writeSequence(
+  writer: ByteWriter,
+  literals: Uint8Array,
+  offset: number,
+  matchLength: number,
+): void {
+  const encodedMatchLength = matchLength - MIN_MATCH_LENGTH;
+  writer.writeU8((Math.min(literals.length, 15) << 4) | Math.min(encodedMatchLength, 15));
+  writeExtendedLength(writer, literals.length);
+  writer.writeBytes(literals);
+  writer.writeU16LE(offset);
+  writeExtendedLength(writer, encodedMatchLength);
+}
+
+function writeLastLiterals(writer: ByteWriter, literals: Uint8Array): void {
+  writer.writeU8(Math.min(literals.length, 15) << 4);
+  writeExtendedLength(writer, literals.length);
+  writer.writeBytes(literals);
+}
+
+function writeExtendedLength(writer: ByteWriter, length: number): void {
+  if (length < 15) {
+    return;
+  }
+  let remaining = length - 15;
+  while (remaining >= 255) {
+    writer.writeU8(255);
+    remaining -= 255;
+  }
+  writer.writeU8(remaining);
+}
+
+function hashSequence(input: Uint8Array, offset: number, hashShift: number): number {
+  const sequence =
+    (input[offset]! |
+      (input[offset + 1]! << 8) |
+      (input[offset + 2]! << 16) |
+      (input[offset + 3]! << 24)) >>>
+    0;
+  return Math.imul(sequence, HASH_MULTIPLIER) >>> hashShift;
+}
+
+function equalFourBytes(input: Uint8Array, left: number, right: number): boolean {
+  return (
+    input[left] === input[right] &&
+    input[left + 1] === input[right + 1] &&
+    input[left + 2] === input[right + 2] &&
+    input[left + 3] === input[right + 3]
+  );
+}
+
 function decodeLz4BlockInto(
   input: Uint8Array,
-  output: number[],
+  output: Lz4Output,
   prefixStart: number,
+  outputLimit: number,
 ): void {
   const reader = new ByteReader(input);
   while (reader.remaining > 0) {
     const token = reader.readU8();
     const literalLength = readExtendedLength(reader, token >>> 4);
-    appendBytes(output, reader.readBytes(literalLength));
+    decodeAssert(
+      literalLength <= outputLimit - output.length,
+      "LZ4 data block output exceeds BD maximum",
+      reader.position,
+    );
+    output.writeBytes(reader.readBytes(literalLength));
     if (reader.remaining === 0) {
       return;
     }
@@ -151,15 +289,52 @@ function decodeLz4BlockInto(
       offsetPosition,
     );
     const matchLength = 4 + readExtendedLength(reader, token & 0x0f);
+    decodeAssert(
+      matchLength <= outputLimit - output.length,
+      "LZ4 data block output exceeds BD maximum",
+      reader.position,
+    );
     for (let index = 0; index < matchLength; index += 1) {
-      const value = output[output.length - offset];
+      const value = output.bytes[output.length - offset];
       decodeAssert(
         value !== undefined,
         "LZ4 match source is out of bounds",
         offsetPosition,
       );
-      output.push(value);
+      output.bytes[output.length] = value;
+      output.length += 1;
     }
+  }
+}
+
+class Lz4Output {
+  bytes = new Uint8Array();
+  length = 0;
+
+  ensureCapacity(extra: number): void {
+    const required = this.length + extra;
+    if (required <= this.bytes.length) {
+      return;
+    }
+    let capacity = Math.max(64, this.bytes.length);
+    while (capacity < required) {
+      capacity = Math.max(required, capacity * 2);
+    }
+    const next = new Uint8Array(capacity);
+    next.set(this.bytes.subarray(0, this.length));
+    this.bytes = next;
+  }
+
+  writeBytes(bytes: Uint8Array): void {
+    this.ensureCapacity(bytes.length);
+    this.bytes.set(bytes, this.length);
+    this.length += bytes.length;
+  }
+
+  finish(): Uint8Array {
+    return this.length === this.bytes.length
+      ? this.bytes
+      : this.bytes.slice(0, this.length);
   }
 }
 
@@ -215,10 +390,4 @@ function chooseBlockDescriptor(length: number): {
     return { descriptor: 0x60, maxBlockSize: 1024 * 1024 };
   }
   return { descriptor: 0x70, maxBlockSize: 4 * 1024 * 1024 };
-}
-
-function appendBytes(output: number[], bytes: Uint8Array): void {
-  for (const byte of bytes) {
-    output.push(byte);
-  }
 }

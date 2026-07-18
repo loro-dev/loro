@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-17.
+Verified against code 2026-07-18.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -87,6 +87,27 @@ JavaScript constant factor.
   arrays for the full output. Range predicates can also stop inside the index;
   `Text.unmark` therefore does not materialize the inspected range before
   applying the mark operation.
+- Text and List Fugue insertion use an incremental `originLeft` direct-child
+  index only when a concurrent/future interval needs ordering. Consecutive IDs
+  keep their single-child edge implicit, and `SequenceIndex` can skip an entire
+  future ID run while finding the next causally included element. Ordinary local
+  edits keep the smaller unindexed path. MovableList continues to use the scan
+  because moves break the origin-tree physical preorder.
+- Merging adjacent changes appends only the new operations and key-table entries
+  to the retained record. The cached operation length, peer end, frontier set,
+  operation indexes, and subscriber update slice are updated incrementally, so
+  a stream of mergeable commits does not repeatedly copy or reduce its complete
+  history. Consecutive List/MovableList inserts in one transaction also share a
+  single operation value array.
+- Snapshot SSTables choose interoperable LZ4 blocks when they reduce size.
+  DeltaRLE state columns encode and decode as streams rather than allocating
+  million-item BigInt intermediates, and LZ4 decode writes into typed storage.
+  Importing an initial latest-state snapshot hydrates current containers and
+  validates its frontier blocks immediately, while retaining the other owned
+  history blocks in encoded form. A history query, edit, checkout, export, or
+  later update builds and validates all history indexes once on a staging
+  document before installing them; current reads, version, frontiers, and
+  operation count do not force that work.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
@@ -110,17 +131,29 @@ pnpm --dir loro-js bench:complexity -- 1000,2000,4000,8000
 ```
 
 On an Apple M5 Pro with Node 26.4.0, the complete 259,778-action B4 trace now
-applies in a 315.9 ms seven-sample median (303.3–321.0 ms samples) and finishes
-at 104,852 UTF-16 code units. The resulting process reported 107.2 MB of used JS
-heap and 322.9 MB RSS.
+applies in a 353.5 ms three-sample median (351.8–354.9 ms samples) and finishes
+at 104,852 UTF-16 code units. The resulting process reported 107.1 MB of used JS
+heap and 322.1 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 6.6x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 7.4x slower in absolute time. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
 measured snapshot
-export at 148.2 ms, update export at 110.9 ms, snapshot import at 152.8 ms, and
-update import at 312.8 ms.
+export at 162.4 ms, update export at 129.3 ms, snapshot import at 161.5 ms, and
+update import at 328.1 ms.
+
+The `zxch3n/crdt-benchmarks` adapters provide a separate end-to-end comparison
+against the published Loro WASM adapter. With the local `loro-js` build, B4 fell
+from more than 180 seconds before the fixes (141.5 seconds after removing the
+first copy path) to 2.846 seconds after incrementally maintaining merged-change
+lengths; the WASM adapter result is 4.733 seconds. B3.5 takes 288 ms versus
+303 ms. B3.3 emits a 240,032-byte snapshot versus roughly 242 KB from WASM,
+down from the former 7.95 MB uncompressed TypeScript snapshot. A 60k-item List
+update is 231,840 bytes and a 120k-character Text update is 120,095 bytes, both
+matching the WASM output sizes. C1.1 still takes 6.988 seconds versus 1.728
+seconds; its remaining gap is described below rather than treated as an
+asymptotic regression.
 
 With 1k through 64k retained changes, exporting, importing, or checking out only
 the last change stays below 0.7 ms after warmup. Explicit one-operation span
@@ -215,6 +248,13 @@ The remaining differences are representation and JavaScript constant factors:
   affected container once. Initial snapshot hydration and fallback transitions
   with incomplete history can likewise materialize complete touched containers
   when their returned state or subscriber event requires it.
+- The million-operation C1.1 concurrent-text trace still exposes a large
+  constant-factor and retained-memory gap. Its local edit phase is about 4x the
+  WASM adapter, and parsing the 6.5 MB snapshot takes 3.62 seconds versus 43 ms.
+  Streaming DeltaRLE, typed LZ4 decode, and deferred history integration removed
+  the known superlinear and temporary-allocation failures; closing the remaining
+  gap needs a more compact decoded operation/frontier representation rather than
+  another public-API complexity change.
 - Old or manually constructed containers without a parent-edge binding scan
   their parent once, then cache the recovered binding. Normal container path
   lookup uses the indexed binding directly.

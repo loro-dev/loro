@@ -31,6 +31,10 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
   readonly #segmentsByPeer = new Map<bigint, OrderedIndex<StyleSegment<Meta>>>();
   readonly #emptyMetas: ReadonlyMap<string, Meta> = new Map();
 
+  get isEmpty(): boolean {
+    return this.#segmentsByPeer.size === 0;
+  }
+
   add(runs: readonly SequenceIdRun[], key: string, meta: Meta): void {
     for (const run of normalizeRuns(runs)) {
       const end = run.start.counter + run.length;
