@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { ContainerType, decodeChangeBlock, encodeChangeBlock } from "../src/codec/index";
+import {
+  ContainerType,
+  decodeChangeBlock,
+  encodeChangeBlock,
+  validateChangeBlock,
+} from "../src/codec/index";
 import type { DecodedChangeBlock } from "../src/codec/index";
 
 describe("semantic change block codec", () => {
@@ -37,7 +42,13 @@ describe("semantic change block codec", () => {
         },
       ],
     };
-    expect(decodeChangeBlock(encodeChangeBlock(block))).toEqual(block);
+    const encoded = encodeChangeBlock(block);
+    expect(decodeChangeBlock(encoded)).toEqual(block);
+    expect(validateChangeBlock(encoded)).toEqual({
+      peer: 0x0102_0304_0506_0708n,
+      counterStart: 10,
+      counterEnd: 11,
+    });
   });
 
   test("round trips deletes, movable-list operations and tree operations", () => {
@@ -101,14 +112,31 @@ describe("semantic change block codec", () => {
               container: tree,
               counter: 3,
               length: 1,
+              content: {
+                type: "tree-create",
+                subject: { peer, counter: 3 },
+                parent: { peer, counter: 2 },
+                position: Uint8Array.of(1, 2),
+              },
+            },
+            {
+              container: tree,
+              counter: 4,
+              length: 1,
               content: { type: "tree-delete", subject: { peer, counter: 2 } },
             },
           ],
         },
       ],
     };
-    const decoded = decodeChangeBlock(encodeChangeBlock(block));
+    const encoded = encodeChangeBlock(block);
+    const decoded = decodeChangeBlock(encoded);
     expect(decoded.changes).toEqual(block.changes);
     expect(decoded.peers).toEqual(expect.arrayContaining([peer, 0xffff_ffff_ffff_ffffn]));
+    expect(validateChangeBlock(encoded)).toEqual({
+      peer,
+      counterStart: 0,
+      counterEnd: 5,
+    });
   });
 });

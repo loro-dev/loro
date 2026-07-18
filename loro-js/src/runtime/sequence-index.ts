@@ -25,6 +25,14 @@ export interface SequenceIdRun {
   readonly length: number;
 }
 
+export interface SequenceInsertionIdContext {
+  leftPeer: bigint | undefined;
+  leftCounter: number;
+  startIndex: number;
+  rightPeer: bigint | undefined;
+  rightCounter: number;
+}
+
 export interface SequenceMetricRange {
   readonly start: number;
   readonly end: number;
@@ -75,6 +83,11 @@ export interface SequenceView<T> {
   range(start: number, end: number): T[];
   idRuns(start: number, end: number): SequenceIdRun[];
 }
+
+export type SequenceStorage<T extends IndexedSequenceElement> =
+  | T
+  | readonly T[]
+  | SequenceSpan<T>;
 
 type SequenceNodeStorage<T extends IndexedSequenceElement> = T | T[] | SequenceSpan<T>;
 
@@ -230,6 +243,44 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       for (let offset = 0; offset < nodeLength(node); offset += 1) {
         const element = nodeElement(node, offset);
         if (!element.deleted && visit(element) === false) return;
+      }
+      node = visibleCount(node.right) > 0 ? node.right : undefined;
+    }
+  }
+
+  /**
+   * Visits maximal visible ranges in each physical storage block without
+   * materializing scalar views from compact spans.
+   */
+  forEachVisibleStorageRange(
+    visit: (storage: SequenceStorage<T>, start: number, end: number) => boolean | void,
+  ): void {
+    if (this.visibleLength === 0) return;
+    const stack: SequenceNode<T>[] = [];
+    let node = this.#root;
+    while (node !== undefined || stack.length > 0) {
+      while (node !== undefined) {
+        pushNodeDeletion(node, this.#metrics);
+        stack.push(node);
+        node = visibleCount(node.left) > 0 ? node.left : undefined;
+      }
+      node = stack.pop()!;
+      let rangeStart = -1;
+      for (let offset = 0; offset < nodeLength(node); offset += 1) {
+        if (!nodeDeleted(node, offset)) {
+          if (rangeStart < 0) rangeStart = offset;
+          continue;
+        }
+        if (rangeStart >= 0) {
+          if (visit(node.element, rangeStart, offset) === false) return;
+          rangeStart = -1;
+        }
+      }
+      if (
+        rangeStart >= 0 &&
+        visit(node.element, rangeStart, nodeLength(node)) === false
+      ) {
+        return;
       }
       node = visibleCount(node.right) > 0 ? node.right : undefined;
     }
@@ -435,6 +486,54 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
           startIndex: physicalBase + offset + 1,
           right: nextPhysicalElement(node, offset),
         };
+      }
+      remaining -= ownVisibleCount(node);
+      physicalBase += nodeLength(node);
+      node = node.right;
+    }
+    throw new Error("visible sequence insertion position is missing");
+  }
+
+  /** Writes insertion neighbor IDs without creating compact-span views. */
+  visibleInsertionIdContext(
+    position: number,
+    output: SequenceInsertionIdContext,
+  ): SequenceInsertionIdContext {
+    if (
+      !Number.isSafeInteger(position) ||
+      position < 0 ||
+      position > this.visibleLength
+    ) {
+      throw new RangeError(`visible sequence position ${position} is out of range`);
+    }
+    if (position === 0) {
+      output.leftPeer = undefined;
+      output.leftCounter = 0;
+      output.startIndex = 0;
+      writeFirstPhysicalId(this.#root, output);
+      return output;
+    }
+
+    let node = this.#root;
+    let remaining = position - 1;
+    let physicalBase = 0;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftPhysicalCount = allCount(node.left);
+      const leftVisibleCount = visibleCount(node.left);
+      if (remaining < leftVisibleCount) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftVisibleCount;
+      physicalBase += leftPhysicalCount;
+      if (remaining < ownVisibleCount(node)) {
+        const offset = physicalOffsetAtVisibleIndex(node, remaining);
+        output.leftPeer = nodePeer(node, offset);
+        output.leftCounter = nodeCounter(node, offset);
+        output.startIndex = physicalBase + offset + 1;
+        writeNextPhysicalId(node, offset, output);
+        return output;
       }
       remaining -= ownVisibleCount(node);
       physicalBase += nodeLength(node);
@@ -1337,6 +1436,54 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     locations.reserveDense(endExclusive);
   }
 
+  /**
+   * Loads globally validated spans into an empty index in physical order.
+   * The Cartesian-tree build preserves the same priority treap as repeated
+   * tail insertion while recomputing every node only once.
+   */
+  loadValidatedSpans(spans: readonly SequenceSpan<T>[]): void {
+    if (this.#root !== undefined || this.#nodesByLocationId.length !== 0) {
+      throw new Error("validated sequence spans require an empty index");
+    }
+    if (spans.length === 0) return;
+    this.#invalidateCausalView();
+    const stack: SequenceNode<T>[] = [];
+    let root: SequenceNode<T> | undefined;
+    let tail: SequenceNode<T> | undefined;
+    for (const span of spans) {
+      const node = this.#newNode(span, true);
+      tail = node;
+      let left: SequenceNode<T> | undefined;
+      while (stack.length > 0 && stack[stack.length - 1]!.priority > node.priority) {
+        left = stack.pop();
+      }
+      node.left = left;
+      const parent = stack[stack.length - 1];
+      if (parent === undefined) {
+        root = node;
+      } else {
+        parent.right = node;
+      }
+      stack.push(node);
+    }
+
+    const pending = [root!];
+    const postorder: SequenceNode<T>[] = [];
+    while (pending.length > 0) {
+      const node = pending.pop()!;
+      postorder.push(node);
+      if (node.left !== undefined) pending.push(node.left);
+      if (node.right !== undefined) pending.push(node.right);
+    }
+    for (let index = postorder.length - 1; index >= 0; index -= 1) {
+      recompute(postorder[index]!, this.#metrics);
+    }
+    root!.parent = undefined;
+    this.#root = root;
+    this.#tail = tail;
+    this.#structureVersion += 1;
+  }
+
   #newNode(
     storage: SequenceNodeStorage<T> | readonly T[],
     recordNew: boolean,
@@ -1688,23 +1835,34 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     const visibleOffsets = node.visibleOffsets ?? [0, node.ownVisibleCount];
     const visibleUtf16Prefix = node.visibleUtf16Prefix ?? [0, node.ownVisibleUtf16];
     const visibleUtf8Prefix = node.visibleUtf8Prefix ?? [0, node.ownVisibleUtf8];
+    let lastPeer = node.ownLastId.peer;
+    let lastCounter = node.ownLastId.counter;
+    let lastVisiblePeer = node.ownLastVisibleId?.peer;
+    let lastVisibleCounter = node.ownLastVisibleId?.counter ?? 0;
     for (let insertedOffset = 0; insertedOffset < span.length; insertedOffset += 1) {
       const offsetInNode = length + insertedOffset;
       this.#recordNewElement(node, offsetInNode);
-      const id = nodeId(node, offsetInNode);
-      if (!sequenceIdsContinue(node.ownLastId, id)) node.ownIdRunCount += 1;
-      node.ownLastId = id;
+      const peer = nodePeer(node, offsetInNode);
+      const counter = nodeCounter(node, offsetInNode);
+      if (!sequenceIdScalarsContinue(lastPeer, lastCounter, peer, counter)) {
+        node.ownIdRunCount += 1;
+      }
+      lastPeer = peer;
+      lastCounter = counter;
       const value = nodeMetrics(node, offsetInNode, this.#metrics);
       node.ownUtf16 += value.utf16;
       node.ownUtf8 += value.utf8;
       if (!nodeDeleted(node, offsetInNode)) {
         if (node.ownVisibleCount === 0) {
-          node.ownFirstVisibleId = id;
+          node.ownFirstVisibleId = { peer, counter };
           node.ownVisibleIdRunCount = 1;
-        } else if (!sequenceIdsContinue(node.ownLastVisibleId!, id)) {
+        } else if (
+          !sequenceIdScalarsContinue(lastVisiblePeer!, lastVisibleCounter, peer, counter)
+        ) {
           node.ownVisibleIdRunCount += 1;
         }
-        node.ownLastVisibleId = id;
+        lastVisiblePeer = peer;
+        lastVisibleCounter = counter;
         node.ownVisibleCount += 1;
         node.ownVisibleUtf16 += value.utf16;
         node.ownVisibleUtf8 += value.utf8;
@@ -1713,6 +1871,11 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       visibleUtf16Prefix.push(node.ownVisibleUtf16);
       visibleUtf8Prefix.push(node.ownVisibleUtf8);
     }
+    node.ownLastId = { peer: lastPeer, counter: lastCounter };
+    node.ownLastVisibleId =
+      lastVisiblePeer === undefined
+        ? undefined
+        : { peer: lastVisiblePeer, counter: lastVisibleCounter };
     node.visibleOffsets = visibleOffsets;
     node.visibleUtf16Prefix = visibleUtf16Prefix;
     node.visibleUtf8Prefix = visibleUtf8Prefix;
@@ -1853,17 +2016,6 @@ function nodeElement<T extends IndexedSequenceElement>(
   }
   const storage = node.element as T | T[];
   return Array.isArray(storage) ? storage[offset]! : storage;
-}
-
-function nodeId<T extends IndexedSequenceElement>(
-  node: SequenceNode<T>,
-  offset: number,
-): SequenceId {
-  return node.isSpan
-    ? (node.element as SequenceSpan<T>).idAt(offset)
-    : Array.isArray(node.element)
-      ? (node.element as T[])[offset]!.id
-      : (node.element as T).id;
 }
 
 function nodePeer<T extends IndexedSequenceElement>(
@@ -2075,6 +2227,7 @@ function physicalOffsetAtVisibleIndex<T extends IndexedSequenceElement>(
   node: SequenceNode<T>,
   index: number,
 ): number {
+  if (node.ownVisibleCount === node.ownCount) return index;
   const prefix = node.visibleOffsets;
   if (prefix === undefined) return 0;
   let low = 1;
@@ -2137,15 +2290,30 @@ function recomputeOwn<T extends IndexedSequenceElement>(
     recomputeOwnElements(node, metrics);
     return;
   }
-  node.ownFirstId = nodeId(node, 0);
-  node.ownLastId = nodeId(node, nodeLength(node) - 1);
+  const length = nodeLength(node);
+  const firstPeer = nodePeer(node, 0);
+  const firstCounter = nodeCounter(node, 0);
+  node.ownFirstId = { peer: firstPeer, counter: firstCounter };
+  node.ownLastId =
+    length === 1
+      ? node.ownFirstId
+      : {
+          peer: nodePeer(node, length - 1),
+          counter: nodeCounter(node, length - 1),
+        };
   node.ownIdRunCount = 1;
-  for (let offset = 1; offset < nodeLength(node); offset += 1) {
-    if (!sequenceIdsContinue(nodeId(node, offset - 1), nodeId(node, offset))) {
+  let previousPeer = firstPeer;
+  let previousCounter = firstCounter;
+  for (let offset = 1; offset < length; offset += 1) {
+    const peer = nodePeer(node, offset);
+    const counter = nodeCounter(node, offset);
+    if (!sequenceIdScalarsContinue(previousPeer, previousCounter, peer, counter)) {
       node.ownIdRunCount += 1;
     }
+    previousPeer = peer;
+    previousCounter = counter;
   }
-  if (nodeLength(node) === 1) {
+  if (length === 1) {
     const value = nodeMetrics(node, 0, metrics);
     node.ownUtf16 = value.utf16;
     node.ownUtf8 = value.utf8;
@@ -2163,8 +2331,8 @@ function recomputeOwn<T extends IndexedSequenceElement>(
       node.ownVisibleCount = 1;
       node.ownVisibleUtf16 = value.utf16;
       node.ownVisibleUtf8 = value.utf8;
-      node.ownFirstVisibleId = nodeId(node, 0);
-      node.ownLastVisibleId = nodeId(node, 0);
+      node.ownFirstVisibleId = node.ownFirstId;
+      node.ownLastVisibleId = node.ownFirstId;
       node.ownVisibleIdRunCount = 1;
     }
     return;
@@ -2180,19 +2348,25 @@ function recomputeOwn<T extends IndexedSequenceElement>(
   const visibleOffsets = [0];
   const visibleUtf16Prefix = [0];
   const visibleUtf8Prefix = [0];
-  for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const id = nodeId(node, offset);
+  let lastVisiblePeer: bigint | undefined;
+  let lastVisibleCounter = 0;
+  for (let offset = 0; offset < length; offset += 1) {
+    const peer = nodePeer(node, offset);
+    const counter = nodeCounter(node, offset);
     const value = nodeMetrics(node, offset, metrics);
     node.ownUtf16 += value.utf16;
     node.ownUtf8 += value.utf8;
     if (!nodeDeleted(node, offset)) {
       if (node.ownVisibleCount === 0) {
-        node.ownFirstVisibleId = id;
+        node.ownFirstVisibleId = { peer, counter };
         node.ownVisibleIdRunCount = 1;
-      } else if (!sequenceIdsContinue(node.ownLastVisibleId!, id)) {
+      } else if (
+        !sequenceIdScalarsContinue(lastVisiblePeer!, lastVisibleCounter, peer, counter)
+      ) {
         node.ownVisibleIdRunCount += 1;
       }
-      node.ownLastVisibleId = id;
+      lastVisiblePeer = peer;
+      lastVisibleCounter = counter;
       node.ownVisibleCount += 1;
       node.ownVisibleUtf16 += value.utf16;
       node.ownVisibleUtf8 += value.utf8;
@@ -2201,6 +2375,10 @@ function recomputeOwn<T extends IndexedSequenceElement>(
     visibleUtf16Prefix.push(node.ownVisibleUtf16);
     visibleUtf8Prefix.push(node.ownVisibleUtf8);
   }
+  node.ownLastVisibleId =
+    lastVisiblePeer === undefined
+      ? undefined
+      : { peer: lastVisiblePeer, counter: lastVisibleCounter };
   node.visibleOffsets = visibleOffsets;
   node.visibleUtf16Prefix = visibleUtf16Prefix;
   node.visibleUtf8Prefix = visibleUtf8Prefix;
@@ -2460,21 +2638,36 @@ function recomputeOwnIdRuns<T extends IndexedSequenceElement>(
   node.ownFirstVisibleId = undefined;
   node.ownLastVisibleId = undefined;
   node.ownVisibleIdRunCount = 0;
+  let lastPeer: bigint | undefined;
+  let lastCounter = 0;
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
     if (nodeDeleted(node, offset)) continue;
-    const id = nodeId(node, offset);
-    if (node.ownFirstVisibleId === undefined) {
-      node.ownFirstVisibleId = id;
+    const peer = nodePeer(node, offset);
+    const counter = nodeCounter(node, offset);
+    if (lastPeer === undefined) {
+      node.ownFirstVisibleId = { peer, counter };
       node.ownVisibleIdRunCount = 1;
-    } else if (!sequenceIdsContinue(node.ownLastVisibleId!, id)) {
+    } else if (!sequenceIdScalarsContinue(lastPeer, lastCounter, peer, counter)) {
       node.ownVisibleIdRunCount += 1;
     }
-    node.ownLastVisibleId = id;
+    lastPeer = peer;
+    lastCounter = counter;
   }
+  node.ownLastVisibleId =
+    lastPeer === undefined ? undefined : { peer: lastPeer, counter: lastCounter };
 }
 
 function sequenceIdsContinue(left: SequenceId, right: SequenceId): boolean {
   return left.peer === right.peer && left.counter + 1 === right.counter;
+}
+
+function sequenceIdScalarsContinue(
+  leftPeer: bigint,
+  leftCounter: number,
+  rightPeer: bigint,
+  rightCounter: number,
+): boolean {
+  return leftPeer === rightPeer && leftCounter + 1 === rightCounter;
 }
 
 function normalizeSequenceIdRuns(runs: readonly SequenceIdRun[]): SequenceIdRun[] {
@@ -3030,6 +3223,20 @@ function firstPhysicalElement<T extends IndexedSequenceElement>(
   return nodeElement(node, 0);
 }
 
+function writeFirstPhysicalId<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+  output: SequenceInsertionIdContext,
+): void {
+  if (node === undefined) {
+    output.rightPeer = undefined;
+    output.rightCounter = 0;
+    return;
+  }
+  while (node.left !== undefined) node = node.left;
+  output.rightPeer = nodePeer(node, 0);
+  output.rightCounter = nodeCounter(node, 0);
+}
+
 function nextPhysicalElement<T extends IndexedSequenceElement>(
   node: SequenceNode<T>,
   offset: number,
@@ -3043,6 +3250,33 @@ function nextPhysicalElement<T extends IndexedSequenceElement>(
     current = current.parent;
   }
   return undefined;
+}
+
+function writeNextPhysicalId<T extends IndexedSequenceElement>(
+  node: SequenceNode<T>,
+  offset: number,
+  output: SequenceInsertionIdContext,
+): void {
+  if (offset + 1 < nodeLength(node)) {
+    output.rightPeer = nodePeer(node, offset + 1);
+    output.rightCounter = nodeCounter(node, offset + 1);
+    return;
+  }
+  if (node.right !== undefined) {
+    writeFirstPhysicalId(node.right, output);
+    return;
+  }
+  let current = node;
+  while (current.parent !== undefined) {
+    if (current === current.parent.left) {
+      output.rightPeer = nodePeer(current.parent, 0);
+      output.rightCounter = nodeCounter(current.parent, 0);
+      return;
+    }
+    current = current.parent;
+  }
+  output.rightPeer = undefined;
+  output.rightCounter = 0;
 }
 
 function firstVisibleElement<T extends IndexedSequenceElement>(

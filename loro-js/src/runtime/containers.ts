@@ -10,7 +10,7 @@ import type { LoroDoc } from "./document";
 import { fractionalIndexBetween } from "./fractional-index";
 import { OrderedIndex } from "./ordered-index";
 import { SequenceIndex, SequenceSpan } from "./sequence-index";
-import type { SequenceIdRun } from "./sequence-index";
+import type { SequenceIdRun, SequenceInsertionIdContext } from "./sequence-index";
 import { TextStyleIndex } from "./text-style-index";
 import type {
   ContainerID,
@@ -617,16 +617,36 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     originLeft: CodecId | undefined,
     originRight: CodecId | undefined,
   ): TextSequenceSpan {
+    return TextSequenceSpan.fromTextOrigins(
+      text,
+      startId,
+      lamport,
+      originLeft?.peer,
+      originLeft?.counter ?? 0,
+      originRight?.peer,
+      originRight?.counter ?? 0,
+    );
+  }
+
+  static fromTextOrigins(
+    text: string,
+    startId: CodecId,
+    lamport: number,
+    originLeftPeer: bigint | undefined,
+    originLeftCounter: number,
+    originRightPeer: bigint | undefined,
+    originRightCounter: number,
+  ): TextSequenceSpan {
     const span = new TextSequenceSpan();
     span.#text = text;
     for (const _value of text) span.#length += 1;
     span.#pendingStartPeer = startId.peer;
     span.#pendingStartCounter = startId.counter;
     span.#pendingLamport = lamport;
-    span.#pendingOriginLeftPeer = originLeft?.peer;
-    span.#pendingOriginLeftCounter = originLeft?.counter ?? 0;
-    span.#pendingOriginRightPeer = originRight?.peer;
-    span.#pendingOriginRightCounter = originRight?.counter ?? 0;
+    span.#pendingOriginLeftPeer = originLeftPeer;
+    span.#pendingOriginLeftCounter = originLeftCounter;
+    span.#pendingOriginRightPeer = originRightPeer;
+    span.#pendingOriginRightCounter = originRightCounter;
     return span;
   }
 
@@ -647,8 +667,10 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     const span = new TextSequenceSpan();
     span.#text = text;
     span.#length = peers.length;
-    span.#numbers = new Array(peers.length * TEXT_NUMBER_STRIDE);
-    span.#peers = new Array(peers.length * TEXT_PEER_STRIDE);
+    const numbers = new Array<number>(peers.length * TEXT_NUMBER_STRIDE).fill(0);
+    const peerColumns = new Array<bigint | undefined>(
+      peers.length * TEXT_PEER_STRIDE,
+    ).fill(undefined);
     let utf16End = 0;
     let offset = 0;
     for (const value of text) {
@@ -657,22 +679,18 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
       }
       utf16End += value.length;
       const numberBase = offset * TEXT_NUMBER_STRIDE;
-      span.#numbers[numberBase + TEXT_COUNTER] = counters[offset]!;
-      span.#numbers[numberBase + TEXT_LAMPORT] = lamports[offset]!;
-      span.#numbers[numberBase + TEXT_UTF16_END] = utf16End;
-      span.#numbers[numberBase + TEXT_ORIGIN_LEFT_COUNTER] = 0;
-      span.#numbers[numberBase + TEXT_ORIGIN_RIGHT_COUNTER] = 0;
-      span.#numbers[numberBase + TEXT_DELETED_BY_COUNTER] = 0;
+      numbers[numberBase + TEXT_COUNTER] = counters[offset]!;
+      numbers[numberBase + TEXT_LAMPORT] = lamports[offset]!;
+      numbers[numberBase + TEXT_UTF16_END] = utf16End;
       const peerBase = offset * TEXT_PEER_STRIDE;
-      span.#peers[peerBase + TEXT_ID_PEER] = peers[offset]!;
-      span.#peers[peerBase + TEXT_ORIGIN_LEFT_PEER] = undefined;
-      span.#peers[peerBase + TEXT_ORIGIN_RIGHT_PEER] = undefined;
-      span.#peers[peerBase + TEXT_DELETED_BY_PEER] = undefined;
+      peerColumns[peerBase + TEXT_ID_PEER] = peers[offset]!;
       offset += 1;
     }
     if (offset !== peers.length) {
       throw new Error("text snapshot chunk contains too few Unicode scalars");
     }
+    span.#numbers = numbers;
+    span.#peers = peerColumns;
     return span;
   }
 
@@ -836,6 +854,12 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   valueAt(offset: number): string {
     const start = offset === 0 ? 0 : this.#number(offset - 1, TEXT_UTF16_END);
     return this.#text.slice(start, this.#number(offset, TEXT_UTF16_END));
+  }
+
+  textRange(start: number, end: number): string {
+    const utf16Start = start === 0 ? 0 : this.#number(start - 1, TEXT_UTF16_END);
+    const utf16End = end === 0 ? 0 : this.#number(end - 1, TEXT_UTF16_END);
+    return this.#text.slice(utf16Start, utf16End);
   }
 
   setValueAt(offset: number, value: string): void {
@@ -1238,6 +1262,14 @@ export class LoroText extends LoroContainer {
   _attributeHistoryComplete = true;
   readonly _styleIndex = new TextStyleIndex<TextStyleMeta>();
   _styleVersion: CausalVersion | undefined;
+  readonly #insertionIdContext: SequenceInsertionIdContext = {
+    leftPeer: undefined,
+    leftCounter: 0,
+    startIndex: 0,
+    rightPeer: undefined,
+    rightCounter: 0,
+  };
+  #validatedSnapshotSpans: TextSequenceSpan[] | undefined;
   readonly #attributeValuesCache = new WeakMap<
     ReadonlyMap<string, TextStyleMeta>,
     ReadonlyMap<string, RuntimeValue>
@@ -1549,10 +1581,61 @@ export class LoroText extends LoroContainer {
     counters: readonly number[],
     lamports: readonly number[],
   ): void {
-    this._sequence.insertSpanAtPhysical(
-      this._sequence.allLength,
-      TextSequenceSpan.fromValidatedSnapshotChunk(text, peers, counters, lamports),
+    const span = TextSequenceSpan.fromValidatedSnapshotChunk(
+      text,
+      peers,
+      counters,
+      lamports,
     );
+    if (this.#validatedSnapshotSpans !== undefined) {
+      this.#validatedSnapshotSpans.push(span);
+    } else {
+      this._sequence.insertSpanAtPhysical(this._sequence.allLength, span);
+    }
+  }
+
+  _beginValidatedSnapshotLoad(): void {
+    if (this.#validatedSnapshotSpans !== undefined) {
+      throw new Error("text snapshot load is already active");
+    }
+    this.#validatedSnapshotSpans = [];
+  }
+
+  _endValidatedSnapshotLoad(): void {
+    const spans = this.#validatedSnapshotSpans;
+    if (spans === undefined) throw new Error("text snapshot load is not active");
+    this.#validatedSnapshotSpans = undefined;
+    this._sequence.loadValidatedSpans(spans);
+  }
+
+  _forEachVisibleSnapshotData(
+    appendText: (text: string, scalarLength: number) => void,
+    appendId: (peer: bigint, counter: number, lamport: number) => void,
+  ): void {
+    this._sequence.forEachVisibleStorageRange((storage, start, end) => {
+      if (storage instanceof TextSequenceSpan) {
+        appendText(storage.textRange(start, end), end - start);
+        for (let offset = start; offset < end; offset += 1) {
+          appendId(
+            storage.peerAt(offset),
+            storage.counterAt(offset),
+            storage.lamportAt(offset),
+          );
+        }
+        return;
+      }
+      if (storage instanceof SequenceSpan) {
+        throw new Error("unexpected text sequence span implementation");
+      }
+      const elements = Array.isArray(storage) ? storage : [storage];
+      let text = "";
+      for (let offset = start; offset < end; offset += 1) {
+        const element = elements[offset]!;
+        text += element.value;
+        appendId(element.id.peer, element.id.counter, element.lamport);
+      }
+      appendText(text, end - start);
+    });
   }
 
   _insertFugue(
@@ -1566,59 +1649,103 @@ export class LoroText extends LoroContainer {
     const authored = current ? undefined : this._sequence.causalView(causalVersion);
     const authoredLength = current ? this._sequence.visibleLength : authored!.length;
     const authoredPosition = Math.min(position, authoredLength);
-    const currentContext = current
-      ? this._sequence.visibleInsertionContext(authoredPosition)
+    const needsStyleElements = !this._styleIndex.isEmpty;
+    const firstCodePoint = text.codePointAt(0)!;
+    const singleScalar =
+      text.length === 1 || (text.length === 2 && firstCodePoint > 0xffff);
+    const useIdContext = current && !needsStyleElements && !singleScalar;
+    const currentContext =
+      current && !useIdContext
+        ? this._sequence.visibleInsertionContext(authoredPosition)
+        : undefined;
+    const currentIdContext = useIdContext
+      ? this._sequence.visibleInsertionIdContext(
+          authoredPosition,
+          this.#insertionIdContext,
+        )
       : undefined;
-    const authoredAt = (index: number): TextElement | undefined =>
-      current ? this._sequence.atVisible(index) : authored!.at(index);
-    const authoredLeft = currentContext?.left ?? authoredAt(authoredPosition - 1);
-    const insertion = fugueInsertion(
-      this._sequence,
-      position,
-      startId,
-      causalVersion,
-      true,
-      currentContext ?? { current: false, left: authoredLeft },
-    );
+    const authoredLeft = current
+      ? currentContext?.left
+      : authored!.at(authoredPosition - 1);
+    const authoredRight = needsStyleElements
+      ? current
+        ? this._sequence.atVisible(authoredPosition)
+        : authored!.at(authoredPosition)
+      : undefined;
+    const insertion =
+      currentIdContext === undefined
+        ? fugueInsertion(
+            this._sequence,
+            position,
+            startId,
+            causalVersion,
+            true,
+            currentContext ?? { current: false, left: authoredLeft },
+          )
+        : undefined;
+    const insertIndex = currentIdContext?.startIndex ?? insertion!.insertIndex;
     let inherited: Map<string, TextStyleMeta> | undefined;
-    if (!this._styleIndex.isEmpty) {
+    if (needsStyleElements) {
       inherited = new Map();
       for (const [key, meta] of this._attributeMetasAt(authoredLeft, causalVersion)) {
         if ((meta.info & 0b100) !== 0) inherited.set(key, meta);
       }
-      for (const [key, meta] of this._attributeMetasAt(
-        authoredAt(authoredPosition),
-        causalVersion,
-      )) {
+      for (const [key, meta] of this._attributeMetasAt(authoredRight, causalVersion)) {
         if ((meta.info & 0b010) !== 0) inherited.set(key, meta);
       }
     }
-    const firstCodePoint = text.codePointAt(0)!;
-    const singleScalar =
-      text.length === 1 || (text.length === 2 && firstCodePoint > 0xffff);
     let insertedLength: number;
     if (singleScalar) {
+      const originLeft =
+        currentIdContext === undefined || currentIdContext.leftPeer === undefined
+          ? insertion?.originLeft
+          : {
+              peer: currentIdContext.leftPeer,
+              counter: currentIdContext.leftCounter,
+            };
+      const originRight =
+        currentIdContext === undefined || currentIdContext.rightPeer === undefined
+          ? insertion?.originRight
+          : {
+              peer: currentIdContext.rightPeer,
+              counter: currentIdContext.rightCounter,
+            };
       const element: TextElement = {
         value: text,
         id: { peer: startId.peer, counter: startId.counter },
         lamport,
         deleted: false,
-        originLeft: insertion.originLeft,
-        originRight: insertion.originRight,
+        originLeft,
+        originRight,
       };
-      this._sequence.insertAtPhysical(insertion.insertIndex, [element]);
-      recordFugueInsertion(this._sequence, insertion, [element.id]);
+      this._sequence.insertAtPhysical(insertIndex, [element]);
+      if (insertion !== undefined) {
+        recordFugueInsertion(this._sequence, insertion, [element.id]);
+      }
       insertedLength = 1;
     } else {
-      const span = TextSequenceSpan.fromText(
-        text,
-        startId,
-        lamport,
-        insertion.originLeft,
-        insertion.originRight,
-      );
-      this._sequence.insertSpanAtPhysical(insertion.insertIndex, span);
-      recordFugueInsertionRun(this._sequence, insertion, startId);
+      const span =
+        currentIdContext === undefined
+          ? TextSequenceSpan.fromText(
+              text,
+              startId,
+              lamport,
+              insertion!.originLeft,
+              insertion!.originRight,
+            )
+          : TextSequenceSpan.fromTextOrigins(
+              text,
+              startId,
+              lamport,
+              currentIdContext.leftPeer,
+              currentIdContext.leftCounter,
+              currentIdContext.rightPeer,
+              currentIdContext.rightCounter,
+            );
+      this._sequence.insertSpanAtPhysical(insertIndex, span);
+      if (insertion !== undefined) {
+        recordFugueInsertionRun(this._sequence, insertion, startId);
+      }
       insertedLength = span.length;
     }
     if (inherited !== undefined && inherited.size > 0) {
@@ -1743,6 +1870,7 @@ export class LoroText extends LoroContainer {
 
   _reset(): void {
     this._sequence.reset();
+    this.#validatedSnapshotSpans = undefined;
     this._detachedCounter = 0;
     this._detachedStyleCounter = 0;
     this._attributeHistoryComplete = true;

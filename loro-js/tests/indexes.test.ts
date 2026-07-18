@@ -130,6 +130,71 @@ describe("runtime indexes", () => {
     expect(visits).toBe(10);
   });
 
+  test("visits raw visible storage ranges and locates insertion neighbor ids", () => {
+    const sequence = new SequenceIndex<TestElement>();
+    const elements = Array.from({ length: 6 }, (_, counter) => ({
+      id: { peer: 1n, counter },
+      deleted: false,
+      deletedBy: [],
+      value: String(counter),
+    }));
+    sequence.insertAtVisible(0, elements);
+    sequence.setDeleted(elements[1]!, true);
+    sequence.setDeleted(elements[4]!, true);
+
+    const ranges: { readonly start: number; readonly end: number }[] = [];
+    sequence.forEachVisibleStorageRange((_storage, start, end) => {
+      ranges.push({ start, end });
+    });
+    expect(ranges).toEqual([
+      { start: 0, end: 1 },
+      { start: 2, end: 4 },
+      { start: 5, end: 6 },
+    ]);
+
+    const context = {
+      leftPeer: undefined as bigint | undefined,
+      leftCounter: 0,
+      startIndex: 0,
+      rightPeer: undefined as bigint | undefined,
+      rightCounter: 0,
+    };
+    const locate = (position: number) => ({
+      ...sequence.visibleInsertionIdContext(position, context),
+    });
+    expect(locate(0)).toEqual({
+      leftPeer: undefined,
+      leftCounter: 0,
+      startIndex: 0,
+      rightPeer: 1n,
+      rightCounter: 0,
+    });
+    expect(locate(1)).toEqual({
+      leftPeer: 1n,
+      leftCounter: 0,
+      startIndex: 1,
+      rightPeer: 1n,
+      rightCounter: 1,
+    });
+    expect(locate(2)).toEqual({
+      leftPeer: 1n,
+      leftCounter: 2,
+      startIndex: 3,
+      rightPeer: 1n,
+      rightCounter: 3,
+    });
+    expect(locate(4)).toEqual({
+      leftPeer: 1n,
+      leftCounter: 5,
+      startIndex: 6,
+      rightPeer: undefined,
+      rightCounter: 0,
+    });
+    expect(() => sequence.loadValidatedSpans([])).toThrow(
+      /validated sequence spans require an empty index/u,
+    );
+  });
+
   test("maps id runs to visible metric ranges without crossing inserts", () => {
     const sequence = new SequenceIndex<TestElement>((element) => ({
       utf16: element.value.length,

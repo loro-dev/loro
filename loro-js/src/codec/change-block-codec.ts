@@ -5,8 +5,8 @@ import {
   decodeChangesHeader,
   decodeChangesMetadata,
   decodeContainerArena,
-  decodeDeleteStartIds,
-  decodeEncodedOperations,
+  decodeDeleteStartIdColumns,
+  decodeEncodedOperationColumns,
   encodeChangeKeys,
   encodeChangesHeader,
   encodeChangesMetadata,
@@ -144,11 +144,17 @@ interface DecodeOperationContext {
   readonly peers: readonly bigint[];
   readonly keys: readonly string[];
   readonly positions: readonly Uint8Array[];
-  readonly deleteStartIds: ReturnType<typeof decodeDeleteStartIds>;
+  readonly deleteStartIds: ReturnType<typeof decodeDeleteStartIdColumns>;
   deleteIndex: number;
 }
 
-export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
+export interface ValidatedChangeBlockRange {
+  readonly peer: bigint;
+  readonly counterStart: number;
+  readonly counterEnd: number;
+}
+
+function decodeChangeBlockParts(bytes: Uint8Array) {
   const encoded = decodeEncodedChangeBlock(bytes);
   const header = decodeChangesHeader(encoded.header, {
     changeCount: encoded.changeCount,
@@ -161,14 +167,20 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
   const keys = decodeChangeKeys(encoded.keys);
   const containers = decodeContainerArena(encoded.containerIds, header.peers, keys);
   const positions = decodePositionArena(encoded.positions);
-  const rows = decodeEncodedOperations(encoded.operations);
+  const operations = decodeEncodedOperationColumns(encoded.operations);
   const context: DecodeOperationContext = {
     peers: header.peers,
     keys,
     positions,
-    deleteStartIds: decodeDeleteStartIds(encoded.deleteStartIds),
+    deleteStartIds: decodeDeleteStartIdColumns(encoded.deleteStartIds),
     deleteIndex: 0,
   };
+  return { encoded, header, metadata, keys, containers, positions, operations, context };
+}
+
+export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
+  const { encoded, header, metadata, keys, containers, positions, operations, context } =
+    decodeChangeBlockParts(bytes);
   const mutableOperations: DecodedOperation[][] = Array.from(
     { length: encoded.changeCount },
     () => [],
@@ -176,19 +188,22 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
   let counter = encoded.counterStart | 0;
   let changeIndex = 0;
   let remainingValues = encoded.values;
-  for (const row of rows) {
-    decodeAssert(row.length > 0 && row.length <= 0x7fff_ffff, "invalid operation length");
-    decodeAssert(
-      row.containerIndex < containers.length,
-      "invalid operation container index",
+  const operationId = { peer: header.peer, counter };
+  for (let row = 0; row < operations.containerIndices.length; row += 1) {
+    const length = operations.lengths[row]!;
+    decodeAssert(length > 0 && length <= 0x7fff_ffff, "invalid operation length");
+    const containerIndex = operations.containerIndices[row]!;
+    decodeAssert(containerIndex < containers.length, "invalid operation container index");
+    const container = containers[containerIndex]!;
+    const [value, remaining] = decodeChangeValueContent(
+      operations.valueTypes[row]!,
+      remainingValues,
     );
-    const container = containers[row.containerIndex]!;
-    const [value, remaining] = decodeChangeValueContent(row.valueType, remainingValues);
     remainingValues = remaining;
-    const operationId: Id = { peer: header.peer, counter };
+    operationId.counter = counter;
     const content = decodeOperationContent(
       container,
-      row.property,
+      operations.properties[row]!,
       value,
       operationId,
       context,
@@ -196,10 +211,10 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
     mutableOperations[changeIndex]!.push({
       container,
       counter,
-      length: row.length,
+      length,
       content,
     });
-    counter = checkedCounter(counter + row.length);
+    counter = checkedCounter(counter + length);
     const nextBoundary = header.counters[changeIndex + 1];
     decodeAssert(nextBoundary !== undefined, "operation exceeds change boundaries");
     decodeAssert(counter <= nextBoundary, "operation crosses a change boundary");
@@ -209,7 +224,7 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
   }
   decodeAssert(remainingValues.length === 0, "trailing change value bytes");
   decodeAssert(
-    context.deleteIndex === context.deleteStartIds.length,
+    context.deleteIndex === context.deleteStartIds.peerIndices.length,
     "unused delete start IDs",
   );
   decodeAssert(
@@ -229,6 +244,54 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
     });
   }
   return { peers: header.peers, keys, containers, positions, changes };
+}
+
+/** Fully validates a block while retaining only its covered counter range. */
+export function validateChangeBlock(bytes: Uint8Array): ValidatedChangeBlockRange {
+  const { encoded, header, containers, operations, context } =
+    decodeChangeBlockParts(bytes);
+  let counter = encoded.counterStart | 0;
+  let changeIndex = 0;
+  let remainingValues = encoded.values;
+  const operationId = { peer: header.peer, counter };
+  for (let row = 0; row < operations.containerIndices.length; row += 1) {
+    const length = operations.lengths[row]!;
+    decodeAssert(length > 0 && length <= 0x7fff_ffff, "invalid operation length");
+    const containerIndex = operations.containerIndices[row]!;
+    decodeAssert(containerIndex < containers.length, "invalid operation container index");
+    const [value, remaining] = decodeChangeValueContent(
+      operations.valueTypes[row]!,
+      remainingValues,
+    );
+    remainingValues = remaining;
+    operationId.counter = counter;
+    decodeOperationContent(
+      containers[containerIndex]!,
+      operations.properties[row]!,
+      value,
+      operationId,
+      context,
+      false,
+    );
+    counter = checkedCounter(counter + length);
+    const nextBoundary = header.counters[changeIndex + 1];
+    decodeAssert(nextBoundary !== undefined, "operation exceeds change boundaries");
+    decodeAssert(counter <= nextBoundary, "operation crosses a change boundary");
+    if (counter === nextBoundary && changeIndex + 1 < encoded.changeCount) {
+      changeIndex += 1;
+    }
+  }
+  decodeAssert(remainingValues.length === 0, "trailing change value bytes");
+  decodeAssert(
+    context.deleteIndex === context.deleteStartIds.peerIndices.length,
+    "unused delete start IDs",
+  );
+  const counterEnd = checkedCounter((encoded.counterStart | 0) + encoded.counterLength);
+  decodeAssert(
+    counter === counterEnd,
+    "operation lengths do not fill the block counter range",
+  );
+  return { peer: header.peer, counterStart: encoded.counterStart | 0, counterEnd };
 }
 
 export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
@@ -361,31 +424,51 @@ function decodeOperationContent(
   value: ChangeValue,
   operationId: Id,
   context: DecodeOperationContext,
-): DecodedOperationContent {
+): DecodedOperationContent;
+function decodeOperationContent(
+  container: ContainerId,
+  property: number,
+  value: ChangeValue,
+  operationId: Id,
+  context: DecodeOperationContext,
+  materialize: false,
+): undefined;
+function decodeOperationContent(
+  container: ContainerId,
+  property: number,
+  value: ChangeValue,
+  operationId: Id,
+  context: DecodeOperationContext,
+  materialize = true,
+): DecodedOperationContent | undefined {
   const type = container.containerType;
   if (type === ContainerType.Map) {
     const key = getIndex(context.keys, property, "map key");
     if (value.type === "delete-once") {
-      return { type: "map-delete", key };
+      return materialize ? { type: "map-delete", key } : undefined;
     }
     if (value.type === "loro-value") {
-      return { type: "map-insert", key, value: value.value };
+      return materialize ? { type: "map-insert", key, value: value.value } : undefined;
     }
     throw new LoroDecodeError("invalid map operation value");
   }
   if (type === ContainerType.Text) {
     if (value.type === "string") {
       decodeAssert(property >= 0, "invalid text insertion position");
-      return { type: "text-insert", position: property, value: value.value };
+      return materialize
+        ? { type: "text-insert", position: property, value: value.value }
+        : undefined;
     }
     if (value.type === "delete-sequence") {
-      const deletion = takeDeletion(context);
-      return {
-        type: "text-delete",
-        position: property,
-        length: deletion.length,
-        startId: deletion.startId,
-      };
+      const deletion = takeDeletion(context, materialize);
+      return materialize
+        ? {
+            type: "text-delete",
+            position: property,
+            length: deletion!.length,
+            startId: deletion!.startId,
+          }
+        : undefined;
     }
     if (value.type === "mark-start") {
       decodeAssert(property >= 0, "invalid text mark position");
@@ -397,87 +480,101 @@ function decodeOperationContent(
       );
       const end = property + length;
       decodeAssert(end <= 0xffff_ffff, "text mark end is out of range");
-      return {
-        type: "text-mark",
-        start: property,
-        end,
-        key: context.keys[keyIndex]!,
-        value: value.value,
-        info: value.info,
-      };
+      return materialize
+        ? {
+            type: "text-mark",
+            start: property,
+            end,
+            key: context.keys[keyIndex]!,
+            value: value.value,
+            info: value.info,
+          }
+        : undefined;
     }
     if (value.type === "null") {
-      return { type: "text-mark-end" };
+      return materialize ? { type: "text-mark-end" } : undefined;
     }
     throw new LoroDecodeError("invalid text operation value");
   }
   if (type === ContainerType.List) {
     if (value.type === "loro-value" && value.value.type === "list") {
       decodeAssert(property >= 0, "invalid list insertion position");
-      return { type: "list-insert", position: property, values: value.value.value };
+      return materialize
+        ? { type: "list-insert", position: property, values: value.value.value }
+        : undefined;
     }
     if (value.type === "delete-sequence") {
-      const deletion = takeDeletion(context);
-      return {
-        type: "list-delete",
-        position: property,
-        length: deletion.length,
-        startId: deletion.startId,
-      };
+      const deletion = takeDeletion(context, materialize);
+      return materialize
+        ? {
+            type: "list-delete",
+            position: property,
+            length: deletion!.length,
+            startId: deletion!.startId,
+          }
+        : undefined;
     }
     throw new LoroDecodeError("invalid list operation value");
   }
   if (type === ContainerType.MovableList) {
     if (value.type === "loro-value" && value.value.type === "list") {
       decodeAssert(property >= 0, "invalid movable-list insertion position");
-      return {
-        type: "movable-list-insert",
-        position: property,
-        values: value.value.value,
-      };
+      return materialize
+        ? {
+            type: "movable-list-insert",
+            position: property,
+            values: value.value.value,
+          }
+        : undefined;
     }
     if (value.type === "delete-sequence") {
-      const deletion = takeDeletion(context);
-      return {
-        type: "movable-list-delete",
-        position: property,
-        length: deletion.length,
-        startId: deletion.startId,
-      };
+      const deletion = takeDeletion(context, materialize);
+      return materialize
+        ? {
+            type: "movable-list-delete",
+            position: property,
+            length: deletion!.length,
+            startId: deletion!.startId,
+          }
+        : undefined;
     }
     if (value.type === "list-move") {
       decodeAssert(property >= 0, "invalid movable-list destination");
-      return {
-        type: "movable-list-move",
-        from: bigintToIndex(value.from, 0xffff_ffff, "movable-list source"),
-        to: property,
-        elementId: {
-          peer: context.peers[
-            bigintToIndex(
-              value.fromPeerIndex,
-              context.peers.length - 1,
-              "movable-list peer index",
-            )
-          ]!,
-          lamport: bigintToIndex(value.lamport, 0xffff_ffff, "movable-list lamport"),
-        },
-      };
+      const from = bigintToIndex(value.from, 0xffff_ffff, "movable-list source");
+      const peer =
+        context.peers[
+          bigintToIndex(
+            value.fromPeerIndex,
+            context.peers.length - 1,
+            "movable-list peer index",
+          )
+        ]!;
+      const lamport = bigintToIndex(value.lamport, 0xffff_ffff, "movable-list lamport");
+      return materialize
+        ? {
+            type: "movable-list-move",
+            from,
+            to: property,
+            elementId: { peer, lamport },
+          }
+        : undefined;
     }
     if (value.type === "list-set") {
-      return {
-        type: "movable-list-set",
-        elementId: {
-          peer: context.peers[
-            bigintToIndex(
-              value.peerIndex,
-              context.peers.length - 1,
-              "movable-list peer index",
-            )
-          ]!,
-          lamport: value.lamport,
-        },
-        value: value.value,
-      };
+      const peer =
+        context.peers[
+          bigintToIndex(
+            value.peerIndex,
+            context.peers.length - 1,
+            "movable-list peer index",
+          )
+        ]!;
+      return materialize
+        ? {
+            type: "movable-list-set",
+            elementId: { peer, lamport: value.lamport },
+            value: value.value,
+          }
+        : undefined;
     }
     throw new LoroDecodeError("invalid movable-list operation value");
   }
@@ -485,30 +582,33 @@ function decodeOperationContent(
     if (value.type !== "raw-tree-move") {
       throw new LoroDecodeError("invalid tree operation value");
     }
-    const subject: Id = {
-      peer: context.peers[
+    const subjectPeer =
+      context.peers[
         bigintToIndex(
           value.subjectPeerIndex,
           context.peers.length - 1,
           "tree subject peer index",
         )
-      ]!,
-      counter: value.subjectCounter,
-    };
-    const parent: Id | undefined = value.parentIsNull
+      ]!;
+    const parentPeer = value.parentIsNull
       ? undefined
-      : {
-          peer: context.peers[
-            bigintToIndex(
-              value.parentPeerIndex,
-              context.peers.length - 1,
-              "tree parent peer index",
-            )
-          ]!,
-          counter: value.parentCounter,
-        };
-    if (parent !== undefined && idsEqual(parent, DELETED_TREE_ROOT)) {
-      return { type: "tree-delete", subject };
+      : context.peers[
+          bigintToIndex(
+            value.parentPeerIndex,
+            context.peers.length - 1,
+            "tree parent peer index",
+          )
+        ]!;
+    const deleting =
+      parentPeer === DELETED_TREE_ROOT.peer &&
+      value.parentCounter === DELETED_TREE_ROOT.counter;
+    if (deleting) {
+      return materialize
+        ? {
+            type: "tree-delete",
+            subject: { peer: subjectPeer, counter: value.subjectCounter },
+          }
+        : undefined;
     }
     const position =
       context.positions[
@@ -518,11 +618,17 @@ function decodeOperationContent(
           "tree position index",
         )
       ]!;
+    if (!materialize) return undefined;
+    const subject: Id = { peer: subjectPeer, counter: value.subjectCounter };
+    const parent: Id | undefined =
+      parentPeer === undefined
+        ? undefined
+        : { peer: parentPeer, counter: value.parentCounter };
     return idsEqual(subject, operationId)
       ? { type: "tree-create", subject, parent, position }
       : { type: "tree-move", subject, parent, position };
   }
-  return { type: "future", property, value };
+  return materialize ? { type: "future", property, value } : undefined;
 }
 
 function encodeOperationContent(
@@ -641,22 +747,29 @@ function encodeTreeMove(
   };
 }
 
-function takeDeletion(context: DecodeOperationContext): {
-  readonly startId: Id;
-  readonly length: bigint;
-} {
-  const deletion = context.deleteStartIds[context.deleteIndex];
-  decodeAssert(deletion !== undefined, "delete start ID underflow");
+function takeDeletion(
+  context: DecodeOperationContext,
+  materialize: boolean,
+): { readonly startId: Id; readonly length: bigint } | undefined {
+  const peerIndexValue = context.deleteStartIds.peerIndices[context.deleteIndex];
+  const counter = context.deleteStartIds.counters[context.deleteIndex];
+  const length = context.deleteStartIds.lengths[context.deleteIndex];
+  decodeAssert(
+    peerIndexValue !== undefined && counter !== undefined && length !== undefined,
+    "delete start ID underflow",
+  );
   context.deleteIndex += 1;
   const peerIndex = bigintToIndex(
-    deletion.peerIndex,
+    peerIndexValue,
     context.peers.length - 1,
     "delete start peer index",
   );
-  return {
-    startId: { peer: context.peers[peerIndex]!, counter: deletion.counter },
-    length: deletion.length,
-  };
+  return materialize
+    ? {
+        startId: { peer: context.peers[peerIndex]!, counter },
+        length,
+      }
+    : undefined;
 }
 
 function registerDeletion(

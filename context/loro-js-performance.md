@@ -78,10 +78,13 @@ JavaScript constant factor.
 - Plain Text/List elements allocate delete, value, and move metadata only when
   an operation needs it; Text style metadata lives in the range index. A
   multi-scalar Text insertion is stored as a compact string/ID span and creates
-  scalar views only when an API needs them. Single-scalar edits retain the
-  smaller object path because the B4 trace consists entirely of single-scalar
-  inserts and constructing a temporary span for every edit costs more than it
-  saves. Text iteration stops directly in the index when its callback
+  scalar views only when an API needs them. Current multi-scalar inserts reuse
+  one fixed-shape neighbor-ID record and pass its scalar columns directly into
+  the span; this avoids allocating compact-span views and short-lived insertion
+  result objects. Single-scalar edits retain the smaller object path because
+  the B4 trace consists entirely of single-scalar inserts and constructing a
+  temporary span for every edit costs more than it saves. Text iteration stops
+  directly in the index when its callback
   returns `false`; `toString` and `slice` traverse visible ranges directly and
   join bounded 32-character chunks instead of allocating element and character
   arrays for the full output. Range predicates can also stop inside the index;
@@ -102,19 +105,22 @@ JavaScript constant factor.
 - Snapshot SSTables choose interoperable LZ4 blocks when they reduce size.
   DeltaRLE state columns encode and decode as streams rather than allocating
   million-item BigInt intermediates, and LZ4 decode writes into typed storage.
-  Text snapshot export streams visible elements and coalesces adjacent IDs with
-  the same peer and lamport offset into one state span. Initial hydration
-  validates every positive Text ID range before mutating the document, appends
-  bounded 32-scalar spans without scalar ID objects, and reserves dense
-  per-peer counter storage only for sufficiently compact ranges under a
-  document-wide allocation cap.
+  Plain Text snapshot export visits raw visible storage ranges, copies bounded
+  text ranges without scalar views, and coalesces adjacent IDs with the same
+  peer and lamport offset into one state span. Initial hydration validates every
+  positive Text ID range before mutating the document, fills exact-size packed
+  ID columns, and builds the priority treap in one Cartesian-tree pass from
+  bounded 32-scalar spans without scalar ID objects. It reserves dense per-peer
+  counter storage only for sufficiently compact ranges under a document-wide
+  allocation cap.
   Importing an initial latest-state snapshot hydrates current containers and
   validates its frontier blocks immediately, while retaining the other owned
-  history blocks in encoded form. Frontier validation discards its decoded
-  operation objects instead of retaining a second full history graph. A history
-  query, edit, checkout, export, or later update builds and validates all
-  history indexes once on a staging document before installing them; current
-  reads, version, frontiers, and operation count do not force that work.
+  history blocks in encoded form. Frontier validation decodes operation and
+  deletion columns directly, validates every semantic path, and retains only
+  the block's peer/counter range instead of operation row/content objects. A
+  history query, edit, checkout, export, or later update builds and validates
+  all history indexes once on a staging document before installing them;
+  current reads, version, frontiers, and operation count do not force that work.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
@@ -137,18 +143,22 @@ with:
 pnpm --dir loro-js bench:complexity -- 1000,2000,4000,8000
 ```
 
-On an Apple M5 Pro with Node 26.4.0, the complete 259,778-action B4 trace now
-applies in a 239.0 ms three-sample median (237.1–242.1 ms samples) and finishes
-at 104,852 UTF-16 code units. The resulting process reported 107.1 MB of used JS
-heap and 322.9 MB RSS.
+On an Apple M5 Pro with Node 22.23.1, the complete 259,778-action B4 trace now
+applies in 236.1–238.4 ms seven-sample medians across repeated processes and
+finishes at 104,852 UTF-16 code units. The resulting processes reported about
+107.3 MB of used JS heap and 323–324 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
 machine, so TypeScript is about 5.0x slower in absolute time. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
-measured snapshot
-export at 97.1 ms, update export at 86.5 ms, snapshot import at 80.0 ms, and
-update import at 221.7 ms.
+series measured snapshot export at 85.6–94.6 ms, update export at 84.2–84.5 ms,
+snapshot import at 63.2–63.3 ms, and update import at 218.5–219.5 ms. Repeated
+same-session builds of the preceding implementation measured 233.5–238.6 ms
+for apply, 92.4–93.1 ms for snapshot export, 82.6–84.3 ms for update export,
+77.5–79.5 ms for snapshot import, and 225.0–226.0 ms for update import. B4 edit
+and export differences are within process noise; the snapshot-import reduction
+is repeatable.
 
 The `zxch3n/crdt-benchmarks` adapters provide a separate end-to-end comparison
 against the published Loro WASM adapter. With the local `loro-js` build, B4 fell
@@ -158,13 +168,19 @@ lengths; the WASM adapter result is 4.733 seconds. B3.5 takes 288 ms versus
 303 ms. B3.3 emits a 240,032-byte snapshot versus roughly 242 KB from WASM,
 down from the former 7.95 MB uncompressed TypeScript snapshot. A 60k-item List
 update is 231,840 bytes and a 120k-character Text update is 120,095 bytes, both
-matching the WASM output sizes. On C1.1, three consecutive local runs take a
-5.688-second median (5.467–5.827 seconds), encode the snapshot in a 1.552-second
-median, retain 207.4 MB, and parse it in a 1.357-second median. Before Text state
-span coalescing and compact hydration, the same adapter took 6.988 seconds,
-encoded in 1.961 seconds, retained 367.8 MB, and parsed in 3.620 seconds. The
-snapshot shrank from about 6.51 MB to 6.26 MB. An isolated profile measures
-state decode at 98 ms and core snapshot import at a 395 ms median; the
+matching the WASM output sizes. Across six C1.1 processes in two adjacent A/B
+batches, the local edit-time median is 5.200 seconds versus 5.238 seconds for a
+same-session build of the preceding implementation; the overlapping ranges make
+that edit difference noise-sized. Snapshot encode falls from a 1.497-second
+median to 0.934 seconds, the benchmark's memory sample falls from 389.2 MB to
+340.8 MB, and parse falls from 0.742 seconds to 0.684 seconds. Before Text
+state-span coalescing and compact hydration, the same
+adapter took 6.988 seconds, encoded in 1.961 seconds, retained 367.8 MB under
+the earlier measurement protocol, and parsed in 3.620 seconds. The snapshot
+shrunk from about 6.51 MB to 6.26 MB. An isolated five-process loader measures
+core snapshot import at a 315.5 ms median versus 365.2 ms for the preceding
+implementation. Its median transient heap delta falls from about 307 MB to
+251 MB, while retained heap is effectively flat at 206.9 versus 206.8 MB. The
 adapter's parse number also includes two forced garbage collections. The WASM
 adapter remains faster at 1.728 seconds overall and 43 ms for parse, so the
 remaining gap is a constant-factor and representation issue rather than a
@@ -266,11 +282,13 @@ The remaining differences are representation and JavaScript constant factors:
 - The million-operation C1.1 concurrent-text trace still exposes a large
   constant-factor gap. Streaming DeltaRLE, typed LZ4 decode, deferred history,
   coalesced Text state spans, chunk hydration, and bounded dense counter storage
-  removed the known superlinear and largest temporary-allocation failures. The
-  remaining work is in edit-time insertion context and treap recomputation,
-  validation-only frontier decoding, and a direct snapshot treap builder. These
-  are internal representation improvements rather than public-API complexity
-  changes.
+  removed the known superlinear and largest temporary-allocation failures.
+  Fixed-shape insertion context, validation-only column decoding, and a linear
+  snapshot treap builder remove the next allocation/recompute layer. The
+  remaining profile is led by garbage collection, visibility/treap recompute,
+  and scalar edit records; tighter column storage and fewer retained scalar
+  objects are the main representation opportunities. These are internal
+  improvements rather than public-API complexity changes.
 - Old or manually constructed containers without a parent-edge binding scan
   their parent once, then cache the recovered binding. Normal container path
   lookup uses the indexed binding directly.

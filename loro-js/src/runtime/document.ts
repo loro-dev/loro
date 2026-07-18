@@ -4,6 +4,7 @@ import { bytesEqual, bytesToHex, hexToBytes } from "../codec/bytes";
 import {
   decodeChangeBlock,
   encodeChangeBlock,
+  validateChangeBlock,
   type DecodedChange,
   type DecodedOperation,
   type DecodedOperationContent,
@@ -4731,17 +4732,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (candidate === undefined) {
         throw new Error("snapshot frontier change block is missing");
       }
-      const block = this.#readChangeBlock(candidate.entry.value);
-      if (block[0] === undefined || !idsEqual(block[0].change.id, candidate.start)) {
+      const block = validateChangeBlock(candidate.entry.value);
+      if (
+        block.peer !== candidate.start.peer ||
+        block.counterStart !== candidate.start.counter
+      ) {
         throw new Error("snapshot change key does not match its block");
       }
       if (
-        !block.some(
-          ({ change }) =>
-            change.id.peer === frontier.peer &&
-            change.id.counter <= frontier.counter &&
-            frontier.counter < change.id.counter + changeLength(change),
-        )
+        block.peer !== frontier.peer ||
+        frontier.counter < block.counterStart ||
+        frontier.counter >= block.counterEnd
       ) {
         throw new Error("snapshot frontier is not covered by its change block");
       }
@@ -5313,35 +5314,55 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const textChunks: string[] = [];
       let textChunk = "";
       let textChunkLength = 0;
-      container._sequence.forEachVisible((element) => {
-        updateActiveStyles(metasAt(element));
-        const elementPeerIndex = peerIndex(element.id.peer);
-        const lamportSub = element.lamport - element.id.counter;
-        const previous = spans.at(-1);
-        if (
-          previous !== undefined &&
-          previous.length > 0 &&
-          previous.peerIndex === elementPeerIndex &&
-          previous.counter + previous.length === element.id.counter &&
-          previous.lamportSub === lamportSub
-        ) {
-          previous.length += 1;
-        } else {
-          spans.push({
-            peerIndex: elementPeerIndex,
-            counter: element.id.counter,
-            lamportSub,
-            length: 1,
-          });
+      const appendText = (text: string, scalarLength: number): void => {
+        if (textChunkLength > 0 && textChunkLength + scalarLength > 1_024) {
+          textChunks.push(textChunk);
+          textChunk = "";
+          textChunkLength = 0;
         }
-        textChunk += element.value;
-        textChunkLength += 1;
+        textChunk += text;
+        textChunkLength += scalarLength;
         if (textChunkLength === 1_024) {
           textChunks.push(textChunk);
           textChunk = "";
           textChunkLength = 0;
         }
-      });
+      };
+      let cachedPeer: bigint | undefined;
+      let cachedPeerIndex = 0n;
+      const appendId = (peer: bigint, counter: number, lamport: number): void => {
+        if (cachedPeer !== peer) {
+          cachedPeer = peer;
+          cachedPeerIndex = peerIndex(peer);
+        }
+        const lamportSub = lamport - counter;
+        const previous = spans[spans.length - 1];
+        if (
+          previous !== undefined &&
+          previous.length > 0 &&
+          previous.peerIndex === cachedPeerIndex &&
+          previous.counter + previous.length === counter &&
+          previous.lamportSub === lamportSub
+        ) {
+          previous.length += 1;
+        } else {
+          spans.push({
+            peerIndex: cachedPeerIndex,
+            counter,
+            lamportSub,
+            length: 1,
+          });
+        }
+      };
+      if (container._styleIndex.isEmpty) {
+        container._forEachVisibleSnapshotData(appendText, appendId);
+      } else {
+        container._sequence.forEachVisible((element) => {
+          updateActiveStyles(metasAt(element));
+          appendId(element.id.peer, element.id.counter, element.lamport);
+          appendText(element.value, 1);
+        });
+      }
       updateActiveStyles(new Map());
       if (textChunkLength > 0) textChunks.push(textChunk);
       return {
@@ -5546,6 +5567,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             remainingTextCounterSlots -= end;
           }
         }
+        container._beginValidatedSnapshotLoad();
         const styleRuns: {
           readonly run: { readonly start: CodecId; readonly length: number };
           readonly key: string;
@@ -5625,6 +5647,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (textUtf16Offset !== state.text.length) {
           throw new Error("text snapshot spans do not consume the decoded text");
         }
+        container._endValidatedSnapshotLoad();
         for (const { run, key, meta } of styleRuns) {
           container._styleIndex.add([run], key, meta);
         }

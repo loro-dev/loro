@@ -1082,6 +1082,32 @@ describe("loro-wasm-compatible runtime", () => {
     expect(target.getText("text").toString()).toBe(value);
   });
 
+  test("bulk-loads multi-span text snapshots and remains editable", () => {
+    const source = new LoroDoc();
+    source.setPeerId(7);
+    const sourceText = source.getText("text");
+    sourceText.insert(
+      0,
+      Array.from({ length: 80 }, (_, index) => `${index % 10}😀`).join(""),
+    );
+    sourceText.delete(6, 6);
+    sourceText.delete(60, 9);
+    source.commit();
+
+    const target = LoroDoc.fromSnapshot(source.export({ mode: "snapshot" }));
+    const targetText = target.getText("text");
+    expect(targetText.toString()).toBe(sourceText.toString());
+
+    targetText.insert(0, "<");
+    targetText.insert(31, "中😀");
+    targetText.push(">");
+    targetText.delete(1, 3);
+    target.commit();
+
+    const restored = LoroDoc.fromSnapshot(target.export({ mode: "snapshot" }));
+    expect(restored.getText("text").toString()).toBe(targetText.toString());
+  });
+
   test("rejects duplicate text IDs before changing the document", () => {
     const source = new LoroDoc();
     source.setPeerId(8);

@@ -55,10 +55,23 @@ export interface EncodedOperationRow {
   readonly length: number;
 }
 
+export interface EncodedOperationColumns {
+  readonly containerIndices: readonly number[];
+  readonly properties: readonly number[];
+  readonly valueTypes: readonly number[];
+  readonly lengths: readonly number[];
+}
+
 export interface EncodedDeleteStartIdRow {
   readonly peerIndex: bigint;
   readonly counter: number;
   readonly length: bigint;
+}
+
+export interface EncodedDeleteStartIdColumns {
+  readonly peerIndices: readonly bigint[];
+  readonly counters: readonly number[];
+  readonly lengths: readonly bigint[];
 }
 
 export interface DecodeChangesHeaderOptions {
@@ -385,8 +398,20 @@ export function encodeContainerArena(
 }
 
 export function decodeEncodedOperations(bytes: Uint8Array): EncodedOperationRow[] {
+  const decoded = decodeEncodedOperationColumns(bytes);
+  return decoded.containerIndices.map((containerIndex, index) => ({
+    containerIndex,
+    property: decoded.properties[index]!,
+    valueType: decoded.valueTypes[index]!,
+    length: decoded.lengths[index]!,
+  }));
+}
+
+export function decodeEncodedOperationColumns(
+  bytes: Uint8Array,
+): EncodedOperationColumns {
   if (bytes.length === 0) {
-    return [];
+    return { containerIndices: [], properties: [], valueTypes: [], lengths: [] };
   }
   const columns = decodeColumnarVecMaybeWrapped(bytes);
   decodeAssert(columns.length === 4, "encoded operations must have four columns");
@@ -400,12 +425,7 @@ export function decodeEncodedOperations(bytes: Uint8Array): EncodedOperationRow[
       lengths.length === containerIndices.length,
     "encoded operation column length mismatch",
   );
-  return containerIndices.map((containerIndex, index) => ({
-    containerIndex,
-    property: properties[index]!,
-    valueType: valueTypes[index]!,
-    length: lengths[index]!,
-  }));
+  return { containerIndices, properties, valueTypes, lengths };
 }
 
 export function encodeEncodedOperations(
@@ -420,8 +440,19 @@ export function encodeEncodedOperations(
 }
 
 export function decodeDeleteStartIds(bytes: Uint8Array): EncodedDeleteStartIdRow[] {
+  const decoded = decodeDeleteStartIdColumns(bytes);
+  return decoded.peerIndices.map((peerIndex, index) => ({
+    peerIndex,
+    counter: decoded.counters[index]!,
+    length: decoded.lengths[index]!,
+  }));
+}
+
+export function decodeDeleteStartIdColumns(
+  bytes: Uint8Array,
+): EncodedDeleteStartIdColumns {
   if (bytes.length === 0) {
-    return [];
+    return { peerIndices: [], counters: [], lengths: [] };
   }
   const columns = decodeColumnarVecMaybeWrapped(bytes);
   decodeAssert(columns.length === 3, "delete start IDs must have three columns");
@@ -432,11 +463,7 @@ export function decodeDeleteStartIds(bytes: Uint8Array): EncodedDeleteStartIdRow
     counters.length === peerIndices.length && lengths.length === peerIndices.length,
     "delete start ID column length mismatch",
   );
-  return peerIndices.map((peerIndex, index) => ({
-    peerIndex,
-    counter: counters[index]!,
-    length: lengths[index]!,
-  }));
+  return { peerIndices, counters, lengths };
 }
 
 export function encodeDeleteStartIds(
