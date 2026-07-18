@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-18.
+Verified against code 2026-07-19.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -144,21 +144,21 @@ pnpm --dir loro-js bench:complexity -- 1000,2000,4000,8000
 ```
 
 On an Apple M5 Pro with Node 22.23.1, the complete 259,778-action B4 trace now
-applies in 236.1–238.4 ms seven-sample medians across repeated processes and
-finishes at 104,852 UTF-16 code units. The resulting processes reported about
-107.3 MB of used JS heap and 323–324 MB RSS.
+applies in 205.2–208.2 ms seven-sample medians and finishes at 104,852 UTF-16
+code units. The resulting processes reported about 107 MB of used JS heap and
+~276 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 5.0x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 4.4x slower in absolute time. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
-series measured snapshot export at 85.6–94.6 ms, update export at 84.2–84.5 ms,
-snapshot import at 63.2–63.3 ms, and update import at 218.5–219.5 ms. Repeated
-same-session builds of the preceding implementation measured 233.5–238.6 ms
-for apply, 92.4–93.1 ms for snapshot export, 82.6–84.3 ms for update export,
-77.5–79.5 ms for snapshot import, and 225.0–226.0 ms for update import. B4 edit
-and export differences are within process noise; the snapshot-import reduction
-is repeatable.
+series measured snapshot export at 68.3 ms, update export at 49.5 ms, snapshot
+import at 49.7 ms, and update import at 188.9 ms. A same-session build of the
+preceding implementation measured 243.6 ms for apply, 101.4 ms for snapshot
+export, 75.9 ms for update export, 65.5 ms for snapshot import, and 246.5 ms
+for update import, so the V8 constant-factor round (Number fast paths in the
+column codecs, zero-allocation per-op paths, uniform object shapes, and fewer
+encoder buffer copies) cut apply by ~15% and the codec-bound phases by 23–35%.
 
 The `zxch3n/crdt-benchmarks` adapters provide a separate end-to-end comparison
 against the published Loro WASM adapter. With the local `loro-js` build, B4 fell
@@ -285,10 +285,16 @@ The remaining differences are representation and JavaScript constant factors:
   removed the known superlinear and largest temporary-allocation failures.
   Fixed-shape insertion context, validation-only column decoding, and a linear
   snapshot treap builder remove the next allocation/recompute layer. The
-  remaining profile is led by garbage collection, visibility/treap recompute,
-  and scalar edit records; tighter column storage and fewer retained scalar
-  objects are the main representation opportunities. These are internal
-  improvements rather than public-API complexity changes.
+  per-operation allocation churn that then led the profile — per-bit BigInt
+  column decoding, ULEB128 BigInt round-trips, per-op writer/result objects,
+  empty deletion-id arrays, treap split tuples, and redundant encoder buffer
+  copies — has since been replaced with Number fast paths, shared constants,
+  scratch records, and linear copies, cutting the B4 codec phases by 23–35%
+  (C1.1 itself has not been re-measured after this round). The remaining
+  profile is led by garbage collection, visibility/treap recompute, and scalar
+  edit records; tighter column storage and fewer retained scalar objects are
+  the main representation opportunities. These are internal improvements rather
+  than public-API complexity changes.
 - Old or manually constructed containers without a parent-edge binding scan
   their parent once, then cache the recovered binding. Normal container path
   lookup uses the indexed binding directly.

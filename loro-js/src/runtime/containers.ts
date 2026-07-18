@@ -10,7 +10,11 @@ import type { LoroDoc } from "./document";
 import { fractionalIndexBetween } from "./fractional-index";
 import { OrderedIndex } from "./ordered-index";
 import { SequenceIndex, SequenceSpan } from "./sequence-index";
-import type { SequenceIdRun, SequenceInsertionIdContext } from "./sequence-index";
+import type {
+  SequenceIdRun,
+  SequenceInsertionIdContext,
+  SequenceStorage,
+} from "./sequence-index";
 import { TextStyleIndex } from "./text-style-index";
 import type {
   ContainerID,
@@ -206,11 +210,21 @@ export class LoroMap<
   }
 
   values(): unknown[] {
-    return this.keys().map((key) => this.get(key));
+    const records = this._keyIndex.values();
+    const output = new Array<unknown>(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+      output[index] = this.get(records[index]!.key);
+    }
+    return output;
   }
 
   entries(): [string, unknown][] {
-    return this.keys().map((key) => [key, this.get(key)]);
+    const records = this._keyIndex.values();
+    const output = new Array<[string, unknown]>(records.length);
+    for (let index = 0; index < records.length; index += 1) {
+      output[index] = [records[index]!.key, this.get(records[index]!.key)];
+    }
+    return output;
   }
 
   get size(): number {
@@ -265,18 +279,19 @@ export class LoroMap<
   }
 
   toJSON(): Record<string, unknown> {
-    return Object.fromEntries(
-      this.keys().map((key) => [key, runtimeValueToJson(this._entries.get(key)!.value!)]),
-    );
+    const output: Record<string, unknown> = {};
+    for (const { key } of this._keyIndex.values()) {
+      output[key] = runtimeValueToJson(this._entries.get(key)!.value!);
+    }
+    return output;
   }
 
   override getShallowValue(): Record<string, unknown> {
-    return Object.fromEntries(
-      this.keys().map((key) => [
-        key,
-        runtimeValueToShallow(this._entries.get(key)!.value!),
-      ]),
-    );
+    const output: Record<string, unknown> = {};
+    for (const { key } of this._keyIndex.values()) {
+      output[key] = runtimeValueToShallow(this._entries.get(key)!.value!);
+    }
+    return output;
   }
 
   _applyValue(
@@ -483,7 +498,8 @@ export class LoroList<T = unknown> extends LoroContainer {
     ids: readonly CodecId[],
     lamports: readonly number[],
   ): void {
-    const elements = values.map((value, index) => {
+    const movable = this instanceof LoroMovableList;
+    const elements: SequenceElement[] = values.map((value, index) => {
       const id = ids[index]!;
       const lamport = lamports[index]!;
       return {
@@ -493,9 +509,7 @@ export class LoroList<T = unknown> extends LoroContainer {
         deleted: false,
         originLeft: undefined,
         originRight: undefined,
-        ...(this instanceof LoroMovableList
-          ? { valueHistory: [{ id, lamport, value }] }
-          : {}),
+        valueHistory: movable ? [{ id, lamport, value }] : undefined,
       };
     });
     this._sequence.insertAtVisible(position, elements);
@@ -509,6 +523,7 @@ export class LoroList<T = unknown> extends LoroContainer {
     lamports: readonly number[],
     causalVersion: CausalVersion,
   ): void {
+    const movable = this instanceof LoroMovableList;
     const elements: SequenceElement[] = values.map((value, index) => {
       const id = ids[index]!;
       const elementLamport = lamports[index]!;
@@ -519,9 +534,7 @@ export class LoroList<T = unknown> extends LoroContainer {
         deleted: false,
         originLeft: undefined,
         originRight: undefined,
-        ...(this instanceof LoroMovableList
-          ? { valueHistory: [{ id, lamport: elementLamport, value }] }
-          : {}),
+        valueHistory: movable ? [{ id, lamport: elementLamport, value }] : undefined,
       };
     });
     insertFugueElements(
@@ -588,6 +601,7 @@ const TEXT_ID_PEER = 0;
 const TEXT_ORIGIN_LEFT_PEER = 1;
 const TEXT_ORIGIN_RIGHT_PEER = 2;
 const TEXT_DELETED_BY_PEER = 3;
+const NO_DELETION_IDS: readonly CodecId[] = [];
 
 class TextSequenceSpan extends SequenceSpan<TextElement> {
   #text = "";
@@ -730,7 +744,7 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   }
 
   setDeletedAt(offset: number, deleted: boolean): void {
-    const bit = 2 ** offset;
+    const bit = 1 << offset;
     this.#deletedBits = deleted
       ? (this.#deletedBits | bit) >>> 0
       : (this.#deletedBits & ~bit) >>> 0;
@@ -771,7 +785,7 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
       }
     }
     const length = end - start;
-    const mask = length === 32 ? 0xffff_ffff : 2 ** length - 1;
+    const mask = length === 32 ? 0xffff_ffff : (1 << length) - 1;
     output.#deletedBits = (this.#deletedBits >>> start) & mask;
     output.#deletedBy = copyOffsetMap(this.#deletedBy, start, end);
     output.#attributes = copyOffsetMap(this.#attributes, start, end);
@@ -806,7 +820,7 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
         (this.#retained ??= new Map()).set(nextOffset, retained);
       }
     }
-    this.#deletedBits = (this.#deletedBits | (other.#deletedBits * 2 ** oldLength)) >>> 0;
+    this.#deletedBits = (this.#deletedBits | (other.#deletedBits << oldLength)) >>> 0;
     this.#length += other.length;
     this.#deletedBy = appendOffsetMap(this.#deletedBy, other.#deletedBy, oldLength);
     this.#attributes = appendOffsetMap(this.#attributes, other.#attributes, oldLength);
@@ -830,13 +844,17 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   }
 
   override deletionIdsAt(offset: number): readonly CodecId[] {
-    const output = this.#deletedBy?.get(offset)?.slice() ?? [];
+    const deletedBy = this.#deletedBy?.get(offset);
     const peer = this.#peer(offset, TEXT_DELETED_BY_PEER);
-    if (peer !== undefined) {
-      output.unshift({
-        peer,
-        counter: this.#number(offset, TEXT_DELETED_BY_COUNTER),
-      });
+    if (peer === undefined) return deletedBy ?? NO_DELETION_IDS;
+    const length = deletedBy?.length ?? 0;
+    const output = new Array<CodecId>(length + 1);
+    output[0] = {
+      peer,
+      counter: this.#number(offset, TEXT_DELETED_BY_COUNTER),
+    };
+    for (let index = 0; index < length; index += 1) {
+      output[index + 1] = deletedBy![index]!;
     }
     return output;
   }
@@ -1245,6 +1263,25 @@ function appendOffsetMap<T>(
   return output;
 }
 
+/** Reads a visible range from sequence storage without materializing scalar views. */
+function storageTextRange(
+  storage: SequenceStorage<TextElement>,
+  start: number,
+  end: number,
+): string {
+  if (storage instanceof TextSequenceSpan) return storage.textRange(start, end);
+  if (storage instanceof SequenceSpan) {
+    throw new Error("unexpected text sequence span implementation");
+  }
+  if (Array.isArray(storage)) {
+    const elements = storage as readonly TextElement[];
+    let text = "";
+    for (let offset = start; offset < end; offset += 1) text += elements[offset]!.value;
+    return text;
+  }
+  return (storage as TextElement).value;
+}
+
 export interface TextStyleMeta {
   readonly startId: CodecId;
   readonly lamport: number;
@@ -1293,41 +1330,28 @@ export class LoroText extends LoroContainer {
 
   _stringRange(start: number, end: number): string {
     const chunks: string[] = [];
-    let chunk = "";
-    let chunkLength = 0;
-    this._sequence.forEachVisibleRange(start, end, (element) => {
-      chunk += element.value;
-      chunkLength += 1;
-      if (chunkLength === 32) {
-        chunks.push(chunk);
-        chunk = "";
-        chunkLength = 0;
+    let cursor = 0;
+    this._sequence.forEachVisibleStorageRange((storage, rangeStart, rangeEnd) => {
+      const nextCursor = cursor + (rangeEnd - rangeStart);
+      if (nextCursor > start && end > cursor) {
+        chunks.push(
+          storageTextRange(
+            storage,
+            start > cursor ? rangeStart + (start - cursor) : rangeStart,
+            end < nextCursor ? rangeStart + (end - cursor) : rangeEnd,
+          ),
+        );
       }
+      cursor = nextCursor;
+      return nextCursor >= end ? false : undefined;
     });
-    if (chunkLength > 0) chunks.push(chunk);
     return chunks.join("");
   }
 
   iter(callback: (chunk: string) => boolean | void | null): void {
-    let chunk: string[] = [];
-    let previous: TextElement | undefined;
-    let stopped = false;
-    this._sequence.forEachVisible((element) => {
-      const continues =
-        previous !== undefined &&
-        previous.id.peer === element.id.peer &&
-        previous.id.counter + 1 === element.id.counter;
-      if (!continues && chunk.length > 0) {
-        if (callback(chunk.join("")) === false) {
-          stopped = true;
-          return false;
-        }
-        chunk = [];
-      }
-      chunk.push(element.value);
-      previous = element;
-    });
-    if (!stopped && chunk.length > 0) callback(chunk.join(""));
+    this._sequence.forEachVisibleStorageRange((storage, start, end) =>
+      callback(storageTextRange(storage, start, end)) === false ? false : undefined,
+    );
   }
 
   insert(pos: number, text: string): void {
@@ -1749,7 +1773,12 @@ export class LoroText extends LoroContainer {
       insertedLength = span.length;
     }
     if (inherited !== undefined && inherited.size > 0) {
-      const insertedRun = [{ start: { ...startId }, length: insertedLength }];
+      const insertedRun = [
+        {
+          start: { peer: startId.peer, counter: startId.counter },
+          length: insertedLength,
+        },
+      ];
       for (const [key, meta] of inherited) {
         this._styleIndex.add(insertedRun, key, meta);
       }
@@ -1951,7 +1980,8 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     this._sequence.moveVisible(from, to);
     if (operation === undefined) return;
     const meta: SequenceMoveMeta = {
-      ...operation,
+      id: operation.id,
+      lamport: operation.lamport,
       beforePrevious,
       beforeNext,
       afterPrevious: this._sequence.previousVisible(element)?.id,
@@ -2164,9 +2194,13 @@ export class LoroTree<
   }
 
   getNodes(options: { withDeleted?: boolean } = {}): LoroTreeNode<T>[] {
-    return [...this._nodes.values()]
-      .filter((record) => options.withDeleted === true || !record.deleted)
-      .map((record) => new LoroTreeNode<T>(this, record.id));
+    const output: LoroTreeNode<T>[] = [];
+    for (const record of this._nodes.values()) {
+      if (options.withDeleted === true || !record.deleted) {
+        output.push(new LoroTreeNode<T>(this, record.id));
+      }
+    }
+    return output;
   }
 
   nodes(): LoroTreeNode<T>[] {
@@ -2597,9 +2631,10 @@ export function runtimeValueToJson(value: RuntimeValue): unknown {
   if (value instanceof Uint8Array) return value.slice();
   if (Array.isArray(value)) return value.map(runtimeValueToJson);
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, runtimeValueToJson(item)]),
-    );
+    const record = value as Record<string, RuntimeValue>;
+    const output: Record<string, unknown> = {};
+    for (const key in record) output[key] = runtimeValueToJson(record[key]!);
+    return output;
   }
   return value;
 }
@@ -2609,9 +2644,10 @@ export function runtimeValueToShallow(value: RuntimeValue): unknown {
   if (value instanceof Uint8Array) return value.slice();
   if (Array.isArray(value)) return value.map(runtimeValueToShallow);
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, runtimeValueToShallow(item)]),
-    );
+    const record = value as Record<string, RuntimeValue>;
+    const output: Record<string, unknown> = {};
+    for (const key in record) output[key] = runtimeValueToShallow(record[key]!);
+    return output;
   }
   return value;
 }
@@ -2653,9 +2689,10 @@ function runtimeValueDeepWithId(value: RuntimeValue): unknown {
   if (value instanceof Uint8Array) return value.slice();
   if (Array.isArray(value)) return value.map(runtimeValueDeepWithId);
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, runtimeValueDeepWithId(item)]),
-    );
+    const record = value as Record<string, RuntimeValue>;
+    const output: Record<string, unknown> = {};
+    for (const key in record) output[key] = runtimeValueDeepWithId(record[key]!);
+    return output;
   }
   return value;
 }
@@ -2666,9 +2703,10 @@ export function cloneRuntimeValue(value: RuntimeValue | undefined): unknown {
   if (value instanceof Uint8Array) return value.slice();
   if (Array.isArray(value)) return value.map((item) => cloneRuntimeValue(item));
   if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, cloneRuntimeValue(item)]),
-    );
+    const record = value as Record<string, RuntimeValue>;
+    const output: Record<string, unknown> = {};
+    for (const key in record) output[key] = cloneRuntimeValue(record[key]!);
+    return output;
   }
   return value;
 }
@@ -2689,9 +2727,11 @@ function normalizeDetachedValue(value: unknown): RuntimeValue {
     if (Object.getOwnPropertySymbols(value).length > 0) {
       throw new TypeError("Object keys must be strings");
     }
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, normalizeDetachedValue(item)]),
-    );
+    const output: Record<string, RuntimeValue> = {};
+    for (const key of Object.keys(value)) {
+      output[key] = normalizeDetachedValue((value as Record<string, unknown>)[key]);
+    }
+    return output;
   }
   throw new TypeError(`unsupported Loro value type: ${typeof value}`);
 }
@@ -2739,10 +2779,10 @@ interface FugueOriginIndex {
 }
 
 interface FugueInsertionResult {
-  readonly insertIndex: number;
-  readonly originLeft: CodecId | undefined;
-  readonly originRight: CodecId | undefined;
-  readonly indexUpdate?: FugueOriginIndex | undefined;
+  insertIndex: number;
+  originLeft: CodecId | undefined;
+  originRight: CodecId | undefined;
+  indexUpdate: FugueOriginIndex | undefined;
 }
 
 interface FuguePositionHint<T extends SequenceElement> {
@@ -2753,6 +2793,28 @@ interface FuguePositionHint<T extends SequenceElement> {
 }
 
 const fugueOriginIndexes = new WeakMap<object, FugueOriginIndex>();
+
+// Callers consume a fugueInsertion result before the next insertion, so every
+// path reuses this single fixed-shape record instead of allocating per edit.
+const fugueInsertionResult: FugueInsertionResult = {
+  insertIndex: 0,
+  originLeft: undefined,
+  originRight: undefined,
+  indexUpdate: undefined,
+};
+const fugueScanVisited = new Map<bigint, Set<number>>();
+const fugueCandidateEntries: FugueOriginEntry[] = [];
+const fugueCandidateIndexes: number[] = [];
+const fugueCandidateOrder: number[] = [];
+const fugueImplicitEntry: {
+  id: CodecId;
+  originLeft: CodecId | undefined;
+  originRight: CodecId | undefined;
+} = { id: { peer: 0n, counter: 0 }, originLeft: undefined, originRight: undefined };
+
+function compareFugueCandidateOrder(left: number, right: number): number {
+  return fugueCandidateIndexes[left]! - fugueCandidateIndexes[right]!;
+}
 
 function fugueInsertion<T extends SequenceElement>(
   sequence: SequenceIndex<T>,
@@ -2803,7 +2865,11 @@ function fugueInsertion<T extends SequenceElement>(
   // maintaining an origin index for the overwhelmingly common local-edit path;
   // structureVersion will force a rebuild if a later merge needs the index.
   if (startIndex === originRightIndex) {
-    return { insertIndex: startIndex, originLeft, originRight };
+    fugueInsertionResult.insertIndex = startIndex;
+    fugueInsertionResult.originLeft = originLeft;
+    fugueInsertionResult.originRight = originRight;
+    fugueInsertionResult.indexUpdate = undefined;
+    return fugueInsertionResult;
   }
 
   if (useOriginIndex) {
@@ -2840,17 +2906,24 @@ function scannedFugueInsertion<T extends SequenceElement>(
 
   let insertIndex = startIndex;
   let scanning = false;
-  const visited = new Set<string>();
+  fugueScanVisited.clear();
   for (let index = startIndex; index < originRightIndex; index += 1) {
     const other = sequence.atPhysicalRaw(index)!;
     if (
       !sameOptionalId(other.originLeft, originLeft) &&
-      (other.originLeft === undefined || !visited.has(sequenceIdKey(other.originLeft)))
+      (other.originLeft === undefined ||
+        fugueScanVisited.get(other.originLeft.peer)?.has(other.originLeft.counter) !==
+          true)
     ) {
       break;
     }
 
-    visited.add(sequenceIdKey(other.id));
+    let visitedCounters = fugueScanVisited.get(other.id.peer);
+    if (visitedCounters === undefined) {
+      visitedCounters = new Set();
+      fugueScanVisited.set(other.id.peer, visitedCounters);
+    }
+    visitedCounters.add(other.id.counter);
     if (sameOptionalId(other.originLeft, originLeft)) {
       if (sameOptionalId(other.originRight, originRight)) {
         if (other.id.peer > insertedId.peer) break;
@@ -2874,7 +2947,11 @@ function scannedFugueInsertion<T extends SequenceElement>(
     if (!scanning) insertIndex = index + 1;
   }
 
-  return { insertIndex, originLeft, originRight };
+  fugueInsertionResult.insertIndex = insertIndex;
+  fugueInsertionResult.originLeft = originLeft;
+  fugueInsertionResult.originRight = originRight;
+  fugueInsertionResult.indexUpdate = undefined;
+  return fugueInsertionResult;
 }
 
 function indexedFugueInsertion<T extends SequenceElement>(
@@ -2886,24 +2963,52 @@ function indexedFugueInsertion<T extends SequenceElement>(
   insertedId: CodecId,
 ): FugueInsertionResult | undefined {
   const originIndex = getFugueOriginIndex(sequence);
-  const children = fugueDirectChildren(sequence, originIndex, originLeft);
-  const positioned: { readonly entry: FugueOriginEntry; readonly index: number }[] = [];
-  for (const entry of children) {
-    const element = sequence.findByIdRaw(entry.id);
-    const index = element === undefined ? undefined : sequence.physicalIndexOf(element);
-    if (index === undefined) return undefined;
-    positioned.push({ entry, index });
+  // Reused candidate columns: gather the direct children inside the scanned
+  // interval without per-call wrapper, slice, or filtered-copy allocations.
+  fugueCandidateEntries.length = 0;
+  fugueCandidateIndexes.length = 0;
+  const explicit = originIndex.explicitChildren.get(optionalSequenceIdKey(originLeft));
+  if (explicit !== undefined) {
+    for (const entry of explicit) {
+      const element = sequence.findByIdRaw(entry.id);
+      const index = element === undefined ? undefined : sequence.physicalIndexOf(element);
+      if (index === undefined) return undefined;
+      if (index >= startIndex && index < originRightIndex) {
+        fugueCandidateEntries.push(entry);
+        fugueCandidateIndexes.push(index);
+      }
+    }
   }
-  positioned.sort((left, right) => left.index - right.index);
+  if (originLeft !== undefined) {
+    // Consecutive IDs keep their single-child edge implicit; derive it on
+    // lookup instead of recording an entry for every consecutive insert.
+    const implicit = sequence.findByIdRaw({
+      peer: originLeft.peer,
+      counter: originLeft.counter + 1,
+    });
+    if (implicit !== undefined && sameOptionalId(implicit.originLeft, originLeft)) {
+      const index = sequence.physicalIndexOf(implicit);
+      if (index === undefined) return undefined;
+      if (index >= startIndex && index < originRightIndex) {
+        fugueImplicitEntry.id = implicit.id;
+        fugueImplicitEntry.originLeft = originLeft;
+        fugueImplicitEntry.originRight = implicit.originRight;
+        fugueCandidateEntries.push(fugueImplicitEntry);
+        fugueCandidateIndexes.push(index);
+      }
+    }
+  }
+  const count = fugueCandidateIndexes.length;
+  fugueCandidateOrder.length = count;
+  for (let index = 0; index < count; index += 1) fugueCandidateOrder[index] = index;
+  fugueCandidateOrder.sort(compareFugueCandidateOrder);
 
-  const candidates = positioned.filter(
-    (child) => child.index >= startIndex && child.index < originRightIndex,
-  );
   const parentRightIndex = directRightParentIndex(sequence, originLeft, originRight);
   let insertIndex = startIndex;
   let scanning = false;
-  for (let childIndex = 0; childIndex < candidates.length; childIndex += 1) {
-    const { entry: other } = candidates[childIndex]!;
+  for (let orderIndex = 0; orderIndex < count; orderIndex += 1) {
+    const candidate = fugueCandidateOrder[orderIndex]!;
+    const other = fugueCandidateEntries[candidate]!;
     if (sameOptionalId(other.originRight, originRight)) {
       if (other.id.peer > insertedId.peer) break;
       scanning = false;
@@ -2920,16 +3025,18 @@ function indexedFugueInsertion<T extends SequenceElement>(
     }
 
     if (!scanning) {
-      insertIndex = candidates[childIndex + 1]?.index ?? originRightIndex;
+      insertIndex =
+        orderIndex + 1 < count
+          ? fugueCandidateIndexes[fugueCandidateOrder[orderIndex + 1]!]!
+          : originRightIndex;
     }
   }
 
-  return {
-    insertIndex,
-    originLeft,
-    originRight,
-    indexUpdate: originIndex,
-  };
+  fugueInsertionResult.insertIndex = insertIndex;
+  fugueInsertionResult.originLeft = originLeft;
+  fugueInsertionResult.originRight = originRight;
+  fugueInsertionResult.indexUpdate = originIndex;
+  return fugueInsertionResult;
 }
 
 function getFugueOriginIndex<T extends SequenceElement>(
@@ -2951,27 +3058,6 @@ function getFugueOriginIndex<T extends SequenceElement>(
   });
   fugueOriginIndexes.set(sequence, rebuilt);
   return rebuilt;
-}
-
-function fugueDirectChildren<T extends SequenceElement>(
-  sequence: SequenceIndex<T>,
-  index: FugueOriginIndex,
-  originLeft: CodecId | undefined,
-): FugueOriginEntry[] {
-  const children =
-    index.explicitChildren.get(optionalSequenceIdKey(originLeft))?.slice() ?? [];
-  if (originLeft === undefined) return children;
-
-  const implicitId = { peer: originLeft.peer, counter: originLeft.counter + 1 };
-  const implicit = sequence.findByIdRaw(implicitId);
-  if (implicit !== undefined && sameOptionalId(implicit.originLeft, originLeft)) {
-    children.push({
-      id: implicitId,
-      originLeft,
-      originRight: implicit.originRight,
-    });
-  }
-  return children;
 }
 
 function recordFugueInsertion<T extends SequenceElement>(
@@ -3016,9 +3102,15 @@ function recordFugueOriginEntry(
   const key = optionalSequenceIdKey(originLeft);
   const children = index.explicitChildren.get(key);
   const entry = {
-    id: { ...id },
-    originLeft: originLeft === undefined ? undefined : { ...originLeft },
-    originRight: originRight === undefined ? undefined : { ...originRight },
+    id: { peer: id.peer, counter: id.counter },
+    originLeft:
+      originLeft === undefined
+        ? undefined
+        : { peer: originLeft.peer, counter: originLeft.counter },
+    originRight:
+      originRight === undefined
+        ? undefined
+        : { peer: originRight.peer, counter: originRight.counter },
   };
   if (children === undefined) index.explicitChildren.set(key, [entry]);
   else children.push(entry);
@@ -3169,17 +3261,16 @@ function textElementsToDelta(
   let attributes: ReadonlyMap<string, RuntimeValue> | undefined;
   const flush = (): void => {
     if (values.length === 0) return;
-    const jsonAttributes = Object.fromEntries(
-      [...(attributes ?? [])].map(([key, value]) => [
-        key,
-        runtimeValueToJson(value) as Value,
-      ]),
-    );
-    output.push({
-      insert: values.join(""),
-      ...(Object.keys(jsonAttributes).length === 0 ? {} : { attributes: jsonAttributes }),
-    });
+    const insert = values.join("");
     values = [];
+    let jsonAttributes: Record<string, Value> | undefined;
+    if (attributes !== undefined) {
+      for (const [key, value] of attributes) {
+        (jsonAttributes ??= {})[key] = runtimeValueToJson(value) as Value;
+      }
+    }
+    if (jsonAttributes === undefined) output.push({ insert });
+    else output.push({ insert, attributes: jsonAttributes });
   };
   for (const element of elements) {
     const nextAttributes = attributesAt(element);
@@ -3217,25 +3308,50 @@ function utf8CodePointLength(value: string): number {
   return 4;
 }
 
+/** The code point whose UTF-16 end offset is `end`, ignoring pairs opened before `lowerBound`. */
+function codePointBefore(text: string, end: number, lowerBound: number): number {
+  const unit = text.charCodeAt(end - 1);
+  if (unit >= 0xdc00 && unit <= 0xdfff && end - 2 >= lowerBound) {
+    const high = text.charCodeAt(end - 2);
+    if (high >= 0xd800 && high <= 0xdbff) {
+      return 0x1_0000 + ((high - 0xd800) << 10) + (unit - 0xdc00);
+    }
+  }
+  return unit;
+}
+
 function updateText(container: LoroText, target: string): void {
-  const current = Array.from(container.toString());
-  const next = Array.from(target);
-  let prefix = 0;
+  const current = container.toString();
+  const currentLength = current.length;
+  const targetLength = target.length;
+  // Common prefix/suffix measured in UTF-16 offsets while comparing by code
+  // point, so astral characters are never split and no arrays are built.
+  let prefixLength = 0;
+  while (prefixLength < currentLength && prefixLength < targetLength) {
+    const codePoint = current.codePointAt(prefixLength)!;
+    if (codePoint !== target.codePointAt(prefixLength)) break;
+    prefixLength += codePoint > 0xffff ? 2 : 1;
+  }
+  let suffixLength = 0;
   while (
-    prefix < current.length &&
-    prefix < next.length &&
-    current[prefix] === next[prefix]
-  )
-    prefix += 1;
-  let suffix = 0;
-  while (
-    suffix < current.length - prefix &&
-    suffix < next.length - prefix &&
-    current[current.length - 1 - suffix] === next[next.length - 1 - suffix]
-  )
-    suffix += 1;
-  const prefixLength = current.slice(0, prefix).join("").length;
-  const removedLength = current.slice(prefix, current.length - suffix).join("").length;
-  container.delete(prefixLength, removedLength);
-  container.insert(prefixLength, next.slice(prefix, next.length - suffix).join(""));
+    suffixLength < currentLength - prefixLength &&
+    suffixLength < targetLength - prefixLength
+  ) {
+    const codePoint = codePointBefore(
+      current,
+      currentLength - suffixLength,
+      prefixLength,
+    );
+    if (
+      codePoint !== codePointBefore(target, targetLength - suffixLength, prefixLength)
+    ) {
+      break;
+    }
+    suffixLength += codePoint > 0xffff ? 2 : 1;
+  }
+  container.delete(prefixLength, currentLength - prefixLength - suffixLength);
+  container.insert(
+    prefixLength,
+    target.slice(prefixLength, targetLength - suffixLength),
+  );
 }

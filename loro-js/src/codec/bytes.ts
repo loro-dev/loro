@@ -182,7 +182,12 @@ export class ByteWriter {
   }
 
   toUint8Array(): Uint8Array {
-    return this.#buffer.slice(0, this.#length);
+    // When the buffer is exactly full, hand it over instead of copying; any
+    // later write would reallocate, so the returned array stays intact. This
+    // matches Lz4Output.finish in lz4.ts.
+    return this.#length === this.#buffer.length
+      ? this.#buffer
+      : this.#buffer.slice(0, this.#length);
   }
 
   private ensureCapacity(extra: number): void {

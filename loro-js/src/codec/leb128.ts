@@ -34,11 +34,61 @@ export function readUlebNumber(
   if (!Number.isSafeInteger(max) || max < 0) {
     throw new LoroDecodeError("invalid ULEB128 number limit", reader.position);
   }
-  const value = readUleb128(reader, BigInt(max));
-  return Number(value);
+  const start = reader.position;
+  let result = 0;
+  let multiplier = 1;
+  // Set once the value provably exceeds Number.MAX_SAFE_INTEGER (and therefore
+  // any max). Bytes are still consumed with readUleb128's overflow rules so
+  // the reader position and error behavior match the BigInt implementation.
+  let exceedsSafeInteger = false;
+  for (let index = 0; index < 10; index += 1) {
+    const byte = reader.readU8();
+    const payload = byte & 0x7f;
+    if (index === 9 && payload > 1) {
+      throw new LoroDecodeError("ULEB128 overflow", start);
+    }
+    if (!exceedsSafeInteger && payload !== 0) {
+      if (multiplier > Number.MAX_SAFE_INTEGER / payload) {
+        exceedsSafeInteger = true;
+      } else {
+        const product = payload * multiplier;
+        if (result > Number.MAX_SAFE_INTEGER - product) {
+          exceedsSafeInteger = true;
+        } else {
+          result += product;
+        }
+      }
+    }
+    if ((byte & 0x80) === 0) {
+      if (exceedsSafeInteger || result > max) {
+        throw new LoroDecodeError("ULEB128 value is out of range", start);
+      }
+      return result;
+    }
+    multiplier *= 128;
+  }
+  throw new LoroDecodeError("ULEB128 overflow", start);
 }
 
 export function writeUleb128(writer: ByteWriter, input: bigint | number): void {
+  if (
+    typeof input === "number" &&
+    Number.isSafeInteger(input) &&
+    input >= 0 &&
+    input < 0x8000_0000
+  ) {
+    // Smi fast path: encode small numbers without any BigInt arithmetic.
+    let value = input;
+    do {
+      let byte = value & 0x7f;
+      value >>>= 7;
+      if (value !== 0) {
+        byte |= 0x80;
+      }
+      writer.writeU8(byte);
+    } while (value !== 0);
+    return;
+  }
   let value = typeof input === "number" ? numberToBigInt(input, "ULEB128") : input;
   if (value < 0n || value > U64_MAX) {
     throw new LoroEncodeError(`ULEB128 value is out of range: ${value}`);

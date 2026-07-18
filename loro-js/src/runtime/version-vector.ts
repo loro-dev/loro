@@ -58,13 +58,19 @@ export class VersionVector {
   compare(other: VersionVector): -1 | 0 | 1 | undefined {
     let less = false;
     let greater = false;
-    for (const peer of new Set([...this.#values.keys(), ...other.#values.keys()])) {
-      const left = this.#values.get(peer) ?? 0;
+    for (const [peer, left] of this.#values) {
       const right = other.#values.get(peer) ?? 0;
-      less ||= left < right;
-      greater ||= left > right;
+      if (left < right) less = true;
+      else if (left > right) greater = true;
+      if (less && greater) return undefined;
     }
-    if (less && greater) return undefined;
+    // Peers present only in the other vector compare as 0 on this side.
+    for (const [peer, right] of other.#values) {
+      if (this.#values.has(peer)) continue;
+      if (right > 0) less = true;
+      else if (right < 0) greater = true;
+      if (less && greater) return undefined;
+    }
     return less ? -1 : greater ? 1 : 0;
   }
 
@@ -91,16 +97,19 @@ export class VersionVector {
   }
 
   codecEntries(): { peer: bigint; counter: number }[] {
-    return this._codecEntriesUnsorted()
-      .map(({ peer, counter }) => [peer, counter] as const)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-      .map(([peer, counter]) => ({ peer, counter }));
+    const entries = this._codecEntriesUnsorted();
+    entries.sort((left, right) =>
+      left.peer < right.peer ? -1 : left.peer > right.peer ? 1 : 0,
+    );
+    return entries;
   }
 
   _codecEntriesUnsorted(): { peer: bigint; counter: number }[] {
-    return [...this.#values].flatMap(([peer, counter]) =>
-      counter > 0 ? [{ peer, counter }] : [],
-    );
+    const entries: { peer: bigint; counter: number }[] = [];
+    for (const [peer, counter] of this.#values) {
+      if (counter > 0) entries.push({ peer, counter });
+    }
+    return entries;
   }
 
   publicEntries(): OpId[] {

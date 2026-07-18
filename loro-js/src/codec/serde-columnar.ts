@@ -1,7 +1,6 @@
 import { ByteReader, ByteWriter } from "./bytes";
-import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
-import { I64_MAX, I64_MIN, U64_MAX, readUlebNumber, writeUleb128 } from "./leb128";
-import { PostcardReader, PostcardWriter } from "./postcard";
+import { LoroDecodeError, LoroEncodeError, decodeAssert, encodeAssert } from "./errors";
+import { I64_MAX, I64_MIN, U64_MAX, readUleb128, readUlebNumber, writeUleb128 } from "./leb128";
 
 const U32_MAX = 0xffff_ffff;
 const I32_MIN = -0x8000_0000;
@@ -10,6 +9,8 @@ const I128_MIN = -(1n << 127n);
 const I128_MAX = (1n << 127n) - 1n;
 const U128_MAX = (1n << 128n) - 1n;
 const MAX_COLUMN_VALUES = 10_000_000;
+const MIN_SAFE_BIGINT = BigInt(-Number.MAX_SAFE_INTEGER);
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
 
 export function decodeColumnarVec(bytes: Uint8Array): Uint8Array[] {
   const reader = new ByteReader(bytes);
@@ -215,11 +216,36 @@ export function decodeDeltaOfDeltaI64(bytes: Uint8Array): bigint[] {
     return [];
   }
   const bits = BitReader.forCompleteStream(bitstream, lastUsedBits);
-  const values = [first];
+  const values: bigint[] = [first];
   let previous = first;
   let delta = 0n;
+  // Number fast path: while every intermediate value stays a safe integer,
+  // accumulate with plain number arithmetic and box only the emitted element.
+  let previousNumber = 0;
+  let deltaNumber = 0;
+  let useNumber = first >= MIN_SAFE_BIGINT && first <= MAX_SAFE_BIGINT;
+  if (useNumber) {
+    previousNumber = Number(first);
+  }
   while (bits.remaining > 0) {
-    delta = checkedI64(delta + decodeDeltaOfDeltaValue(bits), "delta-of-delta delta");
+    const step = decodeDeltaOfDeltaValue(bits);
+    if (useNumber) {
+      if (typeof step === "number") {
+        const nextDelta = deltaNumber + step;
+        const next = previousNumber + nextDelta;
+        if (Number.isSafeInteger(nextDelta) && Number.isSafeInteger(next)) {
+          deltaNumber = nextDelta;
+          previousNumber = next;
+          values.push(BigInt(next));
+          continue;
+        }
+      }
+      delta = BigInt(deltaNumber);
+      previous = BigInt(previousNumber);
+      useNumber = false;
+    }
+    const stepBigInt = typeof step === "number" ? BigInt(step) : step;
+    delta = checkedI64(delta + stepBigInt, "delta-of-delta delta");
     previous = checkedI64(previous + delta, "delta-of-delta value");
     values.push(previous);
   }
@@ -243,11 +269,35 @@ export function takeDeltaOfDeltaI64(
   }
   decodeAssert(count > 0, "delta-of-delta has too many elements");
   const bits = BitReader.forPrefix(bytes.subarray(bitstreamOffset));
-  const values = [first];
+  const values: bigint[] = [first];
   let previous = first;
   let delta = 0n;
+  // Number fast path, mirroring decodeDeltaOfDeltaI64.
+  let previousNumber = 0;
+  let deltaNumber = 0;
+  let useNumber = first >= MIN_SAFE_BIGINT && first <= MAX_SAFE_BIGINT;
+  if (useNumber) {
+    previousNumber = Number(first);
+  }
   while (values.length < count) {
-    delta = checkedI64(delta + decodeDeltaOfDeltaValue(bits), "delta-of-delta delta");
+    const step = decodeDeltaOfDeltaValue(bits);
+    if (useNumber) {
+      if (typeof step === "number") {
+        const nextDelta = deltaNumber + step;
+        const next = previousNumber + nextDelta;
+        if (Number.isSafeInteger(nextDelta) && Number.isSafeInteger(next)) {
+          deltaNumber = nextDelta;
+          previousNumber = next;
+          values.push(BigInt(next));
+          continue;
+        }
+      }
+      delta = BigInt(deltaNumber);
+      previous = BigInt(previousNumber);
+      useNumber = false;
+    }
+    const stepBigInt = typeof step === "number" ? BigInt(step) : step;
+    delta = checkedI64(delta + stepBigInt, "delta-of-delta delta");
     previous = checkedI64(previous + delta, "delta-of-delta value");
     values.push(previous);
   }
@@ -280,8 +330,32 @@ export function encodeDeltaOfDeltaI64(values: readonly bigint[]): Uint8Array {
   }
   const bits = new BitWriter();
   let previousDelta = 0n;
+  // Number fast path: differences of safe integers stay exact while the
+  // running delta and delta-of-delta remain safe integers.
+  let previousDeltaNumber = 0;
+  let useNumber = true;
   for (let index = 1; index < values.length; index += 1) {
-    const delta = checkedI64(values[index]! - values[index - 1]!, "delta-of-delta delta");
+    const current = values[index]!;
+    const prior = values[index - 1]!;
+    if (useNumber) {
+      if (
+        current >= MIN_SAFE_BIGINT &&
+        current <= MAX_SAFE_BIGINT &&
+        prior >= MIN_SAFE_BIGINT &&
+        prior <= MAX_SAFE_BIGINT
+      ) {
+        const deltaNumber = Number(current) - Number(prior);
+        const difference = deltaNumber - previousDeltaNumber;
+        if (Number.isSafeInteger(deltaNumber) && Number.isSafeInteger(difference)) {
+          previousDeltaNumber = deltaNumber;
+          encodeDeltaOfDeltaValueNumber(bits, difference);
+          continue;
+        }
+      }
+      previousDelta = BigInt(previousDeltaNumber);
+      useNumber = false;
+    }
+    const delta = checkedI64(current - prior, "delta-of-delta delta");
     const deltaOfDelta = checkedI64(delta - previousDelta, "delta-of-delta difference");
     previousDelta = delta;
     encodeDeltaOfDeltaValue(bits, deltaOfDelta);
@@ -380,8 +454,25 @@ function encodeDelta<T>(
   }
   writePostcardI64(writer, -BigInt(values.length));
   let previous = 0n;
+  // Number fast path: safe-integer values encode through the number i128
+  // writer, avoiding per-element BigInt subtraction and comparison.
+  let previousNumber = 0;
+  let useNumber = true;
   for (const input of values) {
     const value = toBigInt(input);
+    if (useNumber) {
+      if (value >= MIN_SAFE_BIGINT && value <= MAX_SAFE_BIGINT) {
+        const valueNumber = Number(value);
+        const deltaNumber = valueNumber - previousNumber;
+        if (Number.isSafeInteger(deltaNumber)) {
+          writePostcardI128Number(writer, deltaNumber);
+          previousNumber = valueNumber;
+          continue;
+        }
+      }
+      previous = BigInt(previousNumber);
+      useNumber = false;
+    }
     const delta = value - previous;
     assertBigIntRange(delta, I128_MIN, I128_MAX, "delta RLE delta");
     writePostcardI128(writer, delta);
@@ -399,8 +490,34 @@ function decodeDelta<T>(
   const reader = new ByteReader(bytes);
   const values: T[] = [];
   let value = 0n;
-  const append = (delta: bigint): void => {
-    value += delta;
+  // Number fast path: accumulate with plain number arithmetic while the
+  // running value stays a safe integer. A safe integer always compares
+  // exactly against these bounds: any bound outside the safe range is
+  // replaced by the nearest safe-integer limit, which accepts/rejects the
+  // same values as the BigInt comparison.
+  let valueNumber = 0;
+  let useNumber = true;
+  const minNumber = min < MIN_SAFE_BIGINT ? Number.MIN_SAFE_INTEGER : Number(min);
+  const maxNumber = max > MAX_SAFE_BIGINT ? Number.MAX_SAFE_INTEGER : Number(max);
+  const append = (delta: number | bigint): void => {
+    if (useNumber) {
+      if (typeof delta === "number") {
+        const next = valueNumber + delta;
+        if (Number.isSafeInteger(next)) {
+          valueNumber = next;
+          decodeAssert(
+            next >= minNumber && next <= maxNumber,
+            "delta RLE value is out of range",
+          );
+          values.push(fromBigInt(BigInt(next)));
+          return;
+        }
+      }
+      value = BigInt(valueNumber);
+      useNumber = false;
+    }
+    const deltaBigInt = typeof delta === "number" ? BigInt(delta) : delta;
+    value += deltaBigInt;
     decodeAssert(value >= min && value <= max, "delta RLE value is out of range");
     values.push(fromBigInt(value));
   };
@@ -415,13 +532,13 @@ function decodeDelta<T>(
       "AnyRle has too many elements",
     );
     if (signedLength > 0n) {
-      const delta = readPostcardI128(reader);
+      const delta = readPostcardI128NumberOrBigInt(reader);
       for (let index = 0; index < length; index += 1) {
         append(delta);
       }
     } else {
       for (let index = 0; index < length; index += 1) {
-        append(readPostcardI128(reader));
+        append(readPostcardI128NumberOrBigInt(reader));
       }
     }
   }
@@ -491,35 +608,55 @@ function writePostcardU8(writer: ByteWriter, value: number): void {
 }
 
 function readPostcardU32(reader: ByteReader): number {
-  return new PostcardReader(reader).readU32();
+  return readUlebNumber(reader, 0xffff_ffff);
 }
 
 function writePostcardU32(writer: ByteWriter, value: number): void {
-  new PostcardWriter(writer).writeU32(value);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new LoroEncodeError(`u32 is out of range: ${value}`);
+  }
+  writeUleb128(writer, value);
 }
 
 function readPostcardU64(reader: ByteReader): bigint {
-  return new PostcardReader(reader).readU64();
+  return readUleb128(reader, U64_MAX);
 }
 
 function writePostcardU64(writer: ByteWriter, value: bigint): void {
-  new PostcardWriter(writer).writeU64(value);
+  writeUleb128(writer, value);
 }
 
 function readPostcardI32(reader: ByteReader): number {
-  return new PostcardReader(reader).readI32();
+  const encoded = readUlebNumber(reader, 0xffff_ffff);
+  // ZigZag decode; every u32-encoded value lands in the i32 range.
+  const value = (encoded >>> 1) ^ -(encoded & 1);
+  if (value < I32_MIN || value > I32_MAX) {
+    throw new LoroDecodeError("postcard signed integer is out of range");
+  }
+  return value;
 }
 
 function writePostcardI32(writer: ByteWriter, value: number): void {
-  new PostcardWriter(writer).writeI32(value);
+  if (!Number.isSafeInteger(value) || value < I32_MIN || value > I32_MAX) {
+    throw new LoroEncodeError(`i32 is out of range: ${value}`);
+  }
+  writeUleb128(writer, ((value << 1) ^ (value >> 31)) >>> 0);
 }
 
 function readPostcardI64(reader: ByteReader): bigint {
-  return new PostcardReader(reader).readI64();
+  const encoded = readUleb128(reader, U64_MAX);
+  const value = (encoded >> 1n) ^ -(encoded & 1n);
+  if (value < I64_MIN || value > I64_MAX) {
+    throw new LoroDecodeError("postcard signed integer is out of range");
+  }
+  return value;
 }
 
 function writePostcardI64(writer: ByteWriter, value: bigint): void {
-  new PostcardWriter(writer).writeI64(value);
+  if (value < I64_MIN || value > I64_MAX) {
+    throw new LoroEncodeError(`i64 is out of range: ${value}`);
+  }
+  writeUleb128(writer, (value << 1n) ^ (value >> 63n));
 }
 
 function readPostcardOptionalI64(reader: ByteReader): bigint | undefined {
@@ -538,13 +675,6 @@ function writePostcardOptionalI64(writer: ByteWriter, value: bigint | undefined)
   if (value !== undefined) {
     writePostcardI64(writer, value);
   }
-}
-
-function readPostcardI128(reader: ByteReader): bigint {
-  const encoded = readVarintU128(reader);
-  const value = (encoded >> 1n) ^ -(encoded & 1n);
-  decodeAssert(value >= I128_MIN && value <= I128_MAX, "postcard i128 is out of range");
-  return value;
 }
 
 function writePostcardI128(writer: ByteWriter, value: bigint): void {
@@ -568,6 +698,10 @@ function readPostcardI128Number(reader: ByteReader): number {
       throw new LoroDecodeError("i128 varint exceeds safe integer range", start);
     }
     if ((byte & 0x80) === 0) {
+      if (encoded < 0x8000_0000) {
+        // Smi ZigZag decode; identical to the division-based formula below.
+        return (encoded >>> 1) ^ -(encoded & 1);
+      }
       return encoded % 2 === 0 ? encoded / 2 : -(encoded + 1) / 2;
     }
     multiplier *= 128;
@@ -576,6 +710,19 @@ function readPostcardI128Number(reader: ByteReader): number {
 }
 
 function writePostcardI128Number(writer: ByteWriter, value: number): void {
+  if (Number.isSafeInteger(value) && value > -0x8000_0000 && value < 0x8000_0000) {
+    // Smi-only ZigZag encode and varint emission for 31-bit values.
+    let encoded = ((value << 1) ^ (value >> 31)) >>> 0;
+    do {
+      let byte = encoded & 0x7f;
+      encoded >>>= 7;
+      if (encoded !== 0) {
+        byte |= 0x80;
+      }
+      writer.writeU8(byte);
+    } while (encoded !== 0);
+    return;
+  }
   const encoded = value >= 0 ? value * 2 : -value * 2 - 1;
   let remaining = encoded;
   do {
@@ -588,19 +735,49 @@ function writePostcardI128Number(writer: ByteWriter, value: number): void {
   } while (remaining !== 0);
 }
 
-function readVarintU128(reader: ByteReader): bigint {
+// Reads a postcard i128, keeping the whole decode in number arithmetic while
+// the encoded varint stays a safe integer and falling back to BigInt only for
+// larger (still valid u128) inputs.
+function readPostcardI128NumberOrBigInt(reader: ByteReader): number | bigint {
   const start = reader.position;
-  let value = 0n;
+  let encoded = 0;
+  let multiplier = 1;
+  let encodedBigInt = 0n;
+  let useBigInt = false;
   for (let index = 0; index < 19; index += 1) {
     const byte = reader.readU8();
-    const payload = BigInt(byte & 0x7f);
-    if (index === 18 && payload > 3n) {
+    const payload = byte & 0x7f;
+    if (index === 18 && payload > 3) {
       throw new LoroDecodeError("u128 varint overflow", start);
     }
-    value |= payload << BigInt(index * 7);
+    if (useBigInt) {
+      encodedBigInt |= BigInt(payload) << BigInt(index * 7);
+    } else if (payload !== 0) {
+      if (multiplier <= Number.MAX_SAFE_INTEGER / payload) {
+        const sum = encoded + payload * multiplier;
+        if (Number.isSafeInteger(sum)) {
+          encoded = sum;
+        } else {
+          useBigInt = true;
+          encodedBigInt = BigInt(encoded) | (BigInt(payload) << BigInt(index * 7));
+        }
+      } else {
+        useBigInt = true;
+        encodedBigInt = BigInt(encoded) | (BigInt(payload) << BigInt(index * 7));
+      }
+    }
     if ((byte & 0x80) === 0) {
+      if (!useBigInt) {
+        if (encoded < 0x8000_0000) {
+          return (encoded >>> 1) ^ -(encoded & 1);
+        }
+        return encoded % 2 === 0 ? encoded / 2 : -(encoded + 1) / 2;
+      }
+      const value = (encodedBigInt >> 1n) ^ -(encodedBigInt & 1n);
+      decodeAssert(value >= I128_MIN && value <= I128_MAX, "postcard i128 is out of range");
       return value;
     }
+    multiplier *= 128;
   }
   throw new LoroDecodeError("u128 varint overflow", start);
 }
@@ -621,7 +798,13 @@ function writeVarintU128(writer: ByteWriter, input: bigint): void {
 class BitReader {
   readonly #bytes: Uint8Array;
   readonly #totalBits: number;
-  #position = 0;
+  #bytePosition = 0;
+  // Pending bits read from the stream but not yet consumed, right-aligned.
+  // The invariant #bitCount <= 7 holds between read calls, so every
+  // intermediate below stays a positive 31-bit value and bitwise ops are
+  // exact Smi operations.
+  #bitBuffer = 0;
+  #bitCount = 0;
 
   private constructor(bytes: Uint8Array, totalBits: number) {
     this.#bytes = bytes;
@@ -643,25 +826,46 @@ class BitReader {
   }
 
   get position(): number {
-    return this.#position;
+    return this.#bytePosition * 8 - this.#bitCount;
   }
 
   get remaining(): number {
-    return this.#totalBits - this.#position;
+    return this.#totalBits - this.position;
   }
 
-  readBits(count: number): bigint {
+  // Reads up to 24 bits (the refill loop would exceed 31-bit intermediate
+  // values above that) and returns them as a number. Bits are consumed
+  // MSB-first, matching the original bit-at-a-time implementation.
+  readBitsNumber(count: number): number {
+    decodeAssert(
+      Number.isSafeInteger(count) && count >= 0 && count <= 24,
+      "invalid bit width",
+    );
+    decodeAssert(this.remaining >= count, "unexpected end of delta-of-delta bitstream");
+    while (this.#bitCount < count) {
+      this.#bitBuffer = (this.#bitBuffer << 8) | this.#bytes[this.#bytePosition]!;
+      this.#bytePosition += 1;
+      this.#bitCount += 8;
+    }
+    const shift = this.#bitCount - count;
+    const value = this.#bitBuffer >>> shift;
+    this.#bitBuffer &= (1 << shift) - 1;
+    this.#bitCount -= count;
+    return value;
+  }
+
+  readBitsBigInt(count: number): bigint {
     decodeAssert(
       Number.isSafeInteger(count) && count >= 0 && count <= 64,
       "invalid bit width",
     );
     decodeAssert(this.remaining >= count, "unexpected end of delta-of-delta bitstream");
     let value = 0n;
-    for (let index = 0; index < count; index += 1) {
-      const byte = this.#bytes[Math.floor(this.#position / 8)]!;
-      const shift = 7 - (this.#position % 8);
-      value = (value << 1n) | BigInt((byte >>> shift) & 1);
-      this.#position += 1;
+    let remaining = count;
+    while (remaining > 0) {
+      const step = Math.min(remaining, 24);
+      value = (value << BigInt(step)) | BigInt(this.readBitsNumber(step));
+      remaining -= step;
     }
     return value;
   }
@@ -669,67 +873,105 @@ class BitReader {
 
 class BitWriter {
   readonly #bytes: number[] = [];
-  #current = 0;
-  #used = 0;
+  // Same right-aligned pending-bits representation as BitReader, with the
+  // invariant #bitCount <= 7 between write calls.
+  #bitBuffer = 0;
+  #bitCount = 0;
 
-  writeBits(value: bigint, count: number): void {
-    for (let shift = count - 1; shift >= 0; shift -= 1) {
-      this.#current = (this.#current << 1) | Number((value >> BigInt(shift)) & 1n);
-      this.#used += 1;
-      if (this.#used === 8) {
-        this.#bytes.push(this.#current);
-        this.#current = 0;
-        this.#used = 0;
-      }
+  // Writes the low `count` bits of value, MSB first. Like the original
+  // bit-at-a-time loop, bits of value above `count` are ignored.
+  writeBitsNumber(value: number, count: number): void {
+    encodeAssert(
+      Number.isSafeInteger(count) && count >= 0 && count <= 24,
+      "invalid bit width",
+    );
+    this.#bitBuffer = (this.#bitBuffer << count) | (value & ((1 << count) - 1));
+    this.#bitCount += count;
+    while (this.#bitCount >= 8) {
+      const shift = this.#bitCount - 8;
+      this.#bytes.push(this.#bitBuffer >>> shift);
+      this.#bitBuffer &= (1 << shift) - 1;
+      this.#bitCount -= 8;
+    }
+  }
+
+  writeBitsBigInt(value: bigint, count: number): void {
+    encodeAssert(count >= 0 && count <= 64, "invalid bit width");
+    let remaining = count;
+    while (remaining > 0) {
+      const step = Math.min(remaining, 24);
+      remaining -= step;
+      this.writeBitsNumber(Number((value >> BigInt(remaining)) & 0xff_ffffn), step);
     }
   }
 
   finish(): { readonly bytes: Uint8Array; readonly lastUsedBits: number } {
-    if (this.#used === 0) {
+    if (this.#bitCount === 0) {
       return { bytes: Uint8Array.from(this.#bytes), lastUsedBits: 8 };
     }
-    this.#bytes.push(this.#current << (8 - this.#used));
-    return { bytes: Uint8Array.from(this.#bytes), lastUsedBits: this.#used };
+    this.#bytes.push(this.#bitBuffer << (8 - this.#bitCount));
+    return { bytes: Uint8Array.from(this.#bytes), lastUsedBits: this.#bitCount };
   }
 }
 
-function decodeDeltaOfDeltaValue(reader: BitReader): bigint {
-  if (reader.readBits(1) === 0n) {
-    return 0n;
+function decodeDeltaOfDeltaValue(reader: BitReader): number | bigint {
+  if (reader.readBitsNumber(1) === 0) {
+    return 0;
   }
-  if (reader.readBits(1) === 0n) {
-    return reader.readBits(7) - 63n;
+  if (reader.readBitsNumber(1) === 0) {
+    return reader.readBitsNumber(7) - 63;
   }
-  if (reader.readBits(1) === 0n) {
-    return reader.readBits(9) - 255n;
+  if (reader.readBitsNumber(1) === 0) {
+    return reader.readBitsNumber(9) - 255;
   }
-  if (reader.readBits(1) === 0n) {
-    return reader.readBits(12) - 2047n;
+  if (reader.readBitsNumber(1) === 0) {
+    return reader.readBitsNumber(12) - 2047;
   }
-  if (reader.readBits(1) === 0n) {
-    return reader.readBits(21) - 1_048_575n;
+  if (reader.readBitsNumber(1) === 0) {
+    return reader.readBitsNumber(21) - 1_048_575;
   }
-  return BigInt.asIntN(64, reader.readBits(64));
+  return BigInt.asIntN(64, reader.readBitsBigInt(64));
 }
 
 function encodeDeltaOfDeltaValue(writer: BitWriter, value: bigint): void {
   if (value === 0n) {
-    writer.writeBits(0n, 1);
+    writer.writeBitsNumber(0, 1);
   } else if (value >= -63n && value <= 64n) {
-    writer.writeBits(0b10n, 2);
-    writer.writeBits(value + 63n, 7);
+    writer.writeBitsNumber(0b10, 2);
+    writer.writeBitsNumber(Number(value + 63n), 7);
   } else if (value >= -255n && value <= 256n) {
-    writer.writeBits(0b110n, 3);
-    writer.writeBits(value + 255n, 9);
+    writer.writeBitsNumber(0b110, 3);
+    writer.writeBitsNumber(Number(value + 255n), 9);
   } else if (value >= -2047n && value <= 2048n) {
-    writer.writeBits(0b1110n, 4);
-    writer.writeBits(value + 2047n, 12);
+    writer.writeBitsNumber(0b1110, 4);
+    writer.writeBitsNumber(Number(value + 2047n), 12);
   } else if (value >= -1_048_575n && value <= 1_048_576n) {
-    writer.writeBits(0b11110n, 5);
-    writer.writeBits(value + 1_048_575n, 21);
+    writer.writeBitsNumber(0b11110, 5);
+    writer.writeBitsNumber(Number(value + 1_048_575n), 21);
   } else {
-    writer.writeBits(0b11111n, 5);
-    writer.writeBits(BigInt.asUintN(64, value), 64);
+    writer.writeBitsNumber(0b11111, 5);
+    writer.writeBitsBigInt(BigInt.asUintN(64, value), 64);
+  }
+}
+
+function encodeDeltaOfDeltaValueNumber(writer: BitWriter, value: number): void {
+  if (value === 0) {
+    writer.writeBitsNumber(0, 1);
+  } else if (value >= -63 && value <= 64) {
+    writer.writeBitsNumber(0b10, 2);
+    writer.writeBitsNumber(value + 63, 7);
+  } else if (value >= -255 && value <= 256) {
+    writer.writeBitsNumber(0b110, 3);
+    writer.writeBitsNumber(value + 255, 9);
+  } else if (value >= -2047 && value <= 2048) {
+    writer.writeBitsNumber(0b1110, 4);
+    writer.writeBitsNumber(value + 2047, 12);
+  } else if (value >= -1_048_575 && value <= 1_048_576) {
+    writer.writeBitsNumber(0b11110, 5);
+    writer.writeBitsNumber(value + 1_048_575, 21);
+  } else {
+    writer.writeBitsNumber(0b11111, 5);
+    writer.writeBitsBigInt(BigInt.asUintN(64, BigInt(value)), 64);
   }
 }
 

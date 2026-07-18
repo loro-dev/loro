@@ -46,13 +46,15 @@ export class OrderedIndex<T extends object> {
   }
 
   delete(value: T): boolean {
-    const index = this.indexOf(value);
+    const node = this.#nodes.get(value);
+    if (node === undefined) return false;
+    const index = this.#indexOfNode(node);
     if (index === undefined) return false;
     const [left, selectedAndRight] = split(this.#root, index);
     const [, right] = split(selectedAndRight, 1);
     this.#root = merge(left, right);
     if (this.#root !== undefined) this.#root.parent = undefined;
-    if (this.#last === this.#nodes.get(value)) {
+    if (this.#last === node) {
       this.#last = this.#root === undefined ? undefined : rightmost(this.#root);
     }
     this.#nodes.delete(value);
@@ -78,6 +80,10 @@ export class OrderedIndex<T extends object> {
   indexOf(value: T): number | undefined {
     const node = this.#nodes.get(value);
     if (node === undefined) return undefined;
+    return this.#indexOfNode(node);
+  }
+
+  #indexOfNode(node: OrderedNode<T>): number | undefined {
     let index = nodeSize(node.left);
     let current = node;
     while (current.parent !== undefined) {
@@ -142,6 +148,39 @@ export class OrderedIndex<T extends object> {
       } else {
         stack.push(node);
         node = node.left;
+      }
+    }
+    while (stack.length > 0) {
+      node = stack.pop()!;
+      if (visit(node.value) === false) return;
+      node = node.right;
+      while (node !== undefined) {
+        stack.push(node);
+        node = node.left;
+      }
+    }
+  }
+
+  /**
+   * In-order iteration starting at rank `index` in O(log n + visited). Skips
+   * the per-element `at(index)` treap walks of an index loop. An index at or
+   * beyond `size` visits nothing.
+   */
+  _forEachFromIndex(index: number, visit: (value: T) => boolean | void): void {
+    const stack: OrderedNode<T>[] = [];
+    let node = this.#root;
+    let remaining = index;
+    while (node !== undefined) {
+      const leftSize = nodeSize(node.left);
+      if (remaining < leftSize) {
+        stack.push(node);
+        node = node.left;
+      } else if (remaining === leftSize) {
+        stack.push(node);
+        break;
+      } else {
+        remaining -= leftSize + 1;
+        node = node.right;
       }
     }
     while (stack.length > 0) {
@@ -242,18 +281,41 @@ function split<T extends object>(
   count: number,
 ): [OrderedNode<T> | undefined, OrderedNode<T> | undefined] {
   if (root === undefined) return [undefined, undefined];
-  if (nodeSize(root.left) >= count) {
-    const [left, right] = split(root.left, count);
-    root.left = right;
-    recompute(root);
-    root.parent = undefined;
-    if (left !== undefined) left.parent = undefined;
-    return [left, root];
+  // Descend once, recording the spine. A spine node joins the right result
+  // when the split continues into its left subtree, the left result
+  // otherwise; the two carries are then stitched bottom-up. This keeps the
+  // recursive shape without allocating a [left, right] tuple per level.
+  const spine: OrderedNode<T>[] = [];
+  const intoLeftSubtree: boolean[] = [];
+  let node: OrderedNode<T> | undefined = root;
+  let remaining = count;
+  while (node !== undefined) {
+    const leftSize = nodeSize(node.left);
+    const intoLeft = leftSize >= remaining;
+    spine.push(node);
+    intoLeftSubtree.push(intoLeft);
+    if (intoLeft) {
+      node = node.left;
+    } else {
+      remaining -= leftSize + 1;
+      node = node.right;
+    }
   }
-  const [left, right] = split(root.right, count - nodeSize(root.left) - 1);
-  root.right = left;
-  recompute(root);
-  root.parent = undefined;
+  let left: OrderedNode<T> | undefined;
+  let right: OrderedNode<T> | undefined;
+  for (let index = spine.length - 1; index >= 0; index -= 1) {
+    const current = spine[index]!;
+    if (intoLeftSubtree[index]) {
+      current.left = right;
+      recompute(current);
+      right = current;
+    } else {
+      current.right = left;
+      recompute(current);
+      left = current;
+    }
+  }
+  if (left !== undefined) left.parent = undefined;
   if (right !== undefined) right.parent = undefined;
-  return [root, right];
+  return [left, right];
 }

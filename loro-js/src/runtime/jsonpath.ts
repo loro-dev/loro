@@ -53,7 +53,7 @@ export function evaluateJsonPath(root: unknown, query: string): unknown[] {
 type EventMatchSelector =
   | { readonly kind: "key"; readonly value: string }
   | { readonly kind: "index"; readonly value: number }
-  | { readonly kind: "wildcard" };
+  | { readonly kind: "wildcard"; readonly value: undefined };
 
 interface EventMatchStep {
   readonly recursive: boolean;
@@ -74,28 +74,41 @@ export function compileJsonPathEventMatcher(
         : selector.kind === "indices"
           ? selector.indices.map((value) =>
               value < 0
-                ? ({ kind: "wildcard" } as const)
+                ? ({ kind: "wildcard", value: undefined } as const)
                 : ({ kind: "index", value } as const),
             )
-          : [{ kind: "wildcard" }],
+          : [{ kind: "wildcard", value: undefined }],
   }));
-  const positionsAfter = (path: readonly EventPathElement[]): number[] => {
+  // Positions stay within [0, steps.length], so membership checks on the
+  // ping-pong arrays replace the former per-element Set + spread + sort.
+  const positionsAfter = (
+    path: readonly EventPathElement[],
+    extraElement?: EventPathElement,
+  ): number[] => {
     let positions = [0];
-    for (const element of path) {
-      const next = new Set<number>();
+    let next: number[] = [];
+    const elementCount = extraElement === undefined ? path.length : path.length + 1;
+    for (let index = 0; index < elementCount; index += 1) {
+      const element = index < path.length ? path[index]! : extraElement!;
+      next.length = 0;
       for (const position of positions) {
         if (position >= steps.length) {
-          next.add(position);
+          if (!next.includes(position)) next.push(position);
           continue;
         }
         const step = steps[position]!;
-        if (step.recursive) next.add(position);
-        if (step.selectors.some((selector) => eventSelectorMatches(selector, element))) {
-          next.add(position + 1);
+        if (step.recursive && !next.includes(position)) next.push(position);
+        if (
+          step.selectors.some((selector) => eventSelectorMatches(selector, element)) &&
+          !next.includes(position + 1)
+        ) {
+          next.push(position + 1);
         }
       }
-      positions = [...next].sort((left, right) => left - right);
-      if (positions.length === 0) break;
+      if (next.length === 0) return next;
+      const swap = positions;
+      positions = next;
+      next = swap;
     }
     return positions;
   };
@@ -114,16 +127,17 @@ export function compileJsonPathEventMatcher(
           position > 0 &&
           steps[position - 1]?.selectors.some((selector) => selector.kind === "wildcard"),
       );
-      return Object.keys(event.diff.updated).some(
-        (key) => positionsAfter([...basePath, key]).length > 0 || passedWildcard,
-      );
+      for (const key in event.diff.updated) {
+        if (passedWildcard || positionsAfter(basePath, key).length > 0) return true;
+      }
+      return false;
     }
     if (
       event.diff.type === "list" ||
       event.diff.type === "tree" ||
       event.diff.type === "counter"
     ) {
-      return positionsAfter([...basePath, UNKNOWN_EVENT_INDEX]).length > 0;
+      return positionsAfter(basePath, UNKNOWN_EVENT_INDEX).length > 0;
     }
     return false;
   };
@@ -266,15 +280,26 @@ function applyRecursiveSelector(
   root: unknown,
 ): unknown[] {
   const output: unknown[] = [];
-  const visit = (value: unknown, ancestors: ReadonlySet<object>): void => {
-    output.push(...applySelector([value], { ...selector, recursive: false }, root));
+  // `applySelector` never reads `selector.recursive`, so the selector passes
+  // through unchanged instead of being cloned per visited node. The ancestor
+  // set is reused in place: add on the way down, delete on the way up, which
+  // keeps the same path-scoped cycle detection.
+  const ancestors = new Set<object>();
+  const holder: unknown[] = [undefined];
+  const visit = (value: unknown): void => {
+    holder[0] = value;
+    output.push(...applySelector(holder, selector, root));
     const object = objectIdentity(value);
-    if (object !== undefined && ancestors.has(object)) return;
-    const nextAncestors =
-      object === undefined ? ancestors : new Set([...ancestors, object]);
-    for (const child of childValues(value)) visit(child, nextAncestors);
+    if (object === undefined) {
+      for (const child of childValues(value)) visit(child);
+      return;
+    }
+    if (ancestors.has(object)) return;
+    ancestors.add(object);
+    for (const child of childValues(value)) visit(child);
+    ancestors.delete(object);
   };
-  for (const value of values) visit(value, new Set());
+  for (const value of values) visit(value);
   return output;
 }
 
@@ -494,6 +519,12 @@ type FilterToken =
   | { readonly kind: "identifier"; readonly value: string }
   | { readonly kind: "eof"; readonly value: "" };
 
+const COMPARISON_OPERATORS = ["==", "!=", "<", "<=", ">", ">=", "contains", "in"];
+const DOUBLE_CHAR_OPERATORS = ["&&", "||", "==", "!=", "<=", ">="];
+const SINGLE_CHAR_OPERATORS = ["!", "<", ">"];
+const PUNCTUATION_CHARS = ["(", ")", "[", "]", ","];
+const FILTER_PATH_TERMINATORS = [")", ",", "!", "<", ">", "="];
+
 class FilterParser {
   readonly #tokens: FilterToken[];
   readonly #root: unknown;
@@ -536,7 +567,7 @@ class FilterParser {
     const token = this.#peek();
     if (
       token.kind !== "operator" ||
-      !["==", "!=", "<", "<=", ">", ">=", "contains", "in"].includes(token.value)
+      !COMPARISON_OPERATORS.includes(token.value)
     ) {
       return left;
     }
@@ -627,17 +658,17 @@ function tokenizeFilter(expression: string): FilterToken[] {
       continue;
     }
     const pair = expression.slice(index, index + 2);
-    if (["&&", "||", "==", "!=", "<=", ">="].includes(pair)) {
+    if (DOUBLE_CHAR_OPERATORS.includes(pair)) {
       tokens.push({ kind: "operator", value: pair });
       index += 2;
       continue;
     }
-    if (["!", "<", ">"].includes(character)) {
+    if (SINGLE_CHAR_OPERATORS.includes(character)) {
       tokens.push({ kind: "operator", value: character });
       index += 1;
       continue;
     }
-    if (["(", ")", "[", "]", ","].includes(character)) {
+    if (PUNCTUATION_CHARS.includes(character)) {
       tokens.push({ kind: "punctuation", value: character });
       index += 1;
       continue;
@@ -714,7 +745,7 @@ function readFilterPath(
     }
     if (
       bracketDepth === 0 &&
-      (/\s/u.test(character) || [")", ",", "!", "<", ">", "="].includes(character))
+      (/\s/u.test(character) || FILTER_PATH_TERMINATORS.includes(character))
     ) {
       break;
     }

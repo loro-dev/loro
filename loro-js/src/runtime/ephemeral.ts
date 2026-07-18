@@ -103,12 +103,11 @@ export class AwarenessWasm<T extends Value = Value> {
   }
 
   getAllStates(): Record<PeerID, T> {
-    return Object.fromEntries(
-      [...this.#states].map(([peer, state]) => [
-        peerString(peer),
-        encodedToValue(state.value) as T,
-      ]),
-    ) as Record<PeerID, T>;
+    const output: Record<PeerID, T> = {};
+    for (const [peer, state] of this.#states) {
+      output[peerString(peer)] = encodedToValue(state.value) as T;
+    }
+    return output;
   }
 
   getState(peer: PeerIdInput): T | undefined {
@@ -145,11 +144,10 @@ export class AwarenessWasm<T extends Value = Value> {
   }
 
   private orderedPeers(): bigint[] {
-    const peers = [...this.#states.keys()];
-    const local = peers.indexOf(this.#peer);
-    if (local > 0) {
-      peers.splice(local, 1);
-      peers.unshift(this.#peer);
+    const peers: bigint[] = [];
+    if (this.#states.has(this.#peer)) peers.push(this.#peer);
+    for (const peer of this.#states.keys()) {
+      if (peer !== this.#peer) peers.push(peer);
     }
     return peers;
   }
@@ -259,6 +257,15 @@ export class EphemeralStoreWasm<T extends Value = Value> {
   readonly #localListeners = new Set<EphemeralLocalListener>();
   readonly #pendingEvents: EphemeralStoreEvent[] = [];
   readonly #pendingLocalUpdates: Uint8Array[] = [];
+  // Adds made from inside a dispatch are queued and flushed after that
+  // event's dispatch, preserving the former per-event snapshot semantics
+  // without copying the listener set per emission. Removals apply to the
+  // live set immediately; Set iteration skips not-yet-visited removals,
+  // which matches the old `has` guard.
+  readonly #queuedListeners: EphemeralListener[] = [];
+  readonly #queuedLocalListeners: EphemeralLocalListener[] = [];
+  #deferringListeners = false;
+  #deferringLocalListeners = false;
   #emittingEvents = false;
   #emittingLocalUpdates = false;
 
@@ -282,24 +289,31 @@ export class EphemeralStoreWasm<T extends Value = Value> {
   }
 
   getAllStates(): Record<string, T> {
-    return Object.fromEntries(
-      [...this.#states]
-        .filter(
-          (entry): entry is [string, EphemeralState & { value: EncodedLoroValue }] =>
-            entry[1].value !== undefined,
-        )
-        .map(([key, state]) => [key, encodedToValue(state.value)]),
-    ) as Record<string, T>;
+    const output: Record<string, T> = {};
+    for (const [key, state] of this.#states) {
+      if (state.value !== undefined) output[key] = encodedToValue(state.value) as T;
+    }
+    return output;
   }
 
   subscribeLocalUpdates(listener: EphemeralLocalListener): () => void {
-    this.#localListeners.add(listener);
-    return () => this.#localListeners.delete(listener);
+    if (this.#deferringLocalListeners) this.#queuedLocalListeners.push(listener);
+    else this.#localListeners.add(listener);
+    return () => {
+      this.#localListeners.delete(listener);
+      const queued = this.#queuedLocalListeners.indexOf(listener);
+      if (queued !== -1) this.#queuedLocalListeners.splice(queued, 1);
+    };
   }
 
   subscribe(listener: EphemeralListener): () => void {
-    this.#listeners.add(listener);
-    return () => this.#listeners.delete(listener);
+    if (this.#deferringListeners) this.#queuedListeners.push(listener);
+    else this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+      const queued = this.#queuedListeners.indexOf(listener);
+      if (queued !== -1) this.#queuedListeners.splice(queued, 1);
+    };
   }
 
   encode(key: string): Uint8Array {
@@ -311,11 +325,11 @@ export class EphemeralStoreWasm<T extends Value = Value> {
 
   encodeAll(): Uint8Array {
     const now = Date.now();
-    return encodeEphemeralStates(
-      [...this.#states]
-        .filter(([, state]) => now - state.timestamp <= this.#timeout)
-        .map(([key, state]) => ({ key, ...state })),
-    );
+    const states: EncodedEphemeralState[] = [];
+    for (const [key, state] of this.#states) {
+      if (now - state.timestamp <= this.#timeout) states.push({ key, ...state });
+    }
+    return encodeEphemeralStates(states);
   }
 
   apply(bytes: Uint8Array): void {
@@ -358,9 +372,11 @@ export class EphemeralStoreWasm<T extends Value = Value> {
   }
 
   keys(): string[] {
-    return [...this.#states]
-      .filter(([, state]) => state.value !== undefined)
-      .map(([key]) => key);
+    const output: string[] = [];
+    for (const [key, state] of this.#states) {
+      if (state.value !== undefined) output.push(key);
+    }
+    return output;
   }
 
   private setLocal(key: string, value: EncodedLoroValue | undefined): void {
@@ -389,8 +405,13 @@ export class EphemeralStoreWasm<T extends Value = Value> {
     try {
       while (pending.length > 0) {
         const current = pending.pop()!;
-        for (const listener of [...this.#listeners]) {
-          if (this.#listeners.has(listener)) listener(current);
+        this.#deferringListeners = true;
+        try {
+          for (const listener of this.#listeners) listener(current);
+        } finally {
+          this.#deferringListeners = false;
+          for (const listener of this.#queuedListeners) this.#listeners.add(listener);
+          this.#queuedListeners.length = 0;
         }
         pending.push(...this.#pendingEvents.splice(0));
       }
@@ -411,8 +432,15 @@ export class EphemeralStoreWasm<T extends Value = Value> {
     try {
       while (pending.length > 0) {
         const current = pending.pop()!;
-        for (const listener of [...this.#localListeners]) {
-          if (this.#localListeners.has(listener)) listener(current);
+        this.#deferringLocalListeners = true;
+        try {
+          for (const listener of this.#localListeners) listener(current);
+        } finally {
+          this.#deferringLocalListeners = false;
+          for (const listener of this.#queuedLocalListeners) {
+            this.#localListeners.add(listener);
+          }
+          this.#queuedLocalListeners.length = 0;
         }
         pending.push(...this.#pendingLocalUpdates.splice(0));
       }

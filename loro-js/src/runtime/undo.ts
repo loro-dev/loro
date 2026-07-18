@@ -16,44 +16,46 @@ interface UndoItem {
 }
 
 class UndoDeque<T> {
-  readonly #items = new Map<number, T>();
+  // Array + head offset: capacity is capped by maxUndoSteps, so a Map of
+  // slot indexes only costs extra entries per push/pop.
+  #items: T[] = [];
   #start = 0;
-  #end = 0;
 
   get length(): number {
-    return this.#end - this.#start;
+    return this.#items.length - this.#start;
   }
 
   push(item: T): void {
-    this.#items.set(this.#end, item);
-    this.#end += 1;
+    this.#items.push(item);
   }
 
   pop(): T | undefined {
-    if (this.#end === this.#start) return undefined;
-    this.#end -= 1;
-    const item = this.#items.get(this.#end);
-    this.#items.delete(this.#end);
-    if (this.#end === this.#start) this.clear();
+    if (this.length === 0) return undefined;
+    const item = this.#items.pop()!;
+    if (this.length === 0) this.clear();
     return item;
   }
 
   peek(): T | undefined {
-    return this.#end === this.#start ? undefined : this.#items.get(this.#end - 1);
+    return this.length === 0 ? undefined : this.#items[this.#items.length - 1];
   }
 
   trimFront(length: number): void {
-    while (this.length > length) {
-      this.#items.delete(this.#start);
-      this.#start += 1;
+    while (this.length > length) this.#start += 1;
+    if (this.#start === 0) return;
+    if (this.#start >= this.#items.length) {
+      this.clear();
+    } else if (this.#start >= 32 && this.#start * 2 >= this.#items.length) {
+      // Release the trimmed slots once they dominate the backing array.
+      this.#items.copyWithin(0, this.#start);
+      this.#items.length -= this.#start;
+      this.#start = 0;
     }
-    if (this.#end === this.#start) this.clear();
   }
 
   clear(): void {
-    this.#items.clear();
+    this.#items.length = 0;
     this.#start = 0;
-    this.#end = 0;
   }
 }
 
@@ -193,7 +195,8 @@ export class UndoManager {
 
   #record(event: LoroEventBatch): void {
     if (this.#applying) return;
-    const targets = new Set(event.events.map(({ target }) => target));
+    const targets = new Set<string>();
+    for (const { target } of event.events) targets.add(target);
     if (event.by === "checkout") {
       this.clear();
       return;
@@ -202,10 +205,7 @@ export class UndoManager {
       for (const target of targets) this.#remoteTargets.add(target);
       return;
     }
-    if (
-      event.origin !== undefined &&
-      [...this.#excludeOriginPrefixes].some((prefix) => event.origin!.startsWith(prefix))
-    ) {
+    if (event.origin !== undefined && this.#excludedOrigin(event.origin)) {
       for (const target of targets) this.#remoteTargets.add(target);
       return;
     }
@@ -229,9 +229,15 @@ export class UndoManager {
       targets,
     };
     const previous = this.#undo.peek();
-    const conflictsWithRemote =
-      previous !== undefined &&
-      [...previous.targets].some((target) => this.#remoteTargets.has(target));
+    let conflictsWithRemote = false;
+    if (previous !== undefined) {
+      for (const target of previous.targets) {
+        if (this.#remoteTargets.has(target)) {
+          conflictsWithRemote = true;
+          break;
+        }
+      }
+    }
     const merge =
       previous !== undefined &&
       previous.peer === item.peer &&
@@ -286,6 +292,14 @@ export class UndoManager {
     this.#undo.push(item);
     this.#trimUndo();
     if (clearRedo) this.#redo.length = 0;
+  }
+
+  #excludedOrigin(origin: string): boolean {
+    if (this.#excludeOriginPrefixes.size === 0) return false;
+    for (const prefix of this.#excludeOriginPrefixes) {
+      if (origin.startsWith(prefix)) return true;
+    }
+    return false;
   }
 
   #trimUndo(): void {

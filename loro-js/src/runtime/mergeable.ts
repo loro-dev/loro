@@ -41,13 +41,26 @@ export function mergeableMarker(
   containerType: CodecContainerType,
 ): Uint8Array {
   const rawType = containerTypeToRawByte(containerType);
-  const input = [
-    ...MARKER_DOMAIN,
-    ...lengthPrefixed(encodeContainerId(parent)),
-    ...lengthPrefixed(textEncoder.encode(key)),
-    rawType,
-  ];
-  const digest = crc32(Uint8Array.from(input)) & 0x00ff_ffff;
+  const parentBytes = encodeContainerId(parent);
+  const keyBytes = textEncoder.encode(key);
+  const input = new Uint8Array(
+    MARKER_DOMAIN.length +
+      varintLength(parentBytes.length) +
+      parentBytes.length +
+      varintLength(keyBytes.length) +
+      keyBytes.length +
+      1,
+  );
+  let offset = MARKER_DOMAIN.length;
+  input.set(MARKER_DOMAIN, 0);
+  offset = writeVarint(input, offset, parentBytes.length);
+  input.set(parentBytes, offset);
+  offset += parentBytes.length;
+  offset = writeVarint(input, offset, keyBytes.length);
+  input.set(keyBytes, offset);
+  offset += keyBytes.length;
+  input[offset] = rawType;
+  const digest = crc32(input) & 0x00ff_ffff;
   return Uint8Array.of(
     ...MARKER_MAGIC,
     rawType,
@@ -63,11 +76,16 @@ export function parseMergeableMarker(
   value: unknown,
 ): CodecContainerType | undefined {
   if (!(value instanceof Uint8Array) || value.length !== 8) return undefined;
-  if (!MARKER_MAGIC.every((byte, index) => value[index] === byte)) return undefined;
+  for (let index = 0; index < MARKER_MAGIC.length; index += 1) {
+    if (value[index] !== MARKER_MAGIC[index]) return undefined;
+  }
   const type = containerTypeFromRawByte(value[4]!);
   if (typeof type !== "string") return undefined;
   const expected = mergeableMarker(parent, key, type);
-  return expected.every((byte, index) => value[index] === byte) ? type : undefined;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (value[index] !== expected[index]) return undefined;
+  }
+  return type;
 }
 
 export function isMergeableContainerId(id: ContainerId): boolean {
@@ -90,27 +108,48 @@ function signedBase36(value: number): string {
   return value < 0 ? `-${(-value).toString(36)}` : value.toString(36);
 }
 
-function lengthPrefixed(value: Uint8Array): number[] {
-  const output: number[] = [];
-  let length = value.length;
+function varintLength(value: number): number {
+  let length = 1;
+  while (value >= 0x80) {
+    value = Math.floor(value / 0x80);
+    length += 1;
+  }
+  return length;
+}
+
+function writeVarint(output: Uint8Array, offset: number, value: number): number {
   do {
-    let byte = length & 0x7f;
-    length = Math.floor(length / 0x80);
-    if (length > 0) byte |= 0x80;
-    output.push(byte);
-  } while (length > 0);
-  output.push(...value);
-  return output;
+    let byte = value & 0x7f;
+    value = Math.floor(value / 0x80);
+    if (value > 0) byte |= 0x80;
+    output[offset] = byte;
+    offset += 1;
+  } while (value > 0);
+  return offset;
+}
+
+let crc32Table: Int32Array | undefined;
+
+function getCrc32Table(): Int32Array {
+  if (crc32Table === undefined) {
+    const table = new Int32Array(256);
+    for (let byte = 0; byte < 256; byte += 1) {
+      let crc = byte;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (0xedb8_8320 & -(crc & 1));
+      }
+      table[byte] = crc;
+    }
+    crc32Table = table;
+  }
+  return crc32Table;
 }
 
 function crc32(bytes: Uint8Array): number {
+  const table = getCrc32Table();
   let crc = 0xffff_ffff;
-  for (const byte of bytes) {
-    crc = (crc ^ byte) >>> 0;
-    for (let bit = 0; bit < 8; bit += 1) {
-      const mask = -(crc & 1);
-      crc = ((crc >>> 1) ^ (0xedb8_8320 & mask)) >>> 0;
-    }
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc = (crc >>> 8) ^ table[(crc ^ bytes[index]!) & 0xff]!;
   }
   return ~crc >>> 0;
 }

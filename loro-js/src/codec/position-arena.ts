@@ -20,18 +20,21 @@ export function decodePositionArena(bytes: Uint8Array): Uint8Array[] {
   decodeAssert(count === commonPrefixes.length, "position arena column length mismatch");
   const positions: Uint8Array[] = [];
   let previous: Uint8Array = new Uint8Array();
+  let previousLength = 0;
   for (const commonBigInt of commonPrefixes) {
-    decodeAssert(
-      commonBigInt <= BigInt(previous.length),
-      "invalid position arena common prefix",
-    );
+    // Number comparison is exact here: accepted values are at most
+    // previousLength (an array length), so Number(commonBigInt) is precise
+    // whenever the assertion passes, and larger BigInts convert to values
+    // greater than previousLength and fail the same way.
     const common = Number(commonBigInt);
+    decodeAssert(common <= previousLength, "invalid position arena common prefix");
     const suffix = reader.readBytes(readUlebNumber(reader, 0x7fff_ffff));
     const position = new Uint8Array(common + suffix.length);
     position.set(previous.subarray(0, common));
     position.set(suffix, common);
     positions.push(position);
     previous = position;
+    previousLength = position.length;
   }
   reader.assertEnd("trailing position arena bytes");
   return positions;

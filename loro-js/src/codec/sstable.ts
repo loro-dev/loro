@@ -109,10 +109,9 @@ export function encodeSstable(
   if (!Number.isSafeInteger(blockSize) || blockSize <= 0 || blockSize > 0xffff) {
     throw new LoroEncodeError(`invalid SSTable block size ${blockSize}`);
   }
-  const entries = input.map(({ key, value }) => ({
-    key: key.slice(),
-    value: value.slice(),
-  }));
+  // Sorting only needs to reorder references; keys and values are copied into
+  // the output while encoding and never retained past the returned bytes.
+  const entries = input.slice();
   entries.sort((left, right) => compareBytes(left.key, right.key));
   validateEntriesForEncoding(entries);
   const blocks: EncodedBlock[] = [];

@@ -189,23 +189,25 @@ export function decodeMapStateSnapshot(bytes: Uint8Array): MapStateSnapshot {
   const deletedKeys = readStringVector(reader, "map deleted keys");
   const peers = readPeerTable(reader.input);
   const keys = collectSortedMapKeysForDecode(values, deletedKeys);
+  const peerCount = BigInt(peers.length);
   const metadata: MapStateMetadata[] = [];
   for (const key of keys) {
     const peerIndex = readUleb128(reader.input, U64_MAX);
     const lamport = readUleb128(reader.input, U64_MAX);
-    assertDecodedPeerIndex(peerIndex, peers.length, "map metadata");
+    assertDecodedPeerIndex(peerIndex, peerCount, "map metadata");
     metadata.push({ key, peerIndex, lamport });
   }
   reader.assertEnd();
-  values.sort(([left], [right]) => compareStrings(left, right));
-  deletedKeys.sort(compareStrings);
+  sortByUtf8Key(values, (entry) => entry[0]);
+  sortByUtf8Key(deletedKeys, (key) => key);
   return { kind: ContainerType.Map, values, deletedKeys, peers, metadata };
 }
 
 export function encodeMapStateSnapshot(state: MapStateSnapshot): Uint8Array {
-  const values = state.values.map(([key, value]) => [key, value] as const);
-  values.sort(([left], [right]) => compareStrings(left, right));
-  const deletedKeys = [...state.deletedKeys].sort(compareStrings);
+  const values = [...state.values];
+  sortByUtf8Key(values, (entry) => entry[0]);
+  const deletedKeys = [...state.deletedKeys];
+  sortByUtf8Key(deletedKeys, (key) => key);
   const keys = collectSortedMapKeysForEncode(values, deletedKeys);
   const metadataByKey = new Map<string, MapStateMetadata>();
   for (const metadata of state.metadata) {
@@ -222,10 +224,11 @@ export function encodeMapStateSnapshot(state: MapStateSnapshot): Uint8Array {
   writePostcardValueMap(postcard, values);
   postcard.writeArray(deletedKeys, (writer, key) => writer.writeString(key));
   writePeerTable(output, state.peers);
+  const peerCount = BigInt(state.peers.length);
   for (const key of keys) {
     const metadata = metadataByKey.get(key);
     encodeAssert(metadata !== undefined, `missing map metadata for key ${key}`);
-    assertEncodedPeerIndex(metadata.peerIndex, state.peers.length, "map metadata");
+    assertEncodedPeerIndex(metadata.peerIndex, peerCount, "map metadata");
     writeUleb128(output, metadata.peerIndex);
     writeUleb128(output, metadata.lamport);
   }
@@ -247,8 +250,9 @@ export function decodeListStateSnapshot(bytes: Uint8Array): ListStateSnapshot {
       lamportSubs.length === values.length,
     "list state ID length mismatch",
   );
+  const peerCount = BigInt(peers.length);
   const ids = peerIndices.map((peerIndex, index) => {
-    assertDecodedPeerIndex(peerIndex, peers.length, "list state ID");
+    assertDecodedPeerIndex(peerIndex, peerCount, "list state ID");
     return {
       peerIndex,
       counter: counters[index]!,
@@ -260,8 +264,19 @@ export function decodeListStateSnapshot(bytes: Uint8Array): ListStateSnapshot {
 
 export function encodeListStateSnapshot(state: ListStateSnapshot): Uint8Array {
   encodeAssert(state.ids.length === state.values.length, "list state ID length mismatch");
+  const peerCount = BigInt(state.peers.length);
   for (const id of state.ids) {
-    assertEncodedPeerIndex(id.peerIndex, state.peers.length, "list state ID");
+    assertEncodedPeerIndex(id.peerIndex, peerCount, "list state ID");
+  }
+  const ids = state.ids;
+  const peerIndices: bigint[] = new Array(ids.length);
+  const counters: number[] = new Array(ids.length);
+  const lamportSubs: number[] = new Array(ids.length);
+  for (let index = 0; index < ids.length; index += 1) {
+    const id = ids[index]!;
+    peerIndices[index] = id.peerIndex;
+    counters[index] = id.counter;
+    lamportSubs[index] = id.lamportSub;
   }
   const output = new ByteWriter();
   const postcard = new PostcardWriter(output);
@@ -269,9 +284,9 @@ export function encodeListStateSnapshot(state: ListStateSnapshot): Uint8Array {
   writePeerTable(output, state.peers);
   output.writeBytes(
     encodeColumnarVecWrapped([
-      encodeDeltaRleUsize(state.ids.map((id) => id.peerIndex)),
-      encodeDeltaRleI32(state.ids.map((id) => id.counter)),
-      encodeDeltaRleI32(state.ids.map((id) => id.lamportSub)),
+      encodeDeltaRleUsize(peerIndices),
+      encodeDeltaRleI32(counters),
+      encodeDeltaRleI32(lamportSubs),
     ]),
   );
   return output.toUint8Array();
@@ -294,9 +309,10 @@ export function decodeTextStateSnapshot(bytes: Uint8Array): TextStateSnapshot {
       lamportSubs.length === lengths.length,
     "text state span column length mismatch",
   );
+  const peerCount = BigInt(peers.length);
   const spans = lengths.map((length, index) => {
     const peerIndex = peerIndices[index]!;
-    assertDecodedPeerIndex(peerIndex, peers.length, "text state span");
+    assertDecodedPeerIndex(peerIndex, peerCount, "text state span");
     return {
       peerIndex,
       counter: counters[index]!,
@@ -323,6 +339,18 @@ export function decodeTextStateSnapshot(bytes: Uint8Array): TextStateSnapshot {
 
 export function encodeTextStateSnapshot(state: TextStateSnapshot): Uint8Array {
   validateEncodedText(state);
+  const spans = state.spans;
+  const peerIndices: bigint[] = new Array(spans.length);
+  const counters: number[] = new Array(spans.length);
+  const lamportSubs: number[] = new Array(spans.length);
+  const lengths: number[] = new Array(spans.length);
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    peerIndices[index] = span.peerIndex;
+    counters[index] = span.counter;
+    lamportSubs[index] = span.lamportSub;
+    lengths[index] = span.length;
+  }
   const output = new ByteWriter();
   const postcard = new PostcardWriter(output);
   postcard.writeString(state.text);
@@ -330,10 +358,10 @@ export function encodeTextStateSnapshot(state: TextStateSnapshot): Uint8Array {
   postcard.writeUsize(3);
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.spans.map((span) => span.peerIndex)),
-      encodeDeltaRleI32(state.spans.map((span) => span.counter)),
-      encodeDeltaRleI32(state.spans.map((span) => span.lamportSub)),
-      encodeDeltaRleI32(state.spans.map((span) => span.length)),
+      encodeDeltaRleUsize(peerIndices),
+      encodeDeltaRleI32(counters),
+      encodeDeltaRleI32(lamportSubs),
+      encodeDeltaRleI32(lengths),
     ]),
   );
   postcard.writeArray(state.keys, (writer, key) => writer.writeString(key));
@@ -380,14 +408,16 @@ export function decodeTreeStateSnapshot(bytes: Uint8Array): TreeStateSnapshot {
   const positions = decodePositionArena(reader.readBytes());
   const reserved = reader.readBytes();
   reader.assertEnd();
+  const peerCount = BigInt(peers.length);
+  const parentIndexBound = BigInt(length + 1);
   const nodes = nodePeerIndices.map((peerIndex, index) => {
     const lastSetPeerIndex = lastSetPeerIndices[index]!;
     const parentIndexPlusTwo = parentIndices[index]!;
     const fractionalIndexIndex = fractionalIndexIndices[index]!;
-    assertDecodedPeerIndex(peerIndex, peers.length, "tree node ID");
-    assertDecodedPeerIndex(lastSetPeerIndex, peers.length, "tree last-set ID");
+    assertDecodedPeerIndex(peerIndex, peerCount, "tree node ID");
+    assertDecodedPeerIndex(lastSetPeerIndex, peerCount, "tree last-set ID");
     decodeAssert(
-      parentIndexPlusTwo <= BigInt(length + 1),
+      parentIndexPlusTwo <= parentIndexBound,
       "tree parent index out of range",
     );
     decodeAssert(
@@ -409,23 +439,41 @@ export function decodeTreeStateSnapshot(bytes: Uint8Array): TreeStateSnapshot {
 
 export function encodeTreeStateSnapshot(state: TreeStateSnapshot): Uint8Array {
   validateEncodedTree(state);
+  const nodes = state.nodes;
+  const nodePeerIndices: bigint[] = new Array(nodes.length);
+  const nodeCounters: number[] = new Array(nodes.length);
+  const parentIndices: bigint[] = new Array(nodes.length);
+  const lastSetPeerIndices: bigint[] = new Array(nodes.length);
+  const lastSetCounters: number[] = new Array(nodes.length);
+  const lastSetLamportSubs: number[] = new Array(nodes.length);
+  const fractionalIndexIndices: number[] = new Array(nodes.length);
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!;
+    nodePeerIndices[index] = node.peerIndex;
+    nodeCounters[index] = node.counter;
+    parentIndices[index] = node.parentIndexPlusTwo;
+    lastSetPeerIndices[index] = node.lastSetPeerIndex;
+    lastSetCounters[index] = node.lastSetCounter;
+    lastSetLamportSubs[index] = node.lastSetLamportSub;
+    fractionalIndexIndices[index] = node.fractionalIndexIndex;
+  }
   const output = new ByteWriter();
   writePeerTable(output, state.peers);
   const postcard = new PostcardWriter(output);
   postcard.writeUsize(4);
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.nodes.map((node) => node.peerIndex)),
-      encodeDeltaRleI32(state.nodes.map((node) => node.counter)),
+      encodeDeltaRleUsize(nodePeerIndices),
+      encodeDeltaRleI32(nodeCounters),
     ]),
   );
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.nodes.map((node) => node.parentIndexPlusTwo)),
-      encodeDeltaRleUsize(state.nodes.map((node) => node.lastSetPeerIndex)),
-      encodeDeltaRleI32(state.nodes.map((node) => node.lastSetCounter)),
-      encodeDeltaRleI32(state.nodes.map((node) => node.lastSetLamportSub)),
-      encodePostcardUsizeVector(state.nodes.map((node) => node.fractionalIndexIndex)),
+      encodeDeltaRleUsize(parentIndices),
+      encodeDeltaRleUsize(lastSetPeerIndices),
+      encodeDeltaRleI32(lastSetCounters),
+      encodeDeltaRleI32(lastSetLamportSubs),
+      encodePostcardUsizeVector(fractionalIndexIndices),
     ]),
   );
   postcard.writeBytes(encodePositionArena(state.positions, { encodeEmpty: true }));
@@ -504,7 +552,7 @@ export function decodeMovableListStateSnapshot(
   }));
   validateDecodedMovableList(
     values.length,
-    peers.length,
+    BigInt(peers.length),
     items,
     listItemIds,
     elementIds,
@@ -525,6 +573,42 @@ export function encodeMovableListStateSnapshot(
   state: MovableListStateSnapshot,
 ): Uint8Array {
   validateEncodedMovableList(state);
+  const items = state.items;
+  const invisibleListItems: bigint[] = new Array(items.length);
+  const positionIdEqualsElementId: boolean[] = new Array(items.length);
+  const elementIdEqualsLastSetId: boolean[] = new Array(items.length);
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    invisibleListItems[index] = item.invisibleListItems;
+    positionIdEqualsElementId[index] = item.positionIdEqualsElementId;
+    elementIdEqualsLastSetId[index] = item.elementIdEqualsLastSetId;
+  }
+  const listItemIds = state.listItemIds;
+  const listPeerIndices: bigint[] = new Array(listItemIds.length);
+  const listCounters: number[] = new Array(listItemIds.length);
+  const listLamportSubs: number[] = new Array(listItemIds.length);
+  for (let index = 0; index < listItemIds.length; index += 1) {
+    const id = listItemIds[index]!;
+    listPeerIndices[index] = id.peerIndex;
+    listCounters[index] = id.counter;
+    listLamportSubs[index] = id.lamportSub;
+  }
+  const elementIds = state.elementIds;
+  const elementPeerIndices: bigint[] = new Array(elementIds.length);
+  const elementLamports: number[] = new Array(elementIds.length);
+  for (let index = 0; index < elementIds.length; index += 1) {
+    const id = elementIds[index]!;
+    elementPeerIndices[index] = id.peerIndex;
+    elementLamports[index] = id.lamport;
+  }
+  const lastSetIds = state.lastSetIds;
+  const lastSetPeerIndices: bigint[] = new Array(lastSetIds.length);
+  const lastSetLamports: number[] = new Array(lastSetIds.length);
+  for (let index = 0; index < lastSetIds.length; index += 1) {
+    const id = lastSetIds[index]!;
+    lastSetPeerIndices[index] = id.peerIndex;
+    lastSetLamports[index] = id.lamport;
+  }
   const output = new ByteWriter();
   const postcard = new PostcardWriter(output);
   writePostcardValues(postcard, state.values);
@@ -532,28 +616,28 @@ export function encodeMovableListStateSnapshot(
   postcard.writeUsize(4);
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.items.map((item) => item.invisibleListItems)),
-      encodeBoolRle(state.items.map((item) => item.positionIdEqualsElementId)),
-      encodeBoolRle(state.items.map((item) => item.elementIdEqualsLastSetId)),
+      encodeDeltaRleUsize(invisibleListItems),
+      encodeBoolRle(positionIdEqualsElementId),
+      encodeBoolRle(elementIdEqualsLastSetId),
     ]),
   );
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.listItemIds.map((id) => id.peerIndex)),
-      encodeDeltaRleI32(state.listItemIds.map((id) => id.counter)),
-      encodeDeltaRleI32(state.listItemIds.map((id) => id.lamportSub)),
+      encodeDeltaRleUsize(listPeerIndices),
+      encodeDeltaRleI32(listCounters),
+      encodeDeltaRleI32(listLamportSubs),
     ]),
   );
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.elementIds.map((id) => id.peerIndex)),
-      encodeDeltaRleU32(state.elementIds.map((id) => id.lamport)),
+      encodeDeltaRleUsize(elementPeerIndices),
+      encodeDeltaRleU32(elementLamports),
     ]),
   );
   output.writeBytes(
     encodeColumnarVec([
-      encodeDeltaRleUsize(state.lastSetIds.map((id) => id.peerIndex)),
-      encodeDeltaRleU32(state.lastSetIds.map((id) => id.lamport)),
+      encodeDeltaRleUsize(lastSetPeerIndices),
+      encodeDeltaRleU32(lastSetLamports),
     ]),
   );
   return output.toUint8Array();
@@ -757,7 +841,7 @@ function collectSortedMapKeysForDecode(
   values: readonly (readonly [string, EncodedLoroValue])[],
   deletedKeys: readonly string[],
 ): string[] {
-  const keys = [...values.map(([key]) => key), ...deletedKeys].sort(compareStrings);
+  const keys = mergeMapKeys(values, deletedKeys);
   for (let index = 1; index < keys.length; index += 1) {
     decodeAssert(keys[index] !== keys[index - 1], "duplicate map state key");
   }
@@ -768,24 +852,54 @@ function collectSortedMapKeysForEncode(
   values: readonly (readonly [string, EncodedLoroValue])[],
   deletedKeys: readonly string[],
 ): string[] {
-  const keys = [...values.map(([key]) => key), ...deletedKeys].sort(compareStrings);
+  const keys = mergeMapKeys(values, deletedKeys);
   for (let index = 1; index < keys.length; index += 1) {
     encodeAssert(keys[index] !== keys[index - 1], "duplicate map state key");
   }
   return keys;
 }
 
-function compareStrings(left: string, right: string): number {
-  return compareBytes(textEncoder.encode(left), textEncoder.encode(right));
+function mergeMapKeys(
+  values: readonly (readonly [string, EncodedLoroValue])[],
+  deletedKeys: readonly string[],
+): string[] {
+  const keys: string[] = new Array(values.length + deletedKeys.length);
+  let offset = 0;
+  for (const [key] of values) {
+    keys[offset] = key;
+    offset += 1;
+  }
+  for (const key of deletedKeys) {
+    keys[offset] = key;
+    offset += 1;
+  }
+  sortByUtf8Key(keys, (key) => key);
+  return keys;
 }
 
-function assertDecodedPeerIndex(index: bigint, peerCount: number, label: string): void {
-  decodeAssert(index < BigInt(peerCount), `${label} peer index out of range`);
+/**
+ * Sorts `items` in place by the UTF-8 byte order of their keys (interop
+ * requires UTF-8 byte order, not UTF-16 code unit order). Each key is encoded
+ * exactly once instead of once per comparison.
+ */
+function sortByUtf8Key<T>(items: T[], keyOf: (item: T) => string): void {
+  const decorated = items.map((item) => ({
+    bytes: textEncoder.encode(keyOf(item)),
+    item,
+  }));
+  decorated.sort((left, right) => compareBytes(left.bytes, right.bytes));
+  for (let index = 0; index < decorated.length; index += 1) {
+    items[index] = decorated[index]!.item;
+  }
 }
 
-function assertEncodedPeerIndex(index: bigint, peerCount: number, label: string): void {
+function assertDecodedPeerIndex(index: bigint, peerCount: bigint, label: string): void {
+  decodeAssert(index < peerCount, `${label} peer index out of range`);
+}
+
+function assertEncodedPeerIndex(index: bigint, peerCount: bigint, label: string): void {
   encodeAssert(
-    index >= 0n && index < BigInt(peerCount),
+    index >= 0n && index < peerCount,
     `${label} peer index out of range`,
   );
 }
@@ -814,8 +928,9 @@ function validateDecodedText(
 function validateEncodedText(state: TextStateSnapshot): void {
   let markCount = 0;
   let textLength = 0;
+  const peerCount = BigInt(state.peers.length);
   for (const span of state.spans) {
-    assertEncodedPeerIndex(span.peerIndex, state.peers.length, "text state span");
+    assertEncodedPeerIndex(span.peerIndex, peerCount, "text state span");
     if (span.length === 0) {
       markCount += 1;
     } else if (span.length > 0) {
@@ -854,12 +969,14 @@ function unicodeScalarLength(value: string): number {
 }
 
 function validateEncodedTree(state: TreeStateSnapshot): void {
+  const peerCount = BigInt(state.peers.length);
+  const parentIndexBound = BigInt(state.nodes.length + 1);
   for (const node of state.nodes) {
-    assertEncodedPeerIndex(node.peerIndex, state.peers.length, "tree node ID");
-    assertEncodedPeerIndex(node.lastSetPeerIndex, state.peers.length, "tree last-set ID");
+    assertEncodedPeerIndex(node.peerIndex, peerCount, "tree node ID");
+    assertEncodedPeerIndex(node.lastSetPeerIndex, peerCount, "tree last-set ID");
     encodeAssert(
       node.parentIndexPlusTwo >= 0n &&
-        node.parentIndexPlusTwo <= BigInt(state.nodes.length + 1),
+        node.parentIndexPlusTwo <= parentIndexBound,
       "tree parent index out of range",
     );
     encodeAssert(
@@ -873,7 +990,7 @@ function validateEncodedTree(state: TreeStateSnapshot): void {
 
 function validateDecodedMovableList(
   valueCount: number,
-  peerCount: number,
+  peerCount: bigint,
   items: readonly MovableListStateItem[],
   listItemIds: readonly ListStateItemId[],
   elementIds: readonly MovableListStateLamportId[],
@@ -881,12 +998,14 @@ function validateDecodedMovableList(
 ): void {
   const visibleCount = items.length === 0 ? 0 : items.length - 1;
   decodeAssert(valueCount === visibleCount, "movable-list visible value count mismatch");
-  let expectedListIds = BigInt(visibleCount);
+  // Decoded usize values are non-negative, so the Number running total stays
+  // exact whenever it could equal an actual array length.
+  let expectedListIds = visibleCount;
   for (const item of items) {
-    expectedListIds += item.invisibleListItems;
+    expectedListIds += Number(item.invisibleListItems);
   }
   decodeAssert(
-    BigInt(listItemIds.length) === expectedListIds,
+    expectedListIds === listItemIds.length,
     "movable-list list ID count mismatch",
   );
   let expectedElementIds = 0;
@@ -907,7 +1026,13 @@ function validateDecodedMovableList(
     lastSetIds.length === expectedLastSetIds,
     "movable-list last-set ID count mismatch",
   );
-  for (const id of [...listItemIds, ...elementIds, ...lastSetIds]) {
+  for (const id of listItemIds) {
+    assertDecodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
+  }
+  for (const id of elementIds) {
+    assertDecodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
+  }
+  for (const id of lastSetIds) {
     assertDecodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
   }
 }
@@ -918,16 +1043,18 @@ function validateEncodedMovableList(state: MovableListStateSnapshot): void {
     state.values.length === visibleCount,
     "movable-list visible value count mismatch",
   );
-  let expectedListIds = BigInt(visibleCount);
+  // Items were asserted non-negative, so the Number running total stays exact
+  // whenever it could equal an actual array length.
+  let expectedListIds = visibleCount;
   for (const item of state.items) {
     encodeAssert(
       item.invisibleListItems >= 0n,
       "movable-list invisible count is negative",
     );
-    expectedListIds += item.invisibleListItems;
+    expectedListIds += Number(item.invisibleListItems);
   }
   encodeAssert(
-    BigInt(state.listItemIds.length) === expectedListIds,
+    expectedListIds === state.listItemIds.length,
     "movable-list list ID count mismatch",
   );
   let expectedElementIds = 0;
@@ -948,8 +1075,15 @@ function validateEncodedMovableList(state: MovableListStateSnapshot): void {
     state.lastSetIds.length === expectedLastSetIds,
     "movable-list last-set ID count mismatch",
   );
-  for (const id of [...state.listItemIds, ...state.elementIds, ...state.lastSetIds]) {
-    assertEncodedPeerIndex(id.peerIndex, state.peers.length, "movable-list ID");
+  const peerCount = BigInt(state.peers.length);
+  for (const id of state.listItemIds) {
+    assertEncodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
+  }
+  for (const id of state.elementIds) {
+    assertEncodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
+  }
+  for (const id of state.lastSetIds) {
+    assertEncodedPeerIndex(id.peerIndex, peerCount, "movable-list ID");
   }
 }
 

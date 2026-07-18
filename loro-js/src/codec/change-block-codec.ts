@@ -1,4 +1,4 @@
-import { ByteWriter, bytesEqual } from "./bytes";
+import { ByteReader, ByteWriter } from "./bytes";
 import {
   type ChangesHeader,
   decodeChangeKeys,
@@ -11,14 +11,14 @@ import {
   encodeChangesHeader,
   encodeChangesMetadata,
   encodeContainerArena,
-  encodeDeleteStartIds,
-  encodeEncodedOperations,
+  encodeDeleteStartIdColumns,
+  encodeEncodedOperationColumns,
 } from "./change-block-tables";
 import { decodeEncodedChangeBlock, encodeEncodedChangeBlock } from "./change-block";
 import {
   type ChangeLoroValue,
   type ChangeValue,
-  decodeChangeValueContent,
+  readChangeValueContent,
   encodeChangeValueContent,
 } from "./change-value";
 import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
@@ -137,7 +137,19 @@ interface MutableTables {
   readonly keys: string[];
   readonly keyIndices: Map<string, number>;
   readonly containers: ContainerId[];
+  // Root containers are indexed by name then container-type key; normal
+  // containers by peer, then counter, then container-type key. Registration
+  // order stays in `containers`; these maps only replace linear scans.
+  readonly rootContainerIndices: Map<string, Map<string, number>>;
+  readonly normalContainerIndices: Map<bigint, Map<number, Map<string, number>>>;
   readonly positions: Uint8Array[];
+  readonly positionIndices: Map<string, number>;
+}
+
+interface MutableDeleteStartIdColumns {
+  readonly peerIndices: bigint[];
+  readonly counters: number[];
+  readonly lengths: bigint[];
 }
 
 interface DecodeOperationContext {
@@ -187,7 +199,7 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
   );
   let counter = encoded.counterStart | 0;
   let changeIndex = 0;
-  let remainingValues = encoded.values;
+  const valueReader = new ByteReader(encoded.values);
   const operationId = { peer: header.peer, counter };
   for (let row = 0; row < operations.containerIndices.length; row += 1) {
     const length = operations.lengths[row]!;
@@ -195,11 +207,7 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
     const containerIndex = operations.containerIndices[row]!;
     decodeAssert(containerIndex < containers.length, "invalid operation container index");
     const container = containers[containerIndex]!;
-    const [value, remaining] = decodeChangeValueContent(
-      operations.valueTypes[row]!,
-      remainingValues,
-    );
-    remainingValues = remaining;
+    const value = readChangeValueContent(operations.valueTypes[row]!, valueReader);
     operationId.counter = counter;
     const content = decodeOperationContent(
       container,
@@ -222,7 +230,7 @@ export function decodeChangeBlock(bytes: Uint8Array): DecodedChangeBlock {
       changeIndex += 1;
     }
   }
-  decodeAssert(remainingValues.length === 0, "trailing change value bytes");
+  decodeAssert(valueReader.remaining === 0, "trailing change value bytes");
   decodeAssert(
     context.deleteIndex === context.deleteStartIds.peerIndices.length,
     "unused delete start IDs",
@@ -252,18 +260,14 @@ export function validateChangeBlock(bytes: Uint8Array): ValidatedChangeBlockRang
     decodeChangeBlockParts(bytes);
   let counter = encoded.counterStart | 0;
   let changeIndex = 0;
-  let remainingValues = encoded.values;
+  const valueReader = new ByteReader(encoded.values);
   const operationId = { peer: header.peer, counter };
   for (let row = 0; row < operations.containerIndices.length; row += 1) {
     const length = operations.lengths[row]!;
     decodeAssert(length > 0 && length <= 0x7fff_ffff, "invalid operation length");
     const containerIndex = operations.containerIndices[row]!;
     decodeAssert(containerIndex < containers.length, "invalid operation container index");
-    const [value, remaining] = decodeChangeValueContent(
-      operations.valueTypes[row]!,
-      remainingValues,
-    );
-    remainingValues = remaining;
+    const value = readChangeValueContent(operations.valueTypes[row]!, valueReader);
     operationId.counter = counter;
     decodeOperationContent(
       containers[containerIndex]!,
@@ -281,7 +285,7 @@ export function validateChangeBlock(bytes: Uint8Array): ValidatedChangeBlockRang
       changeIndex += 1;
     }
   }
-  decodeAssert(remainingValues.length === 0, "trailing change value bytes");
+  decodeAssert(valueReader.remaining === 0, "trailing change value bytes");
   decodeAssert(
     context.deleteIndex === context.deleteStartIds.peerIndices.length,
     "unused delete start IDs",
@@ -306,17 +310,15 @@ export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
     throw new LoroEncodeError("the first peer table entry must be the block peer");
   }
 
-  const rows: {
-    containerIndex: number;
-    property: number;
-    valueType: number;
-    length: number;
-  }[] = [];
-  const deleteStartIds: {
-    peerIndex: bigint;
-    counter: number;
-    length: bigint;
-  }[] = [];
+  const operationContainerIndices: number[] = [];
+  const operationProperties: number[] = [];
+  const operationValueTypes: number[] = [];
+  const operationLengths: number[] = [];
+  const deleteStartIds: MutableDeleteStartIdColumns = {
+    peerIndices: [],
+    counters: [],
+    lengths: [],
+  };
   const valueWriter = new ByteWriter();
   const lengths: number[] = [];
   const counters: number[] = [];
@@ -340,12 +342,10 @@ export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
       );
       const encodedValue = encodeChangeValueContent(encodedContent.value);
       valueWriter.writeBytes(encodedValue.bytes);
-      rows.push({
-        containerIndex,
-        property: encodedContent.property,
-        valueType: encodedValue.tag,
-        length: operation.length,
-      });
+      operationContainerIndices.push(containerIndex);
+      operationProperties.push(encodedContent.property);
+      operationValueTypes.push(encodedValue.tag);
+      operationLengths.push(operation.length);
       atomLength += operation.length;
       if (atomLength > 0x7fff_ffff) {
         throw new LoroEncodeError("change atom length is out of range");
@@ -412,8 +412,13 @@ export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
     containerIds: encodeContainerArena(tables.containers, tables.peers, tables.keys),
     keys: encodeChangeKeys(tables.keys),
     positions: encodePositionArena(tables.positions),
-    operations: encodeEncodedOperations(rows),
-    deleteStartIds: encodeDeleteStartIds(deleteStartIds),
+    operations: encodeEncodedOperationColumns({
+      containerIndices: operationContainerIndices,
+      properties: operationProperties,
+      valueTypes: operationValueTypes,
+      lengths: operationLengths,
+    }),
+    deleteStartIds: encodeDeleteStartIdColumns(deleteStartIds),
     values: valueWriter.toUint8Array(),
   });
 }
@@ -634,7 +639,7 @@ function decodeOperationContent(
 function encodeOperationContent(
   content: DecodedOperationContent,
   tables: MutableTables,
-  deletions: { peerIndex: bigint; counter: number; length: bigint }[],
+  deletions: MutableDeleteStartIdColumns,
 ): { readonly property: number; readonly value: ChangeValue } {
   switch (content.type) {
     case "map-insert":
@@ -773,16 +778,14 @@ function takeDeletion(
 }
 
 function registerDeletion(
-  deletions: { peerIndex: bigint; counter: number; length: bigint }[],
+  deletions: MutableDeleteStartIdColumns,
   tables: MutableTables,
   startId: Id,
   length: bigint,
 ): void {
-  deletions.push({
-    peerIndex: BigInt(registerPeer(tables, startId.peer)),
-    counter: startId.counter,
-    length,
-  });
+  deletions.peerIndices.push(BigInt(registerPeer(tables, startId.peer)));
+  deletions.counters.push(startId.counter);
+  deletions.lengths.push(length);
 }
 
 function initializeTables(block: DecodedChangeBlock): MutableTables {
@@ -801,14 +804,31 @@ function initializeTables(block: DecodedChangeBlock): MutableTables {
       keyIndices.set(keys[index]!, index);
     }
   }
-  return {
+  const tables: MutableTables = {
     peers,
     peerIndices,
     keys,
     keyIndices,
     containers: block.containers.map(cloneContainerId),
+    rootContainerIndices: new Map(),
+    normalContainerIndices: new Map(),
     positions: block.positions.map((position) => position.slice()),
+    positionIndices: new Map(),
   };
+  // The first occurrence wins, matching the former linear-scan lookups.
+  for (let index = 0; index < tables.containers.length; index += 1) {
+    const container = tables.containers[index]!;
+    if (lookupContainerIndex(tables, container) === undefined) {
+      recordContainerIndex(tables, container, index);
+    }
+  }
+  for (let index = 0; index < tables.positions.length; index += 1) {
+    const key = positionKey(tables.positions[index]!);
+    if (!tables.positionIndices.has(key)) {
+      tables.positionIndices.set(key, index);
+    }
+  }
+  return tables;
 }
 
 function registerPeer(tables: MutableTables, peer: bigint): number {
@@ -837,23 +857,83 @@ function registerKey(tables: MutableTables, key: string): number {
 }
 
 function registerContainer(tables: MutableTables, container: ContainerId): number {
-  const index = tables.containers.findIndex((current) =>
-    containerIdsEqual(current, container),
-  );
-  if (index >= 0) {
-    return index;
+  const current = lookupContainerIndex(tables, container);
+  if (current !== undefined) {
+    return current;
   }
   tables.containers.push(cloneContainerId(container));
-  return tables.containers.length - 1;
+  const index = tables.containers.length - 1;
+  recordContainerIndex(tables, tables.containers[index]!, index);
+  return index;
 }
 
 function registerPosition(tables: MutableTables, position: Uint8Array): number {
-  const index = tables.positions.findIndex((current) => bytesEqual(current, position));
-  if (index >= 0) {
-    return index;
+  const key = positionKey(position);
+  const current = tables.positionIndices.get(key);
+  if (current !== undefined) {
+    return current;
   }
   tables.positions.push(position.slice());
-  return tables.positions.length - 1;
+  const index = tables.positions.length - 1;
+  tables.positionIndices.set(key, index);
+  return index;
+}
+
+function containerTypeKey(type: ContainerTypeValue): string {
+  return typeof type === "string" ? type : `#${type.value}`;
+}
+
+function lookupContainerIndex(
+  tables: MutableTables,
+  container: ContainerId,
+): number | undefined {
+  if (container.kind === "root") {
+    return tables.rootContainerIndices
+      .get(container.name)
+      ?.get(containerTypeKey(container.containerType));
+  }
+  return tables.normalContainerIndices
+    .get(container.peer)
+    ?.get(container.counter)
+    ?.get(containerTypeKey(container.containerType));
+}
+
+function recordContainerIndex(
+  tables: MutableTables,
+  container: ContainerId,
+  index: number,
+): void {
+  const typeKey = containerTypeKey(container.containerType);
+  if (container.kind === "root") {
+    let byType = tables.rootContainerIndices.get(container.name);
+    if (byType === undefined) {
+      byType = new Map();
+      tables.rootContainerIndices.set(container.name, byType);
+    }
+    byType.set(typeKey, index);
+    return;
+  }
+  let byCounter = tables.normalContainerIndices.get(container.peer);
+  if (byCounter === undefined) {
+    byCounter = new Map();
+    tables.normalContainerIndices.set(container.peer, byCounter);
+  }
+  let byType = byCounter.get(container.counter);
+  if (byType === undefined) {
+    byType = new Map();
+    byCounter.set(container.counter, byType);
+  }
+  byType.set(typeKey, index);
+}
+
+// Maps position bytes one-to-one to code units so distinct byte sequences
+// never share a key.
+function positionKey(position: Uint8Array): string {
+  let key = "";
+  for (let index = 0; index < position.length; index += 1) {
+    key += String.fromCharCode(position[index]!);
+  }
+  return key;
 }
 
 function getIndex<T>(values: readonly T[], index: number, label: string): T {
@@ -864,12 +944,13 @@ function getIndex<T>(values: readonly T[], index: number, label: string): T {
   return values[index]!;
 }
 
+const MAX_SAFE_BIGINT = 0x1f_ffff_ffff_ffffn;
+
 function bigintToIndex(value: bigint, max: number, label: string): number {
-  decodeAssert(
-    max >= 0 && value >= 0n && value <= BigInt(max),
-    `${label} is out of range`,
-  );
-  return Number(value);
+  decodeAssert(value >= 0n && value <= MAX_SAFE_BIGINT, `${label} is out of range`);
+  const result = Number(value);
+  decodeAssert(max >= 0 && result <= max, `${label} is out of range`);
+  return result;
 }
 
 function assertNonnegativePosition(value: number): number {
@@ -902,30 +983,6 @@ function checkedEncodeCounter(value: number): number {
 
 function idsEqual(left: Id, right: Id): boolean {
   return left.peer === right.peer && left.counter === right.counter;
-}
-
-function containerIdsEqual(left: ContainerId, right: ContainerId): boolean {
-  if (
-    left.kind !== right.kind ||
-    !containerTypesEqual(left.containerType, right.containerType)
-  ) {
-    return false;
-  }
-  return left.kind === "root" && right.kind === "root"
-    ? left.name === right.name
-    : left.kind === "normal" &&
-        right.kind === "normal" &&
-        left.peer === right.peer &&
-        left.counter === right.counter;
-}
-
-function containerTypesEqual(
-  left: ContainerTypeValue,
-  right: ContainerTypeValue,
-): boolean {
-  return typeof left === "string" || typeof right === "string"
-    ? left === right
-    : left.value === right.value;
 }
 
 function cloneContainerId(container: ContainerId): ContainerId {

@@ -12,6 +12,10 @@ const HASH_LOG = 16;
 const MIN_HASH_LOG = 10;
 const HASH_MULTIPLIER = 0x9e37_79b1;
 
+// Encoding runs synchronously, so every block reuses one table sized for the
+// largest hash log instead of allocating a fresh table per block.
+const sharedHashTable = new Uint32Array(1 << HASH_LOG);
+
 export interface DecodeLz4Options {
   readonly checkChecksum?: boolean;
   readonly requireCanonicalProfile?: boolean;
@@ -155,7 +159,8 @@ function encodeLz4Block(input: Uint8Array): Uint8Array {
     Math.max(MIN_HASH_LOG, Math.ceil(Math.log2(input.length))),
   );
   const hashShift = 32 - hashLog;
-  const hashTable = new Uint32Array(1 << hashLog);
+  const hashTable = sharedHashTable;
+  hashTable.fill(0, 0, 1 << hashLog);
   const lastMatchStart = input.length - MATCH_FIND_LIMIT;
   const matchLimit = input.length - LAST_LITERALS;
   let anchor = 0;
@@ -294,16 +299,22 @@ function decodeLz4BlockInto(
       "LZ4 data block output exceeds BD maximum",
       reader.position,
     );
-    for (let index = 0; index < matchLength; index += 1) {
-      const value = output.bytes[output.length - offset];
-      decodeAssert(
-        value !== undefined,
-        "LZ4 match source is out of bounds",
-        offsetPosition,
-      );
-      output.bytes[output.length] = value;
-      output.length += 1;
+    // Capacity for the whole block was reserved before decoding started and
+    // the offset checks above keep the source range inside the output, so the
+    // copy can read and write the buffer directly.
+    const bytes = output.bytes;
+    let length = output.length;
+    if (offset >= matchLength) {
+      bytes.copyWithin(length, length - offset, length - offset + matchLength);
+      length += matchLength;
+    } else {
+      // Overlapping matches reference bytes written by this same copy.
+      for (let index = 0; index < matchLength; index += 1) {
+        bytes[length] = bytes[length - offset]!;
+        length += 1;
+      }
     }
+    output.length = length;
   }
 }
 

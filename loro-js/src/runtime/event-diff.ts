@@ -6,13 +6,13 @@ interface OriginalPiece {
   readonly kind: "original";
   readonly start: number;
   readonly length: number;
-  readonly attributes?: Attributes;
+  readonly attributes: Attributes | undefined;
 }
 
 interface TextPiece {
   readonly kind: "text";
   readonly value: string;
-  readonly attributes?: Attributes;
+  readonly attributes: Attributes | undefined;
 }
 
 interface ListPiece {
@@ -42,7 +42,12 @@ export class SequenceEventDiff {
     this.#root =
       originalLength === 0
         ? undefined
-        : this.#newNode({ kind: "original", start: 0, length: originalLength });
+        : this.#newNode({
+            kind: "original",
+            start: 0,
+            length: originalLength,
+            attributes: undefined,
+          });
   }
 
   get length(): number {
@@ -56,9 +61,7 @@ export class SequenceEventDiff {
     const inserted = this.#newNode({
       kind: "text",
       value,
-      ...(attributes === undefined || Object.keys(attributes).length === 0
-        ? {}
-        : { attributes }),
+      attributes: attributes !== undefined && hasAttributes(attributes) ? attributes : undefined,
     });
     this.#root = mergeNodes(mergeNodes(left, inserted), right);
   }
@@ -88,10 +91,16 @@ export class SequenceEventDiff {
     visitNodes(selected, (node) => {
       const piece = node.piece;
       if (piece.kind === "list") throw new Error("text diff contains a list piece");
-      node.piece = {
-        ...piece,
-        attributes: { ...piece.attributes, [key]: value },
-      };
+      const attributes: Attributes = { ...piece.attributes, [key]: value };
+      node.piece =
+        piece.kind === "original"
+          ? {
+              kind: "original",
+              start: piece.start,
+              length: piece.length,
+              attributes,
+            }
+          : { kind: "text", value: piece.value, attributes };
     });
     this.#root = mergeNodes(mergeNodes(left, selected), right);
   }
@@ -217,14 +226,24 @@ function pieceLength(piece: Piece): number {
 function splitPiece(piece: Piece, position: number): [Piece, Piece] {
   if (piece.kind === "original") {
     return [
-      { ...piece, length: position },
-      { ...piece, start: piece.start + position, length: piece.length - position },
+      {
+        kind: "original",
+        start: piece.start,
+        length: position,
+        attributes: piece.attributes,
+      },
+      {
+        kind: "original",
+        start: piece.start + position,
+        length: piece.length - position,
+        attributes: piece.attributes,
+      },
     ];
   }
   if (piece.kind === "text") {
     return [
-      { ...piece, value: piece.value.slice(0, position) },
-      { ...piece, value: piece.value.slice(position) },
+      { kind: "text", value: piece.value.slice(0, position), attributes: piece.attributes },
+      { kind: "text", value: piece.value.slice(position), attributes: piece.attributes },
     ];
   }
   return [
@@ -360,7 +379,7 @@ function appendListDelta(output: Delta<unknown[]>[], operation: Delta<unknown[]>
   } else if (previous !== undefined && "retain" in previous && "retain" in operation) {
     output[output.length - 1] = { retain: previous.retain + operation.retain };
   } else if (previous !== undefined && "insert" in previous && "insert" in operation) {
-    output[output.length - 1] = { insert: [...previous.insert, ...operation.insert] };
+    for (const item of operation.insert) previous.insert.push(item);
   } else {
     output.push(operation);
   }
@@ -380,12 +399,18 @@ function attributesEqual(
 ): boolean {
   if (left === right) return true;
   if (left === undefined || right === undefined) return false;
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every((key) => Object.is(left[key], right[key]))
-  );
+  let count = 0;
+  for (const key in left) {
+    count += 1;
+    if (!Object.is(left[key], right[key])) return false;
+  }
+  for (const _key in right) count -= 1;
+  return count === 0;
+}
+
+function hasAttributes(attributes: Attributes): boolean {
+  for (const _key in attributes) return true;
+  return false;
 }
 
 function trimPlainTrailingRetains<T>(output: Delta<T>[]): void {

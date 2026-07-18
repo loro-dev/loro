@@ -1,6 +1,14 @@
 import { OrderedIndex } from "./ordered-index";
 import type { SequenceId, SequenceIdRun } from "./sequence-index";
 
+// Reused deletion id passed to predicates so visited mappings do not each
+// allocate a short-lived id object. Predicates must not retain the id
+// argument or query deletions reentrantly.
+const scratchDeletionId = { peer: 0n, counter: 0 };
+
+// Reused OrderedIndex.forEachFrom probe in `add`; only `.start` is read.
+const targetSegmentProbe: TargetSegment = { start: 0, end: 0, mappings: [] };
+
 interface DeletionMapping {
   readonly targetPeer: bigint;
   readonly targetStart: number;
@@ -45,13 +53,13 @@ export class SequenceDeletionIndex {
     this.#ensureBoundary(targets, targetStart.counter);
     this.#ensureBoundary(targets, targetEnd);
     const existing: TargetSegment[] = [];
-    targets.forEachFrom(
-      { start: targetStart.counter, end: targetStart.counter, mappings: [] },
-      (segment) => {
-        if (segment.start >= targetEnd) return false;
-        existing.push(segment);
-      },
-    );
+    // OrderedIndex.forEachFrom only reads `.start` through the comparator
+    // and never retains the probe, so a shared scratch object is safe.
+    targetSegmentProbe.start = targetStart.counter;
+    targets.forEachFrom(targetSegmentProbe, (segment) => {
+      if (segment.start >= targetEnd) return false;
+      existing.push(segment);
+    });
     let cursor = targetStart.counter;
     for (const segment of existing) {
       if (cursor < segment.start) {
@@ -64,7 +72,15 @@ export class SequenceDeletionIndex {
       targets.add({ start: cursor, end: targetEnd, mappings: [mapping] });
     }
 
-    this.#operations(deleteStart.peer).add({ ...mapping, serial: this.#serial++ });
+    this.#operations(deleteStart.peer).add({
+      targetPeer: mapping.targetPeer,
+      targetStart: mapping.targetStart,
+      deletePeer: mapping.deletePeer,
+      deleteStart: mapping.deleteStart,
+      length: mapping.length,
+      direction: mapping.direction,
+      serial: this.#serial++,
+    });
   }
 
   deletionIdsAt(target: SequenceId): SequenceId[] {
@@ -77,27 +93,27 @@ export class SequenceDeletionIndex {
   }
 
   someDeletion(target: SequenceId, predicate: (id: SequenceId) => boolean): boolean {
-    const segment = this.#targetSegmentAt(target);
-    return (
-      segment?.mappings.some((mapping) =>
-        predicate({
-          peer: mapping.deletePeer,
-          counter: deleteCounterAt(mapping, target.counter),
-        }),
-      ) ?? false
-    );
+    const mappings = this.#targetSegmentAt(target)?.mappings;
+    if (mappings === undefined) return false;
+    for (let index = 0; index < mappings.length; index += 1) {
+      const mapping = mappings[index]!;
+      scratchDeletionId.peer = mapping.deletePeer;
+      scratchDeletionId.counter = deleteCounterAt(mapping, target.counter);
+      if (predicate(scratchDeletionId)) return true;
+    }
+    return false;
   }
 
   everyDeletion(target: SequenceId, predicate: (id: SequenceId) => boolean): boolean {
-    const segment = this.#targetSegmentAt(target);
-    return (
-      segment?.mappings.every((mapping) =>
-        predicate({
-          peer: mapping.deletePeer,
-          counter: deleteCounterAt(mapping, target.counter),
-        }),
-      ) ?? true
-    );
+    const mappings = this.#targetSegmentAt(target)?.mappings;
+    if (mappings === undefined) return true;
+    for (let index = 0; index < mappings.length; index += 1) {
+      const mapping = mappings[index]!;
+      scratchDeletionId.peer = mapping.deletePeer;
+      scratchDeletionId.counter = deleteCounterAt(mapping, target.counter);
+      if (!predicate(scratchDeletionId)) return false;
+    }
+    return true;
   }
 
   targetRunsDeletedBy(peer: bigint, start: number, end: number): SequenceIdRun[] {

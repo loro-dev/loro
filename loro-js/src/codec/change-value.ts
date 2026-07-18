@@ -6,6 +6,13 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 const MAX_VALUE_DEPTH = 1024;
 const MAX_COLLECTION_LENGTH = 10_000_000;
+const MAX_COLLECTION_LENGTH_BIGINT = BigInt(MAX_COLLECTION_LENGTH);
+const I32_MIN_BIGINT = -0x8000_0000n;
+const I32_MAX_BIGINT = 0x7fff_ffffn;
+const U32_MAX_BIGINT = 0xffff_ffffn;
+// Shared scratch for big-endian f64 access; never exposed to callers.
+const f64Scratch = new Uint8Array(8);
+const f64View = new DataView(f64Scratch.buffer);
 
 export type ChangeLoroValue =
   | { readonly type: "null" }
@@ -78,8 +85,8 @@ export interface EncodedChangeValueContent {
 export function decodeChangeValue(bytes: Uint8Array): ChangeValue {
   const reader = new ByteReader(bytes);
   const tag = reader.readU8();
-  const [value, remaining] = decodeChangeValueContent(tag, bytes.subarray(1));
-  decodeAssert(remaining.length === 0, "trailing change value bytes");
+  const value = readChangeValueContent(tag, reader);
+  decodeAssert(reader.remaining === 0, "trailing change value bytes");
   return value;
 }
 
@@ -88,92 +95,85 @@ export function decodeChangeValueContent(
   bytes: Uint8Array,
 ): [ChangeValue, Uint8Array] {
   const reader = new ByteReader(bytes);
+  const value = readChangeValueContent(tag, reader);
+  return [value, bytes.subarray(reader.position)];
+}
+
+/**
+ * Reads one tagged change value payload from the reader, leaving it positioned
+ * after the value. Per-operation decode loops share one reader across values to
+ * avoid the tuple and subarray allocations of decodeChangeValueContent.
+ */
+export function readChangeValueContent(tag: number, reader: ByteReader): ChangeValue {
   const kind = tag & 0x7f;
-  let value: ChangeValue;
   switch (kind) {
     case 0:
-      value = { type: "null" };
-      break;
+      return { type: "null" };
     case 1:
-      value = { type: "bool", value: true };
-      break;
+      return { type: "bool", value: true };
     case 2:
-      value = { type: "bool", value: false };
-      break;
+      return { type: "bool", value: false };
     case 3:
-      value = { type: "i64", value: readSleb128(reader) };
-      break;
+      return { type: "i64", value: readSleb128(reader) };
     case 4:
-      value = { type: "double", value: readF64BE(reader) };
-      break;
+      return { type: "double", value: readF64BE(reader) };
     case 5:
-      value = { type: "string", value: readUtf8(reader) };
-      break;
+      return { type: "string", value: readUtf8(reader) };
     case 6:
-      value = { type: "binary", value: readLengthPrefixedBytes(reader) };
-      break;
+      return { type: "binary", value: readLengthPrefixedBytes(reader) };
     case 7:
-      value = { type: "container-index", value: readUleb128(reader) };
-      break;
+      return { type: "container-index", value: readUleb128(reader) };
     case 8:
-      value = { type: "delete-once" };
-      break;
+      return { type: "delete-once" };
     case 9:
-      value = { type: "delete-sequence" };
-      break;
+      return { type: "delete-sequence" };
     case 10: {
       const integer = readSleb128(reader);
       decodeAssert(
-        integer >= -0x8000_0000n && integer <= 0x7fff_ffffn,
+        integer >= I32_MIN_BIGINT && integer <= I32_MAX_BIGINT,
         "change delta integer is out of range",
       );
-      value = { type: "delta-int", value: Number(integer) };
-      break;
+      return { type: "delta-int", value: Number(integer) };
     }
     case 11:
-      value = { type: "loro-value", value: readChangeLoroValue(reader) };
-      break;
+      return { type: "loro-value", value: readChangeLoroValue(reader) };
     case 12:
-      value = {
+      return {
         type: "mark-start",
         info: reader.readU8(),
         length: readUleb128(reader),
         keyIndex: readUleb128(reader),
         value: readChangeLoroValue(reader),
       };
-      break;
     case 13: {
       const targetIndex = readUleb128(reader);
       const parentIsNull = reader.readU8() !== 0;
       const position = readUleb128(reader);
-      value = {
+      return {
         type: "tree-move",
         targetIndex,
         parentIsNull,
         position,
         parentIndex: parentIsNull ? undefined : readUleb128(reader),
       };
-      break;
     }
     case 14:
-      value = {
+      return {
         type: "list-move",
         from: readUleb128(reader),
         fromPeerIndex: readUleb128(reader),
         lamport: readUleb128(reader),
       };
-      break;
     case 15: {
       const peerIndex = readUleb128(reader);
       const lamport = readUleb128(reader);
-      decodeAssert(lamport <= 0xffff_ffffn, "list-set lamport is out of range");
-      value = {
+      decodeAssert(lamport <= U32_MAX_BIGINT, "list-set lamport is out of range");
+      return {
         type: "list-set",
         peerIndex,
         lamport: Number(lamport),
         value: readChangeLoroValue(reader),
       };
-      break;
     }
     case 16: {
       const subjectPeerIndex = readUleb128(reader);
@@ -184,7 +184,7 @@ export function decodeChangeValueContent(
       const parentCounter = parentIsNull
         ? 0
         : readNonnegativeI32(reader, "tree parent counter");
-      value = {
+      return {
         type: "raw-tree-move",
         subjectPeerIndex,
         subjectCounter,
@@ -193,12 +193,10 @@ export function decodeChangeValueContent(
         parentPeerIndex,
         parentCounter,
       };
-      break;
     }
     default:
-      value = { type: "future", tag, data: readLengthPrefixedBytes(reader) };
+      return { type: "future", tag, data: readLengthPrefixedBytes(reader) };
   }
-  return [value, bytes.subarray(reader.position)];
 }
 
 export function encodeChangeValue(value: ChangeValue): Uint8Array {
@@ -416,13 +414,13 @@ export function writeChangeLoroValue(
 }
 
 function readCollectionLength(reader: ByteReader): number {
-  const value = readUleb128(reader, BigInt(MAX_COLLECTION_LENGTH));
+  const value = readUleb128(reader, MAX_COLLECTION_LENGTH_BIGINT);
   return Number(value);
 }
 
 function readNonnegativeI32(reader: ByteReader, label: string): number {
-  const value = readUleb128(reader, 0x7fff_ffffn);
-  decodeAssert(value <= 0x7fff_ffffn, `${label} is out of range`);
+  const value = readUleb128(reader, I32_MAX_BIGINT);
+  decodeAssert(value <= I32_MAX_BIGINT, `${label} is out of range`);
   return Number(value);
 }
 
@@ -441,7 +439,7 @@ function writeUtf8(writer: ByteWriter, value: string): void {
 }
 
 function readLengthPrefixedBytes(reader: ByteReader): Uint8Array {
-  const length = readUleb128(reader, 0x7fff_ffffn);
+  const length = readUleb128(reader, I32_MAX_BIGINT);
   return reader.readBytes(Number(length));
 }
 
@@ -451,14 +449,18 @@ function writeLengthPrefixedBytes(writer: ByteWriter, value: Uint8Array): void {
 }
 
 function readF64BE(reader: ByteReader): number {
-  const bytes = reader.readBytes(8);
-  return new DataView(bytes.buffer, bytes.byteOffset, 8).getFloat64(0, false);
+  const offset = reader.position;
+  reader.skip(8);
+  const bytes = reader.bytes;
+  for (let index = 0; index < 8; index += 1) {
+    f64Scratch[index] = bytes[offset + index]!;
+  }
+  return f64View.getFloat64(0, false);
 }
 
 function writeF64BE(writer: ByteWriter, value: number): void {
-  const bytes = new Uint8Array(8);
-  new DataView(bytes.buffer).setFloat64(0, value, false);
-  writer.writeBytes(bytes);
+  f64View.setFloat64(0, value, false);
+  writer.writeBytes(f64Scratch);
 }
 
 function assertI32(value: number, label: string): void {

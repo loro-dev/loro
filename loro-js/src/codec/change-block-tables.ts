@@ -431,11 +431,30 @@ export function decodeEncodedOperationColumns(
 export function encodeEncodedOperations(
   rows: readonly EncodedOperationRow[],
 ): Uint8Array {
+  return encodeEncodedOperationColumns({
+    containerIndices: rows.map((row) => row.containerIndex),
+    properties: rows.map((row) => row.property),
+    valueTypes: rows.map((row) => row.valueType),
+    lengths: rows.map((row) => row.length),
+  });
+}
+
+/** Encodes operation columns directly, without intermediate row objects. */
+export function encodeEncodedOperationColumns(
+  columns: EncodedOperationColumns,
+): Uint8Array {
+  if (
+    columns.properties.length !== columns.containerIndices.length ||
+    columns.valueTypes.length !== columns.containerIndices.length ||
+    columns.lengths.length !== columns.containerIndices.length
+  ) {
+    throw new LoroEncodeError("inconsistent encoded operation columns");
+  }
   return encodeColumnarVecWrapped([
-    encodeDeltaRleU32(rows.map((row) => row.containerIndex)),
-    encodeDeltaRleI32(rows.map((row) => row.property)),
-    encodeRleU8(rows.map((row) => row.valueType)),
-    encodeRleU32(rows.map((row) => row.length)),
+    encodeDeltaRleU32(columns.containerIndices),
+    encodeDeltaRleI32(columns.properties),
+    encodeRleU8(columns.valueTypes),
+    encodeRleU32(columns.lengths),
   ]);
 }
 
@@ -469,13 +488,30 @@ export function decodeDeleteStartIdColumns(
 export function encodeDeleteStartIds(
   rows: readonly EncodedDeleteStartIdRow[],
 ): Uint8Array {
-  if (rows.length === 0) {
+  return encodeDeleteStartIdColumns({
+    peerIndices: rows.map((row) => row.peerIndex),
+    counters: rows.map((row) => row.counter),
+    lengths: rows.map((row) => row.length),
+  });
+}
+
+/** Encodes delete start ID columns directly, without intermediate row objects. */
+export function encodeDeleteStartIdColumns(
+  columns: EncodedDeleteStartIdColumns,
+): Uint8Array {
+  if (
+    columns.counters.length !== columns.peerIndices.length ||
+    columns.lengths.length !== columns.peerIndices.length
+  ) {
+    throw new LoroEncodeError("inconsistent delete start ID columns");
+  }
+  if (columns.peerIndices.length === 0) {
     return new Uint8Array();
   }
   return encodeColumnarVecWrapped([
-    encodeDeltaRleUsize(rows.map((row) => row.peerIndex)),
-    encodeDeltaRleI32(rows.map((row) => row.counter)),
-    encodeDeltaRleIsize(rows.map((row) => row.length)),
+    encodeDeltaRleUsize(columns.peerIndices),
+    encodeDeltaRleI32(columns.counters),
+    encodeDeltaRleIsize(columns.lengths),
   ]);
 }
 
@@ -487,9 +523,13 @@ function checkedI32(value: number, label: string): number {
   return value;
 }
 
+const MAX_SAFE_BIGINT = 0x1f_ffff_ffff_ffffn;
+
 function bigintToNumber(value: bigint, max: number, label: string): number {
-  decodeAssert(value >= 0n && value <= BigInt(max), `${label} is out of range`);
-  return Number(value);
+  decodeAssert(value >= 0n && value <= MAX_SAFE_BIGINT, `${label} is out of range`);
+  const result = Number(value);
+  decodeAssert(result <= max, `${label} is out of range`);
+  return result;
 }
 
 function assertNonnegativeI32(value: number, label: string): number {

@@ -11,6 +11,10 @@ import {
 
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
+// Shared scratch for f64 I/O, avoiding a Uint8Array + DataView allocation
+// per call. Never returned to callers.
+const f64Scratch = new Uint8Array(8);
+const f64View = new DataView(f64Scratch.buffer);
 
 export class PostcardReader {
   readonly input: ByteReader;
@@ -60,8 +64,8 @@ export class PostcardReader {
   }
 
   readF64(): number {
-    const bytes = this.input.readBytes(8);
-    return new DataView(bytes.buffer, bytes.byteOffset, 8).getFloat64(0, true);
+    f64Scratch.set(this.input.readBytes(8));
+    return f64View.getFloat64(0, true);
   }
 
   readBytes(): Uint8Array {
@@ -90,9 +94,11 @@ export class PostcardReader {
 
   readArray<T>(readValue: (reader: PostcardReader, index: number) => T): T[] {
     const length = this.readUsize();
-    const values = new Array<T>(length);
+    // push() keeps the array PACKED; new Array(length) + index assignment
+    // would produce a permanently holey elements kind.
+    const values: T[] = [];
     for (let index = 0; index < length; index += 1) {
-      values[index] = readValue(this, index);
+      values.push(readValue(this, index));
     }
     return values;
   }
@@ -156,9 +162,8 @@ export class PostcardWriter {
   }
 
   writeF64(value: number): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setFloat64(0, value, true);
-    this.output.writeBytes(bytes);
+    f64View.setFloat64(0, value, true);
+    this.output.writeBytes(f64Scratch);
   }
 
   writeBytes(value: Uint8Array): void {

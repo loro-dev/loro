@@ -139,6 +139,9 @@ export function newRootContainerID(name: string, type: ContainerType): Container
 }
 
 export function isContainerId(value: string): value is ContainerID {
+  // Cheap rejection first: allocating the TypeError (and its stack frames) is
+  // the dominant cost when this guards arbitrary strings.
+  if (!value.startsWith("cid:")) return false;
   try {
     parseContainerId(value);
     return true;
@@ -155,7 +158,29 @@ export function containerIdsEqual(
   left: CodecContainerId,
   right: CodecContainerId,
 ): boolean {
-  return formatContainerId(left) === formatContainerId(right);
+  // Structural comparison: stringifying both ids would allocate two throwaway
+  // strings per call on the B4 edit hot path.
+  if (
+    left.kind !== right.kind ||
+    !codecContainerTypesEqual(left.containerType, right.containerType)
+  ) {
+    return false;
+  }
+  return left.kind === "root" && right.kind === "root"
+    ? left.name === right.name
+    : left.kind === "normal" &&
+        right.kind === "normal" &&
+        left.peer === right.peer &&
+        left.counter === right.counter;
+}
+
+function codecContainerTypesEqual(
+  left: CodecContainerTypeValue,
+  right: CodecContainerTypeValue,
+): boolean {
+  return typeof left === "string" || typeof right === "string"
+    ? left === right
+    : left.value === right.value;
 }
 
 function assertCounter(counter: number): void {

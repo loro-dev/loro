@@ -63,16 +63,20 @@ export function encodeDocument(mode: EncodeMode, body: Uint8Array): Uint8Array {
   if (mode !== EncodeMode.FastSnapshot && mode !== EncodeMode.FastUpdates) {
     throw new LoroEncodeError(`unsupported document mode ${mode as number}`);
   }
-  const checksumInput = new ByteWriter(2 + body.length);
-  checksumInput.writeU16BE(mode);
-  checksumInput.writeBytes(body);
-  const checksumBytes = checksumInput.toUint8Array();
-  const writer = new ByteWriter(DOCUMENT_HEADER_LENGTH + body.length);
-  writer.writeBytes(DOCUMENT_MAGIC);
-  writer.writeBytes(new Uint8Array(12));
-  writer.writeU32LE(xxhash32(checksumBytes, LORO_XXHASH_SEED));
-  writer.writeBytes(checksumBytes);
-  return writer.toUint8Array();
+  // Header and body share one allocation so the body is copied exactly once;
+  // the checksum covers the mode and body bytes and is backfilled afterwards.
+  const output = new Uint8Array(DOCUMENT_HEADER_LENGTH + body.length);
+  output.set(DOCUMENT_MAGIC, 0);
+  // Bytes 4..16 stay zero as the checksum prefix.
+  output[20] = mode >>> 8;
+  output[21] = mode & 0xff;
+  output.set(body, DOCUMENT_HEADER_LENGTH);
+  const checksum = xxhash32(output.subarray(20), LORO_XXHASH_SEED);
+  output[16] = checksum & 0xff;
+  output[17] = (checksum >>> 8) & 0xff;
+  output[18] = (checksum >>> 16) & 0xff;
+  output[19] = (checksum >>> 24) & 0xff;
+  return output;
 }
 
 export function decodeFastSnapshotBody(body: Uint8Array): FastSnapshotBody {

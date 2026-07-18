@@ -44,18 +44,13 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
       this.#ensureBoundary(segments, end);
 
       const existing: StyleSegment<Meta>[] = [];
-      segments.forEachFrom(
-        {
-          start: run.start.counter,
-          end: run.start.counter,
-          histories: new Map(),
-          latestMetas: undefined,
-        },
-        (segment) => {
-          if (segment.start >= end) return false;
-          existing.push(segment);
-        },
+      const first = segments._lowerBoundBy(
+        (segment) => segment.start - run.start.counter,
       );
+      segments._forEachFromIndex(first, (segment) => {
+        if (segment.start >= end) return false;
+        existing.push(segment);
+      });
 
       let cursor = run.start.counter;
       for (const segment of existing) {
@@ -143,13 +138,17 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
         0,
         segments._lowerBoundBy((segment) => segment.start - run.start.counter) - 1,
       );
-      for (let index = first; index < segments.size; index += 1) {
-        const segment = segments.at(index)!;
-        if (segment.start >= end) break;
-        if (segment.end <= run.start.counter) continue;
+      let found = false;
+      segments._forEachFromIndex(first, (segment) => {
+        if (segment.start >= end) return false;
+        if (segment.end <= run.start.counter) return;
         const meta = latestIncluded(segment.histories.get(key), version);
-        if (meta !== undefined && meta.value !== null) return true;
-      }
+        if (meta !== undefined && meta.value !== null) {
+          found = true;
+          return false;
+        }
+      });
+      if (found) return true;
     }
     return false;
   }
@@ -194,19 +193,18 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
         0,
         segments._lowerBoundBy((segment) => segment.start - run.start.counter) - 1,
       );
-      for (let index = first; index < segments.size; index += 1) {
-        const segment = segments.at(index)!;
-        if (segment.start >= end) break;
+      segments._forEachFromIndex(first, (segment) => {
+        if (segment.start >= end) return false;
         const start = Math.max(run.start.counter, segment.start);
         const segmentEnd = Math.min(end, segment.end);
-        if (start >= segmentEnd) continue;
+        if (start >= segmentEnd) return;
         append(
           { peer: run.start.peer, counter: start },
           segmentEnd - start,
           latestIncluded(segment.histories.get(key), beforeVersion),
           latestIncluded(segment.histories.get(key), afterVersion),
         );
-      }
+      });
     }
     return transitions;
   }
@@ -221,10 +219,14 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
         0,
         segments._lowerBoundBy((segment) => segment.start - cursor) - 1,
       );
-      for (let index = first; index < segments.size && cursor < end; index += 1) {
-        const segment = segments.at(index)!;
-        if (segment.start > cursor || segment.start >= end) return false;
-        if (segment.end <= cursor) continue;
+      let covered = true;
+      segments._forEachFromIndex(first, (segment) => {
+        if (cursor >= end) return false;
+        if (segment.start > cursor || segment.start >= end) {
+          covered = false;
+          return false;
+        }
+        if (segment.end <= cursor) return;
         if (
           !segment.histories
             .get(key)
@@ -233,11 +235,12 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
                 item.startId.peer === id.peer && item.startId.counter === id.counter,
             )
         ) {
+          covered = false;
           return false;
         }
         cursor = Math.min(end, segment.end);
-      }
-      if (cursor < end) return false;
+      });
+      if (!covered || cursor < end) return false;
     }
     return true;
   }
@@ -330,6 +333,13 @@ function cloneHistories<Meta>(
 }
 
 function normalizeRuns(runs: readonly SequenceIdRun[]): SequenceIdRun[] {
+  // Single-run input is the common case and is already normalized; returning
+  // it as-is skips the filter/map/sort chain. Callers only read the result.
+  if (runs.length === 0) return [];
+  if (runs.length === 1) {
+    const run = runs[0]!;
+    return run.length > 0 ? [run] : [];
+  }
   const sorted = runs
     .filter((run) => run.length > 0)
     .map((run) => ({ start: { ...run.start }, length: run.length }))
