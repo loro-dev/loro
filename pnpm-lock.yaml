@@ -76,16 +76,16 @@ importers:
         version: 5.6.3
       vite:
         specifier: ^4.2.1
-        version: 4.5.3(lightningcss@1.32.0)
+        version: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
       vite-plugin-top-level-await:
         specifier: ^1.2.2
-        version: 1.4.1(@swc/helpers@0.5.17)(rollup@3.29.4)(vite@4.5.3(lightningcss@1.32.0))
+        version: 1.4.1(@swc/helpers@0.5.17)(rollup@3.29.4)(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))
       vite-plugin-wasm:
         specifier: ^3.1.0
-        version: 3.3.0(vite@4.5.3(lightningcss@1.32.0))
+        version: 3.3.0(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))
       vitest:
         specifier: ^1.4.0
-        version: 1.6.0(@vitest/ui@1.6.0)(lightningcss@1.32.0)
+        version: 1.6.0(@types/node@22.20.1)(@vitest/ui@1.6.0)(lightningcss@1.32.0)
 
   crates/loro-wasm-map: {}
 
@@ -115,19 +115,19 @@ importers:
         version: 1.3.10
       '@vitejs/plugin-vue':
         specifier: ^4.1.0
-        version: 4.6.2(vite@4.5.3(lightningcss@1.32.0))(vue@3.4.27(typescript@5.6.3))
+        version: 4.6.2(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))(vue@3.4.27(typescript@5.6.3))
       typescript:
         specifier: ^5.2.0
         version: 5.6.3
       vite:
         specifier: ^4.3.2
-        version: 4.5.3(lightningcss@1.32.0)
+        version: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
       vite-plugin-top-level-await:
         specifier: ^1.3.0
-        version: 1.4.1(@swc/helpers@0.5.17)(rollup@4.17.2)(vite@4.5.3(lightningcss@1.32.0))
+        version: 1.4.1(@swc/helpers@0.5.17)(rollup@4.17.2)(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))
       vite-plugin-wasm:
         specifier: ^3.2.2
-        version: 3.3.0(vite@4.5.3(lightningcss@1.32.0))
+        version: 3.3.0(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))
       vue-tsc:
         specifier: ^1.4.2
         version: 1.8.27(typescript@5.6.3)
@@ -172,6 +172,27 @@ importers:
         specifier: ^5.6.3
         version: 5.6.3
 
+  loro-js:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260506.1
+        version: 7.0.0-dev.20260506.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.6.3
+      vite:
+        specifier: 8.0.10
+        version: 8.0.10(@types/node@22.20.1)(jiti@2.6.1)
+      vite-plus:
+        specifier: 0.1.20
+        version: 0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1))
+      vitest:
+        specifier: ^1.4.0
+        version: 1.6.0(@types/node@22.20.1)(@vitest/ui@1.6.0)(lightningcss@1.32.0)
+
   packages/fractional-index:
     devDependencies:
       '@typescript/native-preview':
@@ -182,13 +203,13 @@ importers:
         version: 5.6.3
       vite:
         specifier: 8.0.10
-        version: 8.0.10(jiti@2.6.1)
+        version: 8.0.10(@types/node@22.20.1)(jiti@2.6.1)
       vite-plus:
         specifier: 0.1.20
-        version: 0.1.20(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(jiti@2.6.1))
+        version: 0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1))
       vitest:
         specifier: ^1.4.0
-        version: 1.6.0(@vitest/ui@1.6.0)(lightningcss@1.32.0)
+        version: 1.6.0(@types/node@22.20.1)(@vitest/ui@1.6.0)(lightningcss@1.32.0)
 
 packages:
 
@@ -291,17 +312,11 @@ packages:
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
 
-  '@emnapi/core@1.7.0':
-    resolution: {integrity: sha512-pJdKGq/1iquWYtv1RRSljZklxHCOCAJFJrImO5ZLKPJVJlVUcs8yFwNQlqS0Lo8xT1VAXXTCZocF9n26FWEKsw==}
-
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
 
   '@emnapi/runtime@1.5.0':
     resolution: {integrity: sha512-97/BJ3iXHww3djw6hYIfErCZFee7qCtrneuLa20UXFCOTCfBM2cvQHjWJ2EG0s0MtdNwInarqCTz35i4wWXHsQ==}
-
-  '@emnapi/wasi-threads@1.1.0':
-    resolution: {integrity: sha512-WI0DdZ8xFSbgMjR1sFsKABJ/C5OnRrjT06JXbZKexJGrDuPTzZdDYfFlsgcCXCyf+suG5QU2e/y1Wo2V/OapLQ==}
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
@@ -1680,6 +1695,9 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
+  '@types/node@22.20.1':
+    resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
+
   '@types/normalize-package-data@2.4.4':
     resolution: {integrity: sha512-37i+OaWTh9qeK4LSHPsyRC7NahnGotNuZvjLSgcPzblpHB3rrCJxAOgI5gCdKm7coonsaX1Of0ILiTcnZjbfxA==}
 
@@ -1783,6 +1801,7 @@ packages:
 
   '@ungap/structured-clone@1.2.0':
     resolution: {integrity: sha512-zuVdFrMJiuCDQUMCzQaD6KL28MjnqqN8XnAqiEq9PNm/hCPTSGfrXCOfwj1ow4LFb/tNymJPwsNbVePc1xFqrQ==}
+    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@vitejs/plugin-vue@4.6.2':
     resolution: {integrity: sha512-kqf7SGFoG+80aZG6Pf+gsZIVvGSCKE98JbiWqcCV9cThtg91Jav0yvYFC9Zb+jKetNGF6ZKeoaxgZfND21fWKw==}
@@ -3623,9 +3642,6 @@ packages:
   text-table@0.2.0:
     resolution: {integrity: sha512-N+8UisAXDGk8PFXP4HAzVR9nbfmVJ3zYLAWiTIoqC5v5isinhr+r5uaO8+7r3BMfuNIufIsA7RdpVgacC2cSpw==}
 
-  tinybench@2.8.0:
-    resolution: {integrity: sha512-1/eK7zUnIklz4JUUlL+658n58XO2hHLQfSk1Zf2LKieUjxidN16eKFEoDEfjHc3ohofSSqK3X5yO6VGb6iW8Lw==}
-
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
@@ -3741,6 +3757,9 @@ packages:
   unconfig@7.3.3:
     resolution: {integrity: sha512-QCkQoOnJF8L107gxfHL0uavn7WD9b3dpBcFX6HtfQYmjw2YzWxGuFQ0N0J6tE9oguCBJn9KOvfqYDCMPHIZrBA==}
 
+  undici-types@6.21.0:
+    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+
   undici@5.29.0:
     resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
     engines: {node: '>=14.0'}
@@ -3757,6 +3776,7 @@ packages:
 
   uuid@9.0.1:
     resolution: {integrity: sha512-b+1eJOlsR9K8HJpow9Ok3fiWOWSIcIzXodvv0rQjVoOVNpWMpxf1wZNpt4y9h10odCNrqnYp1OBzRktckBe3sA==}
+    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
     hasBin: true
 
   validate-npm-package-license@3.0.4:
@@ -4054,7 +4074,7 @@ snapshots:
   '@babel/code-frame@7.24.2':
     dependencies:
       '@babel/highlight': 7.24.5
-      picocolors: 1.0.0
+      picocolors: 1.1.1
 
   '@babel/helper-string-parser@7.24.1': {}
 
@@ -4235,23 +4255,12 @@ snapshots:
       tslib: 2.8.0
     optional: true
 
-  '@emnapi/core@1.7.0':
-    dependencies:
-      '@emnapi/wasi-threads': 1.1.0
-      tslib: 2.8.0
-    optional: true
-
   '@emnapi/runtime@1.10.0':
     dependencies:
       tslib: 2.8.0
     optional: true
 
   '@emnapi/runtime@1.5.0':
-    dependencies:
-      tslib: 2.8.0
-    optional: true
-
-  '@emnapi/wasi-threads@1.1.0':
     dependencies:
       tslib: 2.8.0
     optional: true
@@ -4648,8 +4657,8 @@ snapshots:
 
   '@napi-rs/wasm-runtime@1.0.7':
     dependencies:
-      '@emnapi/core': 1.7.0
-      '@emnapi/runtime': 1.5.0
+      '@emnapi/core': 1.10.0
+      '@emnapi/runtime': 1.10.0
       '@tybys/wasm-util': 0.10.1
     optional: true
 
@@ -5173,6 +5182,10 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
+  '@types/node@22.20.1':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/normalize-package-data@2.4.4': {}
 
   '@types/prop-types@15.7.15': {}
@@ -5267,9 +5280,9 @@ snapshots:
 
   '@ungap/structured-clone@1.2.0': {}
 
-  '@vitejs/plugin-vue@4.6.2(vite@4.5.3(lightningcss@1.32.0))(vue@3.4.27(typescript@5.6.3))':
+  '@vitejs/plugin-vue@4.6.2(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0))(vue@3.4.27(typescript@5.6.3))':
     dependencies:
-      vite: 4.5.3(lightningcss@1.32.0)
+      vite: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
       vue: 3.4.27(typescript@5.6.3)
 
   '@vitest/expect@1.6.0':
@@ -5303,7 +5316,7 @@ snapshots:
       pathe: 1.1.2
       picocolors: 1.0.0
       sirv: 2.0.4
-      vitest: 1.6.0(@vitest/ui@1.6.0)(lightningcss@1.32.0)
+      vitest: 1.6.0(@types/node@22.20.1)(@vitest/ui@1.6.0)(lightningcss@1.32.0)
 
   '@vitest/utils@1.6.0':
     dependencies:
@@ -5312,13 +5325,14 @@ snapshots:
       loupe: 2.3.7
       pretty-format: 29.7.0
 
-  '@voidzero-dev/vite-plus-core@0.1.20(jiti@2.6.1)(typescript@5.6.3)':
+  '@voidzero-dev/vite-plus-core@0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)':
     dependencies:
       '@oxc-project/runtime': 0.127.0
       '@oxc-project/types': 0.127.0
       lightningcss: 1.32.0
       postcss: 8.5.14
     optionalDependencies:
+      '@types/node': 22.20.1
       fsevents: 2.3.3
       jiti: 2.6.1
       typescript: 5.6.3
@@ -5341,11 +5355,11 @@ snapshots:
   '@voidzero-dev/vite-plus-linux-x64-musl@0.1.20':
     optional: true
 
-  '@voidzero-dev/vite-plus-test@0.1.20(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(jiti@2.6.1))':
+  '@voidzero-dev/vite-plus-test@0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1))':
     dependencies:
       '@standard-schema/spec': 1.1.0
       '@types/chai': 5.2.3
-      '@voidzero-dev/vite-plus-core': 0.1.20(jiti@2.6.1)(typescript@5.6.3)
+      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)
       es-module-lexer: 1.7.0
       obug: 2.1.1
       pixelmatch: 7.2.0
@@ -5355,8 +5369,10 @@ snapshots:
       tinybench: 2.9.0
       tinyexec: 1.1.2
       tinyglobby: 0.2.16
-      vite: 8.0.10(jiti@2.6.1)
+      vite: 8.0.10(@types/node@22.20.1)(jiti@2.6.1)
       ws: 8.20.0
+    optionalDependencies:
+      '@types/node': 22.20.1
     transitivePeerDependencies:
       - '@arethetypeswrong/core'
       - '@tsdown/css'
@@ -6867,7 +6883,7 @@ snapshots:
   postcss@8.4.38:
     dependencies:
       nanoid: 3.3.7
-      picocolors: 1.0.0
+      picocolors: 1.1.1
       source-map-js: 1.2.0
 
   postcss@8.5.14:
@@ -7297,8 +7313,6 @@ snapshots:
 
   text-table@0.2.0: {}
 
-  tinybench@2.8.0: {}
-
   tinybench@2.9.0: {}
 
   tinyexec@1.1.2: {}
@@ -7410,6 +7424,8 @@ snapshots:
       jiti: 2.5.1
       quansync: 0.2.11
 
+  undici-types@6.21.0: {}
+
   undici@5.29.0:
     dependencies:
       '@fastify/busboy': 2.1.1
@@ -7429,13 +7445,13 @@ snapshots:
       spdx-correct: 3.2.0
       spdx-expression-parse: 3.0.1
 
-  vite-node@1.6.0(lightningcss@1.32.0):
+  vite-node@1.6.0(@types/node@22.20.1)(lightningcss@1.32.0):
     dependencies:
       cac: 6.7.14
       debug: 4.3.4
       pathe: 1.1.2
-      picocolors: 1.0.0
-      vite: 5.2.11(lightningcss@1.32.0)
+      picocolors: 1.1.1
+      vite: 5.2.11(@types/node@22.20.1)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - '@types/node'
       - less
@@ -7446,35 +7462,35 @@ snapshots:
       - supports-color
       - terser
 
-  vite-plugin-top-level-await@1.4.1(@swc/helpers@0.5.17)(rollup@3.29.4)(vite@4.5.3(lightningcss@1.32.0)):
+  vite-plugin-top-level-await@1.4.1(@swc/helpers@0.5.17)(rollup@3.29.4)(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)):
     dependencies:
       '@rollup/plugin-virtual': 3.0.2(rollup@3.29.4)
       '@swc/core': 1.5.5(@swc/helpers@0.5.17)
       uuid: 9.0.1
-      vite: 4.5.3(lightningcss@1.32.0)
+      vite: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - '@swc/helpers'
       - rollup
 
-  vite-plugin-top-level-await@1.4.1(@swc/helpers@0.5.17)(rollup@4.17.2)(vite@4.5.3(lightningcss@1.32.0)):
+  vite-plugin-top-level-await@1.4.1(@swc/helpers@0.5.17)(rollup@4.17.2)(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)):
     dependencies:
       '@rollup/plugin-virtual': 3.0.2(rollup@4.17.2)
       '@swc/core': 1.5.5(@swc/helpers@0.5.17)
       uuid: 9.0.1
-      vite: 4.5.3(lightningcss@1.32.0)
+      vite: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
     transitivePeerDependencies:
       - '@swc/helpers'
       - rollup
 
-  vite-plugin-wasm@3.3.0(vite@4.5.3(lightningcss@1.32.0)):
+  vite-plugin-wasm@3.3.0(vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)):
     dependencies:
-      vite: 4.5.3(lightningcss@1.32.0)
+      vite: 4.5.3(@types/node@22.20.1)(lightningcss@1.32.0)
 
-  vite-plus@0.1.20(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(jiti@2.6.1)):
+  vite-plus@0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1)):
     dependencies:
       '@oxc-project/types': 0.127.0
-      '@voidzero-dev/vite-plus-core': 0.1.20(jiti@2.6.1)(typescript@5.6.3)
-      '@voidzero-dev/vite-plus-test': 0.1.20(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(jiti@2.6.1))
+      '@voidzero-dev/vite-plus-core': 0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)
+      '@voidzero-dev/vite-plus-test': 0.1.20(@types/node@22.20.1)(jiti@2.6.1)(typescript@5.6.3)(vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1))
       oxfmt: 0.46.0
       oxlint: 1.61.0(oxlint-tsgolint@0.22.0)
       oxlint-tsgolint: 0.22.0
@@ -7517,25 +7533,27 @@ snapshots:
       - vite
       - yaml
 
-  vite@4.5.3(lightningcss@1.32.0):
+  vite@4.5.3(@types/node@22.20.1)(lightningcss@1.32.0):
     dependencies:
       esbuild: 0.18.20
       postcss: 8.4.38
       rollup: 3.29.4
     optionalDependencies:
+      '@types/node': 22.20.1
       fsevents: 2.3.3
       lightningcss: 1.32.0
 
-  vite@5.2.11(lightningcss@1.32.0):
+  vite@5.2.11(@types/node@22.20.1)(lightningcss@1.32.0):
     dependencies:
       esbuild: 0.20.2
-      postcss: 8.4.38
+      postcss: 8.5.14
       rollup: 4.17.2
     optionalDependencies:
+      '@types/node': 22.20.1
       fsevents: 2.3.3
       lightningcss: 1.32.0
 
-  vite@8.0.10(jiti@2.6.1):
+  vite@8.0.10(@types/node@22.20.1)(jiti@2.6.1):
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
@@ -7543,10 +7561,11 @@ snapshots:
       rolldown: 1.0.0-rc.17
       tinyglobby: 0.2.16
     optionalDependencies:
+      '@types/node': 22.20.1
       fsevents: 2.3.3
       jiti: 2.6.1
 
-  vitest@1.6.0(@vitest/ui@1.6.0)(lightningcss@1.32.0):
+  vitest@1.6.0(@types/node@22.20.1)(@vitest/ui@1.6.0)(lightningcss@1.32.0):
     dependencies:
       '@vitest/expect': 1.6.0
       '@vitest/runner': 1.6.0
@@ -7560,15 +7579,16 @@ snapshots:
       local-pkg: 0.5.0
       magic-string: 0.30.10
       pathe: 1.1.2
-      picocolors: 1.0.0
+      picocolors: 1.1.1
       std-env: 3.7.0
       strip-literal: 2.1.0
-      tinybench: 2.8.0
+      tinybench: 2.9.0
       tinypool: 0.8.4
-      vite: 5.2.11(lightningcss@1.32.0)
-      vite-node: 1.6.0(lightningcss@1.32.0)
+      vite: 5.2.11(@types/node@22.20.1)(lightningcss@1.32.0)
+      vite-node: 1.6.0(@types/node@22.20.1)(lightningcss@1.32.0)
       why-is-node-running: 2.2.2
     optionalDependencies:
+      '@types/node': 22.20.1
       '@vitest/ui': 1.6.0(vitest@1.6.0)
     transitivePeerDependencies:
       - less

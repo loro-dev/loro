@@ -1,0 +1,50 @@
+{
+  "map": {
+    "answer": 42,
+    "child": {
+      "name": "child"
+    },
+    "mergeable": {
+      "name": "shared",
+      "revision": 2.5
+    },
+    "nested": {
+      "ok": true,
+      "values": [
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "list": [
+    "C"
+  ],
+  "text": "b",
+  "movable": [
+    "z",
+    "x"
+  ],
+  "counter": 1.5,
+  "tree": [
+    {
+      "id": "25@42",
+      "parent": null,
+      "index": 0,
+      "fractional_index": "80",
+      "meta": {
+        "title": "root"
+      },
+      "children": [
+        {
+          "id": "27@42",
+          "parent": "25@42",
+          "index": 0,
+          "fractional_index": "80",
+          "meta": {},
+          "children": []
+        }
+      ]
+    }
+  ]
+}

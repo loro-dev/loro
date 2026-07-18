@@ -1,0 +1,14 @@
+{
+  "list": [
+    "left",
+    "right",
+    "base"
+  ],
+  "text": "LRx",
+  "map": {
+    "winner": "right"
+  },
+  "state": {
+    "revision": 1.5
+  }
+}
