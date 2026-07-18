@@ -158,7 +158,6 @@ interface DecodedImportData {
 
 interface DeferredSnapshotHistory {
   readonly entries: readonly SstableEntry[];
-  readonly validatedBlocks: ReadonlyMap<SstableEntry, readonly HistoryRecord[]>;
   readonly endVersion: VersionVector;
   readonly frontiers: readonly CodecId[];
   readonly operationCount: number;
@@ -697,6 +696,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         rootStore === undefined
           ? stateStore
           : mergeStateSnapshotStores(rootStore, stateStore);
+      const preparedTextSnapshotIds = validateStateSnapshotTextIds(hydratedStore);
       if (
         stagedShallowRootVersion !== undefined &&
         encodedEndVersion !== undefined &&
@@ -730,11 +730,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (canDeferHistory) {
         const endVersion = encodedEndVersion!;
         const endFrontiers = encodedEndFrontiers!;
-        const validatedBlocks = this.#validateDeferredFrontierBlocks(
-          oplogEntries,
-          endVersion,
-          endFrontiers,
-        );
+        this.#validateDeferredFrontierBlocks(oplogEntries, endVersion, endFrontiers);
         installStagedShallowRoot();
         deferredChanged = new Set(
           hydratedStore.containers.map(({ id }) => formatContainerId(id)),
@@ -742,10 +738,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (this.#hasEventSubscribers()) {
           beforeValues = this.#captureContainerEventValues(deferredChanged);
         }
-        this.#hydrateState(hydratedStore);
+        this.#hydrateState(hydratedStore, preparedTextSnapshotIds);
         this.#deferredSnapshotHistory = {
           entries: oplogEntries,
-          validatedBlocks,
           endVersion,
           frontiers: endFrontiers.map((id) => ({ ...id })),
           operationCount: versionDistance(
@@ -781,7 +776,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (rootStore !== undefined && stateStore.kind === "empty") {
             this.#rebuildFromHistory();
           } else {
-            this.#hydrateState(hydratedStore);
+            this.#hydrateState(hydratedStore, preparedTextSnapshotIds);
           }
         } else if (!this.#detached && integration.added.length > 0) {
           const recording = this.#hasEventSubscribers()
@@ -839,6 +834,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       ? ordered.find(({ snapshot }) => snapshot !== undefined)
       : undefined;
     let rootStore: StateSnapshotStore | undefined;
+    let stagedShallowRoot:
+      | {
+          readonly startVersion: VersionVector;
+          readonly rootVersion: VersionVector;
+          readonly frontiers: CodecId[];
+        }
+      | undefined;
     if (
       snapshotSeed?.snapshot !== undefined &&
       snapshotSeed.snapshot.shallowRootState.length > 0
@@ -853,9 +855,29 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       for (const frontier of startFrontiers) {
         rootVersion.set(frontier.peer, frontier.counter + 1);
       }
-      this.#shallowStartVersion = startVersion;
-      this.#shallowRootVersion = rootVersion;
-      this.#shallowRootFrontiers = startFrontiers.map((id) => ({ ...id }));
+      stagedShallowRoot = {
+        startVersion,
+        rootVersion,
+        frontiers: startFrontiers.map((id) => ({ ...id })),
+      };
+    }
+    let snapshotStateStore: StateSnapshotStore | undefined;
+    let snapshotHydratedStore: StateSnapshotStore | undefined;
+    let preparedTextSnapshotIds:
+      | ReadonlyMap<ContainerStateSnapshot, TextSnapshotIdRanges>
+      | undefined;
+    if (snapshotSeed?.snapshot !== undefined) {
+      snapshotStateStore = decodeStateSnapshotStore(snapshotSeed.snapshot.state);
+      snapshotHydratedStore =
+        rootStore === undefined
+          ? snapshotStateStore
+          : mergeStateSnapshotStores(rootStore, snapshotStateStore);
+      preparedTextSnapshotIds = validateStateSnapshotTextIds(snapshotHydratedStore);
+    }
+    if (rootStore !== undefined && stagedShallowRoot !== undefined) {
+      this.#shallowStartVersion = stagedShallowRoot.startVersion;
+      this.#shallowRootVersion = stagedShallowRoot.rootVersion;
+      this.#shallowRootFrontiers = stagedShallowRoot.frontiers;
       this.#shallowRootStore = rootStore;
     }
 
@@ -870,15 +892,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (this.#hasEventSubscribers()) {
           beforeValues = this.#captureEventValues(integration.added);
         }
-        const stateStore = decodeStateSnapshotStore(snapshotSeed.snapshot.state);
-        if (rootStore !== undefined && stateStore.kind === "empty") {
+        if (rootStore !== undefined && snapshotStateStore!.kind === "empty") {
           this.#rebuildFromHistory();
         } else {
-          this.#hydrateState(
-            rootStore === undefined
-              ? stateStore
-              : mergeStateSnapshotStores(rootStore, stateStore),
-          );
+          this.#hydrateState(snapshotHydratedStore!, preparedTextSnapshotIds!);
           const snapshotVersion =
             snapshotSeed.endVersion?.clone() ??
             historyVersionForRecords(snapshotSeed.records, snapshotSeed.startVersion);
@@ -4673,7 +4690,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     entries: readonly SstableEntry[],
     endVersion: VersionVector,
     frontiers: readonly CodecId[],
-  ): ReadonlyMap<SstableEntry, readonly HistoryRecord[]> {
+  ): void {
     const changeEntriesByPeer = new Map<
       bigint,
       { readonly entry: SstableEntry; readonly start: CodecId }[]
@@ -4691,7 +4708,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const peerEntries of changeEntriesByPeer.values()) {
       peerEntries.sort((left, right) => left.start.counter - right.start.counter);
     }
-    const validated = new Map<SstableEntry, readonly HistoryRecord[]>();
     const seenPeers = new Set<bigint>();
     for (const frontier of frontiers) {
       const peerEnd = endVersion.get(frontier.peer) ?? 0;
@@ -4715,13 +4731,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (candidate === undefined) {
         throw new Error("snapshot frontier change block is missing");
       }
-      let block = validated.get(candidate.entry);
-      if (block === undefined) {
-        block = this.#readChangeBlock(candidate.entry.value);
-        if (block[0] === undefined || !idsEqual(block[0].change.id, candidate.start)) {
-          throw new Error("snapshot change key does not match its block");
-        }
-        validated.set(candidate.entry, block);
+      const block = this.#readChangeBlock(candidate.entry.value);
+      if (block[0] === undefined || !idsEqual(block[0].change.id, candidate.start)) {
+        throw new Error("snapshot change key does not match its block");
       }
       if (
         !block.some(
@@ -4734,7 +4746,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         throw new Error("snapshot frontier is not covered by its change block");
       }
     }
-    return validated;
   }
 
   #materializeDeferredHistory(): void {
@@ -4745,8 +4756,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const entry of deferred.entries) {
       if (entry.key.length !== 12) continue;
       const expected = decodeChangeBlockKey(entry.key);
-      const decoded =
-        deferred.validatedBlocks.get(entry) ?? this.#readChangeBlock(entry.value);
+      const decoded = this.#readChangeBlock(entry.value);
       if (decoded[0] !== undefined && !idsEqual(decoded[0].change.id, expected)) {
         throw new Error("snapshot change key does not match its block");
       }
@@ -5250,7 +5260,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
         return BigInt(index);
       };
-      const visible = container._visibleElements();
       const keys: string[] = [];
       const keyIndices = new Map<string, number>();
       const keyIndex = (key: string): number => {
@@ -5274,9 +5283,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         info: number;
       }[] = [];
       const metasAt = container._attributeMetasResolver();
-      let active = new Map<string, TextStyleMeta>();
-      for (let index = 0; index <= visible.length; index += 1) {
-        const current = index < visible.length ? metasAt(visible[index]!) : new Map();
+      let active: ReadonlyMap<string, TextStyleMeta> = new Map();
+      const updateActiveStyles = (current: ReadonlyMap<string, TextStyleMeta>): void => {
         for (const [key, meta] of active) {
           if (current.get(key) === meta) continue;
           spans.push({
@@ -5300,20 +5308,45 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             info: meta.info,
           });
         }
-        active = new Map(current);
-        if (index < visible.length) {
-          const element = visible[index]!;
+        active = current;
+      };
+      const textChunks: string[] = [];
+      let textChunk = "";
+      let textChunkLength = 0;
+      container._sequence.forEachVisible((element) => {
+        updateActiveStyles(metasAt(element));
+        const elementPeerIndex = peerIndex(element.id.peer);
+        const lamportSub = element.lamport - element.id.counter;
+        const previous = spans.at(-1);
+        if (
+          previous !== undefined &&
+          previous.length > 0 &&
+          previous.peerIndex === elementPeerIndex &&
+          previous.counter + previous.length === element.id.counter &&
+          previous.lamportSub === lamportSub
+        ) {
+          previous.length += 1;
+        } else {
           spans.push({
-            peerIndex: peerIndex(element.id.peer),
+            peerIndex: elementPeerIndex,
             counter: element.id.counter,
-            lamportSub: element.lamport - element.id.counter,
+            lamportSub,
             length: 1,
           });
         }
-      }
+        textChunk += element.value;
+        textChunkLength += 1;
+        if (textChunkLength === 1_024) {
+          textChunks.push(textChunk);
+          textChunk = "";
+          textChunkLength = 0;
+        }
+      });
+      updateActiveStyles(new Map());
+      if (textChunkLength > 0) textChunks.push(textChunk);
       return {
         kind: CodecContainerType.Text,
-        text: visible.map((element) => element.value).join(""),
+        text: textChunks.join(""),
         peers,
         spans,
         keys,
@@ -5461,8 +5494,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     };
   }
 
-  #hydrateState(store: StateSnapshotStore): void {
+  #hydrateState(
+    store: StateSnapshotStore,
+    textSnapshotIds = validateStateSnapshotTextIds(store),
+  ): void {
     if (store.kind !== "sstable") return;
+    let remainingTextCounterSlots = 10_000_000;
     for (const { id } of store.containers) this.#getOrCreateContainer(id);
     for (const { id, wrapper } of store.containers) {
       const container = this.#getOrCreateContainer(id);
@@ -5502,9 +5539,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         container instanceof LoroText &&
         state.kind === CodecContainerType.Text
       ) {
-        const characters = Array.from(state.text);
-        const ids: CodecId[] = [];
-        const lamports: number[] = [];
+        const snapshotIds = textSnapshotIds.get(state)!;
+        for (const { peer, end, visible } of snapshotIds.reservations) {
+          if (end > 0 && end <= visible * 4 + 4_096 && end <= remainingTextCounterSlots) {
+            container._sequence.reservePeerCounters(peer, end);
+            remainingTextCounterSlots -= end;
+          }
+        }
         const styleRuns: {
           readonly run: { readonly start: CodecId; readonly length: number };
           readonly key: string;
@@ -5512,7 +5553,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }[] = [];
         const stylesById = new Map<string, { key: string; meta: TextStyleMeta }>();
         const active = new Map<string, TextStyleMeta[]>();
-        let characterIndex = 0;
+        let textUtf16Offset = 0;
+        let chunkTextStart = 0;
+        const chunkPeers: bigint[] = [];
+        const chunkCounters: number[] = [];
+        const chunkLamports: number[] = [];
+        const flushChunk = (): void => {
+          if (chunkPeers.length === 0) return;
+          container._insertValidatedSnapshotChunk(
+            state.text.slice(chunkTextStart, textUtf16Offset),
+            chunkPeers,
+            chunkCounters,
+            chunkLamports,
+          );
+          chunkPeers.length = 0;
+          chunkCounters.length = 0;
+          chunkLamports.length = 0;
+          chunkTextStart = textUtf16Offset;
+        };
         let markIndex = 0;
         for (const span of state.spans) {
           const peer = state.peers[Number(span.peerIndex)]!;
@@ -5556,12 +5614,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             }
           }
           for (let offset = 0; offset < span.length; offset += 1) {
-            ids.push({ peer, counter: span.counter + offset });
-            lamports.push(span.counter + offset + span.lamportSub);
-            characterIndex += 1;
+            textUtf16Offset = advanceUnicodeScalars(state.text, textUtf16Offset, 1);
+            chunkPeers.push(peer);
+            chunkCounters.push(span.counter + offset);
+            chunkLamports.push(span.counter + offset + span.lamportSub);
+            if (chunkPeers.length === 32) flushChunk();
           }
         }
-        container._insertVisible(0, characters.slice(0, characterIndex), ids, lamports);
+        flushChunk();
+        if (textUtf16Offset !== state.text.length) {
+          throw new Error("text snapshot spans do not consume the decoded text");
+        }
         for (const { run, key, meta } of styleRuns) {
           container._styleIndex.add([run], key, meta);
         }
@@ -6008,6 +6071,133 @@ function changeLength(change: DecodedChange): number {
   const length = change.operations.reduce((sum, operation) => sum + operation.length, 0);
   changeLengthCache.set(change, length);
   return length;
+}
+
+function advanceUnicodeScalars(value: string, start: number, length: number): number {
+  let offset = start;
+  for (let index = 0; index < length; index += 1) {
+    if (offset >= value.length) {
+      throw new Error("text snapshot span exceeds the decoded text");
+    }
+    const first = value.charCodeAt(offset);
+    offset += 1;
+    if (
+      first >= 0xd800 &&
+      first <= 0xdbff &&
+      offset < value.length &&
+      value.charCodeAt(offset) >= 0xdc00 &&
+      value.charCodeAt(offset) <= 0xdfff
+    ) {
+      offset += 1;
+    }
+  }
+  return offset;
+}
+
+function validateStateSnapshotTextIds(
+  store: StateSnapshotStore,
+): ReadonlyMap<ContainerStateSnapshot, TextSnapshotIdRanges> {
+  const textSnapshotIds = new Map<ContainerStateSnapshot, TextSnapshotIdRanges>();
+  if (store.kind !== "sstable") return textSnapshotIds;
+  for (const { wrapper } of store.containers) {
+    if (wrapper.state.kind === CodecContainerType.Text) {
+      textSnapshotIds.set(
+        wrapper.state,
+        validateTextSnapshotIdRanges(wrapper.state.peers, wrapper.state.spans),
+      );
+    }
+  }
+  return textSnapshotIds;
+}
+
+interface TextSnapshotIdRanges {
+  readonly reservations: readonly {
+    readonly peer: bigint;
+    readonly end: number;
+    readonly visible: number;
+  }[];
+}
+
+function validateTextSnapshotIdRanges(
+  peers: readonly bigint[],
+  spans: readonly {
+    readonly peerIndex: bigint;
+    readonly counter: number;
+    readonly length: number;
+  }[],
+): TextSnapshotIdRanges {
+  const statsByPeer = new Map<
+    bigint,
+    {
+      readonly peer: bigint;
+      count: number;
+      end: number;
+      visible: number;
+      ranges?: BigUint64Array;
+      offset: number;
+    }
+  >();
+  for (const span of spans) {
+    if (span.length <= 0) continue;
+    const peerIndex = Number(span.peerIndex);
+    const end = span.counter + span.length;
+    if (
+      !Number.isSafeInteger(peerIndex) ||
+      peerIndex < 0 ||
+      peerIndex >= peers.length ||
+      !Number.isSafeInteger(span.counter) ||
+      span.counter < 0 ||
+      !Number.isSafeInteger(end) ||
+      end <= span.counter ||
+      end > 0x7fff_ffff
+    ) {
+      throw new Error("text snapshot contains an invalid ID range");
+    }
+    const peer = peers[peerIndex]!;
+    let stats = statsByPeer.get(peer);
+    if (stats === undefined) {
+      stats = { peer, count: 0, end: 0, visible: 0, offset: 0 };
+      statsByPeer.set(peer, stats);
+    }
+    stats.count += 1;
+    stats.visible += span.length;
+    if (!Number.isSafeInteger(stats.visible)) {
+      throw new Error("text snapshot contains too many IDs for one peer");
+    }
+    if (end > stats.end) stats.end = end;
+  }
+
+  for (const stats of statsByPeer.values()) {
+    stats.ranges = new BigUint64Array(stats.count);
+  }
+  for (const span of spans) {
+    if (span.length <= 0) continue;
+    const peerIndex = Number(span.peerIndex);
+    const end = span.counter + span.length;
+    const stats = statsByPeer.get(peers[peerIndex]!)!;
+    stats.ranges![stats.offset] = (BigInt(span.counter) << 32n) | BigInt(end);
+    stats.offset += 1;
+  }
+  for (const stats of statsByPeer.values()) {
+    const peerRanges = stats.ranges!;
+    peerRanges.sort();
+    let previousEnd = -1;
+    for (const packed of peerRanges) {
+      const start = Number(packed >> 32n);
+      const end = Number(packed & 0xffff_ffffn);
+      if (start < previousEnd) {
+        throw new Error("text snapshot contains duplicate sequence IDs");
+      }
+      previousEnd = end;
+    }
+  }
+  return {
+    reservations: [...statsByPeer.values()].map(({ peer, end, visible }) => ({
+      peer,
+      end,
+      visible,
+    })),
+  };
 }
 
 function changedContainerIds(records: readonly HistoryRecord[]): Set<string> {

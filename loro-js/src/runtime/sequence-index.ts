@@ -1325,6 +1325,18 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     this.#structureVersion += 1;
   }
 
+  reservePeerCounters(peer: bigint, endExclusive: number): void {
+    if (!Number.isSafeInteger(endExclusive) || endExclusive < 0) {
+      throw new RangeError("sequence peer counter capacity is out of range");
+    }
+    let locations = this.#locationsByPeer.get(peer);
+    if (locations === undefined) {
+      locations = new CounterStore();
+      this.#locationsByPeer.set(peer, locations);
+    }
+    locations.reserveDense(endExclusive);
+  }
+
   #newNode(
     storage: SequenceNodeStorage<T> | readonly T[],
     recordNew: boolean,
@@ -3158,6 +3170,13 @@ class CounterStore<T> {
     }
     if (!this.#sparse.has(counter)) this.#sparseCounters.add(counter);
     this.#sparse.set(counter, value);
+  }
+
+  reserveDense(endExclusive: number): void {
+    if (this.#sparse.size > 0) {
+      throw new Error("cannot reserve dense sequence counters after sparse insertion");
+    }
+    if (endExclusive > this.#dense.length) this.#dense.length = endExclusive;
   }
 
   forEach(start: number, end: number, visit: (value: T, counter: number) => void): void {

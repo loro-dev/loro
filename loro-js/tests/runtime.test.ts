@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ContainerType,
   decodeFastSnapshot,
   decodePostcardVersionVector,
+  decodeStateSnapshotStore,
   decodeSstable,
   encodeFastSnapshot,
   encodePostcardVersionVector,
+  encodeStateSnapshotStore,
   encodeSstable,
 } from "../src/codec";
 
@@ -35,6 +38,50 @@ import {
 
 const fixture = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(new URL(`./fixtures/rust/${name}`, import.meta.url)));
+
+const withDuplicateTextId = (
+  snapshot: ReturnType<typeof decodeFastSnapshot>,
+): Uint8Array => {
+  const stateStore = decodeStateSnapshotStore(snapshot.state);
+  if (stateStore.kind !== "sstable") throw new Error("expected snapshot state");
+  let changed = false;
+  const containers = stateStore.containers.map((entry) => {
+    const state = entry.wrapper.state;
+    if (changed || state.kind !== ContainerType.Text) return entry;
+    const span = state.spans.find(({ length }) => length >= 2);
+    if (span === undefined) return entry;
+    const peer = state.peers[Number(span.peerIndex)]!;
+    const aliasPeerIndex = BigInt(state.peers.length);
+    changed = true;
+    return {
+      ...entry,
+      wrapper: {
+        ...entry.wrapper,
+        state: {
+          ...state,
+          peers: [...state.peers, peer],
+          spans: state.spans.flatMap((item) =>
+            item === span
+              ? [
+                  { ...span, length: 1 },
+                  { ...span, peerIndex: aliasPeerIndex, length: 1 },
+                  { ...span, counter: span.counter + 2, length: span.length - 2 },
+                ].filter(({ length }) => length > 0)
+              : [item],
+          ),
+        },
+      },
+    };
+  });
+  if (!changed) throw new Error("expected a splittable text span");
+  return encodeFastSnapshot({
+    ...snapshot,
+    state: encodeStateSnapshotStore(
+      { ...stateStore, containers },
+      { compression: "none" },
+    ),
+  });
+};
 
 describe("loro-wasm-compatible runtime", () => {
   test("keeps existing container handlers usable after freeing the doc wrapper", () => {
@@ -1008,6 +1055,89 @@ describe("loro-wasm-compatible runtime", () => {
     expect(target.getAllChanges()).toEqual(source.getAllChanges());
   });
 
+  test("coalesces consecutive text IDs without splitting Unicode scalars", () => {
+    const source = new LoroDoc();
+    source.setPeerId(7);
+    const text = source.getText("text");
+    const value = `${"a".repeat(31)}😀b`;
+    text.insert(0, `${"a".repeat(31)}😀`);
+    text.push("b");
+    source.commit();
+
+    const snapshot = decodeFastSnapshot(source.export({ mode: "snapshot" }));
+    const stateStore = decodeStateSnapshotStore(snapshot.state);
+    expect(stateStore.kind).toBe("sstable");
+    if (stateStore.kind !== "sstable") throw new Error("expected snapshot state");
+    const textState = stateStore.containers.find(
+      ({ wrapper }) => wrapper.state.kind === ContainerType.Text,
+    )?.wrapper.state;
+    expect(textState?.kind).toBe(ContainerType.Text);
+    if (textState?.kind !== ContainerType.Text) throw new Error("expected text state");
+    expect(textState.text).toBe(value);
+    expect(textState.spans.filter(({ length }) => length > 0)).toEqual([
+      { peerIndex: 0n, counter: 0, lamportSub: 0, length: 33 },
+    ]);
+
+    const target = LoroDoc.fromSnapshot(encodeFastSnapshot(snapshot));
+    expect(target.getText("text").toString()).toBe(value);
+  });
+
+  test("rejects duplicate text IDs before changing the document", () => {
+    const source = new LoroDoc();
+    source.setPeerId(8);
+    source.getText("text").insert(0, "x".repeat(64));
+    source.commit();
+    const malformed = withDuplicateTextId(
+      decodeFastSnapshot(source.export({ mode: "snapshot" })),
+    );
+
+    const target = new LoroDoc();
+    const events: LoroEventBatch[] = [];
+    target.subscribe((event) => events.push(event));
+    expect(() => target.import(malformed)).toThrow(/duplicate sequence IDs/u);
+    expect(events).toEqual([]);
+    expect(target.version().toJSON()).toEqual(new Map());
+    expect(target.toJSON()).toEqual({});
+  });
+
+  test("rejects duplicate text IDs before installing shallow metadata", () => {
+    const source = new LoroDoc();
+    source.setPeerId(9);
+    source.getText("text").insert(0, "x".repeat(64));
+    source.commit();
+    const shallowRoot = source.frontiers();
+    source.getMap("meta").set("ready", true);
+    source.commit();
+    const malformed = withDuplicateTextId(
+      decodeFastSnapshot(
+        source.export({ mode: "shallow-snapshot", frontiers: shallowRoot }),
+      ),
+    );
+
+    const target = new LoroDoc();
+    const events: LoroEventBatch[] = [];
+    target.subscribe((event) => events.push(event));
+    expect(() => target.import(malformed)).toThrow(/duplicate sequence IDs/u);
+    expect(events).toEqual([]);
+    expect(target.isShallow()).toBe(false);
+    expect(target.version().toJSON()).toEqual(new Map());
+    expect(target.toJSON()).toEqual({});
+
+    const concurrent = new LoroDoc();
+    concurrent.setPeerId(10);
+    concurrent.getMap("concurrent").set("value", true);
+    const batchTarget = new LoroDoc();
+    const batchEvents: LoroEventBatch[] = [];
+    batchTarget.subscribe((event) => batchEvents.push(event));
+    expect(() =>
+      batchTarget.importBatch([malformed, concurrent.export({ mode: "update" })]),
+    ).toThrow(/duplicate sequence IDs/u);
+    expect(batchEvents).toEqual([]);
+    expect(batchTarget.isShallow()).toBe(false);
+    expect(batchTarget.version().toJSON()).toEqual(new Map());
+    expect(batchTarget.toJSON()).toEqual({});
+  });
+
   test("keeps snapshot history lazy and owns the deferred bytes", () => {
     const source = new LoroDoc();
     source.setPeerId(7);
@@ -1222,15 +1352,15 @@ describe("loro-wasm-compatible runtime", () => {
     const source = new LoroDoc();
     source.setPeerId(7);
     const text = source.getText("text");
-    text.insert(0, "hello");
-    text.mark({ start: 1, end: 4 }, "bold", true);
+    text.insert(0, "a😀bc");
+    text.mark({ start: 1, end: 3 }, "bold", true);
     source.commit();
 
     const target = LoroDoc.fromSnapshot(source.export({ mode: "snapshot" }));
     expect(target.getText("text").toDelta()).toEqual([
-      { insert: "h" },
-      { insert: "ell", attributes: { bold: true } },
-      { insert: "o" },
+      { insert: "a" },
+      { insert: "😀", attributes: { bold: true } },
+      { insert: "bc" },
     ]);
   });
 

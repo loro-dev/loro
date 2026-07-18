@@ -102,12 +102,19 @@ JavaScript constant factor.
 - Snapshot SSTables choose interoperable LZ4 blocks when they reduce size.
   DeltaRLE state columns encode and decode as streams rather than allocating
   million-item BigInt intermediates, and LZ4 decode writes into typed storage.
+  Text snapshot export streams visible elements and coalesces adjacent IDs with
+  the same peer and lamport offset into one state span. Initial hydration
+  validates every positive Text ID range before mutating the document, appends
+  bounded 32-scalar spans without scalar ID objects, and reserves dense
+  per-peer counter storage only for sufficiently compact ranges under a
+  document-wide allocation cap.
   Importing an initial latest-state snapshot hydrates current containers and
   validates its frontier blocks immediately, while retaining the other owned
-  history blocks in encoded form. A history query, edit, checkout, export, or
-  later update builds and validates all history indexes once on a staging
-  document before installing them; current reads, version, frontiers, and
-  operation count do not force that work.
+  history blocks in encoded form. Frontier validation discards its decoded
+  operation objects instead of retaining a second full history graph. A history
+  query, edit, checkout, export, or later update builds and validates all
+  history indexes once on a staging document before installing them; current
+  reads, version, frontiers, and operation count do not force that work.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
@@ -131,17 +138,17 @@ pnpm --dir loro-js bench:complexity -- 1000,2000,4000,8000
 ```
 
 On an Apple M5 Pro with Node 26.4.0, the complete 259,778-action B4 trace now
-applies in a 353.5 ms three-sample median (351.8–354.9 ms samples) and finishes
+applies in a 239.0 ms three-sample median (237.1–242.1 ms samples) and finishes
 at 104,852 UTF-16 code units. The resulting process reported 107.1 MB of used JS
-heap and 322.1 MB RSS.
+heap and 322.9 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 7.4x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 5.0x slower in absolute time. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
 measured snapshot
-export at 162.4 ms, update export at 129.3 ms, snapshot import at 161.5 ms, and
-update import at 328.1 ms.
+export at 97.1 ms, update export at 86.5 ms, snapshot import at 80.0 ms, and
+update import at 221.7 ms.
 
 The `zxch3n/crdt-benchmarks` adapters provide a separate end-to-end comparison
 against the published Loro WASM adapter. With the local `loro-js` build, B4 fell
@@ -151,9 +158,17 @@ lengths; the WASM adapter result is 4.733 seconds. B3.5 takes 288 ms versus
 303 ms. B3.3 emits a 240,032-byte snapshot versus roughly 242 KB from WASM,
 down from the former 7.95 MB uncompressed TypeScript snapshot. A 60k-item List
 update is 231,840 bytes and a 120k-character Text update is 120,095 bytes, both
-matching the WASM output sizes. C1.1 still takes 6.988 seconds versus 1.728
-seconds; its remaining gap is described below rather than treated as an
-asymptotic regression.
+matching the WASM output sizes. On C1.1, three consecutive local runs take a
+5.688-second median (5.467–5.827 seconds), encode the snapshot in a 1.552-second
+median, retain 207.4 MB, and parse it in a 1.357-second median. Before Text state
+span coalescing and compact hydration, the same adapter took 6.988 seconds,
+encoded in 1.961 seconds, retained 367.8 MB, and parsed in 3.620 seconds. The
+snapshot shrank from about 6.51 MB to 6.26 MB. An isolated profile measures
+state decode at 98 ms and core snapshot import at a 395 ms median; the
+adapter's parse number also includes two forced garbage collections. The WASM
+adapter remains faster at 1.728 seconds overall and 43 ms for parse, so the
+remaining gap is a constant-factor and representation issue rather than a
+public-API complexity regression.
 
 With 1k through 64k retained changes, exporting, importing, or checking out only
 the last change stays below 0.7 ms after warmup. Explicit one-operation span
@@ -249,12 +264,13 @@ The remaining differences are representation and JavaScript constant factors:
   with incomplete history can likewise materialize complete touched containers
   when their returned state or subscriber event requires it.
 - The million-operation C1.1 concurrent-text trace still exposes a large
-  constant-factor and retained-memory gap. Its local edit phase is about 4x the
-  WASM adapter, and parsing the 6.5 MB snapshot takes 3.62 seconds versus 43 ms.
-  Streaming DeltaRLE, typed LZ4 decode, and deferred history integration removed
-  the known superlinear and temporary-allocation failures; closing the remaining
-  gap needs a more compact decoded operation/frontier representation rather than
-  another public-API complexity change.
+  constant-factor gap. Streaming DeltaRLE, typed LZ4 decode, deferred history,
+  coalesced Text state spans, chunk hydration, and bounded dense counter storage
+  removed the known superlinear and largest temporary-allocation failures. The
+  remaining work is in edit-time insertion context and treap recomputation,
+  validation-only frontier decoding, and a direct snapshot treap builder. These
+  are internal representation improvements rather than public-API complexity
+  changes.
 - Old or manually constructed containers without a parent-edge binding scan
   their parent once, then cache the recovered binding. Normal container path
   lookup uses the indexed binding directly.

@@ -630,6 +630,52 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     return span;
   }
 
+  /** The caller must have validated ID uniqueness across the complete snapshot. */
+  static fromValidatedSnapshotChunk(
+    text: string,
+    peers: readonly bigint[],
+    counters: readonly number[],
+    lamports: readonly number[],
+  ): TextSequenceSpan {
+    if (
+      peers.length === 0 ||
+      peers.length !== counters.length ||
+      peers.length !== lamports.length
+    ) {
+      throw new Error("invalid text snapshot chunk columns");
+    }
+    const span = new TextSequenceSpan();
+    span.#text = text;
+    span.#length = peers.length;
+    span.#numbers = new Array(peers.length * TEXT_NUMBER_STRIDE);
+    span.#peers = new Array(peers.length * TEXT_PEER_STRIDE);
+    let utf16End = 0;
+    let offset = 0;
+    for (const value of text) {
+      if (offset >= peers.length) {
+        throw new Error("text snapshot chunk contains too many Unicode scalars");
+      }
+      utf16End += value.length;
+      const numberBase = offset * TEXT_NUMBER_STRIDE;
+      span.#numbers[numberBase + TEXT_COUNTER] = counters[offset]!;
+      span.#numbers[numberBase + TEXT_LAMPORT] = lamports[offset]!;
+      span.#numbers[numberBase + TEXT_UTF16_END] = utf16End;
+      span.#numbers[numberBase + TEXT_ORIGIN_LEFT_COUNTER] = 0;
+      span.#numbers[numberBase + TEXT_ORIGIN_RIGHT_COUNTER] = 0;
+      span.#numbers[numberBase + TEXT_DELETED_BY_COUNTER] = 0;
+      const peerBase = offset * TEXT_PEER_STRIDE;
+      span.#peers[peerBase + TEXT_ID_PEER] = peers[offset]!;
+      span.#peers[peerBase + TEXT_ORIGIN_LEFT_PEER] = undefined;
+      span.#peers[peerBase + TEXT_ORIGIN_RIGHT_PEER] = undefined;
+      span.#peers[peerBase + TEXT_DELETED_BY_PEER] = undefined;
+      offset += 1;
+    }
+    if (offset !== peers.length) {
+      throw new Error("text snapshot chunk contains too few Unicode scalars");
+    }
+    return span;
+  }
+
   get length(): number {
     return this.#length;
   }
@@ -1494,6 +1540,18 @@ export class LoroText extends LoroContainer {
         originLeft: undefined,
         originRight: undefined,
       })),
+    );
+  }
+
+  _insertValidatedSnapshotChunk(
+    text: string,
+    peers: readonly bigint[],
+    counters: readonly number[],
+    lamports: readonly number[],
+  ): void {
+    this._sequence.insertSpanAtPhysical(
+      this._sequence.allLength,
+      TextSequenceSpan.fromValidatedSnapshotChunk(text, peers, counters, lamports),
     );
   }
 
