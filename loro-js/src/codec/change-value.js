@@ -1,0 +1,375 @@
+import { ByteReader, ByteWriter } from "./bytes";
+import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
+import { readSleb128, readUleb128, writeSleb128, writeUleb128 } from "./leb128";
+const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const textEncoder = new TextEncoder();
+const MAX_VALUE_DEPTH = 1024;
+const MAX_COLLECTION_LENGTH = 10000000;
+const MAX_COLLECTION_LENGTH_BIGINT = BigInt(MAX_COLLECTION_LENGTH);
+const I32_MIN_BIGINT = -0x80000000n;
+const I32_MAX_BIGINT = 0x7fffffffn;
+const U32_MAX_BIGINT = 0xffffffffn;
+// Shared scratch for big-endian f64 access; never exposed to callers.
+const f64Scratch = new Uint8Array(8);
+const f64View = new DataView(f64Scratch.buffer);
+export function decodeChangeValue(bytes) {
+    const reader = new ByteReader(bytes);
+    const tag = reader.readU8();
+    const value = readChangeValueContent(tag, reader);
+    decodeAssert(reader.remaining === 0, "trailing change value bytes");
+    return value;
+}
+export function decodeChangeValueContent(tag, bytes) {
+    const reader = new ByteReader(bytes);
+    const value = readChangeValueContent(tag, reader);
+    return [value, bytes.subarray(reader.position)];
+}
+/**
+ * Reads one tagged change value payload from the reader, leaving it positioned
+ * after the value. Per-operation decode loops share one reader across values to
+ * avoid the tuple and subarray allocations of decodeChangeValueContent.
+ */
+export function readChangeValueContent(tag, reader) {
+    const kind = tag & 0x7f;
+    switch (kind) {
+        case 0:
+            return { type: "null" };
+        case 1:
+            return { type: "bool", value: true };
+        case 2:
+            return { type: "bool", value: false };
+        case 3:
+            return { type: "i64", value: readSleb128(reader) };
+        case 4:
+            return { type: "double", value: readF64BE(reader) };
+        case 5:
+            return { type: "string", value: readUtf8(reader) };
+        case 6:
+            return { type: "binary", value: readLengthPrefixedBytes(reader) };
+        case 7:
+            return { type: "container-index", value: readUleb128(reader) };
+        case 8:
+            return { type: "delete-once" };
+        case 9:
+            return { type: "delete-sequence" };
+        case 10: {
+            const integer = readSleb128(reader);
+            decodeAssert(integer >= I32_MIN_BIGINT && integer <= I32_MAX_BIGINT, "change delta integer is out of range");
+            return { type: "delta-int", value: Number(integer) };
+        }
+        case 11:
+            return { type: "loro-value", value: readChangeLoroValue(reader) };
+        case 12:
+            return {
+                type: "mark-start",
+                info: reader.readU8(),
+                length: readUleb128(reader),
+                keyIndex: readUleb128(reader),
+                value: readChangeLoroValue(reader),
+            };
+        case 13: {
+            const targetIndex = readUleb128(reader);
+            const parentIsNull = reader.readU8() !== 0;
+            const position = readUleb128(reader);
+            return {
+                type: "tree-move",
+                targetIndex,
+                parentIsNull,
+                position,
+                parentIndex: parentIsNull ? undefined : readUleb128(reader),
+            };
+        }
+        case 14:
+            return {
+                type: "list-move",
+                from: readUleb128(reader),
+                fromPeerIndex: readUleb128(reader),
+                lamport: readUleb128(reader),
+            };
+        case 15: {
+            const peerIndex = readUleb128(reader);
+            const lamport = readUleb128(reader);
+            decodeAssert(lamport <= U32_MAX_BIGINT, "list-set lamport is out of range");
+            return {
+                type: "list-set",
+                peerIndex,
+                lamport: Number(lamport),
+                value: readChangeLoroValue(reader),
+            };
+        }
+        case 16: {
+            const subjectPeerIndex = readUleb128(reader);
+            const subjectCounter = readNonnegativeI32(reader, "tree subject counter");
+            const positionIndex = readUleb128(reader);
+            const parentIsNull = reader.readU8() !== 0;
+            const parentPeerIndex = parentIsNull ? 0n : readUleb128(reader);
+            const parentCounter = parentIsNull
+                ? 0
+                : readNonnegativeI32(reader, "tree parent counter");
+            return {
+                type: "raw-tree-move",
+                subjectPeerIndex,
+                subjectCounter,
+                positionIndex,
+                parentIsNull,
+                parentPeerIndex,
+                parentCounter,
+            };
+        }
+        default:
+            return { type: "future", tag, data: readLengthPrefixedBytes(reader) };
+    }
+}
+export function encodeChangeValue(value) {
+    const encoded = encodeChangeValueContent(value);
+    const writer = new ByteWriter(encoded.bytes.length + 1);
+    writer.writeU8(encoded.tag);
+    writer.writeBytes(encoded.bytes);
+    return writer.toUint8Array();
+}
+export function encodeChangeValueContent(value) {
+    const writer = new ByteWriter();
+    let tag;
+    switch (value.type) {
+        case "null":
+            tag = 0;
+            break;
+        case "bool":
+            tag = value.value ? 1 : 2;
+            break;
+        case "i64":
+            tag = 3;
+            writeSleb128(writer, value.value);
+            break;
+        case "double":
+            tag = 4;
+            writeF64BE(writer, value.value);
+            break;
+        case "string":
+            tag = 5;
+            writeUtf8(writer, value.value);
+            break;
+        case "binary":
+            tag = 6;
+            writeLengthPrefixedBytes(writer, value.value);
+            break;
+        case "container-index":
+            tag = 7;
+            writeUleb128(writer, value.value);
+            break;
+        case "delete-once":
+            tag = 8;
+            break;
+        case "delete-sequence":
+            tag = 9;
+            break;
+        case "delta-int":
+            tag = 10;
+            assertI32(value.value, "delta integer");
+            writeSleb128(writer, value.value);
+            break;
+        case "loro-value":
+            tag = 11;
+            writeChangeLoroValue(writer, value.value);
+            break;
+        case "mark-start":
+            tag = 12;
+            writer.writeU8(value.info);
+            writeUleb128(writer, value.length);
+            writeUleb128(writer, value.keyIndex);
+            writeChangeLoroValue(writer, value.value);
+            break;
+        case "tree-move":
+            tag = 13;
+            writeUleb128(writer, value.targetIndex);
+            writer.writeU8(value.parentIsNull ? 1 : 0);
+            writeUleb128(writer, value.position);
+            if (!value.parentIsNull) {
+                if (value.parentIndex === undefined) {
+                    throw new LoroEncodeError("tree move lacks its parent index");
+                }
+                writeUleb128(writer, value.parentIndex);
+            }
+            break;
+        case "list-move":
+            tag = 14;
+            writeUleb128(writer, value.from);
+            writeUleb128(writer, value.fromPeerIndex);
+            writeUleb128(writer, value.lamport);
+            break;
+        case "list-set":
+            tag = 15;
+            writeUleb128(writer, value.peerIndex);
+            writeUleb128(writer, value.lamport);
+            writeChangeLoroValue(writer, value.value);
+            break;
+        case "raw-tree-move":
+            tag = 16;
+            writeUleb128(writer, value.subjectPeerIndex);
+            writeUleb128(writer, assertNonnegativeI32(value.subjectCounter, "tree subject counter"));
+            writeUleb128(writer, value.positionIndex);
+            writer.writeU8(value.parentIsNull ? 1 : 0);
+            if (!value.parentIsNull) {
+                writeUleb128(writer, value.parentPeerIndex);
+                writeUleb128(writer, assertNonnegativeI32(value.parentCounter, "tree parent counter"));
+            }
+            break;
+        case "future":
+            tag = value.tag;
+            if (!Number.isSafeInteger(tag) || tag < 0 || tag > 0xff || (tag & 0x7f) <= 16) {
+                throw new LoroEncodeError(`invalid future change value tag: ${tag}`);
+            }
+            writeLengthPrefixedBytes(writer, value.data);
+    }
+    return { tag, bytes: writer.toUint8Array() };
+}
+export function readChangeLoroValue(reader, depth = 0) {
+    decodeAssert(depth <= MAX_VALUE_DEPTH, "change LoroValue is too deep", reader.position);
+    const kind = reader.readU8();
+    switch (kind) {
+        case 0:
+            return { type: "null" };
+        case 1:
+            return { type: "bool", value: true };
+        case 2:
+            return { type: "bool", value: false };
+        case 3:
+            return { type: "i64", value: readSleb128(reader) };
+        case 4:
+            return { type: "double", value: readF64BE(reader) };
+        case 5:
+            return { type: "string", value: readUtf8(reader) };
+        case 6:
+            return { type: "binary", value: readLengthPrefixedBytes(reader) };
+        case 7: {
+            const length = readCollectionLength(reader);
+            decodeAssert(length <= reader.remaining, "change LoroValue list length exceeds input");
+            const value = [];
+            for (let index = 0; index < length; index += 1) {
+                value.push(readChangeLoroValue(reader, depth + 1));
+            }
+            return { type: "list", value };
+        }
+        case 8: {
+            const length = readCollectionLength(reader);
+            decodeAssert(length <= Math.floor(reader.remaining / 2), "change LoroValue map length exceeds input");
+            const value = [];
+            for (let index = 0; index < length; index += 1) {
+                value.push([readUleb128(reader), readChangeLoroValue(reader, depth + 1)]);
+            }
+            return { type: "map", value };
+        }
+        case 9:
+            return { type: "container-type", value: reader.readU8() };
+        default:
+            throw new LoroDecodeError("invalid change LoroValue kind", reader.position - 1);
+    }
+}
+export function writeChangeLoroValue(writer, value, depth = 0) {
+    if (depth > MAX_VALUE_DEPTH) {
+        throw new LoroEncodeError("change LoroValue is too deep");
+    }
+    switch (value.type) {
+        case "null":
+            writer.writeU8(0);
+            return;
+        case "bool":
+            writer.writeU8(value.value ? 1 : 2);
+            return;
+        case "i64":
+            writer.writeU8(3);
+            writeSleb128(writer, value.value);
+            return;
+        case "double":
+            writer.writeU8(4);
+            writeF64BE(writer, value.value);
+            return;
+        case "string":
+            writer.writeU8(5);
+            writeUtf8(writer, value.value);
+            return;
+        case "binary":
+            writer.writeU8(6);
+            writeLengthPrefixedBytes(writer, value.value);
+            return;
+        case "list":
+            writer.writeU8(7);
+            assertCollectionLength(value.value.length);
+            writeUleb128(writer, value.value.length);
+            for (const item of value.value) {
+                writeChangeLoroValue(writer, item, depth + 1);
+            }
+            return;
+        case "map":
+            writer.writeU8(8);
+            assertCollectionLength(value.value.length);
+            writeUleb128(writer, value.value.length);
+            for (const [keyIndex, item] of value.value) {
+                writeUleb128(writer, keyIndex);
+                writeChangeLoroValue(writer, item, depth + 1);
+            }
+            return;
+        case "container-type":
+            writer.writeU8(9);
+            writer.writeU8(value.value);
+    }
+}
+function readCollectionLength(reader) {
+    const value = readUleb128(reader, MAX_COLLECTION_LENGTH_BIGINT);
+    return Number(value);
+}
+function readNonnegativeI32(reader, label) {
+    const value = readUleb128(reader, I32_MAX_BIGINT);
+    decodeAssert(value <= I32_MAX_BIGINT, `${label} is out of range`);
+    return Number(value);
+}
+function readUtf8(reader) {
+    const offset = reader.position;
+    const bytes = readLengthPrefixedBytes(reader);
+    try {
+        return textDecoder.decode(bytes);
+    }
+    catch {
+        throw new LoroDecodeError("invalid UTF-8 change value", offset);
+    }
+}
+function writeUtf8(writer, value) {
+    writeLengthPrefixedBytes(writer, textEncoder.encode(value));
+}
+function readLengthPrefixedBytes(reader) {
+    const length = readUleb128(reader, I32_MAX_BIGINT);
+    return reader.readBytes(Number(length));
+}
+function writeLengthPrefixedBytes(writer, value) {
+    writeUleb128(writer, value.length);
+    writer.writeBytes(value);
+}
+function readF64BE(reader) {
+    const offset = reader.position;
+    reader.skip(8);
+    const bytes = reader.bytes;
+    for (let index = 0; index < 8; index += 1) {
+        f64Scratch[index] = bytes[offset + index];
+    }
+    return f64View.getFloat64(0, false);
+}
+function writeF64BE(writer, value) {
+    f64View.setFloat64(0, value, false);
+    writer.writeBytes(f64Scratch);
+}
+function assertI32(value, label) {
+    if (!Number.isSafeInteger(value) || value < -2147483648 || value > 2147483647) {
+        throw new LoroEncodeError(`${label} is out of range: ${value}`);
+    }
+}
+function assertNonnegativeI32(value, label) {
+    if (!Number.isSafeInteger(value) || value < 0 || value > 2147483647) {
+        throw new LoroEncodeError(`${label} is out of range: ${value}`);
+    }
+    return value;
+}
+function assertCollectionLength(length) {
+    if (!Number.isSafeInteger(length) || length < 0 || length > MAX_COLLECTION_LENGTH) {
+        throw new LoroEncodeError(`change value collection is too large: ${length}`);
+    }
+}

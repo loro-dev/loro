@@ -1,0 +1,115 @@
+import { ByteReader, ByteWriter, bytesEqual } from "./bytes";
+import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
+import { readUlebNumber, writeUleb128 } from "./leb128";
+import { LORO_XXHASH_SEED, xxhash32 } from "./xxhash32";
+const DOCUMENT_MAGIC = Uint8Array.of(0x6c, 0x6f, 0x72, 0x6f);
+const DOCUMENT_HEADER_LENGTH = 22;
+export var EncodeMode;
+(function (EncodeMode) {
+    EncodeMode[EncodeMode["FastSnapshot"] = 3] = "FastSnapshot";
+    EncodeMode[EncodeMode["FastUpdates"] = 4] = "FastUpdates";
+})(EncodeMode || (EncodeMode = {}));
+export function decodeDocument(bytes, options = {}) {
+    const reader = new ByteReader(bytes);
+    decodeAssert(bytes.length >= DOCUMENT_HEADER_LENGTH, "document is too short", 0);
+    decodeAssert(bytesEqual(reader.readBytes(4), DOCUMENT_MAGIC), "invalid document magic", 0);
+    const checksumPrefix = reader.readBytes(12);
+    if (options.requireCanonicalPrefix === true) {
+        for (const byte of checksumPrefix) {
+            decodeAssert(byte === 0, "nonzero document checksum prefix", 4);
+        }
+    }
+    const checksum = reader.readU32LE();
+    const rawMode = reader.readU16BE();
+    if (rawMode !== EncodeMode.FastSnapshot && rawMode !== EncodeMode.FastUpdates) {
+        throw new LoroDecodeError(`unsupported document mode ${rawMode}`, 20);
+    }
+    const body = reader.readRemaining();
+    if (options.checkChecksum !== false) {
+        const expected = xxhash32(bytes.subarray(20), LORO_XXHASH_SEED);
+        decodeAssert(checksum === expected, "document checksum mismatch", 16);
+    }
+    return { mode: rawMode, body, checksum, checksumPrefix };
+}
+export function encodeDocument(mode, body) {
+    if (mode !== EncodeMode.FastSnapshot && mode !== EncodeMode.FastUpdates) {
+        throw new LoroEncodeError(`unsupported document mode ${mode}`);
+    }
+    // Header and body share one allocation so the body is copied exactly once;
+    // the checksum covers the mode and body bytes and is backfilled afterwards.
+    const output = new Uint8Array(DOCUMENT_HEADER_LENGTH + body.length);
+    output.set(DOCUMENT_MAGIC, 0);
+    // Bytes 4..16 stay zero as the checksum prefix.
+    output[20] = mode >>> 8;
+    output[21] = mode & 0xff;
+    output.set(body, DOCUMENT_HEADER_LENGTH);
+    const checksum = xxhash32(output.subarray(20), LORO_XXHASH_SEED);
+    output[16] = checksum & 0xff;
+    output[17] = (checksum >>> 8) & 0xff;
+    output[18] = (checksum >>> 16) & 0xff;
+    output[19] = (checksum >>> 24) & 0xff;
+    return output;
+}
+export function decodeFastSnapshotBody(body) {
+    const reader = new ByteReader(body);
+    const oplog = readU32LengthPrefixed(reader, "oplog");
+    const state = readU32LengthPrefixed(reader, "state");
+    const shallowRootState = readU32LengthPrefixed(reader, "shallow root state");
+    reader.assertEnd("trailing FastSnapshot bytes");
+    return { oplog, state, shallowRootState };
+}
+export function encodeFastSnapshotBody(snapshot) {
+    const writer = new ByteWriter(12 + snapshot.oplog.length + snapshot.state.length + snapshot.shallowRootState.length);
+    writeU32LengthPrefixed(writer, snapshot.oplog, "oplog");
+    writeU32LengthPrefixed(writer, snapshot.state, "state");
+    writeU32LengthPrefixed(writer, snapshot.shallowRootState, "shallow root state");
+    return writer.toUint8Array();
+}
+export function decodeFastUpdatesBody(body) {
+    const reader = new ByteReader(body);
+    const blocks = [];
+    while (reader.remaining > 0) {
+        const length = readUlebNumber(reader, 4294967295);
+        blocks.push(reader.readBytes(length));
+    }
+    return blocks;
+}
+export function encodeFastUpdatesBody(blocks) {
+    const writer = new ByteWriter();
+    for (const block of blocks) {
+        writeUleb128(writer, block.length);
+        writer.writeBytes(block);
+    }
+    return writer.toUint8Array();
+}
+export function decodeFastSnapshot(bytes, options) {
+    const document = decodeDocument(bytes, options);
+    decodeAssert(document.mode === EncodeMode.FastSnapshot, "document is not a FastSnapshot", 20);
+    return decodeFastSnapshotBody(document.body);
+}
+export function encodeFastSnapshot(snapshot) {
+    return encodeDocument(EncodeMode.FastSnapshot, encodeFastSnapshotBody(snapshot));
+}
+export function decodeFastUpdates(bytes, options) {
+    const document = decodeDocument(bytes, options);
+    decodeAssert(document.mode === EncodeMode.FastUpdates, "document is not FastUpdates", 20);
+    return decodeFastUpdatesBody(document.body);
+}
+export function encodeFastUpdates(blocks) {
+    return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
+}
+function readU32LengthPrefixed(reader, label) {
+    const offset = reader.position;
+    const length = reader.readU32LE();
+    if (length > reader.remaining) {
+        throw new LoroDecodeError(`${label} length exceeds remaining input`, offset);
+    }
+    return reader.readBytes(length);
+}
+function writeU32LengthPrefixed(writer, value, label) {
+    if (value.length > 4294967295) {
+        throw new LoroEncodeError(`${label} is too large`);
+    }
+    writer.writeU32LE(value.length);
+    writer.writeBytes(value);
+}
