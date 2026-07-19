@@ -3,7 +3,7 @@ import packageMetadata from "../../package.json" with { type: "json" };
 import { bytesEqual, bytesToHex, hexToBytes } from "../codec/bytes";
 import {
   decodeChangeBlock,
-  encodeChangeBlock,
+  encodeSingleChangeBlock,
   validateChangeBlock,
   type DecodedChange,
   type DecodedOperation,
@@ -137,10 +137,6 @@ const FRONTIERS_KEY = Uint8Array.of(0x66, 0x72);
 const START_VERSION_KEY = Uint8Array.of(0x73, 0x76);
 const START_FRONTIERS_KEY = Uint8Array.of(0x73, 0x66);
 let fallbackPeer = 1n;
-
-// Shared empty tables for encodeChangeBlock, which copies them in
-// initializeTables and never writes to the arrays it is given.
-const EMPTY_CHANGE_BLOCK_TABLE: readonly never[] = Object.freeze([]);
 
 // Scratch buffer for Counter snapshot float64 <-> bits conversion. Used
 // synchronously and never retained.
@@ -5127,13 +5123,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #encodeUpdates(records: readonly HistoryRecord[]): Uint8Array {
     const blocks = records.map((record) =>
-      encodeChangeBlock({
-        peers: [record.change.id.peer],
-        keys: record.keys,
-        containers: EMPTY_CHANGE_BLOCK_TABLE,
-        positions: EMPTY_CHANGE_BLOCK_TABLE,
-        changes: [record.change],
-      }),
+      encodeSingleChangeBlock(record.change, record.keys),
     );
     return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
   }
@@ -5144,13 +5134,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     const historyEntries = this.#sortedHistory().map((record) => ({
       key: encodeChangeBlockKey(record.change.id),
-      value: encodeChangeBlock({
-        peers: [record.change.id.peer],
-        keys: record.keys,
-        containers: EMPTY_CHANGE_BLOCK_TABLE,
-        positions: EMPTY_CHANGE_BLOCK_TABLE,
-        changes: [record.change],
-      }),
+      value: encodeSingleChangeBlock(record.change, record.keys),
     }));
     historyEntries.push({
       key: VERSION_KEY,
@@ -5191,13 +5175,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const historyEntries = this.#recordsInVersionRange(startVersion, latestVersion).map(
       (record) => ({
         key: encodeChangeBlockKey(record.change.id),
-        value: encodeChangeBlock({
-          peers: [record.change.id.peer],
-          keys: record.keys,
-          containers: EMPTY_CHANGE_BLOCK_TABLE,
-          positions: EMPTY_CHANGE_BLOCK_TABLE,
-          changes: [record.change],
-        }),
+        value: encodeSingleChangeBlock(record.change, record.keys),
       }),
     );
     historyEntries.push(

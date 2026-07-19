@@ -423,6 +423,133 @@ export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
   });
 }
 
+/**
+ * Encodes a block holding exactly one change, the shape documents emit per
+ * history record. Seeds the peer/key tables directly instead of copying the
+ * wrapper arrays initializeTables accepts, avoiding one block object and two
+ * single-element arrays per record. The bytes are identical to
+ * encodeChangeBlock with `{ peers: [change.id.peer], keys, containers: [],
+ * positions: [], changes: [change] }`; keep the shared encoding steps below in
+ * sync with it.
+ */
+export function encodeSingleChangeBlock(
+  change: DecodedChange,
+  keys: readonly string[],
+): Uint8Array {
+  const peer = change.id.peer;
+  const copiedKeys = [...keys];
+  const keyIndices = new Map<string, number>();
+  for (let index = 0; index < copiedKeys.length; index += 1) {
+    // The first occurrence wins, matching initializeTables.
+    if (!keyIndices.has(copiedKeys[index]!)) {
+      keyIndices.set(copiedKeys[index]!, index);
+    }
+  }
+  const tables: MutableTables = {
+    peers: [peer],
+    peerIndices: new Map([[peer, 0]]),
+    keys: copiedKeys,
+    keyIndices,
+    containers: [],
+    rootContainerIndices: new Map(),
+    normalContainerIndices: new Map(),
+    positions: [],
+    positionIndices: new Map(),
+  };
+
+  const operationContainerIndices: number[] = [];
+  const operationProperties: number[] = [];
+  const operationValueTypes: number[] = [];
+  const operationLengths: number[] = [];
+  const deleteStartIds: MutableDeleteStartIdColumns = {
+    peerIndices: [],
+    counters: [],
+    lengths: [],
+  };
+  const valueWriter = new ByteWriter();
+  const counterStart = change.id.counter;
+  let atomLength = 0;
+  for (const operation of change.operations) {
+    if (operation.counter !== counterStart + atomLength) {
+      throw new LoroEncodeError("operation counters are not continuous");
+    }
+    assertOperationLength(operation.length);
+    const containerIndex = registerContainer(tables, operation.container);
+    const encodedContent = encodeOperationContent(
+      operation.content,
+      tables,
+      deleteStartIds,
+    );
+    const encodedValue = encodeChangeValueContent(encodedContent.value);
+    valueWriter.writeBytes(encodedValue.bytes);
+    operationContainerIndices.push(containerIndex);
+    operationProperties.push(encodedContent.property);
+    operationValueTypes.push(encodedValue.tag);
+    operationLengths.push(operation.length);
+    atomLength += operation.length;
+    if (atomLength > 0x7fff_ffff) {
+      throw new LoroEncodeError("change atom length is out of range");
+    }
+  }
+  if (atomLength === 0) {
+    throw new LoroEncodeError("changes must contain at least one operation atom");
+  }
+  const counterEnd = checkedEncodeCounter(counterStart + atomLength);
+
+  for (const container of tables.containers) {
+    if (container.kind === "root") {
+      registerKey(tables, container.name);
+    } else {
+      registerPeer(tables, container.peer);
+    }
+  }
+  for (const dependency of change.dependencies) {
+    registerPeer(tables, dependency.peer);
+  }
+
+  if (counterStart < 0) {
+    throw new LoroEncodeError("change block counter start must be nonnegative");
+  }
+  const lamportStart = change.lamport;
+  if (
+    !Number.isSafeInteger(lamportStart) ||
+    lamportStart < 0 ||
+    lamportStart > 0xffff_ffff
+  ) {
+    throw new LoroEncodeError("change block lamport range is invalid");
+  }
+  return encodeEncodedChangeBlock({
+    counterStart,
+    counterLength: atomLength,
+    lamportStart,
+    lamportLength: atomLength,
+    changeCount: 1,
+    header: encodeChangesHeader({
+      peer,
+      peers: tables.peers,
+      counters: [counterStart, counterEnd],
+      lengths: [atomLength],
+      lamports: [lamportStart],
+      dependencies: [change.dependencies],
+    }),
+    changeMetadata: encodeChangesMetadata({
+      timestamps: [change.timestamp],
+      commitMessages: [change.message],
+    }),
+    containerIds: encodeContainerArena(tables.containers, tables.peers, tables.keys),
+    keys: encodeChangeKeys(tables.keys),
+    positions: encodePositionArena(tables.positions),
+    operations: encodeEncodedOperationColumns({
+      containerIndices: operationContainerIndices,
+      properties: operationProperties,
+      valueTypes: operationValueTypes,
+      lengths: operationLengths,
+    }),
+    deleteStartIds: encodeDeleteStartIdColumns(deleteStartIds),
+    values: valueWriter.toUint8Array(),
+  });
+}
+
 function decodeOperationContent(
   container: ContainerId,
   property: number,

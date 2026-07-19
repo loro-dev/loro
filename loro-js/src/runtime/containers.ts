@@ -2137,7 +2137,13 @@ export class LoroTree<
   T extends Record<string, unknown> = Record<string, unknown>,
 > extends LoroContainer {
   readonly _nodes = new Map<string, TreeNodeRecord>();
-  readonly _children = new Map<string, OrderedIndex<TreeNodeRecord>>();
+  // Parent-keyed children indexes, keyed numerically (peer -> counter) so tree
+  // reads/writes never stringify ids. Root children live in `_rootChildren`.
+  readonly _children = new Map<
+    bigint,
+    Map<number, OrderedIndex<TreeNodeRecord>>
+  >();
+  private _rootChildren: OrderedIndex<TreeNodeRecord> | undefined;
   _fractionalIndexEnabled = true;
 
   kind(): "Tree" {
@@ -2232,16 +2238,16 @@ export class LoroTree<
   }
 
   _childrenOf(parent: CodecId | undefined): TreeNodeRecord[] {
-    return this._children.get(treeParentKey(parent))?.values() ?? [];
+    return this._childrenIndexFor(parent)?.values() ?? [];
   }
 
   _nodeAt(parent: CodecId | undefined, index: number): LoroTreeNode<T> | undefined {
-    const record = this._children.get(treeParentKey(parent))?.at(index);
+    const record = this._childrenIndexFor(parent)?.at(index);
     return record === undefined ? undefined : new LoroTreeNode<T>(this, record.id);
   }
 
   _rootJsonValueAt(index: number): TreeJsonValue<T> | undefined {
-    const roots = this._children.get(treeParentKey(undefined));
+    const roots = this._childrenIndexFor(undefined);
     const normalized = index < 0 ? (roots?.size ?? 0) + index : index;
     const record = roots?.at(normalized);
     return record === undefined
@@ -2250,12 +2256,12 @@ export class LoroTree<
   }
 
   _rootCount(): number {
-    return this._children.get(treeParentKey(undefined))?.size ?? 0;
+    return this._childrenIndexFor(undefined)?.size ?? 0;
   }
 
   _rootJsonValuesRange(start: number, end: number): TreeJsonValue<T>[] {
     return (
-      this._children.get(treeParentKey(undefined))?.valuesRange(start, end) ?? []
+      this._childrenIndexFor(undefined)?.valuesRange(start, end) ?? []
     ).map(
       (record, offset) => this._recordToValue(record, start + offset) as TreeJsonValue<T>,
     );
@@ -2266,7 +2272,7 @@ export class LoroTree<
     index?: number,
     exclude?: CodecId,
   ): Uint8Array {
-    const children = this._children.get(treeParentKey(parent));
+    const children = this._childrenIndexFor(parent);
     const excluded =
       exclude === undefined ? undefined : this._nodes.get(formatTreeId(exclude));
     const excludedIndex =
@@ -2280,16 +2286,25 @@ export class LoroTree<
     if (!Number.isSafeInteger(position) || position < 0 || position > length) {
       throw new RangeError(`tree index ${position} is out of range`);
     }
-    const siblingAt = (siblingIndex: number): TreeNodeRecord | undefined =>
-      children?.at(
-        excludedIndex !== undefined && siblingIndex >= excludedIndex
-          ? siblingIndex + 1
-          : siblingIndex,
-      );
-    return fractionalIndexBetween(
-      position === 0 ? undefined : siblingAt(position - 1)!.position,
-      position === length ? undefined : siblingAt(position)!.position,
-    );
+    // The sibling lookups below skip the slot the excluded record still
+    // occupies; inlined to avoid allocating a closure per call.
+    let before: Uint8Array | undefined;
+    if (position > 0) {
+      const siblingIndex =
+        excludedIndex !== undefined && position - 1 >= excludedIndex
+          ? position
+          : position - 1;
+      before = children!.at(siblingIndex)!.position;
+    }
+    let after: Uint8Array | undefined;
+    if (position < length) {
+      const siblingIndex =
+        excludedIndex !== undefined && position >= excludedIndex
+          ? position + 1
+          : position;
+      after = children!.at(siblingIndex)!.position;
+    }
+    return fractionalIndexBetween(before, after);
   }
 
   _setRecord(record: TreeNodeRecord): void {
@@ -2305,7 +2320,7 @@ export class LoroTree<
     writer: LastWriter,
     lastMoveId: CodecId,
   ): void {
-    if (!record.deleted) this._children.get(treeParentKey(record.parent))?.delete(record);
+    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
     record.parent = parent;
     record.position = position;
     record.deleted = false;
@@ -2315,19 +2330,19 @@ export class LoroTree<
   }
 
   _deleteRecord(record: TreeNodeRecord, writer: LastWriter): void {
-    if (!record.deleted) this._children.get(treeParentKey(record.parent))?.delete(record);
+    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
     record.deleted = true;
     record.writer = writer;
   }
 
   _removeRecord(record: TreeNodeRecord): void {
-    if (!record.deleted) this._children.get(treeParentKey(record.parent))?.delete(record);
+    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
     record.deleted = true;
     this._nodes.delete(formatTreeId(record.id));
   }
 
   _indexOf(record: TreeNodeRecord): number {
-    return this._children.get(treeParentKey(record.parent))?.indexOf(record) ?? -1;
+    return this._childrenIndexFor(record.parent)?.indexOf(record) ?? -1;
   }
 
   _recordToValue(
@@ -2389,14 +2404,30 @@ export class LoroTree<
   _reset(): void {
     this._nodes.clear();
     this._children.clear();
+    this._rootChildren = undefined;
+  }
+
+  private _childrenIndexFor(
+    parent: CodecId | undefined,
+  ): OrderedIndex<TreeNodeRecord> | undefined {
+    return parent === undefined
+      ? this._rootChildren
+      : this._children.get(parent.peer)?.get(parent.counter);
   }
 
   private _childrenIndex(parent: CodecId | undefined): OrderedIndex<TreeNodeRecord> {
-    const key = treeParentKey(parent);
-    let index = this._children.get(key);
+    if (parent === undefined) {
+      return (this._rootChildren ??= new OrderedIndex(compareTreeRecords));
+    }
+    let byCounter = this._children.get(parent.peer);
+    if (byCounter === undefined) {
+      byCounter = new Map();
+      this._children.set(parent.peer, byCounter);
+    }
+    let index = byCounter.get(parent.counter);
     if (index === undefined) {
       index = new OrderedIndex(compareTreeRecords);
-      this._children.set(key, index);
+      byCounter.set(parent.counter, index);
     }
     return index;
   }
@@ -3246,10 +3277,6 @@ function codecIdsCompare(left: CodecId, right: CodecId): number {
     : left.peer > right.peer
       ? 1
       : left.counter - right.counter;
-}
-
-function treeParentKey(parent: CodecId | undefined): string {
-  return parent === undefined ? "root" : sequenceIdKey(parent);
 }
 
 function textElementsToDelta(

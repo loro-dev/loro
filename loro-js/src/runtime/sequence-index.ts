@@ -245,8 +245,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       }
       node = stack.pop()!;
       for (let offset = 0; offset < nodeLength(node); offset += 1) {
-        const element = nodeElement(node, offset);
-        if (!element.deleted && visit(element) === false) return;
+        if (nodeDeleted(node, offset)) continue;
+        if (visit(nodeElement(node, offset)) === false) return;
       }
       node = visibleCount(node.right) > 0 ? node.right : undefined;
     }
@@ -770,9 +770,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
         for (const element of elements) {
           const id = element.id;
           if (this.#locationsByPeer.get(id.peer)?.has(id.counter) === true) {
-            throw new Error(
-              `duplicate sequence id ${id.counter}@${id.peer.toString()}`,
-            );
+            throw new Error(`duplicate sequence id ${id.counter}@${id.peer.toString()}`);
           }
         }
       } else {
@@ -1047,28 +1045,34 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
   ): DeleteRunResult {
     const locations = this.#locationsByPeer.get(startId.peer);
     if (locations === undefined) return { found: false, changed: false };
-    const elements: T[] = [];
+    // Resolves locations to (node, offset) pairs so compact-span targets are
+    // read and written through column helpers without materializing views.
+    const targetNodes: SequenceNode<T>[] = [];
+    const targetOffsets: number[] = [];
     locations.forEach(startId.counter, startId.counter + length, (location) => {
-      elements.push(
-        typeof location === "number" ? this.#elementAtLocation(location) : location,
-      );
+      if (typeof location === "number") {
+        targetNodes.push(this.#nodeAtLocation(location));
+        targetOffsets.push(location % SEQUENCE_LOCATION_STRIDE);
+      } else {
+        targetNodes.push(elementNode(location)!);
+        targetOffsets.push(elementOffset(location)!);
+      }
     });
-    if (elements.length === 0) return { found: false, changed: false };
+    if (targetNodes.length === 0) return { found: false, changed: false };
 
-    if (elements.length <= MAX_SEQUENCE_SPAN) {
+    if (targetNodes.length <= MAX_SEQUENCE_SPAN) {
       const materializedNodes: SequenceNode<T>[] = [];
-      for (const element of elements) {
-        const node = elementNode(element)!;
+      for (const node of targetNodes) {
         if (materializedNodes.includes(node)) continue;
         materializedNodes.push(node);
-        materializeElementDeletion(element, this.#metrics);
+        materializeNodeDeletion(node, this.#metrics);
       }
 
       const changedNodes: SequenceNode<T>[] = [];
-      for (const element of elements) {
-        if (element.deleted === deleted) continue;
-        element.deleted = deleted;
-        const node = elementNode(element)!;
+      for (let index = 0; index < targetNodes.length; index += 1) {
+        const node = targetNodes[index]!;
+        if (nodeDeleted(node, targetOffsets[index]!) === deleted) continue;
+        setNodeDeleted(node, targetOffsets[index]!, deleted);
         if (!changedNodes.includes(node)) changedNodes.push(node);
       }
       if (changedNodes.length === 0) return { found: true, changed: false };
@@ -1078,18 +1082,18 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     }
 
     const materializedNodes = new Set<SequenceNode<T>>();
-    for (const element of elements) {
-      const node = elementNode(element)!;
+    for (const node of targetNodes) {
       if (materializedNodes.has(node)) continue;
       materializedNodes.add(node);
-      materializeElementDeletion(element, this.#metrics);
+      materializeNodeDeletion(node, this.#metrics);
     }
 
     const changedNodes = new Set<SequenceNode<T>>();
-    for (const element of elements) {
-      if (element.deleted === deleted) continue;
-      element.deleted = deleted;
-      changedNodes.add(elementNode(element)!);
+    for (let index = 0; index < targetNodes.length; index += 1) {
+      const node = targetNodes[index]!;
+      if (nodeDeleted(node, targetOffsets[index]!) === deleted) continue;
+      setNodeDeleted(node, targetOffsets[index]!, deleted);
+      changedNodes.add(node);
     }
     if (changedNodes.size === 0) return { found: true, changed: false };
     const affected = new Set<SequenceNode<T>>();
@@ -1306,8 +1310,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     const offset = elementOffset(element);
     if (node === undefined || offset === undefined) return undefined;
     for (let index = offset + 1; index < nodeLength(node); index += 1) {
-      const next = nodeElement(node, index);
-      if (!next.deleted) return next;
+      if (!nodeDeleted(node, index)) return nodeElement(node, index);
     }
     const right = firstVisibleElement(node.right, this.#metrics);
     if (right !== undefined) return right;
@@ -1316,8 +1319,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const parent = current.parent;
       if (current === parent.left) {
         for (let index = 0; index < nodeLength(parent); index += 1) {
-          const next = nodeElement(parent, index);
-          if (!next.deleted) return next;
+          if (!nodeDeleted(parent, index)) return nodeElement(parent, index);
         }
         const sibling = firstVisibleElement(parent.right, this.#metrics);
         if (sibling !== undefined) return sibling;
@@ -1333,8 +1335,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     const offset = elementOffset(element);
     if (node === undefined || offset === undefined) return undefined;
     for (let index = offset - 1; index >= 0; index -= 1) {
-      const previous = nodeElement(node, index);
-      if (!previous.deleted) return previous;
+      if (!nodeDeleted(node, index)) return nodeElement(node, index);
     }
     const left = lastVisibleElement(node.left, this.#metrics);
     if (left !== undefined) return left;
@@ -1343,8 +1344,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const parent = current.parent;
       if (current === parent.right) {
         for (let index = nodeLength(parent) - 1; index >= 0; index -= 1) {
-          const previous = nodeElement(parent, index);
-          if (!previous.deleted) return previous;
+          if (!nodeDeleted(parent, index)) return nodeElement(parent, index);
         }
         const sibling = lastVisibleElement(parent.left, this.#metrics);
         if (sibling !== undefined) return sibling;
@@ -1390,9 +1390,18 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     const causalVersion = new Map(version);
     const included = (id: SequenceId): boolean =>
       id.counter < (causalVersion.get(id.peer) ?? 0);
-    const isVisible = (element: T): boolean =>
-      included(element.id) &&
-      this.everyDeletion(element, (deleteId) => !included(deleteId));
+    const deletionIncluded = (deleteId: SequenceId): boolean => !included(deleteId);
+    // Column-read visibility probe: scans stay allocation-free over compact
+    // spans and only returned elements are materialized by the callers.
+    const isVisible = (node: SequenceNode<T>, offset: number): boolean => {
+      scratchSequenceCausalId.peer = nodePeer(node, offset);
+      scratchSequenceCausalId.counter = nodeCounter(node, offset);
+      return (
+        included(scratchSequenceCausalId) &&
+        this.#deletionRuns.everyDeletion(scratchSequenceCausalId, deletionIncluded) &&
+        everyNodeElementDeletion(node, offset, deletionIncluded)
+      );
+    };
     const causalCounts = new Map<SequenceNode<T>, number>();
     const causalCount = (node: SequenceNode<T> | undefined): number => {
       if (node === undefined) return 0;
@@ -1417,7 +1426,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       }
       let count = causalCount(node.left) + causalCount(node.right);
       for (let offset = 0; offset < nodeLength(node); offset += 1) {
-        if (isVisible(nodeElement(node, offset))) count += 1;
+        if (isVisible(node, offset)) count += 1;
       }
       causalCounts.set(node, count);
       return count;
@@ -1439,9 +1448,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
           }
           remaining -= leftCount;
           for (let offset = 0; offset < nodeLength(node); offset += 1) {
-            const element = nodeElement(node, offset);
-            if (!isVisible(element)) continue;
-            if (remaining === 0) return element;
+            if (!isVisible(node, offset)) continue;
+            if (remaining === 0) return nodeElement(node, offset);
             remaining -= 1;
           }
           node = node.right;
@@ -1693,10 +1701,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     }
     // Iterates deletion metadata in place: the common fresh element carries
     // none and must not allocate an empty id list.
-    if (
-      element.deletedByPeer !== undefined &&
-      element.deletedByCounter !== undefined
-    ) {
+    if (element.deletedByPeer !== undefined && element.deletedByCounter !== undefined) {
       const deletionId = {
         peer: element.deletedByPeer,
         counter: element.deletedByCounter,
@@ -2093,14 +2098,18 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
 // id argument or query deletions reentrantly.
 const scratchSequenceDeletionId = { peer: 0n, counter: 0 };
 
+// Reused id targets for visible-id-run starts and causal-view visibility
+// probes, so column scans do not allocate an id per visited element.
+// `appendSequenceIdRun` copies the run start before retaining it; deletion
+// predicates must not retain the ids they receive.
+const scratchSequenceRunId = { peer: 0n, counter: 0 };
+const scratchSequenceCausalId = { peer: 0n, counter: 0 };
+
 export function someSequenceDeletion(
   element: IndexedSequenceElement,
   predicate: (id: SequenceId) => boolean,
 ): boolean {
-  if (
-    element.deletedByPeer !== undefined &&
-    element.deletedByCounter !== undefined
-  ) {
+  if (element.deletedByPeer !== undefined && element.deletedByCounter !== undefined) {
     scratchSequenceDeletionId.peer = element.deletedByPeer;
     scratchSequenceDeletionId.counter = element.deletedByCounter;
     if (predicate(scratchSequenceDeletionId)) return true;
@@ -2112,15 +2121,36 @@ export function everySequenceDeletion(
   element: IndexedSequenceElement,
   predicate: (id: SequenceId) => boolean,
 ): boolean {
-  if (
-    element.deletedByPeer !== undefined &&
-    element.deletedByCounter !== undefined
-  ) {
+  if (element.deletedByPeer !== undefined && element.deletedByCounter !== undefined) {
     scratchSequenceDeletionId.peer = element.deletedByPeer;
     scratchSequenceDeletionId.counter = element.deletedByCounter;
     if (!predicate(scratchSequenceDeletionId)) return false;
   }
   return element.deletedBy?.every(predicate) ?? true;
+}
+
+/**
+ * Column-read variant of `everySequenceDeletion`: compact-span deletion
+ * metadata is checked through `deletionIdsAt` without materializing an
+ * element view. Plain elements are read in place.
+ */
+function everyNodeElementDeletion<T extends IndexedSequenceElement>(
+  node: SequenceNode<T>,
+  offset: number,
+  predicate: (id: SequenceId) => boolean,
+): boolean {
+  if (node.isSpan) {
+    const deletionIds = (node.element as SequenceSpan<T>).deletionIdsAt(offset);
+    for (let index = 0; index < deletionIds.length; index += 1) {
+      if (!predicate(deletionIds[index]!)) return false;
+    }
+    return true;
+  }
+  const storage = node.element as T | T[];
+  return everySequenceDeletion(
+    Array.isArray(storage) ? storage[offset]! : storage,
+    predicate,
+  );
 }
 
 function elementNode<T extends IndexedSequenceElement>(
@@ -2763,6 +2793,13 @@ function materializeElementDeletion<T extends IndexedSequenceElement>(
 ): void {
   const node = elementNode(element);
   if (node === undefined) return;
+  materializeNodeDeletion(node, metrics);
+}
+
+function materializeNodeDeletion<T extends IndexedSequenceElement>(
+  node: SequenceNode<T>,
+  metrics: (element: T) => SequenceMetrics,
+): void {
   const path: SequenceNode<T>[] = [];
   let current: SequenceNode<T> | undefined = node;
   while (current !== undefined) {
@@ -2957,9 +2994,12 @@ function visitVisibleIdRuns<T extends IndexedSequenceElement>(
     } else {
       let visibleOffset = 0;
       for (let offset = 0; offset < nodeLength(node); offset += 1) {
-        const element = nodeElement(node, offset);
-        if (element.deleted) continue;
-        if (visibleOffset >= ownStart && visibleOffset < ownEnd) visit(element.id, 1);
+        if (nodeDeleted(node, offset)) continue;
+        if (visibleOffset >= ownStart && visibleOffset < ownEnd) {
+          // The visit callback may retain the id, so each run start is a
+          // fresh object; only the element view allocation is avoided.
+          visit({ peer: nodePeer(node, offset), counter: nodeCounter(node, offset) }, 1);
+        }
         visibleOffset += 1;
         if (visibleOffset >= ownEnd) break;
       }
@@ -3086,16 +3126,11 @@ function visitVisibleMetricRangesForIds<T extends IndexedSequenceElement>(
   visitVisibleMetricRangesForIds(node.left, base, metric, targets, metrics, visit);
   let ownBase = base + visibleMetric(node.left, metric);
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const element = nodeElement(node, offset);
-    if (element.deleted) continue;
-    const length = metrics(element)[metric];
+    if (nodeDeleted(node, offset)) continue;
+    const length = nodeMetrics(node, offset, metrics)[metric];
+    const counter = nodeCounter(node, offset);
     if (
-      counterRangeRelation(
-        targets,
-        element.id.peer,
-        element.id.counter,
-        element.id.counter + 1,
-      ) === 1
+      counterRangeRelation(targets, nodePeer(node, offset), counter, counter + 1) === 1
     ) {
       visit(ownBase, ownBase + length);
     }
@@ -3243,9 +3278,12 @@ function visitVisibleRange<T extends IndexedSequenceElement>(
   }
   let ownOffset = leftCount;
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const element = nodeElement(node, offset);
-    if (element.deleted) continue;
-    if (start <= ownOffset && end > ownOffset && visit(element) === false) {
+    if (nodeDeleted(node, offset)) continue;
+    if (
+      start <= ownOffset &&
+      end > ownOffset &&
+      visit(nodeElement(node, offset)) === false
+    ) {
       return false;
     }
     ownOffset += 1;
@@ -3269,7 +3307,7 @@ function collectCausalRange<T extends IndexedSequenceElement>(
   end: number,
   output: T[],
   count: (node: SequenceNode<T> | undefined) => number,
-  isVisible: (element: T) => boolean,
+  isVisible: (node: SequenceNode<T>, offset: number) => boolean,
   metrics: (element: T) => SequenceMetrics,
 ): void {
   if (node === undefined || start >= end) return;
@@ -3288,9 +3326,8 @@ function collectCausalRange<T extends IndexedSequenceElement>(
   }
   let ownOffset = leftCount;
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const element = nodeElement(node, offset);
-    if (!isVisible(element)) continue;
-    if (start <= ownOffset && end > ownOffset) output.push(element);
+    if (!isVisible(node, offset)) continue;
+    if (start <= ownOffset && end > ownOffset) output.push(nodeElement(node, offset));
     ownOffset += 1;
     if (ownOffset >= end) break;
   }
@@ -3313,7 +3350,7 @@ function collectCausalIdRuns<T extends IndexedSequenceElement>(
   end: number,
   output: SequenceIdRun[],
   count: (node: SequenceNode<T> | undefined) => number,
-  isVisible: (element: T) => boolean,
+  isVisible: (node: SequenceNode<T>, offset: number) => boolean,
 ): void {
   if (node === undefined || start >= end) return;
   const nodeCount = count(node);
@@ -3339,10 +3376,12 @@ function collectCausalIdRuns<T extends IndexedSequenceElement>(
   }
   let ownOffset = leftCount;
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const element = nodeElement(node, offset);
-    if (!isVisible(element)) continue;
+    if (!isVisible(node, offset)) continue;
     if (start <= ownOffset && end > ownOffset) {
-      appendSequenceIdRun(output, element.id, 1);
+      // appendSequenceIdRun copies the start id before retaining it.
+      scratchSequenceRunId.peer = nodePeer(node, offset);
+      scratchSequenceRunId.counter = nodeCounter(node, offset);
+      appendSequenceIdRun(output, scratchSequenceRunId, 1);
     }
     ownOffset += 1;
     if (ownOffset >= end) break;
@@ -3455,8 +3494,7 @@ function firstVisibleElement<T extends IndexedSequenceElement>(
       continue;
     }
     for (let offset = 0; offset < nodeLength(node); offset += 1) {
-      const element = nodeElement(node, offset);
-      if (!element.deleted) return element;
+      if (!nodeDeleted(node, offset)) return nodeElement(node, offset);
     }
     node = node.right;
   }
@@ -3474,8 +3512,7 @@ function lastVisibleElement<T extends IndexedSequenceElement>(
       continue;
     }
     for (let offset = nodeLength(node) - 1; offset >= 0; offset -= 1) {
-      const element = nodeElement(node, offset);
-      if (!element.deleted) return element;
+      if (!nodeDeleted(node, offset)) return nodeElement(node, offset);
     }
     node = node.left;
   }
