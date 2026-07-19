@@ -565,10 +565,7 @@ class FilterParser {
   #parseComparison(): unknown {
     const left = this.#parseUnary();
     const token = this.#peek();
-    if (
-      token.kind !== "operator" ||
-      !COMPARISON_OPERATORS.includes(token.value)
-    ) {
+    if (token.kind !== "operator" || !COMPARISON_OPERATORS.includes(token.value)) {
       return left;
     }
     this.#index += 1;

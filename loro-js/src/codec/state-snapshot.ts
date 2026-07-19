@@ -898,10 +898,7 @@ function assertDecodedPeerIndex(index: bigint, peerCount: bigint, label: string)
 }
 
 function assertEncodedPeerIndex(index: bigint, peerCount: bigint, label: string): void {
-  encodeAssert(
-    index >= 0n && index < peerCount,
-    `${label} peer index out of range`,
-  );
+  encodeAssert(index >= 0n && index < peerCount, `${label} peer index out of range`);
 }
 
 function validateDecodedText(
@@ -975,8 +972,7 @@ function validateEncodedTree(state: TreeStateSnapshot): void {
     assertEncodedPeerIndex(node.peerIndex, peerCount, "tree node ID");
     assertEncodedPeerIndex(node.lastSetPeerIndex, peerCount, "tree last-set ID");
     encodeAssert(
-      node.parentIndexPlusTwo >= 0n &&
-        node.parentIndexPlusTwo <= parentIndexBound,
+      node.parentIndexPlusTwo >= 0n && node.parentIndexPlusTwo <= parentIndexBound,
       "tree parent index out of range",
     );
     encodeAssert(
