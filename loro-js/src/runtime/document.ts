@@ -776,10 +776,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         const endFrontiers = encodedEndFrontiers!;
         this.#validateDeferredFrontierBlocks(oplogEntries, endVersion, endFrontiers);
         installStagedShallowRoot();
-        deferredChanged = new Set(
-          hydratedStore.containers.map(({ id }) => formatContainerId(id)),
-        );
-        if (this.#hasEventSubscribers()) {
+        if (emitting) {
+          deferredChanged = new Set(
+            hydratedStore.containers.map(({ id }) => formatContainerId(id)),
+          );
           beforeValues = this.#captureContainerEventValues(deferredChanged);
         }
         this.#hydrateState(hydratedStore, preparedTextSnapshotIds);
@@ -5521,12 +5521,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       };
     }
     if (container instanceof LoroCounter) {
-      const bytes = new Uint8Array(8);
-      new DataView(bytes.buffer).setFloat64(0, container.value, true);
-      let bits = 0n;
-      for (let index = 7; index >= 0; index -= 1)
-        bits = (bits << 8n) | BigInt(bytes[index]!);
-      return { kind: CodecContainerType.Counter, bits };
+      float64BitsScratch.setFloat64(0, container.value, true);
+      return {
+        kind: CodecContainerType.Counter,
+        bits: float64BitsScratch.getBigUint64(0, true),
+      };
     }
     if (!(container instanceof LoroList)) {
       throw new TypeError(`unsupported container kind ${container.kind()}`);
@@ -5544,22 +5543,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return BigInt(index);
     };
     if (container instanceof LoroMovableList) {
+      // The state-snapshot encoder only reads item fields, so every slot can
+      // reference the same frozen item instead of allocating one per element.
+      const items: MovableListStateItem[] = [SHARED_MOVABLE_LIST_STATE_ITEM];
+      for (let index = 0; index < visible.length; index += 1) {
+        items.push(SHARED_MOVABLE_LIST_STATE_ITEM);
+      }
       return {
         kind: CodecContainerType.MovableList,
         values: visible.map((element) => this.#encodeSnapshotValue(element.value)),
         peers,
-        items: [
-          {
-            invisibleListItems: 0n,
-            positionIdEqualsElementId: true,
-            elementIdEqualsLastSetId: true,
-          },
-          ...visible.map(() => ({
-            invisibleListItems: 0n,
-            positionIdEqualsElementId: true,
-            elementIdEqualsLastSetId: true,
-          })),
-        ],
+        items,
         listItemIds: visible.map((element) => ({
           peerIndex: peerIndex(element.id.peer),
           counter: element.id.counter,
@@ -5803,13 +5797,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         container instanceof LoroCounter &&
         state.kind === CodecContainerType.Counter
       ) {
-        const bytes = new Uint8Array(8);
-        let bits = state.bits;
-        for (let index = 0; index < 8; index += 1) {
-          bytes[index] = Number(bits & 0xffn);
-          bits >>= 8n;
-        }
-        container._value = new DataView(bytes.buffer).getFloat64(0, true);
+        float64BitsScratch.setBigUint64(0, state.bits, true);
+        container._value = float64BitsScratch.getFloat64(0, true);
       } else if (
         container instanceof LoroMovableList &&
         state.kind === CodecContainerType.MovableList
@@ -5940,13 +5929,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       events.push({ target: id as ContainerID, diff, path: containerPath(container) });
     }
     if (events.length === 0) return;
-    const base = {
-      by,
-      ...(origin === undefined ? {} : { origin }),
-      events,
-      from: from.map(formatOpId),
-      to: to.map(formatOpId),
-    } satisfies LoroEventBatch;
+    const fromFormatted = from.map(formatOpId);
+    const toFormatted = to.map(formatOpId);
+    // Two explicit literals: the key set differs by `origin`, so each branch
+    // keeps one stable object shape and avoids CopyDataProperties.
+    const base = (
+      origin === undefined
+        ? { by, events, from: fromFormatted, to: toFormatted }
+        : { by, origin, events, from: fromFormatted, to: toFormatted }
+    ) satisfies LoroEventBatch;
     for (const listener of this.#subscribers) listener(base);
     const relevantByTarget = new Map<string, LoroEvent[]>();
     for (const event of events) {
@@ -5964,7 +5955,23 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const [target, relevant] of relevantByTarget) {
       const listeners = this.#containerSubscribers.get(target);
       if (listeners === undefined) continue;
-      const batch = { ...base, currentTarget: target as ContainerID, events: relevant };
+      const batch =
+        origin === undefined
+          ? {
+              by,
+              events: relevant,
+              from: fromFormatted,
+              to: toFormatted,
+              currentTarget: target as ContainerID,
+            }
+          : {
+              by,
+              origin,
+              events: relevant,
+              from: fromFormatted,
+              to: toFormatted,
+              currentTarget: target as ContainerID,
+            };
       for (const listener of listeners) listener(batch);
     }
   }
