@@ -25,6 +25,20 @@ into a non-empty document. The strict corpus records these known gaps. In
 particular, `fuzz/corpus/strict/richtext-anchor.json` demonstrates the remaining
 anchor/entity-position mismatch after a marked range receives a later insert.
 
+Event normalization is payload-only. Subscription callbacks enqueue raw event
+batches, which are normalized after the public command returns. Do not query the
+live document from a callback: the WASM adapter flushes queued callbacks at the
+outer JS method boundary while the pure TypeScript runtime emits during the
+internal commit, so callback-time state can differ even when event payloads and
+the resulting document state agree.
+
+Map event recording is operation-aware rather than only comparing the values at
+the start and end of a batch. If a key visibly changes and is then restored in
+the same local or imported change, Rust reports the final value in `updated`, so
+the TypeScript runtime must retain that key. An incoming same-value winner that
+never changes the visible value remains an event no-op. The regression scenario
+is `fuzz/corpus/local-map-delete-restore-event.json`.
+
 Run the complete green smoke from the repository root with:
 
 ```sh

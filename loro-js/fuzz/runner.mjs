@@ -48,6 +48,26 @@ function canonicalVersion(version) {
   return canonicalize(json);
 }
 
+function releaseResource(resource) {
+  resource?.free?.();
+}
+
+function releaseResources(resources) {
+  for (const resource of resources) releaseResource(resource);
+}
+
+function usingResource(resource, action) {
+  try {
+    return action(resource);
+  } finally {
+    releaseResource(resource);
+  }
+}
+
+function canonicalVersionAndRelease(version) {
+  return usingResource(version, canonicalVersion);
+}
+
 function canonicalFrontiers(frontiers) {
   return frontiers
     .map(({ peer, counter }) => `${counter}@${peer}`)
@@ -68,7 +88,7 @@ function normalizeDeepWithId(value, key) {
   );
 }
 
-function normalizeEventBatch(batch, doc) {
+function normalizeEventBatch(batch) {
   const normalized = canonicalize(batch);
   // `origin` is binding metadata rather than a CRDT diff. The pure TS runtime
   // does not currently expose every synthetic Rust origin (for example
@@ -82,16 +102,20 @@ function normalizeEventBatch(batch, doc) {
     }
   }
   if (Array.isArray(normalized.events)) {
+    const deletedTreeNodes = collectDeletedTreeNodes(normalized.events);
     for (const event of normalized.events) {
       if (Array.isArray(event.diff?.diff)) {
-        event.diff.diff = canonicalizeDeltaOrder(coalesceDelta(event.diff.diff));
+        event.diff.diff = trimPlainTrailingRetains(
+          canonicalizeDeltaOrder(coalesceDelta(event.diff.diff)),
+        );
       }
       if (event.diff?.type === "tree" && Array.isArray(event.diff.diff)) {
         event.diff.diff = removeTransientTreeActions(event.diff.diff);
       }
     }
     normalized.events = normalized.events.filter(
-      (event) => eventHasEffect(event) && !targetsDeletedTreeNode(event, doc),
+      (event) =>
+        eventHasEffect(event) && !targetsTreeNodeDeletedInBatch(event, deletedTreeNodes),
     );
     normalized.events.sort((left, right) =>
       JSON.stringify([left.target, left.path]).localeCompare(
@@ -100,6 +124,21 @@ function normalizeEventBatch(batch, doc) {
     );
   }
   return canonicalize(normalized);
+}
+
+function collectDeletedTreeNodes(events) {
+  const deleted = new Set();
+  for (const event of events) {
+    if (event.diff?.type !== "tree" || !Array.isArray(event.diff.diff)) continue;
+    const root = event.path?.[0];
+    if (typeof root !== "string") continue;
+    for (const action of event.diff.diff) {
+      if (action.action === "delete" && typeof action.target === "string") {
+        deleted.add(JSON.stringify([root, action.target]));
+      }
+    }
+  }
+  return deleted;
 }
 
 function canonicalizeDeltaOrder(delta) {
@@ -127,34 +166,230 @@ function canonicalizeDeltaOrder(delta) {
 }
 
 function removeTransientTreeActions(actions) {
-  const transientTargets = new Set();
+  const actionsByTarget = new Map();
   for (const action of actions) {
-    if (action.action !== "delete") continue;
-    if (
-      actions.some(
-        (candidate) =>
-          candidate.target === action.target && candidate.action === "create",
-      )
-    ) {
-      transientTargets.add(action.target);
+    let targetActions = actionsByTarget.get(action.target);
+    if (targetActions === undefined) {
+      targetActions = [];
+      actionsByTarget.set(action.target, targetActions);
+    }
+    targetActions.push(action);
+  }
+  const finalParents = new Map();
+  const finalDeleted = new Set();
+  for (const action of actions) {
+    if (action.action === "delete") {
+      finalDeleted.add(action.target);
+    } else {
+      finalDeleted.delete(action.target);
+      finalParents.set(action.target, normalizeTreeParent(action.parent));
     }
   }
-  return actions.filter((action) => !transientTargets.has(action.target));
+  const endsDeleted = (target, visiting = new Set()) => {
+    if (finalDeleted.has(target)) return true;
+    const parent = finalParents.get(target);
+    if (parent === undefined || parent === null || visiting.has(parent)) return false;
+    visiting.add(parent);
+    return endsDeleted(parent, visiting);
+  };
+  const transientTargets = new Set();
+  for (const [target, targetActions] of actionsByTarget) {
+    if (targetActions[0]?.action === "create" && endsDeleted(target)) {
+      transientTargets.add(target);
+    }
+  }
+
+  const positions = new Map();
+  const countBefore = (parent, index, target) => {
+    let count = 0;
+    for (const [candidate, position] of positions) {
+      if (
+        candidate !== target &&
+        transientTargets.has(candidate) &&
+        position.parent === parent &&
+        position.index < index
+      ) {
+        count += 1;
+      }
+    }
+    return count;
+  };
+  const removeAt = (parent, index, target) => {
+    positions.delete(target);
+    for (const position of positions.values()) {
+      if (position.parent === parent && position.index > index) position.index -= 1;
+    }
+  };
+  const insertAt = (parent, index, target) => {
+    for (const [candidate, position] of positions) {
+      if (candidate !== target && position.parent === parent && position.index >= index) {
+        position.index += 1;
+      }
+    }
+    positions.set(target, { parent, index });
+  };
+
+  const output = [];
+  for (const action of actions) {
+    const transient = transientTargets.has(action.target);
+    const normalized = structuredClone(action);
+    if (action.action === "create") {
+      const parent = normalizeTreeParent(action.parent);
+      if (!transient) {
+        normalized.index -= countBefore(parent, action.index, action.target);
+      }
+      insertAt(parent, action.index, action.target);
+    } else if (action.action === "delete") {
+      const oldParent = normalizeTreeParent(action.oldParent);
+      if (!transient) {
+        normalized.oldIndex -= countBefore(oldParent, action.oldIndex, action.target);
+      }
+      const position = positions.get(action.target) ?? {
+        parent: oldParent,
+        index: action.oldIndex,
+      };
+      removeAt(position.parent, position.index, action.target);
+    } else if (action.action === "move") {
+      const oldParent = normalizeTreeParent(action.oldParent);
+      const parent = normalizeTreeParent(action.parent);
+      if (!transient) {
+        normalized.oldIndex -= countBefore(oldParent, action.oldIndex, action.target);
+      }
+      const previous = positions.get(action.target) ?? {
+        parent: oldParent,
+        index: action.oldIndex,
+      };
+      removeAt(previous.parent, previous.index, action.target);
+      if (!transient) {
+        normalized.index -= countBefore(parent, action.index, action.target);
+      }
+      insertAt(parent, action.index, action.target);
+    }
+    if (!transient) output.push(normalized);
+  }
+  const hasComposedTarget = output.some((action, index) =>
+    output.slice(index + 1).some((candidate) => candidate.target === action.target),
+  );
+  return coalesceTreeActions(
+    output,
+    hasComposedTarget ? positions : undefined,
+    transientTargets,
+  );
 }
 
-function targetsDeletedTreeNode(event, doc) {
+function coalesceTreeActions(actions, finalPositions, transientTargets) {
+  const actionsByTarget = new Map();
+  for (const action of actions) {
+    let targetActions = actionsByTarget.get(action.target);
+    if (targetActions === undefined) {
+      targetActions = [];
+      actionsByTarget.set(action.target, targetActions);
+    }
+    targetActions.push(action);
+  }
+  const departures = [];
+  if (finalPositions === undefined) {
+    for (const [target, targetActions] of actionsByTarget) {
+      const first = targetActions[0];
+      if (first.action === "create") continue;
+      const last = targetActions.at(-1);
+      const oldParent = normalizeTreeParent(first.oldParent);
+      const parent =
+        last.action === "delete" ? undefined : normalizeTreeParent(last.parent);
+      if (parent !== oldParent) {
+        departures.push({ target, parent: oldParent, index: first.oldIndex });
+      }
+    }
+  }
+  const finalIndex = (target, parent, fallback) => {
+    const position = finalPositions?.get(target);
+    if (position === undefined) {
+      const removedBefore = departures.filter(
+        (departure) =>
+          departure.target !== target &&
+          departure.parent === parent &&
+          departure.index < fallback,
+      ).length;
+      return fallback - removedBefore;
+    }
+    let removedBefore = 0;
+    for (const [candidate, candidatePosition] of finalPositions) {
+      if (
+        transientTargets.has(candidate) &&
+        candidatePosition.parent === position.parent &&
+        candidatePosition.index < position.index
+      ) {
+        removedBefore += 1;
+      }
+    }
+    return position.index - removedBefore;
+  };
+  const output = [];
+  for (const [target, targetActions] of actionsByTarget) {
+    const first = targetActions[0];
+    const last = targetActions.at(-1);
+    const existedBefore = first.action !== "create";
+    const existsAfter = last.action !== "delete";
+    if (!existedBefore && !existsAfter) continue;
+    if (!existedBefore) {
+      output.push({
+        target,
+        action: "create",
+        parent: last.parent,
+        index: finalIndex(target, normalizeTreeParent(last.parent), last.index),
+        fractional_index: last.fractional_index,
+      });
+      continue;
+    }
+    const oldParent = normalizeTreeParent(first.oldParent);
+    const oldIndex = first.oldIndex;
+    if (!existsAfter) {
+      output.push({ target, action: "delete", oldParent, oldIndex });
+      continue;
+    }
+    const parent = normalizeTreeParent(last.parent);
+    const index = finalIndex(target, parent, last.index);
+    if (parent === oldParent && index === oldIndex) continue;
+    output.push({
+      target,
+      action: "move",
+      parent,
+      index,
+      fractional_index: last.fractional_index,
+      oldParent,
+      oldIndex,
+    });
+  }
+  return output.sort((left, right) => left.target.localeCompare(right.target));
+}
+
+function normalizeTreeParent(parent) {
+  return parent ?? null;
+}
+
+function targetsTreeNodeDeletedInBatch(event, deletedTreeNodes) {
   const [root, node] = event.path ?? [];
   return (
     typeof root === "string" &&
     typeof node === "string" &&
-    node.includes("@") &&
-    doc.getTree(root).isNodeDeleted(node)
+    deletedTreeNodes.has(JSON.stringify([root, node]))
   );
 }
 
 function eventHasEffect(event) {
   const diff = event.diff;
-  if (Array.isArray(diff?.diff)) return diff.diff.length > 0;
+  if (Array.isArray(diff?.diff)) {
+    if (diff.type === "list" || diff.type === "text") {
+      return diff.diff.some(
+        (operation) =>
+          operation.insert !== undefined ||
+          operation.delete !== undefined ||
+          (operation.attributes !== undefined &&
+            Object.keys(operation.attributes).length > 0),
+      );
+    }
+    return diff.diff.length > 0;
+  }
   if (diff?.type === "map") return Object.keys(diff.updated ?? {}).length > 0;
   if (diff?.type === "counter") return diff.increment !== 0;
   return true;
@@ -201,39 +436,60 @@ function coalesceDelta(delta) {
   return output;
 }
 
+function trimPlainTrailingRetains(delta) {
+  while (delta.length > 0) {
+    const operation = delta.at(-1);
+    if (
+      typeof operation?.retain !== "number" ||
+      (operation.attributes !== undefined && Object.keys(operation.attributes).length > 0)
+    ) {
+      break;
+    }
+    delta.pop();
+  }
+  return delta;
+}
+
 export function observeDoc(doc) {
   const pendingLength = doc.getPendingTxnLength();
   const tree = doc.getTree("tree");
-  const treeNodes = tree
-    .getNodes({ withDeleted: true })
-    .map((node) => node.toJSON())
-    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  const observation = {
-    json: doc.toJSON(),
-    deepWithId: normalizeDeepWithId(doc.getDeepValueWithID()),
-    textDelta: doc.getText("text").toDelta(),
-    treeNodes,
-    version: canonicalVersion(doc.version()),
-    frontiers: canonicalFrontiers(doc.frontiers()),
-    detached: doc.isDetached(),
-    shallow: doc.isShallow(),
-    pendingLength,
-  };
-  if (pendingLength === 0) {
-    observation.oplogVersion = canonicalVersion(doc.oplogVersion());
-    observation.oplogFrontiers = canonicalFrontiers(doc.oplogFrontiers());
-    observation.opCount = doc.opCount();
-    observation.changeCount = doc.changeCount();
+  const nodes = tree.getNodes({ withDeleted: true });
+  const text = doc.getText("text");
+  try {
+    const treeNodes = nodes
+      .map((node) => node.toJSON())
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const observation = {
+      json: doc.toJSON(),
+      deepWithId: normalizeDeepWithId(doc.getDeepValueWithID()),
+      textDelta: text.toDelta(),
+      treeNodes,
+      version: canonicalVersionAndRelease(doc.version()),
+      frontiers: canonicalFrontiers(doc.frontiers()),
+      detached: doc.isDetached(),
+      shallow: doc.isShallow(),
+      pendingLength,
+    };
+    if (pendingLength === 0) {
+      observation.oplogVersion = canonicalVersionAndRelease(doc.oplogVersion());
+      observation.oplogFrontiers = canonicalFrontiers(doc.oplogFrontiers());
+      observation.opCount = doc.opCount();
+      observation.changeCount = doc.changeCount();
+    }
+    return canonicalize(observation);
+  } finally {
+    releaseResources(nodes);
+    releaseResource(text);
+    releaseResource(tree);
   }
-  return canonicalize(observation);
 }
 
 export function observeDocForNative(doc) {
   return canonicalize({
     json: doc.toJSON(),
     deepWithId: normalizeDeepWithId(doc.getDeepValueWithID()),
-    version: canonicalVersion(doc.version()),
-    oplogVersion: canonicalVersion(doc.oplogVersion()),
+    version: canonicalVersionAndRelease(doc.version()),
+    oplogVersion: canonicalVersionAndRelease(doc.oplogVersion()),
     frontiers: canonicalFrontiers(doc.frontiers()),
     oplogFrontiers: canonicalFrontiers(doc.oplogFrontiers()),
     detached: doc.isDetached(),
@@ -312,147 +568,175 @@ function liveTreeNodes(tree) {
 }
 
 function isTreeDescendant(node, ancestorId) {
-  for (let parent = node.parent(); parent !== undefined; parent = parent.parent()) {
-    if (parent.id === ancestorId) return true;
+  let parent = node.parent();
+  while (parent !== undefined) {
+    if (parent.id === ancestorId) {
+      releaseResource(parent);
+      return true;
+    }
+    const next = parent.parent();
+    releaseResource(parent);
+    parent = next;
   }
   return false;
+}
+
+function usingLiveTreeNodes(doc, action) {
+  return usingResource(doc.getTree("tree"), (tree) => {
+    const nodes = liveTreeNodes(tree);
+    try {
+      return action(tree, nodes);
+    } finally {
+      releaseResources(nodes);
+    }
+  });
 }
 
 function applyEdit(doc, command) {
   switch (command.kind) {
     case "map-set":
-      return doc.getMap("map").set(command.key, command.value);
-    case "map-delete": {
-      const map = doc.getMap("map");
-      const keys = map.keys();
-      if (keys.length === 0) return undefined;
-      const key = keys.includes(command.key) ? command.key : keys.sort()[0];
-      return map.delete(key);
-    }
-    case "list-insert": {
-      const list = doc.getList("list");
-      return list.insert(modulo(command.index, list.length + 1), command.value);
-    }
-    case "list-delete": {
-      const list = doc.getList("list");
-      if (list.length === 0) return undefined;
-      const index = modulo(command.index, list.length);
-      const length = 1 + modulo(command.length, list.length - index);
-      return list.delete(index, length);
-    }
-    case "text-insert": {
-      const text = doc.getText("text");
-      const boundaries = utf16Boundaries(text.toString());
-      return text.insert(
-        boundaries[modulo(command.index, boundaries.length)],
-        command.text,
+      return usingResource(doc.getMap("map"), (map) =>
+        map.set(command.key, command.value),
       );
-    }
-    case "text-delete": {
-      const text = doc.getText("text");
-      const { start, end } = selectedTextRange(
-        text,
-        command.index,
-        command.length,
-        false,
+    case "map-delete":
+      return usingResource(doc.getMap("map"), (map) => {
+        const keys = map.keys();
+        if (keys.length === 0) return undefined;
+        const key = keys.includes(command.key) ? command.key : keys.sort()[0];
+        return map.delete(key);
+      });
+    case "list-insert":
+      return usingResource(doc.getList("list"), (list) =>
+        list.insert(modulo(command.index, list.length + 1), command.value),
       );
-      if (start === end) return undefined;
-      return text.delete(start, end - start);
-    }
-    case "text-mark": {
-      const text = doc.getText("text");
-      const { start, end } = selectedTextRange(
-        text,
-        command.index,
-        command.length,
-        false,
+    case "list-delete":
+      return usingResource(doc.getList("list"), (list) => {
+        if (list.length === 0) return undefined;
+        const index = modulo(command.index, list.length);
+        const length = 1 + modulo(command.length, list.length - index);
+        return list.delete(index, length);
+      });
+    case "text-insert":
+      return usingResource(doc.getText("text"), (text) => {
+        const boundaries = utf16Boundaries(text.toString());
+        return text.insert(
+          boundaries[modulo(command.index, boundaries.length)],
+          command.text,
+        );
+      });
+    case "text-delete":
+      return usingResource(doc.getText("text"), (text) => {
+        const { start, end } = selectedTextRange(
+          text,
+          command.index,
+          command.length,
+          false,
+        );
+        if (start === end) return undefined;
+        return text.delete(start, end - start);
+      });
+    case "text-mark":
+      return usingResource(doc.getText("text"), (text) => {
+        const { start, end } = selectedTextRange(
+          text,
+          command.index,
+          command.length,
+          false,
+        );
+        if (start === end) return undefined;
+        return text.mark({ start, end }, command.key, command.value);
+      });
+    case "text-unmark":
+      return usingResource(doc.getText("text"), (text) => {
+        const { start, end } = selectedTextRange(
+          text,
+          command.index,
+          command.length,
+          false,
+        );
+        if (start === end) return undefined;
+        return text.unmark({ start, end }, command.key);
+      });
+    case "movable-insert":
+      return usingResource(doc.getMovableList("movable"), (list) =>
+        list.insert(modulo(command.index, list.length + 1), command.value),
       );
-      if (start === end) return undefined;
-      return text.mark({ start, end }, command.key, command.value);
-    }
-    case "text-unmark": {
-      const text = doc.getText("text");
-      const { start, end } = selectedTextRange(
-        text,
-        command.index,
-        command.length,
-        false,
-      );
-      if (start === end) return undefined;
-      return text.unmark({ start, end }, command.key);
-    }
-    case "movable-insert": {
-      const list = doc.getMovableList("movable");
-      return list.insert(modulo(command.index, list.length + 1), command.value);
-    }
-    case "movable-delete": {
-      const list = doc.getMovableList("movable");
-      if (list.length === 0) return undefined;
-      const index = modulo(command.index, list.length);
-      const length = 1 + modulo(command.length, list.length - index);
-      return list.delete(index, length);
-    }
-    case "movable-set": {
-      const list = doc.getMovableList("movable");
-      if (list.length === 0) return undefined;
-      const index = modulo(command.index, list.length);
-      if (isDeepStrictEqual(canonicalize(list.get(index)), canonicalize(command.value))) {
-        return undefined;
-      }
-      return list.set(index, command.value);
-    }
-    case "movable-move": {
-      const list = doc.getMovableList("movable");
-      if (list.length < 2) return undefined;
-      return list.move(
-        modulo(command.from, list.length),
-        modulo(command.to, list.length),
-      );
-    }
+    case "movable-delete":
+      return usingResource(doc.getMovableList("movable"), (list) => {
+        if (list.length === 0) return undefined;
+        const index = modulo(command.index, list.length);
+        const length = 1 + modulo(command.length, list.length - index);
+        return list.delete(index, length);
+      });
+    case "movable-set":
+      return usingResource(doc.getMovableList("movable"), (list) => {
+        if (list.length === 0) return undefined;
+        const index = modulo(command.index, list.length);
+        if (
+          isDeepStrictEqual(canonicalize(list.get(index)), canonicalize(command.value))
+        ) {
+          return undefined;
+        }
+        return list.set(index, command.value);
+      });
+    case "movable-move":
+      return usingResource(doc.getMovableList("movable"), (list) => {
+        if (list.length < 2) return undefined;
+        return list.move(
+          modulo(command.from, list.length),
+          modulo(command.to, list.length),
+        );
+      });
     case "counter-increment":
       return command.delta === 0
         ? undefined
-        : doc.getCounter("counter").increment(command.delta);
-    case "tree-create": {
-      const tree = doc.getTree("tree");
-      const nodes = liveTreeNodes(tree);
-      const parent =
-        command.parent === null || nodes.length === 0
-          ? undefined
-          : nodes[modulo(command.parent, nodes.length)].id;
-      const node = tree.createNode(parent);
-      node.data.set("value", command.value);
-      return node.id;
-    }
-    case "tree-meta-set": {
-      const nodes = liveTreeNodes(doc.getTree("tree"));
-      if (nodes.length === 0) return undefined;
-      return nodes[modulo(command.node, nodes.length)].data.set(
-        command.key,
-        command.value,
-      );
-    }
-    case "tree-move": {
-      const tree = doc.getTree("tree");
-      const nodes = liveTreeNodes(tree);
-      if (nodes.length === 0) return undefined;
-      const node = nodes[modulo(command.node, nodes.length)];
-      const candidates = nodes.filter(
-        (candidate) => candidate.id !== node.id && !isTreeDescendant(candidate, node.id),
-      );
-      const parent =
-        command.parent === null || candidates.length === 0
-          ? undefined
-          : candidates[modulo(command.parent, candidates.length)];
-      if (node.parent()?.id === parent?.id) return undefined;
-      return tree.move(node.id, parent?.id);
-    }
-    case "tree-delete": {
-      const tree = doc.getTree("tree");
-      const nodes = liveTreeNodes(tree);
-      if (nodes.length === 0) return undefined;
-      return tree.delete(nodes[modulo(command.node, nodes.length)].id);
-    }
+        : usingResource(doc.getCounter("counter"), (counter) =>
+            counter.increment(command.delta),
+          );
+    case "tree-create":
+      return usingLiveTreeNodes(doc, (tree, nodes) => {
+        const parent =
+          command.parent === null || nodes.length === 0
+            ? undefined
+            : nodes[modulo(command.parent, nodes.length)].id;
+        const node = tree.createNode(parent);
+        try {
+          usingResource(node.data, (data) => data.set("value", command.value));
+          return node.id;
+        } finally {
+          releaseResource(node);
+        }
+      });
+    case "tree-meta-set":
+      return usingLiveTreeNodes(doc, (_tree, nodes) => {
+        if (nodes.length === 0) return undefined;
+        return usingResource(nodes[modulo(command.node, nodes.length)].data, (data) =>
+          data.set(command.key, command.value),
+        );
+      });
+    case "tree-move":
+      return usingLiveTreeNodes(doc, (tree, nodes) => {
+        if (nodes.length === 0) return undefined;
+        const node = nodes[modulo(command.node, nodes.length)];
+        const candidates = nodes.filter(
+          (candidate) =>
+            candidate.id !== node.id && !isTreeDescendant(candidate, node.id),
+        );
+        const parent =
+          command.parent === null || candidates.length === 0
+            ? undefined
+            : candidates[modulo(command.parent, candidates.length)];
+        const currentParent = node.parent();
+        const currentParentId = currentParent?.id;
+        releaseResource(currentParent);
+        if (currentParentId === parent?.id) return undefined;
+        return tree.move(node.id, parent?.id);
+      });
+    case "tree-delete":
+      return usingLiveTreeNodes(doc, (tree, nodes) => {
+        if (nodes.length === 0) return undefined;
+        return tree.delete(nodes[modulo(command.node, nodes.length)].id);
+      });
     default:
       throw new RangeError(`unsupported edit command ${command.kind}`);
   }
@@ -464,20 +748,24 @@ function createDoc(engine, peer, initializeRoots = true) {
   doc.setRecordTimestamp(false);
   doc.setChangeMergeInterval(0);
   if (initializeRoots) {
-    doc.getMap("map");
-    doc.getList("list");
-    doc.getText("text");
-    doc.getMovableList("movable");
-    doc.getCounter("counter");
-    doc.getTree("tree").enableFractionalIndex(0);
+    releaseResource(doc.getMap("map"));
+    releaseResource(doc.getList("list"));
+    releaseResource(doc.getText("text"));
+    releaseResource(doc.getMovableList("movable"));
+    releaseResource(doc.getCounter("counter"));
+    usingResource(doc.getTree("tree"), (tree) => tree.enableFractionalIndex(0));
   }
   return doc;
 }
 
 function exportFor(doc, target, mode) {
-  return mode === "snapshot"
-    ? doc.export({ mode: "snapshot" })
-    : doc.export({ mode: "update", from: target.oplogVersion() });
+  if (mode === "snapshot") return doc.export({ mode: "snapshot" });
+  const from = target.oplogVersion();
+  try {
+    return doc.export({ mode: "update", from });
+  } finally {
+    releaseResource(from);
+  }
 }
 
 function compare(label, left, right) {
@@ -506,8 +794,7 @@ class EngineWorld {
     this.eventQueues = this.docs.map(() => []);
     this.subscriptions = this.docs.map((doc, peer) =>
       doc.subscribe((batch) => {
-        const normalized = normalizeEventBatch(batch, doc);
-        if (normalized.events.length > 0) this.eventQueues[peer].push(normalized);
+        this.eventQueues[peer].push(batch);
       }),
     );
   }
@@ -588,8 +875,12 @@ class EngineWorld {
           ? doc.export({ mode: "snapshot" })
           : doc.export({ mode: "update" });
       const imported = createDoc(this.engine, undefined, false);
-      imported.import(bytes);
-      return observeDoc(imported);
+      try {
+        imported.import(bytes);
+        return observeDoc(imported);
+      } finally {
+        releaseResource(imported);
+      }
     });
   }
 
@@ -599,7 +890,20 @@ class EngineWorld {
 
   drainEvents() {
     this.engine.callPendingEvents?.();
-    return this.eventQueues.map((queue) => queue.splice(0));
+    return this.eventQueues.map((queue) =>
+      queue
+        .splice(0)
+        .map(normalizeEventBatch)
+        .filter((batch) => batch.events.length > 0),
+    );
+  }
+
+  dispose() {
+    for (const subscription of this.subscriptions) {
+      if (typeof subscription === "function") subscription();
+      else releaseResource(subscription);
+    }
+    releaseResources(this.docs);
   }
 }
 
@@ -616,13 +920,17 @@ function isEditCommand(kind) {
 
 export function runSingleScenario(engine, scenario, externalBlobs) {
   const world = new EngineWorld(engine, scenario, externalBlobs);
-  const results = [];
-  for (const command of scenario.commands) results.push(world.execute(command));
-  return {
-    observations: world.finalNativeObservations(),
-    transportBlobs: world.transportBlobs,
-    results: canonicalize(results),
-  };
+  try {
+    const results = [];
+    for (const command of scenario.commands) results.push(world.execute(command));
+    return {
+      observations: world.finalNativeObservations(),
+      transportBlobs: world.transportBlobs,
+      results: canonicalize(results),
+    };
+  } finally {
+    world.dispose();
+  }
 }
 
 export function runMalformedImportChecks(wasmEngine, jsEngine) {
@@ -633,24 +941,30 @@ export function runMalformedImportChecks(wasmEngine, jsEngine) {
   let cases = 0;
   for (const [producerName, producer] of engines) {
     const source = createDoc(producer, 0);
-    source.getMap("map").set("payload", { nested: [1, true, "😀"] });
-    source.getText("text").insert(0, "malformed 😀 文");
-    source.getList("list").push("item");
-    source.commit({ message: "malformed-seed" });
-    for (const mode of ["update", "snapshot"]) {
-      const blob = source.export({ mode });
-      for (const [mutation, bytes] of malformedVariants(blob)) {
-        const outcomes = engines.map(([consumerName, engine]) => [
-          consumerName,
-          malformedOutcome(engine, bytes),
-        ]);
-        compare(
-          `malformed import mismatch: producer=${producerName} mode=${mode} mutation=${mutation}`,
-          outcomes[0][1],
-          outcomes[1][1],
-        );
-        cases += 1;
+    try {
+      usingResource(source.getMap("map"), (map) =>
+        map.set("payload", { nested: [1, true, "😀"] }),
+      );
+      usingResource(source.getText("text"), (text) => text.insert(0, "malformed 😀 文"));
+      usingResource(source.getList("list"), (list) => list.push("item"));
+      source.commit({ message: "malformed-seed" });
+      for (const mode of ["update", "snapshot"]) {
+        const blob = source.export({ mode });
+        for (const [mutation, bytes] of malformedVariants(blob)) {
+          const outcomes = engines.map(([consumerName, engine]) => [
+            consumerName,
+            malformedOutcome(engine, bytes),
+          ]);
+          compare(
+            `malformed import mismatch: producer=${producerName} mode=${mode} mutation=${mutation}`,
+            outcomes[0][1],
+            outcomes[1][1],
+          );
+          cases += 1;
+        }
       }
+    } finally {
+      releaseResource(source);
     }
   }
   return cases;
@@ -678,18 +992,22 @@ function flippedByte(blob, index) {
 
 function malformedOutcome(engine, bytes) {
   const target = createDoc(engine, 97);
-  target.getMap("map").set("sentinel", "unchanged");
-  target.getText("text").insert(0, "stable");
-  target.commit({ message: "malformed-target" });
-  const before = observeDoc(target);
   try {
-    target.import(bytes);
-    return { accepted: true, observation: observeDoc(target) };
-  } catch {
-    return {
-      accepted: false,
-      atomic: isDeepStrictEqual(before, observeDoc(target)),
-    };
+    usingResource(target.getMap("map"), (map) => map.set("sentinel", "unchanged"));
+    usingResource(target.getText("text"), (text) => text.insert(0, "stable"));
+    target.commit({ message: "malformed-target" });
+    const before = observeDoc(target);
+    try {
+      target.import(bytes);
+      return { accepted: true, observation: observeDoc(target) };
+    } catch {
+      return {
+        accepted: false,
+        atomic: isDeepStrictEqual(before, observeDoc(target)),
+      };
+    }
+  } finally {
+    releaseResource(target);
   }
 }
 
@@ -702,69 +1020,74 @@ export function runDifferentialScenario(
   const wasm = new EngineWorld(wasmEngine, scenario);
   const js = new EngineWorld(jsEngine, scenario);
 
-  for (let index = 0; index < scenario.commands.length; index += 1) {
-    const command = scenario.commands[index];
-    let wasmResult;
-    let jsResult;
-    let compareEvents = true;
-    if (command.kind === "deliver") {
-      const wasmSlot = wasm.slots.get(modulo(command.slot, 8));
-      const jsSlot = js.slots.get(modulo(command.slot, 8));
-      if (wasmSlot === undefined || jsSlot === undefined) {
-        wasmResult = { ok: true, value: "empty-slot" };
-        jsResult = { ok: true, value: "empty-slot" };
-      } else {
-        compareEvents = strict || wasmSlot.mode !== "snapshot";
-        const copies = 1 + modulo(command.copies, 3);
-        const wasmStatuses = [];
-        const jsStatuses = [];
-        for (let copy = 0; copy < copies; copy += 1) {
-          wasmStatuses.push(
-            canonicalize(wasm.docs[wasmSlot.targetIndex].import(jsSlot.blob)),
-          );
-          jsStatuses.push(
-            canonicalize(js.docs[jsSlot.targetIndex].import(wasmSlot.blob)),
-          );
+  try {
+    for (let index = 0; index < scenario.commands.length; index += 1) {
+      const command = scenario.commands[index];
+      let wasmResult;
+      let jsResult;
+      let compareEvents = true;
+      if (command.kind === "deliver") {
+        const wasmSlot = wasm.slots.get(modulo(command.slot, 8));
+        const jsSlot = js.slots.get(modulo(command.slot, 8));
+        if (wasmSlot === undefined || jsSlot === undefined) {
+          wasmResult = { ok: true, value: "empty-slot" };
+          jsResult = { ok: true, value: "empty-slot" };
+        } else {
+          compareEvents = strict || wasmSlot.mode !== "snapshot";
+          const copies = 1 + modulo(command.copies, 3);
+          const wasmStatuses = [];
+          const jsStatuses = [];
+          for (let copy = 0; copy < copies; copy += 1) {
+            wasmStatuses.push(
+              canonicalize(wasm.docs[wasmSlot.targetIndex].import(jsSlot.blob)),
+            );
+            jsStatuses.push(
+              canonicalize(js.docs[jsSlot.targetIndex].import(wasmSlot.blob)),
+            );
+          }
+          wasmResult = { ok: true, value: wasmStatuses };
+          jsResult = { ok: true, value: jsStatuses };
         }
-        wasmResult = { ok: true, value: wasmStatuses };
-        jsResult = { ok: true, value: jsStatuses };
+      } else if (command.kind === "roundtrip") {
+        const peer = peerIndex(command.peer, wasm.docs.length);
+        wasmResult = crossRoundtrip(
+          wasmEngine,
+          jsEngine,
+          wasm.docs[peer],
+          js.docs[peer],
+          command.mode,
+        );
+        jsResult = wasmResult;
+      } else {
+        wasmResult = wasm.execute(command);
+        jsResult = js.execute(command);
       }
-    } else if (command.kind === "roundtrip") {
-      const peer = peerIndex(command.peer, wasm.docs.length);
-      wasmResult = crossRoundtrip(
-        wasmEngine,
-        jsEngine,
-        wasm.docs[peer],
-        js.docs[peer],
-        command.mode,
-      );
-      jsResult = wasmResult;
-    } else {
-      wasmResult = wasm.execute(command);
-      jsResult = js.execute(command);
-    }
 
-    compare(
-      `command result mismatch at ${index}: ${JSON.stringify(command)}`,
-      wasmResult,
-      jsResult,
-    );
-    const wasmEvents = wasm.drainEvents();
-    const jsEvents = js.drainEvents();
-    if (compareEvents) {
       compare(
-        `event mismatch at command ${index}: ${JSON.stringify(command)}`,
-        wasmEvents,
-        jsEvents,
+        `command result mismatch at ${index}: ${JSON.stringify(command)}`,
+        wasmResult,
+        jsResult,
       );
+      const wasmEvents = wasm.drainEvents();
+      const jsEvents = js.drainEvents();
+      if (compareEvents) {
+        compare(
+          `event mismatch at command ${index}: ${JSON.stringify(command)}`,
+          wasmEvents,
+          jsEvents,
+        );
+      }
+      for (let peer = 0; peer < scenario.peerCount; peer += 1) {
+        compare(
+          `document mismatch at command ${index}, peer ${peer}: ${JSON.stringify(command)}`,
+          observeDoc(wasm.docs[peer]),
+          observeDoc(js.docs[peer]),
+        );
+      }
     }
-    for (let peer = 0; peer < scenario.peerCount; peer += 1) {
-      compare(
-        `document mismatch at command ${index}, peer ${peer}: ${JSON.stringify(command)}`,
-        observeDoc(wasm.docs[peer]),
-        observeDoc(js.docs[peer]),
-      );
-    }
+  } finally {
+    wasm.dispose();
+    js.dispose();
   }
 }
 
@@ -785,8 +1108,12 @@ function crossRoundtrip(wasmEngine, jsEngine, wasmDoc, jsDoc, mode) {
       [jsEngine, jsBytes],
     ].map(([engine, bytes]) => {
       const doc = createDoc(engine, undefined, false);
-      doc.import(bytes);
-      return observeDoc(doc);
+      try {
+        doc.import(bytes);
+        return observeDoc(doc);
+      } finally {
+        releaseResource(doc);
+      }
     });
     for (let index = 1; index < variants.length; index += 1) {
       compare(`roundtrip variant ${index} mismatch`, variants[0], variants[index]);

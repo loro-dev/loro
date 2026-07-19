@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "tree-create", "peer": 1, "parent": null, "value": [] },
+    { "kind": "tree-delete", "peer": 1, "node": 0 },
+    { "kind": "commit", "peer": 1, "message": 0 }
+  ]
+}

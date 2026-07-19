@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "tree-create", "peer": 15, "parent": null, "value": [] },
+    { "kind": "tree-create", "peer": 0, "parent": null, "value": [] },
+    { "kind": "enqueue", "source": 0, "target": 0, "slot": 4, "mode": "update" },
+    { "kind": "deliver", "slot": 4, "copies": 0 }
+  ]
+}

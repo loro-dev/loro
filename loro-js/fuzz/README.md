@@ -59,7 +59,10 @@ not canonical.
 
 Equivalent event representations are normalized: adjacent delta fragments are
 coalesced, insert/delete operations at one cursor are put in a stable order,
-and transaction-local tree create/delete pairs are treated as a net no-op.
+and transaction-local tree create/delete pairs are treated as a net no-op. The
+normalizer only reads event payloads; it never queries live document state from
+inside a subscription callback, because the WASM wrapper and pure TypeScript
+runtime can reach the callback at different points within one public method.
 Snapshot imports into a non-empty document still have known event differences,
 so the stable profile compares their resulting state but not their event list.
 

@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -40,6 +49,7 @@ const wasmEngine =
     : importedWasmEngine;
 const corpus = readCorpus(options.replay, options.strict);
 const malformedCases = runMalformedImportChecks(wasmEngine, jsEngine);
+let randomRuns = 0;
 
 for (const { name, scenario } of corpus) {
   runDifferentialScenario(wasmEngine, jsEngine, scenario, {
@@ -51,19 +61,36 @@ for (const { name, scenario } of corpus) {
 }
 
 if (!options.corpusOnly) {
+  mkdirSync(artifactsRoot, { recursive: true });
+  const journalPath = path.join(artifactsRoot, "active-run.txt");
+  const journal = openSync(journalPath, "w");
+  let runIndex = 0;
   const arbitrary = scenarioArbitrary(options.maxCommands, { strict: options.strict });
   const property = fc.property(arbitrary, (scenario) => {
+    // A Rust panic can poison a lock before fast-check returns its seed/path.
+    // Persist the deterministic raw-case position first so a killed or wedged
+    // process can be replayed with `seed` plus `path=<run index>`.
+    writeSync(journal, `${options.seed} ${runIndex}\n`, 0, "utf8");
+    runIndex += 1;
     runDifferentialScenario(wasmEngine, jsEngine, scenario, {
       strict: options.strict,
     });
   });
-  const check = fc.check(property, {
-    numRuns: options.runs,
-    seed: options.seed,
-    path: options.path,
-    endOnFailure: true,
-    interruptAfterTimeLimit: options.timeLimit,
-  });
+  process.stdout.write(
+    `loro interop fuzz started: seed=${options.seed} maxCommands=${options.maxCommands}\n`,
+  );
+  let check;
+  try {
+    check = fc.check(property, {
+      numRuns: options.runs,
+      seed: options.seed,
+      path: options.path,
+      interruptAfterTimeLimit: options.timeLimit,
+    });
+  } finally {
+    closeSync(journal);
+  }
+  randomRuns = check.numRuns;
   if (check.failed) {
     mkdirSync(artifactsRoot, { recursive: true });
     const scenario = check.counterexample?.[0];
@@ -83,7 +110,7 @@ if (!options.corpusOnly) {
 }
 
 process.stdout.write(
-  `loro interop fuzz passed: profile=${options.strict ? "strict" : "stable"} corpus=${corpus.length} malformed=${malformedCases} random=${options.corpusOnly ? 0 : options.runs}\n`,
+  `loro interop fuzz passed: profile=${options.strict ? "strict" : "stable"} corpus=${corpus.length} malformed=${malformedCases} random=${randomRuns}\n`,
 );
 
 function parseArgs(args) {
@@ -106,7 +133,7 @@ function parseArgs(args) {
     replay,
     runs: Number.isSafeInteger(envRuns) ? envRuns : ci ? 500 : 100,
     maxCommands: Number.isSafeInteger(envCommands) ? envCommands : ci ? 60 : 40,
-    seed: Number.isSafeInteger(envSeed) ? envSeed : undefined,
+    seed: Number.isSafeInteger(envSeed) ? envSeed : (Date.now() ^ process.pid) | 0,
     path: process.env.LORO_INTEROP_FUZZ_PATH,
     timeLimit: Number.isSafeInteger(envTime) ? envTime : ci ? 60_000 : undefined,
   };

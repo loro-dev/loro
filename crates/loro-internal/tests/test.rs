@@ -126,6 +126,38 @@ fn event_from_checkout() {
 }
 
 #[test]
+fn local_event_starts_after_net_empty_import() {
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(2).unwrap();
+    let source_list = source.get_list("source");
+    source_list.insert(0, false).unwrap();
+    source_list.delete(0, 1).unwrap();
+    source.commit_then_renew();
+    let imported_frontiers = source.oplog_frontiers();
+
+    let target = LoroDoc::new_auto_commit();
+    target.set_peer_id(1).unwrap();
+    let saw_local = Arc::new(AtomicBool::new(false));
+    let saw_local_in_callback = saw_local.clone();
+    let expected_from = imported_frontiers.clone();
+    let _sub = target.subscribe_root(Arc::new(move |event| {
+        if event.event_meta.by.is_local() {
+            assert_eq!(event.event_meta.from, expected_from);
+            saw_local_in_callback.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }));
+
+    target
+        .import(&source.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(target.oplog_frontiers(), imported_frontiers);
+    target.get_list("visible").insert(0, true).unwrap();
+    target.commit_then_renew();
+
+    assert!(saw_local.load(std::sync::atomic::Ordering::Relaxed));
+}
+
+#[test]
 fn handler_in_event() {
     let doc = LoroDoc::new_auto_commit();
     let _g = doc.subscribe_root(Arc::new(|e| {

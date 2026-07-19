@@ -281,25 +281,6 @@ impl NodeChildren {
         }
     }
 
-    fn push_child_in_order(&mut self, pos: NodePosition, id: TreeID) {
-        match self {
-            NodeChildren::Vec(v) => {
-                if v.len() >= Self::MAX_SIZE_FOR_ARRAY {
-                    self.upgrade();
-                    return self.push_child_in_order(pos, id);
-                }
-
-                if let Some(last) = v.last() {
-                    assert!(last.0 < pos);
-                }
-                v.push((pos, id));
-            }
-            NodeChildren::BTree(v) => {
-                v.push_child_in_order(pos, id);
-            }
-        }
-    }
-
     fn len(&self) -> usize {
         match self {
             NodeChildren::Vec(v) => v.len(),
@@ -363,14 +344,6 @@ mod btree {
                 },
             );
 
-            self.id_to_leaf_index.insert(id, c.leaf);
-        }
-
-        pub(super) fn push_child_in_order(&mut self, pos: NodePosition, id: TreeID) {
-            let c = self.tree.push(Elem {
-                pos: Arc::new(pos.clone()),
-                id,
-            });
             self.id_to_leaf_index.insert(id, c.leaf);
         }
 
@@ -710,19 +683,28 @@ impl TreeState {
         Ok(())
     }
 
-    fn _init_push_tree_node_in_order(
+    fn _init_tree_node_from_snapshot(
         &mut self,
         target: TreeID,
         parent: TreeParentId,
         last_move_op: IdFull,
         position: Option<FractionalIndex>,
     ) -> Result<(), LoroError> {
-        debug_assert!(!self.trees.contains_key(&target));
+        if self.trees.contains_key(&target) {
+            return Err(LoroError::internal("duplicate tree node id in snapshot"));
+        }
         let entry = self.children.entry(parent).or_default();
         let node_position =
             NodePosition::new(position.clone().unwrap_or_default(), last_move_op.idlp());
-        debug_assert!(!entry.has_child(&node_position));
-        entry.push_child_in_order(node_position, target);
+        if entry.has_child(&node_position) {
+            return Err(LoroError::internal(
+                "duplicate tree node position in snapshot",
+            ));
+        }
+        // Snapshot bytes are external input. Canonical encoders group siblings
+        // in order, but interoperable encoders may choose another node traversal.
+        // Insert by NodePosition instead of asserting that input order is sorted.
+        entry.insert_child(node_position, target);
         self.trees.insert(
             target,
             TreeStateNode {
@@ -1726,7 +1708,7 @@ mod snapshot {
             for (node_id, node) in node_ids.iter().zip(encoded.nodes) {
                 // PERF: we don't need to mov the deleted node, instead we can cache them
                 // If the parent is TreeParentId::Deleted, then all the nodes afterwards are deleted
-                tree._init_push_tree_node_in_order(
+                tree._init_tree_node_from_snapshot(
                     *node_id,
                     match node.parent_idx_plus_two {
                         0 => TreeParentId::Root,
@@ -1826,6 +1808,61 @@ mod snapshot {
             bytes.extend_from_slice(&serde_columnar::to_vec(&encoded).unwrap());
 
             assert!(TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &bytes), ctx).is_err());
+        }
+
+        #[test]
+        fn tree_fast_snapshot_accepts_noncanonical_sibling_order() {
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+
+            let low = FractionalIndex::default();
+            let high = FractionalIndex::from_bytes(vec![0x81]);
+            let positions = PositionArena::from_positions([high.as_bytes(), low.as_bytes()]);
+            let encoded = EncodedTree {
+                node_ids: vec![
+                    EncodedTreeNodeId {
+                        peer_idx: 0,
+                        counter: 0,
+                    },
+                    EncodedTreeNodeId {
+                        peer_idx: 0,
+                        counter: 1,
+                    },
+                ],
+                nodes: vec![
+                    EncodedTreeNode {
+                        parent_idx_plus_two: 0,
+                        last_set_peer_idx: 0,
+                        last_set_counter: 0,
+                        last_set_lamport_sub_counter: 0,
+                        fractional_index_idx: 0,
+                    },
+                    EncodedTreeNode {
+                        parent_idx_plus_two: 0,
+                        last_set_peer_idx: 0,
+                        last_set_counter: 1,
+                        last_set_lamport_sub_counter: 0,
+                        fractional_index_idx: 1,
+                    },
+                ],
+                fractional_indexes: positions.encode().into(),
+                reserved_has_effect_bool_rle: vec![].into(),
+            };
+            let mut bytes = Vec::new();
+            leb128::write::unsigned(&mut bytes, 1).unwrap();
+            bytes.extend_from_slice(&1_u64.to_le_bytes());
+            bytes.extend_from_slice(&serde_columnar::to_vec(&encoded).unwrap());
+
+            let tree =
+                TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &bytes), ctx).unwrap();
+            let roots = tree.tree_nodes();
+            assert_eq!(roots.len(), 2);
+            assert_eq!(roots[0].id.counter, 1);
+            assert_eq!(roots[1].id.counter, 0);
         }
     }
 }

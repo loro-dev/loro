@@ -10,7 +10,7 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 use rustc_hash::FxHashMap;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -569,7 +569,12 @@ impl Transaction {
             let expected = self
                 .doc
                 .upgrade()
-                .map(|d| d.state.lock().peer.load(std::sync::atomic::Ordering::Relaxed))
+                .map(|d| {
+                    d.state
+                        .lock()
+                        .peer
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                })
                 .unwrap_or(found);
             return Err(LoroError::UnmatchedContext { expected, found });
         }
@@ -770,42 +775,34 @@ fn change_to_diff(
         };
 
         let mut op_index = 0;
-        let mut hint_iter = hints.into_iter();
-        let mut current_hint = hint_iter.next();
+        let mut op_offset = 0;
 
-        while op_index < container_ops.len() {
-            let Some(hint) = current_hint.take() else {
-                unreachable!("Missing hint for op");
-            };
-
-            // Collect ops that belong to this hint
-            let mut ops_for_hint: SmallVec<[Op; 1]> = smallvec![container_ops[op_index].clone()];
-            let mut total_len = container_ops[op_index].atom_len();
-
-            // If hint spans multiple ops, collect them
-            while total_len < hint.rle_len() {
-                op_index += 1;
-                let next_op_len = container_ops[op_index].atom_len();
-                let op = if next_op_len + total_len > hint.rle_len() {
-                    let new_len = hint.rle_len() - total_len;
-                    let left = container_ops[op_index].slice(0, new_len);
-                    let right = container_ops[op_index].slice(new_len, next_op_len);
-                    container_ops[op_index] = right;
-                    op_index -= 1;
-                    left
+        for hint in hints {
+            // Ops and event hints use independent RLE merging rules. Walk the op
+            // stream by atom offset so a single merged op can be split across
+            // multiple hints (notably adjacent UTF-16 text deletions).
+            let mut remaining = hint.rle_len();
+            let mut ops_for_hint: SmallVec<[Op; 1]> = SmallVec::new();
+            while remaining > 0 {
+                let op = container_ops
+                    .get(op_index)
+                    .unwrap_or_else(|| unreachable!("Missing op for hint"));
+                let op_len = op.atom_len();
+                let available = op_len - op_offset;
+                let take = available.min(remaining);
+                let piece = if op_offset == 0 && take == op_len {
+                    op.clone()
                 } else {
-                    container_ops[op_index].clone()
+                    op.slice(op_offset, op_offset + take)
                 };
-
-                total_len += op.atom_len();
-                ops_for_hint.push(op);
+                ops_for_hint.push(piece);
+                remaining -= take;
+                op_offset += take;
+                if op_offset == op_len {
+                    op_index += 1;
+                    op_offset = 0;
+                }
             }
-
-            op_index += 1;
-            assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
-
-            // Move to next hint
-            current_hint = hint_iter.next();
 
             // Generate diff based on hint type
             match hint {
@@ -981,6 +978,9 @@ fn change_to_diff(
                 .map(|x| x.content_len() as Lamport)
                 .sum::<Lamport>();
         }
+
+        assert_eq!(op_offset, 0, "Missing hint for partial op");
+        assert_eq!(op_index, container_ops.len(), "Missing hint for op");
     }
 
     ans
@@ -1014,5 +1014,20 @@ mod tests {
             LoroError::ConcurrentOpsWithSamePeerID { peer: 7, .. }
         ));
         assert!(!doc.app_state().lock().is_in_txn());
+    }
+
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn txn_events_split_merged_utf16_delete_ops() {
+        let doc = LoroDoc::new();
+        let _subscription = doc.subscribe_root(Arc::new(|_| {}));
+        let text = doc.get_text("text");
+
+        text.insert_utf16(0, "a𐐷").unwrap();
+        text.delete_utf16(1, 2).unwrap();
+        text.delete_utf16(0, 1).unwrap();
+        doc.commit_then_renew();
+
+        assert_eq!(text.to_string(), "");
     }
 }

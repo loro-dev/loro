@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "tree-create", "peer": 1, "parent": null, "value": [] },
+    { "kind": "tree-create", "peer": 0, "parent": null, "value": [] },
+    { "kind": "enqueue", "source": 0, "target": 1, "slot": 0, "mode": "update" },
+    { "kind": "deliver", "slot": 0, "copies": 0 },
+    { "kind": "roundtrip", "peer": 1, "mode": "snapshot" }
+  ]
+}

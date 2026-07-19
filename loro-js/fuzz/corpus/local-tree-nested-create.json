@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "tree-create", "peer": 45, "parent": null, "value": [] },
+    { "kind": "tree-create", "peer": 105, "parent": null, "value": null },
+    { "kind": "tree-move", "peer": 3, "node": 0, "parent": 0 },
+    { "kind": "commit", "peer": 51, "message": 0 }
+  ]
+}

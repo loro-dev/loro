@@ -527,6 +527,73 @@ describe("loro-wasm-compatible runtime", () => {
     });
   });
 
+  test("emits the final map value after a delete and restore in one commit", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(2);
+    const map = doc.getMap("map");
+    map.set("title", {});
+    doc.commit();
+
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((event) => batches.push(event));
+    map.delete("title");
+    map.set("title", {});
+    doc.attach();
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.events).toEqual([
+      {
+        target: map.id,
+        diff: { type: "map", updated: { title: {} } },
+        path: ["map"],
+      },
+    ]);
+  });
+
+  test("preserves visible map transitions but suppresses same-value import winners", () => {
+    const source = new LoroDoc();
+    source.setPeerId(2);
+    const sourceMap = source.getMap("map");
+    sourceMap.set("title", {});
+    source.commit();
+
+    const target = new LoroDoc();
+    target.setPeerId(1);
+    target.import(source.export({ mode: "update" }));
+    const batches: LoroEventBatch[] = [];
+    target.subscribe((event) => batches.push(event));
+
+    sourceMap.delete("title");
+    sourceMap.set("title", {});
+    source.commit();
+    target.import(source.export({ mode: "update" }));
+    expect(batches.map((batch) => batch.events[0]?.diff)).toEqual([
+      { type: "map", updated: { title: {} } },
+    ]);
+
+    const concurrent = new LoroDoc();
+    concurrent.setPeerId(3);
+    concurrent.getMap("map").set("title", {});
+    concurrent.commit();
+    batches.length = 0;
+    target.import(concurrent.export({ mode: "update" }));
+    expect(batches).toEqual([]);
+  });
+
+  test("does not emit changes for tree metadata deleted in the same commit", () => {
+    const doc = new LoroDoc();
+    const tree = doc.getTree("tree");
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((event) => batches.push(event));
+
+    const node = tree.createNode();
+    node.data.set("value", []);
+    tree.delete(node.id);
+    doc.commit();
+
+    expect(batches).toEqual([]);
+  });
+
   test("calculates raw and JSON-compatible diffs without moving document state", () => {
     const doc = new LoroDoc();
     const map = doc.getMap("map");
@@ -1770,15 +1837,60 @@ describe("loro-wasm-compatible runtime", () => {
     expect(tree.isFractionalIndexEnabled()).toBe(true);
     expect(() => tree.enableFractionalIndex(256)).toThrow(/unsigned byte/u);
 
-    const deletedFractionalIndex = child.fractionalIndex();
+    const lastMoveBeforeDelete = child.getLastMoveId();
     tree.delete(child.id);
     expect(tree.isNodeDeleted(child.id)).toBe(true);
+    expect(() => tree.isNodeDeleted("999@999")).toThrow(/does not exist/u);
     expect(tree.getNodes({ withDeleted: true })).toHaveLength(2);
     expect(root.toJSON()).toMatchObject({ parent: undefined, fractionalIndex: "80" });
+    expect(child.parent()?.id).toBe("2147483647@18446744073709551615");
+    expect(child.index()).toBeUndefined();
+    expect(child.fractionalIndex()).toBeUndefined();
+    expect(child.getLastMoveId()).not.toEqual(lastMoveBeforeDelete);
     expect(child.toJSON()).toMatchObject({
       parent: "2147483647@18446744073709551615",
       index: 0,
-      fractionalIndex: deletedFractionalIndex,
+      fractionalIndex: "80",
+    });
+  });
+
+  test("keeps deleted tree subtrees out of the live forest and snapshots them", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    tree.enableFractionalIndex(0);
+    const liveRoot = tree.createNode();
+    const deletedRoot = tree.createNode();
+    const deletedChild = deletedRoot.createNode();
+
+    expect(deletedRoot.toJSON().fractionalIndex).toBe("8180");
+    tree.delete(deletedRoot.id);
+    expect(tree.getNodes().map((node) => node.id)).toEqual([liveRoot.id]);
+    expect(tree.getNodes({ withDeleted: true }).map((node) => node.id)).toEqual([
+      liveRoot.id,
+      deletedRoot.id,
+      deletedChild.id,
+    ]);
+    expect(tree.isNodeDeleted(deletedChild.id)).toBe(true);
+    expect(deletedChild.isDeleted()).toBe(true);
+    expect(deletedChild.data.isDeleted()).toBe(true);
+    expect(deletedRoot.toJSON()).toMatchObject({
+      parent: "2147483647@18446744073709551615",
+      index: 0,
+      fractionalIndex: "80",
+    });
+
+    doc.commit();
+    const restored = new LoroDoc();
+    restored.import(doc.export({ mode: "snapshot" }));
+    const restoredTree = restored.getTree("tree");
+    expect(restoredTree.getNodes().map((node) => node.id)).toEqual([liveRoot.id]);
+    expect(restoredTree.isNodeDeleted(deletedRoot.id)).toBe(true);
+    expect(restoredTree.isNodeDeleted(deletedChild.id)).toBe(true);
+    expect(restoredTree.getNodeByID(deletedRoot.id)?.toJSON()).toMatchObject({
+      parent: "2147483647@18446744073709551615",
+      index: 0,
+      fractionalIndex: "80",
     });
   });
 

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "save", "peer": 0, "checkpoint": 3 },
+    { "kind": "tree-create", "peer": 0, "parent": null, "value": {} },
+    { "kind": "tree-create", "peer": 0, "parent": null, "value": {} },
+    { "kind": "checkout", "peer": 0, "checkpoint": 3 }
+  ]
+}

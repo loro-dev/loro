@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    {
+      "kind": "text-insert",
+      "peer": 1,
+      "index": 0,
+      "text": "a𐐷"
+    },
+    {
+      "kind": "text-delete",
+      "peer": 1,
+      "index": 1,
+      "length": 0
+    },
+    {
+      "kind": "text-delete",
+      "peer": 1,
+      "index": 0,
+      "length": 0
+    },
+    {
+      "kind": "commit",
+      "peer": 1,
+      "message": 0
+    }
+  ]
+}

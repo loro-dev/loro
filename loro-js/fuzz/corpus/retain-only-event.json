@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "list-insert", "peer": 217, "index": 0, "value": 0 },
+    { "kind": "attach", "peer": 45 },
+    { "kind": "list-insert", "peer": 7, "index": 93, "value": {} },
+    { "kind": "list-delete", "peer": 3, "index": 15, "length": 0 },
+    { "kind": "attach", "peer": 189 }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    {
+      "kind": "movable-insert",
+      "peer": 33,
+      "index": 0,
+      "value": []
+    },
+    {
+      "kind": "attach",
+      "peer": 189
+    },
+    {
+      "kind": "movable-insert",
+      "peer": 189,
+      "index": 91,
+      "value": []
+    },
+    {
+      "kind": "movable-move",
+      "peer": 33,
+      "from": 153,
+      "to": 0
+    },
+    {
+      "kind": "attach",
+      "peer": 73
+    },
+    {
+      "kind": "text-delete",
+      "peer": 0,
+      "index": 0,
+      "length": 0
+    }
+  ]
+}
