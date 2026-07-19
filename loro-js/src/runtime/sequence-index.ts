@@ -1585,9 +1585,10 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     this.#randomState ^= this.#randomState << 13;
     this.#randomState ^= this.#randomState >>> 17;
     this.#randomState ^= this.#randomState << 5;
-    // Signed int32 keeps priorities Smi-sized; the treap only needs a
-    // deterministic total order, so the sign bit is irrelevant.
-    const priority = this.#randomState | 0;
+    // Keep priorities inside the compressed-Smi range [0, 2^30) so every node
+    // avoids boxing its priority; the treap only needs a deterministic total
+    // order, and 30 bits of entropy is ample for its node counts.
+    const priority = this.#randomState >>> 2;
     const locationId = this.#nodesByLocationId.length;
     const node: SequenceNode<T> = {
       element,
