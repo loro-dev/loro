@@ -49,3 +49,5 @@ jobs:
       #   run: cargo clippy --all-features -- -Dwarnings
       - name: Run rust tests
         run: GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} deno task test-all
+      - name: Run Rust and TypeScript interop fuzz smoke
+        run: pnpm test-loro-js-interop

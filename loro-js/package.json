@@ -50,6 +50,10 @@
     "build": "vp pack",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "clean": "rm -rf dist",
+    "fuzz:interop": "pnpm build && node fuzz/run-interop-fuzz.mjs",
+    "fuzz:interop:ci": "pnpm build && node fuzz/run-interop-fuzz.mjs --ci",
+    "fuzz:interop:native": "cargo build -p fuzz --bin loro_js_interop_driver && LORO_INTEROP_NATIVE_DRIVER=../target/debug/loro_js_interop_driver pnpm fuzz:interop -- --corpus-only",
+    "fuzz:interop:strict": "pnpm build && node fuzz/run-interop-fuzz.mjs --strict",
     "format": "vp fmt",
     "format:check": "vp fmt --check",
     "fixtures:rewrite": "pnpm build && node scripts/rewrite-rust-fixture.mjs",
@@ -60,6 +64,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@typescript/native-preview": "7.0.0-dev.20260506.1",
+    "fast-check": "^4.9.0",
     "typescript": "^5.6.3",
     "vite": "8.0.10",
     "vite-plus": "0.1.20",

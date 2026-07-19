@@ -6194,27 +6194,6 @@ function changeLength(change: DecodedChange): number {
   return length;
 }
 
-function advanceUnicodeScalars(value: string, start: number, length: number): number {
-  let offset = start;
-  for (let index = 0; index < length; index += 1) {
-    if (offset >= value.length) {
-      throw new Error("text snapshot span exceeds the decoded text");
-    }
-    const first = value.charCodeAt(offset);
-    offset += 1;
-    if (
-      first >= 0xd800 &&
-      first <= 0xdbff &&
-      offset < value.length &&
-      value.charCodeAt(offset) >= 0xdc00 &&
-      value.charCodeAt(offset) <= 0xdfff
-    ) {
-      offset += 1;
-    }
-  }
-  return offset;
-}
-
 function validateStateSnapshotTextIds(
   store: StateSnapshotStore,
 ): ReadonlyMap<ContainerStateSnapshot, TextSnapshotIdRanges> {
@@ -7961,12 +7940,7 @@ function splitsSurrogatePair(value: string, at: number): boolean {
   if (at <= 0 || at >= value.length) return false;
   const before = value.charCodeAt(at - 1);
   const after = value.charCodeAt(at);
-  return (
-    before >= 0xd800 &&
-    before <= 0xdbff &&
-    after >= 0xdc00 &&
-    after <= 0xdfff
-  );
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
 }
 
 function stringDelta(before: string, after: string): Delta<string>[] {
@@ -8091,7 +8065,9 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
   if (left instanceof Uint8Array && right instanceof Uint8Array) {
     return bytesEqual(left, right);
   }
+  if (left instanceof Uint8Array || right instanceof Uint8Array) return false;
   if (isContainer(left) && isContainer(right)) return left.id === right.id;
+  if (isContainer(left) || isContainer(right)) return false;
   if (Array.isArray(left) && Array.isArray(right)) {
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index += 1) {
@@ -8099,6 +8075,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     }
     return true;
   }
+  if (Array.isArray(left) || Array.isArray(right)) return false;
   if (left instanceof Map && right instanceof Map) {
     if (left.size !== right.size) return false;
     for (const [key, value] of left) {
@@ -8106,6 +8083,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     }
     return true;
   }
+  if (left instanceof Map || right instanceof Map) return false;
   if (
     typeof left === "object" &&
     left !== null &&
@@ -8122,7 +8100,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
       }
     }
     let rightCount = 0;
-    for (const key in rightRecord) rightCount += 1;
+    for (const _key in rightRecord) rightCount += 1;
     return leftCount === rightCount;
   }
   return false;

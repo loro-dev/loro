@@ -1610,6 +1610,27 @@ describe("loro-wasm-compatible runtime", () => {
     expect(doc.opCount()).toBe(opCount);
   });
 
+  test("does not confuse empty value shapes when detecting no-op edits", () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    const movable = doc.getMovableList("movable");
+    map.set("value", []);
+    movable.push([]);
+    doc.commit();
+    const opCount = doc.opCount();
+
+    map.set("value", {});
+    movable.set(0, {});
+    doc.commit();
+    map.set("value", new Uint8Array());
+    movable.set(0, new Uint8Array());
+    doc.commit();
+
+    expect(map.get("value")).toEqual(new Uint8Array());
+    expect(movable.get(0)).toEqual(new Uint8Array());
+    expect(doc.opCount()).toBe(opCount + 4);
+  });
+
   test("resurfaces preserved state and switches mergeable kinds", () => {
     const doc = new LoroDoc();
     const root = doc.getMap("state");

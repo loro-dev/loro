@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    { "kind": "text-insert", "peer": 0, "index": 0, "text": "first" },
+    { "kind": "commit", "peer": 0, "message": 1 },
+    { "kind": "enqueue", "source": 0, "target": 1, "slot": 0, "mode": "update" },
+    { "kind": "text-insert", "peer": 0, "index": 5, "text": " second" },
+    { "kind": "commit", "peer": 0, "message": 2 },
+    { "kind": "enqueue", "source": 0, "target": 1, "slot": 1, "mode": "update" },
+    { "kind": "deliver", "slot": 1, "copies": 0 },
+    { "kind": "deliver", "slot": 0, "copies": 1 },
+    { "kind": "save", "peer": 1, "checkpoint": 0 },
+    { "kind": "list-insert", "peer": 1, "index": 0, "value": "local" },
+    { "kind": "commit", "peer": 1, "message": 3 },
+    { "kind": "checkout", "peer": 1, "checkpoint": 0 },
+    { "kind": "attach", "peer": 1 },
+    { "kind": "roundtrip", "peer": 1, "mode": "snapshot" }
+  ]
+}
