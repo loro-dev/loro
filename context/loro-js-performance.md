@@ -186,6 +186,19 @@ adapter remains faster at 1.728 seconds overall and 43 ms for parse, so the
 remaining gap is a constant-factor and representation issue rather than a
 public-API complexity regression.
 
+C1.1 was re-measured after the V8 constant-factor round with a loro-ts adapter
+replicating the reference batched-transaction protocol (one commit per 100K-op
+phase, one batched import per peer). Same-session A/B against the pre-round
+build: edit time 5.74–5.89 s versus 6.25 s (-6~8%), snapshot encode about
+0.49 s versus 0.62 s (-20%), snapshot parse about 1.09 s versus 1.57 s (-31%),
+memory sample flat at ~207 MB, and update/doc sizes byte-identical
+(4,873,151 / 6,262,498 bytes). The published WASM adapter measured in the same
+window remains faster at 1.77 s overall, 0.16 s encode, and 0.04 s parse.
+Separately, an adversarial per-op interleave probe (every local op exported
+and cross-applied immediately) exposes a pre-existing superlinear import path
+in both the pre-round and current builds — incremental live-sync at that
+granularity is a known gap, not a regression from this round.
+
 With 1k through 64k retained changes, exporting, importing, or checking out only
 the last change stays below 0.7 ms after warmup. Explicit one-operation span
 exports stay below 0.3 ms.
@@ -289,8 +302,11 @@ The remaining differences are representation and JavaScript constant factors:
   column decoding, ULEB128 BigInt round-trips, per-op writer/result objects,
   empty deletion-id arrays, treap split tuples, and redundant encoder buffer
   copies — has since been replaced with Number fast paths, shared constants,
-  scratch records, and linear copies, cutting the B4 codec phases by 23–35%
-  (C1.1 itself has not been re-measured after this round). The remaining
+  scratch records, and linear copies, cutting the B4 codec phases by 23–35%.
+  A follow-up pass made visibility walks (nextVisible/previousVisible, visible
+  run and causal collectors) allocation-free on span storage and added a
+  single-change block encoder; the C1.1 re-measurement above shows edit -6~8%,
+  encode -20%, and parse -31% from this work. The remaining
   profile is led by garbage collection, visibility/treap recompute, and scalar
   edit records; tighter column storage and fewer retained scalar objects are
   the main representation opportunities. These are internal improvements rather
