@@ -61,7 +61,8 @@ export class SequenceEventDiff {
     const inserted = this.#newNode({
       kind: "text",
       value,
-      attributes: attributes !== undefined && hasAttributes(attributes) ? attributes : undefined,
+      attributes:
+        attributes !== undefined && hasAttributes(attributes) ? attributes : undefined,
     });
     this.#root = mergeNodes(mergeNodes(left, inserted), right);
   }
@@ -242,7 +243,11 @@ function splitPiece(piece: Piece, position: number): [Piece, Piece] {
   }
   if (piece.kind === "text") {
     return [
-      { kind: "text", value: piece.value.slice(0, position), attributes: piece.attributes },
+      {
+        kind: "text",
+        value: piece.value.slice(0, position),
+        attributes: piece.attributes,
+      },
       { kind: "text", value: piece.value.slice(position), attributes: piece.attributes },
     ];
   }

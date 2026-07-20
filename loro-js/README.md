@@ -110,13 +110,21 @@ pnpm exec tsgo -p tsconfig.json --noEmit
 pnpm lint
 pnpm build
 pnpm fixtures:rewrite
+pnpm fuzz:interop
 ```
 
 From the repository root, the Rust-side compatibility suite is:
 
 ```sh
 cargo test -p loro --test loro_js_interop
+pnpm test-loro-js-interop
 ```
+
+The differential fuzz suite crosses Rust/WASM and pure TypeScript update and
+snapshot blobs, compares state/history/events after each command, checks
+malformed-import atomicity, and replays its permanent corpus through native
+Rust. See [`fuzz/README.md`](./fuzz/README.md) for replay and strict-profile
+details.
 
 The format implementation follows the repository reference in
 [`docs/encoding.md`](https://github.com/loro-dev/loro/blob/main/docs/encoding.md).

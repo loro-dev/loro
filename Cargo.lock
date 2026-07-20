@@ -945,6 +945,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "rustc-hash",
+ "serde",
  "serde_json",
  "tabled 0.10.0",
  "tracing",

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 3,
+  "commands": [
+    { "kind": "map-set", "peer": 0, "key": "title", "value": "hello" },
+    { "kind": "list-insert", "peer": 0, "index": 0, "value": "A" },
+    { "kind": "text-insert", "peer": 0, "index": 0, "text": "a😀文" },
+    { "kind": "movable-insert", "peer": 0, "index": 0, "value": "card-a" },
+    { "kind": "movable-insert", "peer": 0, "index": 1, "value": "card-b" },
+    { "kind": "movable-move", "peer": 0, "from": 0, "to": 1 },
+    { "kind": "counter-increment", "peer": 0, "delta": 3 },
+    { "kind": "tree-create", "peer": 0, "parent": null, "value": "root" },
+    { "kind": "tree-create", "peer": 0, "parent": 0, "value": "child" },
+    { "kind": "commit", "peer": 0, "message": 1 },
+    { "kind": "enqueue", "source": 0, "target": 1, "slot": 0, "mode": "update" },
+    { "kind": "deliver", "slot": 0, "copies": 2 },
+    { "kind": "map-set", "peer": 1, "key": "title", "value": "from peer 1" },
+    { "kind": "text-insert", "peer": 1, "index": 2, "text": "!" },
+    { "kind": "commit", "peer": 1, "message": 2 },
+    { "kind": "enqueue", "source": 1, "target": 0, "slot": 1, "mode": "snapshot" },
+    { "kind": "deliver", "slot": 1, "copies": 0 },
+    {
+      "kind": "text-mark",
+      "peer": 0,
+      "index": 1,
+      "length": 0,
+      "key": "bold",
+      "value": true
+    },
+    { "kind": "roundtrip", "peer": 0, "mode": "update" },
+    { "kind": "roundtrip", "peer": 1, "mode": "snapshot" }
+  ]
+}

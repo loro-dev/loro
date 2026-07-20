@@ -7,6 +7,7 @@ use loro_common::{Counter, IdFull, IdSpan, LoroError, LoroResult, LoroValue, ID}
 use query::{ByteQuery, ByteQueryT};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
+use smallvec::SmallVec;
 use std::{
     fmt::{Display, Formatter},
     ops::{Bound, RangeBounds},
@@ -16,7 +17,6 @@ use std::{
     str::Utf8Error,
     sync::Arc,
 };
-use smallvec::SmallVec;
 use tracing::instrument;
 
 use crate::{

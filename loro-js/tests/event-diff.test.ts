@@ -238,6 +238,46 @@ describe("incremental event diffs", () => {
       ],
     });
   });
+
+  test("reports local tree reindexing during a concurrent import", () => {
+    const incoming = new LoroDoc();
+    incoming.setPeerId(1);
+    const incomingNode = incoming.getTree("tree").createNode();
+    incoming.commit();
+
+    const target = new LoroDoc();
+    target.setPeerId(2);
+    const localNode = target.getTree("tree").createNode();
+    target.commit();
+    let batch: LoroEventBatch | undefined;
+    target.subscribe((event) => {
+      batch = event;
+    });
+
+    target.import(incoming.export({ mode: "update" }));
+
+    expect(batch?.events[0]?.diff).toEqual({
+      type: "tree",
+      diff: [
+        {
+          target: localNode.id,
+          action: "move",
+          parent: undefined,
+          index: 1,
+          fractionalIndex: localNode.fractionalIndex(),
+          oldParent: undefined,
+          oldIndex: 0,
+        },
+        {
+          target: incomingNode.id,
+          action: "create",
+          parent: undefined,
+          index: 0,
+          fractionalIndex: incomingNode.fractionalIndex(),
+        },
+      ],
+    });
+  });
 });
 
 function applyTextDelta(original: string, delta: readonly Delta<string>[]): string {

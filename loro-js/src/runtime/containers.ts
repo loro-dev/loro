@@ -2124,6 +2124,11 @@ export interface TreeNodeRecord {
   readonly data: LoroMap;
 }
 
+const DELETED_TREE_ROOT_ID: CodecId = {
+  peer: 18_446_744_073_709_551_615n,
+  counter: 2_147_483_647,
+};
+
 interface TreeJsonValue<T> {
   readonly id: TreeID;
   readonly parent: TreeID | null;
@@ -2139,11 +2144,9 @@ export class LoroTree<
   readonly _nodes = new Map<string, TreeNodeRecord>();
   // Parent-keyed children indexes, keyed numerically (peer -> counter) so tree
   // reads/writes never stringify ids. Root children live in `_rootChildren`.
-  readonly _children = new Map<
-    bigint,
-    Map<number, OrderedIndex<TreeNodeRecord>>
-  >();
+  readonly _children = new Map<bigint, Map<number, OrderedIndex<TreeNodeRecord>>>();
   private _rootChildren: OrderedIndex<TreeNodeRecord> | undefined;
+  private _deletedRoots: OrderedIndex<TreeNodeRecord> | undefined;
   _fractionalIndexEnabled = true;
 
   kind(): "Tree" {
@@ -2176,7 +2179,11 @@ export class LoroTree<
   }
 
   isNodeDeleted(target: TreeID): boolean {
-    return this._nodes.get(target)?.deleted ?? false;
+    const node = this._nodes.get(target);
+    if (node === undefined) {
+      throw new RangeError(`tree node ${target} does not exist`);
+    }
+    return this._isRecordDeleted(node);
   }
 
   enableFractionalIndex(jitter = 0): void {
@@ -2200,13 +2207,17 @@ export class LoroTree<
   }
 
   getNodes(options: { withDeleted?: boolean } = {}): LoroTreeNode<T>[] {
-    const output: LoroTreeNode<T>[] = [];
-    for (const record of this._nodes.values()) {
-      if (options.withDeleted === true || !record.deleted) {
-        output.push(new LoroTreeNode<T>(this, record.id));
-      }
+    const records = this._nodesUnder(this._childrenOf(undefined));
+    if (options.withDeleted === true) {
+      records.push(...this._nodesUnder(this._deletedRoots?.values() ?? []));
     }
-    return output;
+    return records.map((record) => new LoroTreeNode<T>(this, record.id));
+  }
+
+  _recordsForSnapshot(): TreeNodeRecord[] {
+    const records = this._nodesUnder(this._childrenOf(undefined));
+    records.push(...this._nodesUnder(this._deletedRoots?.values() ?? []));
+    return records;
   }
 
   nodes(): LoroTreeNode<T>[] {
@@ -2260,9 +2271,7 @@ export class LoroTree<
   }
 
   _rootJsonValuesRange(start: number, end: number): TreeJsonValue<T>[] {
-    return (
-      this._childrenIndexFor(undefined)?.valuesRange(start, end) ?? []
-    ).map(
+    return (this._childrenIndexFor(undefined)?.valuesRange(start, end) ?? []).map(
       (record, offset) => this._recordToValue(record, start + offset) as TreeJsonValue<T>,
     );
   }
@@ -2310,7 +2319,12 @@ export class LoroTree<
   _setRecord(record: TreeNodeRecord): void {
     this._nodes.set(formatTreeId(record.id), record);
     record.data._setParentBinding(this, { kind: "tree", record });
-    if (!record.deleted) this._childrenIndex(record.parent).add(record);
+    if (record.deleted) {
+      record.parent = DELETED_TREE_ROOT_ID;
+      this._deletedRootsIndex().add(record);
+    } else {
+      this._childrenIndex(record.parent).add(record);
+    }
   }
 
   _updateRecord(
@@ -2320,7 +2334,11 @@ export class LoroTree<
     writer: LastWriter,
     lastMoveId: CodecId,
   ): void {
-    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
+    if (record.deleted) {
+      this._deletedRoots?.delete(record);
+    } else {
+      this._childrenIndexFor(record.parent)?.delete(record);
+    }
     record.parent = parent;
     record.position = position;
     record.deleted = false;
@@ -2329,20 +2347,47 @@ export class LoroTree<
     this._childrenIndex(parent).add(record);
   }
 
-  _deleteRecord(record: TreeNodeRecord, writer: LastWriter): void {
-    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
+  _deleteRecord(record: TreeNodeRecord, writer: LastWriter, lastMoveId: CodecId): void {
+    if (record.deleted) {
+      this._deletedRoots?.delete(record);
+    } else {
+      this._childrenIndexFor(record.parent)?.delete(record);
+    }
+    record.parent = DELETED_TREE_ROOT_ID;
+    record.position = Uint8Array.of(0x80);
     record.deleted = true;
     record.writer = writer;
+    record.lastMoveId = lastMoveId;
+    this._deletedRootsIndex().add(record);
   }
 
   _removeRecord(record: TreeNodeRecord): void {
-    if (!record.deleted) this._childrenIndexFor(record.parent)?.delete(record);
+    if (record.deleted) {
+      this._deletedRoots?.delete(record);
+    } else {
+      this._childrenIndexFor(record.parent)?.delete(record);
+    }
     record.deleted = true;
     this._nodes.delete(formatTreeId(record.id));
   }
 
   _indexOf(record: TreeNodeRecord): number {
+    if (record.deleted) return -1;
     return this._childrenIndexFor(record.parent)?.indexOf(record) ?? -1;
+  }
+
+  _isRecordDeleted(record: TreeNodeRecord): boolean {
+    const visited = new Set<string>();
+    let current: TreeNodeRecord | undefined = record;
+    while (current !== undefined) {
+      if (current.deleted) return true;
+      if (current.parent === undefined) return false;
+      const key = formatTreeId(current.parent);
+      if (visited.has(key)) return true;
+      visited.add(key);
+      current = this._nodes.get(key);
+    }
+    return true;
   }
 
   _recordToValue(
@@ -2405,6 +2450,18 @@ export class LoroTree<
     this._nodes.clear();
     this._children.clear();
     this._rootChildren = undefined;
+    this._deletedRoots = undefined;
+  }
+
+  private _nodesUnder(roots: readonly TreeNodeRecord[]): TreeNodeRecord[] {
+    const output: TreeNodeRecord[] = [];
+    const queue = roots.slice();
+    for (let index = 0; index < queue.length; index += 1) {
+      const record = queue[index]!;
+      output.push(record);
+      queue.push(...this._childrenOf(record.id));
+    }
+    return output;
   }
 
   private _childrenIndexFor(
@@ -2430,6 +2487,10 @@ export class LoroTree<
       byCounter.set(parent.counter, index);
     }
     return index;
+  }
+
+  private _deletedRootsIndex(): OrderedIndex<TreeNodeRecord> {
+    return (this._deletedRoots ??= new OrderedIndex(compareTreeRecords));
   }
 }
 
@@ -2462,11 +2523,15 @@ export class LoroTreeNode<T extends Record<string, unknown> = Record<string, unk
 
   moveAfter(target: LoroTreeNode<T>): void {
     const parent = target.parent();
-    this.move(parent, target.index() + 1);
+    const index = target.index();
+    if (index === undefined) throw new RangeError(`tree node ${target.id} is deleted`);
+    this.move(parent, index + 1);
   }
 
   moveBefore(target: LoroTreeNode<T>): void {
-    this.move(target.parent(), target.index());
+    const index = target.index();
+    if (index === undefined) throw new RangeError(`tree node ${target.id} is deleted`);
+    this.move(target.parent(), index);
   }
 
   parent(): LoroTreeNode<T> | undefined {
@@ -2484,19 +2549,21 @@ export class LoroTreeNode<T extends Record<string, unknown> = Record<string, unk
     return this.#tree._nodeAt(this.#id, index);
   }
 
-  index(): number {
+  index(): number | undefined {
     const record = this.#record();
-    return this.#tree._indexOf(record);
+    const index = this.#tree._indexOf(record);
+    return index < 0 ? undefined : index;
   }
 
   fractionalIndex(): string | undefined {
-    return this.#tree._fractionalIndexEnabled
-      ? bytesToHex(this.#record().position).toUpperCase()
+    const record = this.#record();
+    return this.#tree._fractionalIndexEnabled && !record.deleted
+      ? bytesToHex(record.position).toUpperCase()
       : undefined;
   }
 
   isDeleted(): boolean {
-    return this.#record().deleted;
+    return this.#tree._isRecordDeleted(this.#record());
   }
 
   getLastMoveId(): { peer: string; counter: number } {
@@ -3377,8 +3444,5 @@ function updateText(container: LoroText, target: string): void {
     suffixLength += codePoint > 0xffff ? 2 : 1;
   }
   container.delete(prefixLength, currentLength - prefixLength - suffixLength);
-  container.insert(
-    prefixLength,
-    target.slice(prefixLength, targetLength - suffixLength),
-  );
+  container.insert(prefixLength, target.slice(prefixLength, targetLength - suffixLength));
 }

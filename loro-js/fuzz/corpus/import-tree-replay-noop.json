@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    {
+      "kind": "map-set",
+      "peer": 1,
+      "key": "a",
+      "value": false
+    },
+    {
+      "kind": "enqueue",
+      "source": 1,
+      "target": 0,
+      "slot": 0,
+      "mode": "update"
+    },
+    {
+      "kind": "tree-create",
+      "peer": 0,
+      "parent": null,
+      "value": ""
+    },
+    {
+      "kind": "deliver",
+      "slot": 0,
+      "copies": 0
+    }
+  ]
+}

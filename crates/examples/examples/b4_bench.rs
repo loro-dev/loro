@@ -69,7 +69,10 @@ fn report() {
         let d = apply(&actions, 1);
         d.export(ExportMode::Snapshot).unwrap()
     });
-    println!("  export(+apply,nocache):{:>8.2?}  (includes a fresh apply)", t_export_nc);
+    println!(
+        "  export(+apply,nocache):{:>8.2?}  (includes a fresh apply)",
+        t_export_nc
+    );
 
     // ---- Snapshot import ----
     let mem_before = get_mem_usage();
@@ -89,7 +92,10 @@ fn report() {
         let v = d.get_deep_value();
         std::hint::black_box(v);
     });
-    println!("  import + toJSON:     {:>10.2?}  (forces full state materialization)", t_import_val);
+    println!(
+        "  import + toJSON:     {:>10.2?}  (forces full state materialization)",
+        t_import_val
+    );
     std::hint::black_box(&imported);
 
     // ---- B4 x100 ----

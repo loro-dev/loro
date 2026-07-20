@@ -26,6 +26,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:
   [context/loro-js-performance.md](context/loro-js-performance.md).
+- Rust/WASM, native Rust, and pure TypeScript differential fuzzing:
+  [context/loro-js-interop-fuzz.md](context/loro-js-interop-fuzz.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands

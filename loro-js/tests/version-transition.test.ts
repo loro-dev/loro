@@ -4,6 +4,75 @@ import { LoroDoc } from "../src/runtime/document";
 import type { LoroEventBatch } from "../src/runtime/types";
 
 describe("indexed version transitions", () => {
+  test("reports tree checkout deletions at their original sibling indices", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const emptyFrontiers = doc.frontiers();
+    const tree = doc.getTree("tree");
+    const first = tree.createNode();
+    const second = tree.createNode();
+    doc.commit();
+    let batch: LoroEventBatch | undefined;
+    doc.subscribe((event) => {
+      batch = event;
+    });
+
+    doc.checkout(emptyFrontiers);
+
+    expect(batch?.events.find(({ target }) => target === tree.id)?.diff).toEqual({
+      type: "tree",
+      diff: [
+        {
+          target: first.id,
+          action: "delete",
+          oldParent: undefined,
+          oldIndex: 0,
+        },
+        {
+          target: second.id,
+          action: "delete",
+          oldParent: undefined,
+          oldIndex: 1,
+        },
+      ],
+    });
+  });
+
+  test("revives tree metadata events when checkout restores a node", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const node = tree.createNode();
+    node.data.set("value", {});
+    doc.commit();
+    const liveFrontiers = doc.frontiers();
+    tree.delete(node.id);
+    doc.commit();
+    let batch: LoroEventBatch | undefined;
+    doc.subscribe((event) => {
+      batch = event;
+    });
+
+    doc.checkout(liveFrontiers);
+
+    expect(batch?.events.find(({ target }) => target === node.data.id)?.diff).toEqual({
+      type: "map",
+      updated: { value: {} },
+    });
+    expect(batch?.events.find(({ target }) => target === tree.id)?.diff).toEqual({
+      type: "tree",
+      diff: [
+        {
+          target: node.id,
+          action: "create",
+          parent: undefined,
+          index: 0,
+          fractionalIndex: node.fractionalIndex(),
+        },
+      ],
+    });
+  });
+
   test("retreats and restores indexed container state", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);

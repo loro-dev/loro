@@ -524,7 +524,26 @@ impl DocState {
     /// Panic when the diff cannot be merged with the previous diff.
     /// Caller should call [pre_txn] before calling this to avoid panic.
     fn record_diff(&mut self, diff: InternalDocDiff) {
-        if !self.event_recorder.recording_diff || diff.diff.is_empty() {
+        if !self.event_recorder.recording_diff {
+            return;
+        }
+
+        if diff.diff.is_empty() {
+            let new_version = (*diff.new_version).to_owned();
+            let Some(last_diff) = self.event_recorder.diffs.last_mut() else {
+                // A state-neutral import still advances the document version. Keep
+                // the next visible event's `from` frontier aligned with DocState.
+                self.event_recorder.diff_start_version = Some(new_version);
+                return;
+            };
+
+            if last_diff.origin != diff.origin || !last_diff.can_merge(&diff) {
+                panic!("should call pre_txn before record_diff");
+            }
+
+            // The empty transition belongs to the current event batch. It changes
+            // no container diff, but its version is still the batch's `to` frontier.
+            last_diff.new_version = Cow::Owned(new_version);
             return;
         }
 

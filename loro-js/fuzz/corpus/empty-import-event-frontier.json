@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    {
+      "kind": "list-insert",
+      "peer": 57,
+      "index": 0,
+      "value": false
+    },
+    {
+      "kind": "list-delete",
+      "peer": 21,
+      "index": 0,
+      "length": 0
+    },
+    {
+      "kind": "enqueue",
+      "source": 111,
+      "target": 0,
+      "slot": 4,
+      "mode": "update"
+    },
+    {
+      "kind": "deliver",
+      "slot": 4,
+      "copies": 0
+    },
+    {
+      "kind": "movable-insert",
+      "peer": 0,
+      "index": 0,
+      "value": {}
+    },
+    {
+      "kind": "enqueue",
+      "source": 0,
+      "target": 0,
+      "slot": 0,
+      "mode": "update"
+    }
+  ]
+}

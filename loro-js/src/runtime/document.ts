@@ -236,6 +236,7 @@ type PendingEventState =
           readonly value: unknown;
         }
       >;
+      readonly changed: Set<string>;
     }
   | { readonly kind: "counter"; readonly before: number }
   | {
@@ -660,6 +661,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         const recording = this.#hasEventSubscribers()
           ? { beforeValues: new Map(), eventStates: new Map() }
           : undefined;
+        if (recording !== undefined) {
+          this.#recordConcurrentTreeSubjects(recording, added, beforeVersion);
+        }
         this.#applyRecords(added, recording);
         this.#canonicalizeImportedMovableMoves(added, recording);
         if (recording !== undefined) {
@@ -822,6 +826,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           const recording = this.#hasEventSubscribers()
             ? { beforeValues: new Map(), eventStates: new Map() }
             : undefined;
+          if (recording !== undefined) {
+            this.#recordConcurrentTreeSubjects(
+              recording,
+              integration.added,
+              beforeVersion,
+            );
+          }
           this.#applyRecords(integration.added, recording);
           this.#canonicalizeImportedMovableMoves(integration.added, recording);
           if (recording !== undefined) {
@@ -2056,7 +2067,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return binding.element.deleted || binding.element.value !== container;
     }
     if (binding?.kind === "tree" && parent instanceof LoroTree) {
-      return binding.record.deleted || binding.record.data !== container;
+      return parent._isRecordDeleted(binding.record) || binding.record.data !== container;
     }
     return parent !== undefined;
   }
@@ -2878,18 +2889,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     } else if (container instanceof LoroMap) {
       if (content.type === "map-insert" || content.type === "map-delete") {
         const state = this.#mapEventState(recording, container);
+        const beforeRecord = container._entries.get(content.key);
+        const beforeVisible = beforeRecord !== undefined && !beforeRecord.deleted;
+        const beforeValue = beforeVisible
+          ? cloneRuntimeValue(beforeRecord.value)
+          : undefined;
         if (!state.originals.has(content.key)) {
-          const record = container._entries.get(content.key);
           state.originals.set(content.key, {
-            present: record !== undefined,
-            visible: record !== undefined && !record.deleted,
-            value:
-              record === undefined || record.deleted
-                ? undefined
-                : cloneRuntimeValue(record.value),
+            present: beforeRecord !== undefined,
+            visible: beforeVisible,
+            value: beforeValue,
           });
         }
-        return undefined;
+        return () => {
+          const afterRecord = container._entries.get(content.key);
+          const afterVisible = afterRecord !== undefined && !afterRecord.deleted;
+          const afterValue = afterVisible
+            ? cloneRuntimeValue(afterRecord.value)
+            : undefined;
+          if (
+            beforeVisible !== afterVisible ||
+            !eventValuesEqual(beforeValue, afterValue)
+          ) {
+            state.changed.add(content.key);
+          }
+        };
       }
     } else if (container instanceof LoroTree) {
       if (
@@ -2903,7 +2927,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           const record = container._nodes.get(id);
           state.originals.set(
             id,
-            record === undefined || record.deleted
+            record === undefined || container._isRecordDeleted(record)
               ? undefined
               : this.#treeEventNode(container, record),
           );
@@ -2959,6 +2983,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         string,
         { present: boolean; visible: boolean; value: unknown }
       >(),
+      changed: new Set<string>(),
     };
     recording.eventStates.set(container.id, state);
     return state;
@@ -3021,6 +3046,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           const visible = record !== undefined && !record.deleted;
           const value = visible ? cloneRuntimeValue(record.value) : undefined;
           if (
+            state.changed.has(key) ||
             (includeMapTombstones && present !== original.present) ||
             visible !== original.visible ||
             !eventValuesEqual(value, original.value)
@@ -3037,7 +3063,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         for (const [nodeId, original] of state.originals) {
           if (original !== undefined) before.push(original);
           const record = container._nodes.get(nodeId);
-          if (record !== undefined && !record.deleted) {
+          if (record !== undefined && !container._isRecordDeleted(record)) {
             after.push(this.#treeEventNode(container, record));
           }
         }
@@ -3427,7 +3453,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (record !== undefined) {
           const writer: LastWriter = { peer: changeId.peer, lamport };
           if (compareWriter(record.writer, writer) <= 0) {
-            (container as LoroTree)._deleteRecord(record, writer);
+            (container as LoroTree)._deleteRecord(record, writer, operationId);
           }
         }
         return;
@@ -4277,22 +4303,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
 
+    if (recording !== undefined) {
+      for (const [tree, subjects] of treeSubjects) {
+        const state = this.#treeEventState(recording, tree);
+        for (const subject of subjects.values()) {
+          const nodeKey = formatTreeId(subject);
+          if (state.originals.has(nodeKey)) continue;
+          const record = tree._nodes.get(nodeKey);
+          state.originals.set(
+            nodeKey,
+            record === undefined || tree._isRecordDeleted(record)
+              ? undefined
+              : this.#treeEventNode(tree, record),
+          );
+        }
+      }
+    }
+
     for (const [tree, subjects] of treeSubjects) {
       const history = this.#treeOperationHistory.get(tree.id);
       for (const [historyKey, subject] of subjects) {
         const nodeKey = formatTreeId(subject);
-        if (recording !== undefined) {
-          const state = this.#treeEventState(recording, tree);
-          if (!state.originals.has(nodeKey)) {
-            const record = tree._nodes.get(nodeKey);
-            state.originals.set(
-              nodeKey,
-              record === undefined || record.deleted
-                ? undefined
-                : this.#treeEventNode(tree, record),
-            );
-          }
-        }
         const operations = history?.get(historyKey);
         const winner = latestIncludedOperation(operations, target);
         const existing = tree._nodes.get(nodeKey);
@@ -4347,7 +4378,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           );
         }
         if (winnerContent.type === "tree-delete") {
-          tree._deleteRecord(record, winner.writer);
+          tree._deleteRecord(record, winner.writer, {
+            peer: winner.record.change.id.peer,
+            counter: winner.operation.counter,
+          });
         }
       }
     }
@@ -5448,9 +5482,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       };
     }
     if (container instanceof LoroTree) {
-      const records = [...container._nodes.values()].sort(
-        (left, right) => Number(left.deleted) - Number(right.deleted),
-      );
+      // Rust's fast-tree decoder historically accepted the canonical snapshot
+      // order: live roots/subtrees first, then deleted roots/subtrees, with each
+      // sibling group ordered by fractional position and last-move writer.
+      // Preserve that order so snapshots remain byte-level interoperable and so
+      // parent-local ordered insertion never sees an insertion-order permutation.
+      const records = container._recordsForSnapshot();
       const peers: bigint[] = [];
       const peerIndices = new Map<bigint, number>();
       const peerIndex = (peer: bigint): bigint => {
@@ -5478,19 +5515,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             positions.push(record.position.slice());
             positionIndices.set(positionKey, positionIndex);
           }
-          const parentIndex =
-            record.parent === undefined
+          const parentIndex = record.deleted
+            ? 1n
+            : record.parent === undefined
               ? 0n
-              : record.deleted
-                ? 1n
-                : BigInt((recordIndices.get(idKey(record.parent)) ?? -2) + 2);
+              : BigInt((recordIndices.get(idKey(record.parent)) ?? -2) + 2);
           return {
             peerIndex: peerIndex(record.id.peer),
             counter: record.id.counter,
             parentIndexPlusTwo: parentIndex,
             lastSetPeerIndex: peerIndex(record.writer.peer),
-            lastSetCounter: record.id.counter,
-            lastSetLamportSub: record.writer.lamport - record.id.counter,
+            lastSetCounter: record.lastMoveId.counter,
+            lastSetLamportSub: record.writer.lamport - record.lastMoveId.counter,
             fractionalIndexIndex: positionIndex,
           };
         }),
@@ -5866,6 +5902,60 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return values;
   }
 
+  #recordConcurrentTreeSubjects(
+    recording: EventRecording,
+    added: readonly HistoryRecord[],
+    beforeVersion: VersionVector,
+  ): void {
+    const incomingVersion = new VersionVector();
+    for (const { change } of added) {
+      const length = changeLength(change);
+      if (length === 0) continue;
+      const frontier = {
+        peer: change.id.peer,
+        counter: change.id.counter + length - 1,
+      };
+      for (const [peer, counter] of this.#causalVersionAt([frontier])) {
+        if (counter > (incomingVersion.get(peer) ?? 0)) {
+          incomingVersion.set(peer, counter);
+        }
+      }
+    }
+
+    // Rust calculates a concurrent import diff by retreating to the common
+    // ancestor and replaying both branches. Tree operations from the local-only
+    // branch can therefore produce visible reindex moves even though those
+    // operations are not present in the imported update. Capture those subjects
+    // so the incremental TS merge reports the same net transition.
+    for (const { change } of this.#recordsInVersionRange(
+      incomingVersion,
+      beforeVersion,
+    )) {
+      for (const operation of change.operations) {
+        const content = operation.content;
+        if (
+          content.type !== "tree-create" &&
+          content.type !== "tree-move" &&
+          content.type !== "tree-delete"
+        ) {
+          continue;
+        }
+        const container = this.#containers.get(this.#containerKey(operation.container));
+        if (!(container instanceof LoroTree)) continue;
+        const state = this.#treeEventState(recording, container);
+        const nodeId = formatTreeId(content.subject);
+        if (state.originals.has(nodeId)) continue;
+        const record = container._nodes.get(nodeId);
+        state.originals.set(
+          nodeId,
+          record === undefined || container._isRecordDeleted(record)
+            ? undefined
+            : this.#treeEventNode(container, record),
+        );
+      }
+    }
+  }
+
   #captureContainerEventValues(ids: ReadonlySet<string>): Map<string, unknown> {
     const values = new Map<string, unknown>();
     for (const id of ids) {
@@ -5897,12 +5987,34 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     preparedDiffs: ReadonlyMap<string, Diff> = new Map(),
   ): void {
     if (changed.size === 0 || !this.#hasEventSubscribers()) return;
-    const events: LoroEvent[] = [];
+    const expandedChanged = new Set(changed);
+    const revived = new Set<string>();
+    const calculatedDiffs = new Map(preparedDiffs);
     for (const id of changed) {
       const container = this.#containers.get(id);
-      if (container === undefined) continue;
+      if (!(container instanceof LoroTree) || this._isContainerDeleted(container)) {
+        continue;
+      }
       const diff =
-        preparedDiffs.get(id) ?? containerDiff(container, beforeValues.get(id));
+        calculatedDiffs.get(id) ?? containerDiff(container, beforeValues.get(id));
+      calculatedDiffs.set(id, diff);
+      if (diff.type !== "tree") continue;
+      for (const item of diff.diff) {
+        if (item.action !== "create") continue;
+        const record = container._nodes.get(item.target);
+        if (record === undefined || container._isRecordDeleted(record)) continue;
+        expandedChanged.add(record.data.id);
+        revived.add(record.data.id);
+      }
+    }
+
+    const events: LoroEvent[] = [];
+    for (const id of expandedChanged) {
+      const container = this.#containers.get(id);
+      if (container === undefined || this._isContainerDeleted(container)) continue;
+      const diff =
+        calculatedDiffs.get(id) ??
+        containerDiff(container, revived.has(id) ? undefined : beforeValues.get(id));
       if (isEmptyContainerDiff(diff)) continue;
       events.push({ target: id as ContainerID, diff, path: containerPath(container) });
     }
@@ -6192,27 +6304,6 @@ function changeLength(change: DecodedChange): number {
   const length = change.operations.reduce((sum, operation) => sum + operation.length, 0);
   changeLengthCache.set(change, length);
   return length;
-}
-
-function advanceUnicodeScalars(value: string, start: number, length: number): number {
-  let offset = start;
-  for (let index = 0; index < length; index += 1) {
-    if (offset >= value.length) {
-      throw new Error("text snapshot span exceeds the decoded text");
-    }
-    const first = value.charCodeAt(offset);
-    offset += 1;
-    if (
-      first >= 0xd800 &&
-      first <= 0xdbff &&
-      offset < value.length &&
-      value.charCodeAt(offset) >= 0xdc00 &&
-      value.charCodeAt(offset) <= 0xdfff
-    ) {
-      offset += 1;
-    }
-  }
-  return offset;
 }
 
 function validateStateSnapshotTextIds(
@@ -7835,7 +7926,7 @@ function containerEventValue(container: LoroContainer): unknown {
     return container.getNodes().map((node) => ({
       id: node.id,
       parent: node.parent()?.id,
-      index: node.index(),
+      index: node.index()!,
       fractionalIndex: node.fractionalIndex() ?? "",
     })) satisfies TreeEventNode[];
   }
@@ -7961,12 +8052,7 @@ function splitsSurrogatePair(value: string, at: number): boolean {
   if (at <= 0 || at >= value.length) return false;
   const before = value.charCodeAt(at - 1);
   const after = value.charCodeAt(at);
-  return (
-    before >= 0xd800 &&
-    before <= 0xdbff &&
-    after >= 0xdc00 &&
-    after <= 0xdfff
-  );
+  return before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
 }
 
 function stringDelta(before: string, after: string): Delta<string>[] {
@@ -8091,7 +8177,9 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
   if (left instanceof Uint8Array && right instanceof Uint8Array) {
     return bytesEqual(left, right);
   }
+  if (left instanceof Uint8Array || right instanceof Uint8Array) return false;
   if (isContainer(left) && isContainer(right)) return left.id === right.id;
+  if (isContainer(left) || isContainer(right)) return false;
   if (Array.isArray(left) && Array.isArray(right)) {
     if (left.length !== right.length) return false;
     for (let index = 0; index < left.length; index += 1) {
@@ -8099,6 +8187,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     }
     return true;
   }
+  if (Array.isArray(left) || Array.isArray(right)) return false;
   if (left instanceof Map && right instanceof Map) {
     if (left.size !== right.size) return false;
     for (const [key, value] of left) {
@@ -8106,6 +8195,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     }
     return true;
   }
+  if (left instanceof Map || right instanceof Map) return false;
   if (
     typeof left === "object" &&
     left !== null &&
@@ -8122,7 +8212,7 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
       }
     }
     let rightCount = 0;
-    for (const key in rightRecord) rightCount += 1;
+    for (const _key in rightRecord) rightCount += 1;
     return leftCount === rightCount;
   }
   return false;

@@ -1,6 +1,13 @@
 import { ByteReader, ByteWriter } from "./bytes";
 import { LoroDecodeError, LoroEncodeError, decodeAssert, encodeAssert } from "./errors";
-import { I64_MAX, I64_MIN, U64_MAX, readUleb128, readUlebNumber, writeUleb128 } from "./leb128";
+import {
+  I64_MAX,
+  I64_MIN,
+  U64_MAX,
+  readUleb128,
+  readUlebNumber,
+  writeUleb128,
+} from "./leb128";
 
 const U32_MAX = 0xffff_ffff;
 const I32_MIN = -0x8000_0000;
@@ -774,7 +781,10 @@ function readPostcardI128NumberOrBigInt(reader: ByteReader): number | bigint {
         return encoded % 2 === 0 ? encoded / 2 : -(encoded + 1) / 2;
       }
       const value = (encodedBigInt >> 1n) ^ -(encodedBigInt & 1n);
-      decodeAssert(value >= I128_MIN && value <= I128_MAX, "postcard i128 is out of range");
+      decodeAssert(
+        value >= I128_MIN && value <= I128_MAX,
+        "postcard i128 is out of range",
+      );
       return value;
     }
     multiplier *= 128;

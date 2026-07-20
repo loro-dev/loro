@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "peerCount": 2,
+  "commands": [
+    {
+      "kind": "map-set",
+      "peer": 69,
+      "key": "title",
+      "value": {}
+    },
+    {
+      "kind": "attach",
+      "peer": 73
+    },
+    {
+      "kind": "map-delete",
+      "peer": 3,
+      "key": "a"
+    },
+    {
+      "kind": "map-set",
+      "peer": 13,
+      "key": "title",
+      "value": {}
+    },
+    {
+      "kind": "attach",
+      "peer": 217
+    }
+  ]
+}
