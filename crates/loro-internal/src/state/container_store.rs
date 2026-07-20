@@ -111,6 +111,29 @@ impl ContainerStore {
             .with_container_for_read(idx, |c| c.get_value(idx, ctx!(self)))
     }
 
+    pub(crate) fn get_value_ephemeral(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
+        self.try_get_value_ephemeral(idx)
+            .expect("snapshot-backed container should decode")
+    }
+
+    pub(crate) fn try_get_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<LoroValue>> {
+        self.store
+            .try_with_container_for_ephemeral_read(idx, |c| {
+                c.try_get_value_ephemeral(idx, ctx!(self))
+            })
+            .and_then(|value| value.transpose())
+    }
+
+    pub(crate) fn get_parent_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<Option<ContainerID>>> {
+        self.store.get_parent_ephemeral(idx)
+    }
+
     pub fn map_get(&mut self, idx: ContainerIdx, key: &str) -> Option<LoroValue> {
         self.store
             .with_container_for_read(idx, |c| c.map_get(idx, ctx!(self), key))?
@@ -264,11 +287,6 @@ impl ContainerStore {
         self.store.iter_all_container_ids()
     }
 
-    pub fn load_all(&mut self) -> LoadAllFlag {
-        self.store.load_all();
-        LoadAllFlag
-    }
-
     pub fn load_root_containers(&mut self) -> LoadAllFlag {
         self.store.load_roots();
         LoadAllFlag
@@ -373,8 +391,8 @@ impl ContainerStore {
 mod test {
     use super::*;
     use crate::{
-        cursor::PosType, state::TreeParentId, ContainerType, ListHandler, LoroDoc, MapHandler,
-        MovableListHandler,
+        cursor::PosType, handler::HandlerTrait, state::TreeParentId, ContainerType, ListHandler,
+        LoroDoc, MapHandler, MovableListHandler,
     };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
@@ -425,7 +443,7 @@ mod test {
 
     fn export_container_store(doc: &LoroDoc) -> Bytes {
         let mut state = doc.app_state().lock();
-        state.ensure_all_alive_containers();
+        state.ensure_all_alive_containers().unwrap();
         state.store.encode()
     }
 
@@ -449,5 +467,136 @@ mod test {
         assert!(!store.store.has_cached_value_for_test(map_idx));
         assert_eq!(store.map_len(map_idx), 2);
         assert!(store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn ephemeral_lazy_read_does_not_cache_value() {
+        let doc = init_doc();
+        let bytes = export_container_store(&doc);
+        let mut store = decode_container_store(bytes);
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let map_idx = store.arena.register_container(&map_id);
+
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+        assert_eq!(
+            store
+                .get_value_ephemeral(map_idx)
+                .and_then(|value| value.as_map().map(|map| map.len())),
+            Some(2)
+        );
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_does_not_materialize_map_value_after_key_read() {
+        let source = init_doc();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        assert_eq!(imported.get_map("map").get("key"), Some("value".into()));
+        {
+            let mut state = imported.app_state().lock();
+            let map_idx = state.store.arena.register_container(&map_id);
+            assert!(state.store.store.has_cached_value_for_test(map_idx));
+            assert!(!state
+                .store
+                .store
+                .has_materialized_map_value_for_test(map_idx));
+        }
+
+        imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        assert!(!state
+            .store
+            .store
+            .has_materialized_map_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_keeps_imported_state_lazy() {
+        let source = init_doc();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        {
+            let mut state = imported.app_state().lock();
+            let map_idx = state.store.arena.register_container(&map_id);
+            assert!(!state.store.store.has_cached_value_for_test(map_idx));
+        }
+
+        let exported = imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        assert!(!exported.is_empty());
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        assert!(!state.store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn deep_value_read_keeps_imported_state_lazy() {
+        let source = init_doc();
+        let expected = source.get_deep_value();
+        let child_map_id = source
+            .get_map("map")
+            .get("child_map")
+            .and_then(|value| value.as_container().cloned())
+            .unwrap();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        assert_eq!(imported.get_deep_value(), expected);
+        assert_eq!(imported.get_deep_value(), expected);
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        let child_map_idx = state.store.arena.register_container(&child_map_id);
+        assert!(!state.store.store.has_cached_value_for_test(map_idx));
+        assert!(!state.store.store.has_cached_value_for_test(child_map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_persists_empty_alive_child() {
+        let source = LoroDoc::new_auto_commit();
+        let child = source
+            .get_map("root")
+            .insert_container("empty", MapHandler::new_detached())
+            .unwrap();
+        let child_id = child.id();
+        let updates = source
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+        let target = LoroDoc::new();
+        target.import(&updates).unwrap();
+        {
+            let mut state = target.app_state().lock();
+            assert!(!state.store.contains_id(&child_id));
+        }
+
+        let snapshot = target
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+
+        let mut state = round_tripped.app_state().lock();
+        assert!(state.store.contains_id(&child_id));
     }
 }

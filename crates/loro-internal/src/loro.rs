@@ -14,7 +14,7 @@ use crate::{
     },
     cursor::{AbsolutePosition, CannotFindRelativePosition, Cursor, PosQueryResult},
     dag::{Dag, DagUtils},
-    diff_calc::DiffCalculator,
+    diff_calc::{DiffCalculator, DiffMode},
     encoding::{
         self, decode_snapshot, export_fast_snapshot, export_fast_updates,
         export_fast_updates_in_range, export_shallow_snapshot, export_snapshot_at,
@@ -135,7 +135,9 @@ impl LoroDoc {
                 .expect("fork_at on detached doc should not fail");
         }
 
-        let snapshot = self.with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self));
+        let snapshot = self
+            .with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self))
+            .expect("forking a valid document should encode a snapshot");
         let doc = Self::new();
         doc.with_barrier(|| {
             encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default())
@@ -767,6 +769,14 @@ impl LoroDoc {
 
         let old_vv = oplog.vv().clone();
         let old_frontiers = oplog.frontiers().clone();
+        // Checked before the changes are applied, while the store still holds only old history.
+        let isolated_batch = isolated_scalar_root_batch(&oplog, &changes).filter(|(_, names)| {
+            let mut state = self.state.lock();
+            names.iter().all(|name| {
+                let id = ContainerID::new_root(name, ContainerType::Map);
+                !state.store.contains_id(&id)
+            })
+        });
         let rollback_enabled = preflight.needs_state_apply_rollback;
         if rollback_enabled {
             oplog.begin_import_rollback_with_arena(arena_checkpoint);
@@ -775,14 +785,39 @@ impl LoroDoc {
         let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
         if &old_vv != oplog.vv() {
             let mut diff = DiffCalculator::new(false);
-            let (diff, diff_mode) = diff.calc_diff_internal(
-                &oplog,
-                &old_vv,
-                &old_frontiers,
-                oplog.vv(),
-                oplog.dag.get_frontiers(),
-                None,
-            );
+            // Applying may have unlocked pending changes; the isolated fast path is only valid
+            // when exactly the candidate batch was appended on top of the old version.
+            let isolated_batch = isolated_batch.filter(|(component_vv, _)| {
+                component_vv
+                    .iter()
+                    .all(|(peer, end)| oplog.vv().get(peer) == Some(end))
+                    && oplog.vv().iter().all(|(peer, end)| {
+                        let old_end = old_vv.get(peer).copied().unwrap_or(0);
+                        let component_end = component_vv.get(peer).copied().unwrap_or(0);
+                        *end == old_end.max(component_end)
+                    })
+            });
+            let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
+                let component_frontiers = oplog.dag.vv_to_frontiers(&component_vv);
+                let (diff, _) = diff.calc_diff_internal(
+                    &oplog,
+                    &VersionVector::default(),
+                    &Frontiers::default(),
+                    &component_vv,
+                    &component_frontiers,
+                    None,
+                );
+                (diff, DiffMode::Import)
+            } else {
+                diff.calc_diff_internal(
+                    &oplog,
+                    &old_vv,
+                    &old_frontiers,
+                    oplog.vv(),
+                    oplog.dag.get_frontiers(),
+                    None,
+                )
+            };
             let mut state = self.state.lock();
             if let Err(e) = state.apply_diff(
                 InternalDocDiff {
@@ -2061,7 +2096,7 @@ impl LoroDoc {
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.with_barrier(|| {
             let ans = match mode {
-                ExportMode::Snapshot => export_fast_snapshot(self),
+                ExportMode::Snapshot => export_fast_snapshot(self)?,
                 ExportMode::Updates { from } => export_fast_updates(self, &from),
                 ExportMode::UpdatesInRange { spans } => {
                     export_fast_updates_in_range(&self.oplog.lock(), spans.as_ref())
@@ -2176,6 +2211,82 @@ fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> 
     }
 
     roots.into_iter().collect()
+}
+
+/// Identify a causally closed update component that can be applied without replaying unrelated
+/// history. The first version is deliberately narrow: it accepts only scalar Map operations on
+/// top-level roots that never appeared in the existing history.
+fn isolated_scalar_root_batch(
+    oplog: &OpLog,
+    changes: &[Change],
+) -> Option<(VersionVector, FxHashSet<InternalString>)> {
+    if changes.is_empty() || !oplog.shallow_since_vv().is_empty() {
+        return None;
+    }
+
+    // Every peer in the batch must be brand new and contiguously covered from counter 0.
+    // (`changes` is sorted by lamport, so one peer's changes appear in counter order.)
+    let mut component_vv = VersionVector::new();
+    let mut root_names = FxHashSet::default();
+    for change in changes {
+        let peer = change.id.peer;
+        if oplog.vv().get(&peer).copied().unwrap_or(0) != 0 {
+            return None;
+        }
+        let end = component_vv.entry(peer).or_insert(0);
+        if change.id.counter != *end {
+            return None;
+        }
+        *end = change.ctr_end();
+
+        for op in change.ops.iter() {
+            let cid = oplog.arena.idx_to_id(op.container)?;
+            if cid.is_mergeable() {
+                return None;
+            }
+            let ContainerID::Root {
+                name,
+                container_type: ContainerType::Map,
+            } = cid
+            else {
+                return None;
+            };
+            let InnerContent::Map(map) = &op.content else {
+                return None;
+            };
+            if let Some(value) = &map.value {
+                if value.is_container()
+                    || loro_common::parse_mergeable_marker(
+                        &ContainerID::new_root(&name, ContainerType::Map),
+                        &map.key,
+                        value,
+                    )
+                    .is_some()
+                {
+                    return None;
+                }
+            }
+            root_names.insert(name);
+        }
+    }
+
+    // The batch must be causally closed: every dependency points inside the batch itself.
+    for change in changes {
+        for dep in change.deps.iter() {
+            if dep.counter >= component_vv.get(&dep.peer).copied().unwrap_or(0) {
+                return None;
+            }
+        }
+    }
+
+    if oplog
+        .change_store()
+        .old_history_may_touch_root_names(&root_names)
+    {
+        return None;
+    }
+
+    Some((component_vv, root_names))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -2472,7 +2583,7 @@ mod test {
         LoroDoc, ToJson, TreeParentId,
     };
     use bytes::{BufMut, Bytes};
-    use loro_common::ID;
+    use loro_common::{ContainerID, ContainerType, ID};
     use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 
     const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
@@ -2972,5 +3083,183 @@ mod test {
             String::new()
         };
         assert!(msg.contains("poisoned LoroMutex"), "{msg}");
+    }
+
+    #[test]
+    fn repeated_independent_scalar_root_imports_scan_history_once() {
+        let base = LoroDoc::new_auto_commit();
+        base.set_peer_id(1).unwrap();
+        for i in 0..64 {
+            base.get_map("existing")
+                .insert(&format!("key-{i}"), i)
+                .unwrap();
+            base.commit_then_renew();
+        }
+
+        let target = LoroDoc::new();
+        target
+            .import(&base.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert!(!target.has_history_cache());
+
+        for i in 0_u64..8 {
+            let remote = LoroDoc::new_auto_commit();
+            remote.set_peer_id(2 + i).unwrap();
+            remote
+                .get_map(format!("isolated-{i}"))
+                .insert("value", i as i32)
+                .unwrap();
+            let update = remote.export(ExportMode::all_updates()).unwrap();
+            target.import(&update).unwrap();
+            assert_eq!(
+                target.get_map(format!("isolated-{i}")).get("value"),
+                Some((i as i32).into())
+            );
+        }
+
+        assert!(!target.has_history_cache());
+        assert_eq!(
+            target
+                .oplog
+                .lock()
+                .change_store()
+                .root_history_scan_count_for_test(),
+            1
+        );
+    }
+
+    #[test]
+    fn independent_fast_path_rejects_root_present_only_in_snapshot_state() {
+        fn snapshot_sections(doc: &LoroDoc) -> crate::encoding::fast_snapshot::Snapshot {
+            let (_, txn_guard) = doc.implicit_commit_then_stop();
+            drop(txn_guard);
+            crate::encoding::fast_snapshot::encode_snapshot_inner(doc).unwrap()
+        }
+
+        let base = LoroDoc::new_auto_commit();
+        base.set_peer_id(1).unwrap();
+        base.get_map("existing").insert("value", "base").unwrap();
+        let base_sections = snapshot_sections(&base);
+
+        let state_donor = LoroDoc::new_auto_commit();
+        state_donor.set_peer_id(999).unwrap();
+        state_donor
+            .get_map("isolated")
+            .insert("value", "stale")
+            .unwrap();
+        let donor_sections = snapshot_sections(&state_donor);
+
+        let target = LoroDoc::new();
+        crate::encoding::fast_snapshot::decode_snapshot_inner(
+            crate::encoding::fast_snapshot::Snapshot {
+                oplog_bytes: base_sections.oplog_bytes,
+                state_bytes: donor_sections.state_bytes,
+                shallow_root_state_bytes: Bytes::new(),
+            },
+            &target,
+            Default::default(),
+        )
+        .unwrap();
+        assert!(!target.has_history_cache());
+
+        let left = LoroDoc::new_auto_commit();
+        left.set_peer_id(2).unwrap();
+        left.get_map("isolated").insert("value", "left").unwrap();
+        let right = LoroDoc::new_auto_commit();
+        right.set_peer_id(3).unwrap();
+        right.get_map("isolated").insert("value", "winner").unwrap();
+        let aggregate = LoroDoc::new();
+        aggregate
+            .import(&left.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        aggregate
+            .import(&right.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        target
+            .import(&aggregate.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert_eq!(
+            target.get_map("isolated").get("value"),
+            Some("winner".into())
+        );
+        assert!(target.has_history_cache());
+    }
+
+    #[test]
+    fn independent_scalar_root_import_rolls_back_after_state_failure() {
+        let base = LoroDoc::new_auto_commit();
+        base.set_peer_id(1).unwrap();
+        base.get_map("existing").insert("value", "base").unwrap();
+
+        let target = LoroDoc::new();
+        target
+            .import(&base.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        let vv_before = target.oplog_vv();
+        let state_before = target.get_deep_value();
+
+        let remote = LoroDoc::new_auto_commit();
+        remote.set_peer_id(2).unwrap();
+        remote.get_map("isolated").insert("value", 7).unwrap();
+        let update = remote.export(ExportMode::all_updates()).unwrap();
+
+        crate::state::fail_next_import_state_apply_for_test();
+        let err = target.import(&update).unwrap_err();
+        assert!(err.to_string().contains("state apply failpoint"));
+        assert_eq!(target.oplog_vv(), vv_before);
+        assert_eq!(target.get_deep_value(), state_before);
+        assert!(!target.has_history_cache());
+
+        target.import(&update).unwrap();
+        assert_eq!(target.get_map("isolated").get("value"), Some(7.into()));
+    }
+
+    #[test]
+    fn independent_fast_path_rejects_root_name_seen_in_history() {
+        let base = LoroDoc::new_auto_commit();
+        base.set_peer_id(1).unwrap();
+        base.get_map("shared").insert("value", "base").unwrap();
+
+        let target = LoroDoc::new();
+        target
+            .import(&base.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert!(!target.has_history_cache());
+
+        let remote = LoroDoc::new_auto_commit();
+        remote.set_peer_id(999).unwrap();
+        remote.get_map("shared").insert("value", "remote").unwrap();
+        target
+            .import(&remote.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert_eq!(target.get_map("shared").get("value"), Some("remote".into()));
+        assert!(target.has_history_cache());
+    }
+
+    #[test]
+    fn independent_fast_path_rejects_deleted_root_name() {
+        let base = LoroDoc::new_auto_commit();
+        base.set_peer_id(1).unwrap();
+        let root_id = ContainerID::new_root("deleted", ContainerType::Map);
+        base.get_map("deleted").insert("value", "base").unwrap();
+        base.delete_root_container(root_id);
+
+        let target = LoroDoc::new();
+        target
+            .import(&base.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert!(!target.has_history_cache());
+
+        let remote = LoroDoc::new_auto_commit();
+        remote.set_peer_id(2).unwrap();
+        remote.get_map("deleted").insert("value", "remote").unwrap();
+        target
+            .import(&remote.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert!(target.has_history_cache());
     }
 }

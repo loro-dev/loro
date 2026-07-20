@@ -5,10 +5,10 @@ use std::collections::BTreeSet;
 use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
 
 use crate::{
-    container::list::list_op::InnerListOp,
+    container::{idx::ContainerIdx, list::list_op::InnerListOp},
     dag::DagUtils,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
-    state::container_store::FRONTIERS_KEY,
+    state::{container_store::FRONTIERS_KEY, DocState},
     version::{Frontiers, VersionVector},
     LoroDoc,
 };
@@ -25,7 +25,7 @@ pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let (snapshot, start_from) = export_shallow_snapshot_inner(doc, start_from)?;
-    _encode_snapshot(snapshot, w);
+    _encode_snapshot(&snapshot, w);
     Ok(start_from)
 }
 
@@ -102,7 +102,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                 return Err(LoroEncodeError::UnknownContainer);
             }
 
-            state.ensure_all_alive_containers();
+            state.ensure_all_alive_containers()?;
             state.store.flush();
 
             // All the containers that are created after start_from need to be encoded.
@@ -136,12 +136,11 @@ pub(crate) fn export_shallow_snapshot_inner(
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
-        let alive_containers = state.ensure_all_alive_containers();
-        if has_unknown_container(alive_containers.iter()) {
+        let alive_containers = state.ensure_all_alive_containers()?;
+        if has_unknown_container(alive_containers.iter().copied()) {
             return Err(LoroEncodeError::UnknownContainer);
         }
-        let mut alive_c_bytes: BTreeSet<Vec<u8>> =
-            alive_containers.iter().map(|x| x.to_bytes()).collect();
+        let mut alive_c_bytes = alive_indices_to_bytes(&state, &alive_containers);
         state.store.flush();
         let shallow_root_state_kv = state.store.get_kv_clone();
         drop(state);
@@ -149,7 +148,7 @@ pub(crate) fn export_shallow_snapshot_inner(
             .map_err(LoroEncodeError::from)?;
         let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
             let mut state = doc.app_state().lock();
-            state.ensure_all_alive_containers();
+            state.ensure_all_alive_containers()?;
             state.store.encode();
             // All the containers that are created after start_from need to be encoded
             for cid in state.store.iter_all_container_ids() {
@@ -187,8 +186,8 @@ pub(crate) fn export_shallow_snapshot_inner(
     Ok((result?, start_from))
 }
 
-fn has_unknown_container<'a>(mut cids: impl Iterator<Item = &'a ContainerID>) -> bool {
-    cids.any(|cid| matches!(cid.container_type(), ContainerType::Unknown(_)))
+fn has_unknown_container(mut idxs: impl Iterator<Item = ContainerIdx>) -> bool {
+    idxs.any(|idx| matches!(idx.get_type(), ContainerType::Unknown(_)))
 }
 
 fn has_unknown_container_key<'a>(mut keys: impl Iterator<Item = &'a Vec<u8>>) -> bool {
@@ -225,11 +224,11 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
-        let alive_containers = state.ensure_all_alive_containers();
-        if has_unknown_container(alive_containers.iter()) {
+        let alive_containers = state.ensure_all_alive_containers()?;
+        if has_unknown_container(alive_containers.iter().copied()) {
             return Err(LoroEncodeError::UnknownContainer);
         }
-        let mut alive_c_bytes = cids_to_bytes(alive_containers);
+        let mut alive_c_bytes = alive_indices_to_bytes(&state, &alive_containers);
         state.store.flush();
         let shallow_state_kv = state.store.get_kv_clone();
         drop(state);
@@ -237,7 +236,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         doc._checkout_without_emitting(target_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
-        state.ensure_all_alive_containers();
+        state.ensure_all_alive_containers()?;
         state.store.encode();
         for cid in state.store.iter_all_container_ids() {
             if let ContainerID::Normal { peer, counter, .. } = cid {
@@ -263,7 +262,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
             state_bytes: Some(target_state_kv.export()),
             shallow_root_state_bytes: shallow_state_bytes,
         };
-        _encode_snapshot(snapshot, w);
+        _encode_snapshot(&snapshot, w);
         Ok(())
     })();
 
@@ -273,11 +272,14 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     Ok(start_from)
 }
 
-fn cids_to_bytes(
-    alive_containers: std::collections::HashSet<ContainerID, rustc_hash::FxBuildHasher>,
+fn alive_indices_to_bytes(
+    state: &DocState,
+    alive_containers: &rustc_hash::FxHashSet<ContainerIdx>,
 ) -> BTreeSet<Vec<u8>> {
-    let alive_c_bytes: BTreeSet<Vec<u8>> = alive_containers.iter().map(|x| x.to_bytes()).collect();
-    alive_c_bytes
+    alive_containers
+        .iter()
+        .map(|idx| state.arena.get_container_id(*idx).unwrap().to_bytes())
+        .collect()
 }
 
 fn frontiers_to_vv_for_export(
@@ -426,18 +428,18 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             }
         }
 
-        let alive_containers = state.ensure_all_alive_containers();
-        if has_unknown_container(alive_containers.iter()) {
+        let alive_containers = state.ensure_all_alive_containers()?;
+        if has_unknown_container(alive_containers.iter().copied()) {
             break 'block Err(LoroEncodeError::UnknownContainer);
         }
 
-        let alive_c_bytes = cids_to_bytes(alive_containers);
+        let alive_c_bytes = alive_indices_to_bytes(&state, &alive_containers);
         state.store.flush();
         let state_kv = state.store.get_kv_clone();
         state_kv.retain_keys(&alive_c_bytes);
         let bytes = state_kv.export();
         _encode_snapshot(
-            Snapshot {
+            &Snapshot {
                 oplog_bytes,
                 state_bytes: Some(bytes),
                 shallow_root_state_bytes: Bytes::new(),

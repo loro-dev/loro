@@ -20,7 +20,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
-use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroError, LoroResult};
+use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroEncodeError, LoroError, LoroResult};
 
 use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
@@ -30,16 +30,30 @@ pub(crate) struct Snapshot {
     pub shallow_root_state_bytes: Bytes,
 }
 
-pub(super) fn _encode_snapshot<W: Write>(s: Snapshot, w: &mut W) {
+impl Snapshot {
+    pub(super) fn encoded_len(&self) -> Option<usize> {
+        let state_len = self
+            .state_bytes
+            .as_ref()
+            .map_or(EMPTY_MARK.len(), Bytes::len);
+        u32::try_from(self.oplog_bytes.len()).ok()?;
+        u32::try_from(state_len).ok()?;
+        u32::try_from(self.shallow_root_state_bytes.len()).ok()?;
+        (3 * std::mem::size_of::<u32>())
+            .checked_add(self.oplog_bytes.len())?
+            .checked_add(state_len)?
+            .checked_add(self.shallow_root_state_bytes.len())
+    }
+}
+
+pub(super) fn _encode_snapshot<W: Write>(s: &Snapshot, w: &mut W) {
     w.write_all(&(s.oplog_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&s.oplog_bytes).unwrap();
-    let state_bytes = s
-        .state_bytes
-        .unwrap_or_else(|| Bytes::from_static(EMPTY_MARK));
+    let state_bytes = s.state_bytes.as_deref().unwrap_or(EMPTY_MARK);
     w.write_all(&(state_bytes.len() as u32).to_le_bytes())
         .unwrap();
-    w.write_all(&state_bytes).unwrap();
+    w.write_all(state_bytes).unwrap();
     w.write_all(&(s.shallow_root_state_bytes.len() as u32).to_le_bytes())
         .unwrap();
     w.write_all(&s.shallow_root_state_bytes).unwrap();
@@ -269,12 +283,7 @@ impl OpLog {
     }
 }
 
-pub(crate) fn encode_snapshot<W: std::io::Write>(doc: &LoroDoc, w: &mut W) {
-    let snapshot = encode_snapshot_inner(doc);
-    _encode_snapshot(snapshot, w);
-}
-
-pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
+pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Result<Snapshot, LoroEncodeError> {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
@@ -286,8 +295,8 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
         let f = oplog.shallow_since_frontiers().clone();
         drop(state);
         drop(oplog);
-        let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f).unwrap();
-        return snapshot;
+        let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f)?;
+        return Ok(snapshot);
     }
 
     assert!(!state.is_in_txn());
@@ -306,12 +315,13 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Snapshot {
             .unwrap();
         state = doc.app_state().lock();
     }
-    state.ensure_all_alive_containers();
-    let state_bytes = state.store.encode();
-    let snapshot = Snapshot {
-        oplog_bytes,
-        state_bytes: Some(state_bytes),
-        shallow_root_state_bytes: Bytes::new(),
+    let snapshot = match state.ensure_all_alive_containers() {
+        Ok(_) => Ok(Snapshot {
+            oplog_bytes,
+            state_bytes: Some(state.store.encode()),
+            shallow_root_state_bytes: Bytes::new(),
+        }),
+        Err(err) => Err(LoroEncodeError::from(err)),
     };
     if was_detached {
         drop(state);
@@ -390,6 +400,36 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        encoding::ExportMode, handler::HandlerTrait, utils::kv_wrapper::KvWrapper, MapHandler,
+    };
+
+    fn snapshot_sections(doc: &LoroDoc) -> Snapshot {
+        let encoded = doc.export(ExportMode::Snapshot).unwrap();
+        let parsed = crate::encoding::parse_header_and_body(&encoded, true).unwrap();
+        _decode_snapshot_bytes(Bytes::copy_from_slice(parsed.body)).unwrap()
+    }
+
+    #[test]
+    fn snapshot_encoded_len_matches_written_len() {
+        for snapshot in [
+            Snapshot {
+                oplog_bytes: Bytes::from_static(b"oplog"),
+                state_bytes: Some(Bytes::from_static(b"state")),
+                shallow_root_state_bytes: Bytes::new(),
+            },
+            Snapshot {
+                oplog_bytes: Bytes::new(),
+                state_bytes: None,
+                shallow_root_state_bytes: Bytes::from_static(b"shallow"),
+            },
+        ] {
+            let expected_len = snapshot.encoded_len().unwrap();
+            let mut encoded = Vec::new();
+            _encode_snapshot(&snapshot, &mut encoded);
+            assert_eq!(encoded.len(), expected_len);
+        }
+    }
 
     #[test]
     fn decode_updates_rejects_truncated_block() {
@@ -398,6 +438,84 @@ mod tests {
         let err = decode_updates(&mut oplog, Bytes::from_static(&[0x02, 0x01]))
             .expect_err("truncated update block should be rejected");
         assert!(matches!(err, LoroError::DecodeError(_)));
+    }
+
+    #[test]
+    fn snapshot_export_rejects_lazy_child_parent_conflict() {
+        fn doc_with_child(root: &str) -> (LoroDoc, loro_common::ContainerID) {
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(42).unwrap();
+            let child = doc
+                .get_map(root)
+                .insert_container("child", MapHandler::new_detached())
+                .unwrap();
+            child.insert("value", root).unwrap();
+            let child_id = child.id();
+            (doc, child_id)
+        }
+
+        let (parent_a, child_a) = doc_with_child("parent-a");
+        let (parent_b, child_b) = doc_with_child("parent-b");
+        assert_eq!(child_a, child_b, "test setup needs the same child id");
+
+        let mut sections_a = snapshot_sections(&parent_a);
+        let sections_b = snapshot_sections(&parent_b);
+        let state_a = KvWrapper::new_mem();
+        state_a
+            .import(sections_a.state_bytes.take().unwrap())
+            .unwrap();
+        let state_b = KvWrapper::new_mem();
+        state_b.import(sections_b.state_bytes.unwrap()).unwrap();
+        let child_key = child_a.to_bytes();
+        state_a.insert(&child_key, state_b.get(&child_key).unwrap());
+
+        let target = LoroDoc::new();
+        decode_snapshot_inner(
+            Snapshot {
+                oplog_bytes: sections_a.oplog_bytes,
+                state_bytes: Some(state_a.export()),
+                shallow_root_state_bytes: sections_a.shallow_root_state_bytes,
+            },
+            &target,
+            Default::default(),
+        )
+        .unwrap();
+
+        let err = target
+            .export(ExportMode::Snapshot)
+            .expect_err("conflicting lazy parent metadata must not be exported");
+        assert!(err.to_string().contains("snapshot state encodes parent"));
+    }
+
+    #[test]
+    fn snapshot_export_rejects_malformed_lazy_container_wrapper() {
+        let source = LoroDoc::new_auto_commit();
+        source.get_map("root").insert("value", 1).unwrap();
+        let mut sections = snapshot_sections(&source);
+        let state = KvWrapper::new_mem();
+        state.import(sections.state_bytes.take().unwrap()).unwrap();
+        let root = loro_common::ContainerID::new_root("root", crate::ContainerType::Map);
+        state.insert(
+            &root.to_bytes(),
+            Bytes::from(vec![crate::ContainerType::Map.to_u8()]),
+        );
+
+        let target = LoroDoc::new();
+        decode_snapshot_inner(
+            Snapshot {
+                oplog_bytes: sections.oplog_bytes,
+                state_bytes: Some(state.export()),
+                shallow_root_state_bytes: sections.shallow_root_state_bytes,
+            },
+            &target,
+            Default::default(),
+        )
+        .unwrap();
+
+        let err = target
+            .export(ExportMode::Snapshot)
+            .expect_err("malformed lazy state must return an export error");
+        assert!(err.to_string().contains("Decode container state failed"));
     }
 }
 

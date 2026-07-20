@@ -462,6 +462,16 @@ impl SharedArena {
         panic!("InternalError: Parent is not registered")
     }
 
+    /// Return the parent edge already stored in the arena without invoking the lazy resolver.
+    ///
+    /// The outer `Option` distinguishes an unregistered edge from a registered root edge.
+    pub(crate) fn get_registered_parent(
+        &self,
+        child: ContainerIdx,
+    ) -> Option<Option<ContainerIdx>> {
+        self.inner.containers.read().parents.get(&child).copied()
+    }
+
     /// Call `f` on each ancestor of `container`, including `container` itself.
     ///
     /// f(ContainerIdx, is_first)

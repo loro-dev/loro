@@ -16,8 +16,10 @@ const CURRENT_SCHEMA_VERSION: u8 = 0;
 pub const SIZE_OF_U8: usize = std::mem::size_of::<u8>();
 pub const SIZE_OF_U16: usize = std::mem::size_of::<u16>();
 pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
-// TODO: cache size
-const DEFAULT_CACHE_SIZE: usize = 1 << 20;
+/// Upper bound, in decompressed bytes, for each table's block cache. This keeps hot reads
+/// cheap while guaranteeing that neither a long-lived document nor a one-shot import/export
+/// walk can retain its entire store decompressed.
+const BLOCK_CACHE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_BLOCK_NUM: u32 = 10_000_000;
 
 /// ```log
@@ -162,7 +164,17 @@ pub(crate) struct SsTableBuilder {
 
 impl SsTableBuilder {
     pub fn new(block_size: usize, compression_type: CompressionType, include_none: bool) -> Self {
-        let mut data = Vec::with_capacity(5);
+        Self::with_capacity(block_size, compression_type, include_none, 0)
+    }
+
+    pub fn with_capacity(
+        block_size: usize,
+        compression_type: CompressionType,
+        include_none: bool,
+        data_capacity: usize,
+    ) -> Self {
+        let header_size = MAGIC_BYTES.len() + SIZE_OF_U8;
+        let mut data = Vec::with_capacity(data_capacity.max(header_size));
         data.put_u32_le(u32::from_le_bytes(MAGIC_BYTES));
         data.put_u8(CURRENT_SCHEMA_VERSION);
         Self {
@@ -301,12 +313,28 @@ impl SsTableBuilder {
             last_key,
             meta: self.meta,
             meta_offset: meta_offset as usize,
-            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
+            block_cache: new_block_cache(),
         }
     }
 }
 
-type BlockCache = quick_cache::sync::Cache<usize, Arc<Block>>;
+type BlockCache = quick_cache::sync::Cache<usize, Arc<Block>, BlockDataWeighter>;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BlockDataWeighter;
+
+impl quick_cache::Weighter<usize, Arc<Block>> for BlockDataWeighter {
+    fn weight(&self, _idx: &usize, block: &Arc<Block>) -> u64 {
+        // Zero-weight entries are never evicted; clamp so empty blocks cannot pin themselves.
+        (block.data().len() as u64).max(1)
+    }
+}
+
+fn new_block_cache() -> BlockCache {
+    let estimated_blocks =
+        (BLOCK_CACHE_MAX_BYTES / crate::MemKvStore::DEFAULT_BLOCK_SIZE as u64) as usize;
+    BlockCache::with_weighter(estimated_blocks, BLOCK_CACHE_MAX_BYTES, BlockDataWeighter)
+}
 
 #[derive(Debug)]
 pub struct SsTable {
@@ -327,7 +355,7 @@ impl Clone for SsTable {
             last_key: self.last_key.clone(),
             meta: self.meta.clone(),
             meta_offset: self.meta_offset,
-            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
+            block_cache: new_block_cache(),
         }
     }
 }
@@ -360,11 +388,10 @@ impl SsTable {
     /// Import without per-block checksum verification (and without eager block
     /// validation).
     ///
-    /// Only use this when the blob's integrity is already guaranteed by an outer
-    /// checksum — e.g. Loro verifies a document-wide checksum over the whole
-    /// snapshot body in `parse_header_and_body` before reaching here, so
-    /// re-hashing every block would redundantly cover bytes the outer checksum
-    /// already protects (this was ~38% of B4 snapshot-import time).
+    /// Only use this for trusted bytes produced by this crate, or after the
+    /// embedded block checksums have already been validated. An outer envelope
+    /// checksum alone is insufficient because it can be recomputed over malformed
+    /// inner blocks.
     pub fn import_all_unchecked(bytes: Bytes) -> LoroResult<Self> {
         Self::import_all_with(bytes, false, false)
     }
@@ -426,7 +453,7 @@ impl SsTable {
             last_key,
             meta,
             meta_offset,
-            block_cache: BlockCache::new(DEFAULT_CACHE_SIZE),
+            block_cache: new_block_cache(),
         };
         Ok(ans)
     }
@@ -582,6 +609,11 @@ impl SsTable {
     pub fn meta_len(&self) -> usize {
         self.meta.len()
     }
+
+    #[cfg(test)]
+    pub(crate) fn cached_block_bytes(&self) -> u64 {
+        self.block_cache.weight()
+    }
 }
 
 #[derive(Clone)]
@@ -608,24 +640,25 @@ impl<'a> SsTableIter<'a> {
     }
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
+        let read_block = |idx| table.read_block_cached(idx);
         let (table_idx, mut iter, excluded) = match start {
             Bound::Included(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start included");
                 let idx = table.find_block_idx(start);
-                let block = table.read_block_cached(idx);
+                let block = read_block(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, None)
             }
             Bound::Excluded(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start excluded");
                 let idx = table.find_block_idx(start);
-                let block = table.read_block_cached(idx);
+                let block = read_block(idx);
                 let iter = BlockIter::new_seek_to_key(block, start);
                 (idx, iter, Some(start))
             }
             Bound::Unbounded => {
                 notify_cov("kv-store::SstableIter::new_scan::start unbounded");
-                let block = table.read_block_cached(0);
+                let block = read_block(0);
                 let iter = BlockIter::new(block);
                 (0, iter, None)
             }
@@ -642,7 +675,7 @@ impl<'a> SsTableIter<'a> {
                     }
                     (end_idx, None, None)
                 } else {
-                    let block = table.read_block_cached(end_idx);
+                    let block = read_block(end_idx);
                     let iter = BlockIter::new_back_to_key(block, end);
                     (end_idx, Some(iter), None)
                 }
@@ -658,7 +691,7 @@ impl<'a> SsTableIter<'a> {
                     }
                     (end_idx, None, Some(end))
                 } else {
-                    let block = table.read_block_cached(end_idx);
+                    let block = read_block(end_idx);
                     let iter = BlockIter::new_back_to_key(block, end);
                     (end_idx, Some(iter), Some(end))
                 }
@@ -670,7 +703,7 @@ impl<'a> SsTableIter<'a> {
                     notify_cov("kv-store::SstableIter::new_scan::unbounded equal");
                     (end_idx, None, None)
                 } else {
-                    let block = table.read_block_cached(end_idx);
+                    let block = read_block(end_idx);
                     let iter = BlockIter::new(block);
                     (end_idx, Some(iter), None)
                 }
@@ -1197,6 +1230,15 @@ mod test {
     }
 
     #[test]
+    fn sstable_builder_reserves_capacity_hint() {
+        let builder = SsTableBuilder::with_capacity(10, CompressionType::LZ4, true, 4096);
+        assert!(builder.data.capacity() >= 4096);
+
+        let builder = SsTableBuilder::with_capacity(10, CompressionType::LZ4, true, 0);
+        assert!(builder.data.capacity() >= MAGIC_BYTES.len() + SIZE_OF_U8);
+    }
+
+    #[test]
     fn sstable_iter_with_delete() {
         let mut builder = SsTableBuilder::new(10, CompressionType::LZ4, true);
         builder.add(Bytes::from_static(b"key1"), Bytes::from_static(b"value1"));
@@ -1403,8 +1445,7 @@ mod test {
         // The public `import_all` always verifies per-block checksums (with or
         // without the heavier `validate_blocks` decode). Only the explicit
         // `import_all_unchecked` fast path skips them, and its caller is then
-        // responsible for integrity via an outer checksum — that is the
-        // redundant-checksum skip that makes full snapshot import faster.
+        // responsible for accepting only trusted or previously validated bytes.
         let first_key = Bytes::from_static(b"key");
         let mut block_bytes = normal_block_bytes(b"key", b"value");
         *block_bytes.last_mut().unwrap() ^= 0xff;

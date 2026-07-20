@@ -3,7 +3,7 @@ use crate::{
     state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
 };
 use bytes::Bytes;
-use loro_common::ContainerID;
+use loro_common::{ContainerID, LoroResult};
 
 use super::ContainerWrapper;
 
@@ -163,6 +163,40 @@ impl InnerStore {
         }
 
         None
+    }
+
+    /// Read a container without retaining a wrapper loaded only for this read.
+    pub(crate) fn try_with_container_for_ephemeral_read<R>(
+        &mut self,
+        idx: ContainerIdx,
+        f: impl FnOnce(&mut ContainerWrapper) -> R,
+    ) -> LoroResult<Option<R>> {
+        if let Some(entry) = self.get_entry_mut(idx) {
+            return Ok(Some(f(entry)));
+        }
+
+        if self.load_state != LoadState::AllLoaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(v) = self.kv.get(&key) {
+                let mut container = ContainerWrapper::try_new_from_bytes(v)?;
+                return Ok(Some(f(&mut container)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Read the parent encoded in a container wrapper without retaining a wrapper loaded only
+    /// for this probe.
+    ///
+    /// The outer `Option` distinguishes a missing wrapper from a wrapper whose encoded parent is
+    /// `None`.
+    pub(crate) fn get_parent_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<Option<ContainerID>>> {
+        self.try_with_container_for_ephemeral_read(idx, |container| container.parent().cloned())
     }
 
     pub(crate) fn has_decoded_state(&mut self, idx: ContainerIdx) -> bool {
@@ -375,6 +409,12 @@ impl InnerStore {
     pub(super) fn has_cached_value_for_test(&mut self, idx: ContainerIdx) -> bool {
         self.get_entry_mut(idx)
             .is_some_and(|entry| entry.has_cached_value_for_test())
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_materialized_map_value_for_test(&mut self, idx: ContainerIdx) -> bool {
+        self.get_entry_mut(idx)
+            .is_some_and(|entry| entry.has_materialized_map_value_for_test())
     }
 }
 

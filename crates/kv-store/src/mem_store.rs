@@ -62,6 +62,8 @@ impl MemKvConfig {
 
 impl MemKvStore {
     pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
+    const EXPORT_ENTRY_OVERHEAD: usize = 8;
+
     pub fn new(config: MemKvConfig) -> Self {
         Self {
             mem_table: BTreeMap::new(),
@@ -81,18 +83,8 @@ impl MemKvStore {
         }
 
         for table in self.ss_table.iter().rev() {
-            if table.first_key > key || table.last_key < key {
-                continue;
-            }
-            // table.
-            let idx = table.find_block_idx(key);
-            let block = table.read_block_cached(idx);
-            let block_iter = BlockIter::new_seek_to_key(block, key);
-            if let Some(k) = block_iter.peek_next_curr_key() {
-                let v = block_iter.peek_next_curr_value().unwrap();
-                if k == key {
-                    return if v.is_empty() { None } else { Some(v) };
-                }
+            if let Some(value) = table.get(key) {
+                return if value.is_empty() { None } else { Some(value) };
             }
         }
         None
@@ -186,6 +178,11 @@ impl MemKvStore {
         ))
     }
 
+    #[cfg(test)]
+    fn cached_block_bytes(&self) -> u64 {
+        self.ss_table.iter().map(SsTable::cached_block_bytes).sum()
+    }
+
     /// The number of valid keys in the mem table and sstable, it's expensive to call
     pub fn len(&self) -> usize {
         // TODO: PERF
@@ -207,6 +204,34 @@ impl MemKvStore {
                 .sum::<usize>()
     }
 
+    fn export_capacity_hint(&self) -> usize {
+        debug_assert_eq!(self.ss_table.len(), 1);
+        let existing_bytes = self.ss_table[0].data_size();
+        let pending_bytes = self.mem_table.iter().fold(0_usize, |size, (key, value)| {
+            size.saturating_add(key.len())
+                .saturating_add(value.len())
+                // Account for entry prefixes, offsets, checksums, and new block metadata.
+                .saturating_add(Self::EXPORT_ENTRY_OVERHEAD)
+        });
+        // Raw memtable values can be far larger than their compressed representation. Bound the
+        // hint so a large, highly compressible delta cannot reserve an arbitrary amount up front.
+        let pending_headroom = pending_bytes.min((existing_bytes / 4).max(self.block_size));
+        existing_bytes
+            .saturating_add(pending_headroom)
+            // Leave room for a partially filled block and its metadata so a small delta does not
+            // push a nearly complete imported SSTable into Vec's geometric growth path.
+            .saturating_add(self.block_size)
+    }
+
+    fn new_export_builder(&self) -> SsTableBuilder {
+        SsTableBuilder::with_capacity(
+            self.block_size,
+            self.compression_type,
+            self.should_encode_none,
+            self.export_capacity_hint(),
+        )
+    }
+
     pub fn export_all(&mut self) -> Bytes {
         if self.mem_table.is_empty() && self.ss_table.len() == 1 {
             return self.ss_table[0].export_all();
@@ -216,6 +241,8 @@ impl MemKvStore {
             return self.export_with_encoded_block();
         }
 
+        // Pure memtables may contain highly compressible values, while multiple imported SSTables
+        // can overlap heavily. In both cases their resident size is a poor capacity hint.
         let mut builder = SsTableBuilder::new(
             self.block_size,
             self.compression_type,
@@ -264,9 +291,10 @@ impl MemKvStore {
 
     /// Like [`Self::import_all`] but skips per-block checksum verification.
     ///
-    /// Only use this when the blob's integrity is already guaranteed by an outer
-    /// checksum (e.g. Loro's document-level snapshot checksum, verified before
-    /// the snapshot body is handed to the KV store).
+    /// Only use this for trusted bytes produced by this crate, or after the
+    /// embedded block checksums have already been validated. An outer envelope
+    /// checksum alone is insufficient because it can be recomputed over malformed
+    /// inner blocks.
     pub fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
         if bytes.is_empty() {
             return Ok(());
@@ -280,13 +308,10 @@ impl MemKvStore {
     #[tracing::instrument(level = "debug", skip(self))]
     fn export_with_encoded_block(&mut self) -> Bytes {
         ensure_cov::notify_cov("kv-store::mem_store::export_with_encoded_block");
+        let mut builder = self.new_export_builder();
         let mut mem_iter = self.mem_table.iter().peekable();
-        let mut sstable_iter = self.ss_table[0].iter();
-        let mut builder = SsTableBuilder::new(
-            self.block_size,
-            self.compression_type,
-            self.should_encode_none,
-        );
+        let mut sstable_iter =
+            SsTableIter::new_scan(&self.ss_table[0], Bound::Unbounded, Bound::Unbounded);
         'outer: while let Some(next_mem_pair) = mem_iter.peek() {
             let block = loop {
                 let Some(block) = sstable_iter.peek_next_block() else {
@@ -508,7 +533,7 @@ where
 mod tests {
     use std::vec;
 
-    use crate::{mem_store::MemKvConfig, MemKvStore};
+    use crate::{compress::CompressionType, mem_store::MemKvConfig, MemKvStore};
     use bytes::Bytes;
     #[test]
     fn test_mem_kv_store() {
@@ -615,6 +640,97 @@ mod tests {
 
         store.compare_and_swap(key, Some(value.clone()), large_value.clone());
         assert!(store.contains_key(key));
+    }
+
+    #[test]
+    fn block_cache_stays_bounded_during_full_scan() {
+        // More decompressed bytes than the block cache budget, so an unbounded cache would
+        // exceed it after one full scan.
+        const VALUE_SIZE: usize = 4 * 1024;
+        const ENTRIES: usize = 2048;
+        let mut source = MemKvStore::new(MemKvConfig::default().should_encode_none(true));
+        for i in 0..ENTRIES as u16 {
+            source.set(&i.to_be_bytes(), Bytes::from(vec![i as u8; VALUE_SIZE]));
+        }
+        let bytes = source.export_all();
+        let mut imported = MemKvStore::new(MemKvConfig::default().should_encode_none(true));
+        imported.import_all(bytes).unwrap();
+
+        assert_eq!(
+            imported.get(&0_u16.to_be_bytes()),
+            Some(Bytes::from(vec![0; VALUE_SIZE]))
+        );
+        let entries = imported
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), ENTRIES);
+        let cached = imported.cached_block_bytes();
+        assert!(cached > 0);
+        assert!(
+            cached <= 4 * 1024 * 1024,
+            "block cache exceeded its byte budget: {cached}"
+        );
+    }
+
+    #[test]
+    fn export_capacity_hint_covers_a_small_delta() {
+        let config = MemKvConfig::default()
+            .block_size(64)
+            .compression_type(CompressionType::None)
+            .should_encode_none(true);
+        let mut source = MemKvStore::new(config);
+        for i in 0..128_u16 {
+            source.set(&i.to_be_bytes(), Bytes::from(vec![i as u8; 32]));
+        }
+        let bytes = source.export_all();
+
+        let mut imported = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(64)
+                .compression_type(CompressionType::None)
+                .should_encode_none(true),
+        );
+        imported.import_all(bytes).unwrap();
+        imported.set(&64_u16.to_be_bytes(), Bytes::from(vec![7; 48]));
+        imported.set(&256_u16.to_be_bytes(), Bytes::from(vec![8; 48]));
+
+        let capacity_hint = imported.export_capacity_hint();
+        let exported = imported.export_all();
+        assert!(exported.len() <= capacity_hint);
+
+        let mut round_tripped = MemKvStore::new(
+            MemKvConfig::default()
+                .block_size(64)
+                .compression_type(CompressionType::None)
+                .should_encode_none(true),
+        );
+        round_tripped.import_all(exported).unwrap();
+        assert_eq!(
+            round_tripped.get(&64_u16.to_be_bytes()),
+            Some(Bytes::from(vec![7; 48]))
+        );
+        assert_eq!(
+            round_tripped.get(&256_u16.to_be_bytes()),
+            Some(Bytes::from(vec![8; 48]))
+        );
+    }
+
+    #[test]
+    fn export_capacity_hint_is_bounded_for_a_compressible_delta() {
+        let mut source = new_store();
+        source.set(b"base", Bytes::from_static(b"value"));
+        let bytes = source.export_all();
+
+        let mut imported = new_store();
+        imported.import_all(bytes).unwrap();
+        let large_value = Bytes::from(vec![0; 1024 * 1024]);
+        imported.set(b"large", large_value.clone());
+
+        assert!(imported.export_capacity_hint() < large_value.len());
+        let exported = imported.export_all();
+        let mut round_tripped = new_store();
+        round_tripped.import_all(exported).unwrap();
+        assert_eq!(round_tripped.get(b"large"), Some(large_value));
     }
 
     #[test]

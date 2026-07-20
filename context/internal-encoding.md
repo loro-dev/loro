@@ -1,7 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-07-17 at commit
-`fd5a1fdab79142302f0c0fbceb8807128ec6d9cd`.
+Verified against code 2026-07-20.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -85,6 +84,27 @@ document. If a snapshot is imported into a non-empty document,
 `LoroDoc::_import_with` routes through decoded oplog changes instead. Failed
 direct snapshot import must reset both state and oplog.
 
+Default snapshot export must still persist alive empty child containers, but it
+must not materialize the full lazy state store to find them. The alive walk in
+`DocState::get_all_alive_containers` registers root keys, reads snapshot-backed
+values ephemerally (via `try_get_value_ephemeral`, which never caches the
+decoded value or retains a probe-only wrapper), and only inserts a wrapper when
+an alive container has no KV entry. Shallow snapshot retention reuses the same
+complete alive set of arena indices. Do not replace this with
+`InnerStore::load_all` or cache every decoded value: documents with many
+small/deleted containers retain that memory for the rest of the WASM instance.
+Decompressed SSTable blocks are bounded separately by the kv-store's
+byte-weighted block cache (`BLOCK_CACHE_MAX_BYTES` in `sstable.rs`), so the walk
+uses plain cached reads. The walk reads each present wrapper's parent header
+and checks it against the reachable edge (or a mergeable ID's intrinsic edge).
+Conflicting external state must return an export error; an alive empty child
+with no wrapper may inherit the edge that made it reachable.
+
+`Snapshot::encoded_len` is available after the three section `Bytes` values are
+created. The default exporter uses it to reserve the final envelope once; keep
+the checksum offset and the `EMPTY_MARK` length in that calculation aligned with
+`_encode_snapshot`.
+
 ## FastUpdates
 
 `FastUpdates` is a sequence of LEB128 length-prefixed change blocks.
@@ -93,6 +113,41 @@ overflow, and truncated block payloads, then sorts decoded changes by lamport.
 `encoding.rs:apply_decoded_changes_to_oplog` imports changes, separates pending
 changes, applies newly-unlocked pending changes, and rejects dependencies before
 a shallow root.
+
+`loro.rs:isolated_scalar_root_batch` is a conservative import optimization for
+a causally closed batch of brand-new peers whose operations are scalar Map
+writes on top-level root names absent from old history and current state. It is
+checked against the decoded changes *before* they are applied to the oplog,
+while the store still holds only old history: every batch peer must be absent
+from the current vv and contiguously covered from counter 0, every dependency
+must point inside the batch, and every op must be a scalar Map write on a root
+Map (no container values, no mergeable markers). After apply, the candidate is
+kept only if the vv delta equals exactly the batch spans (pending changes may
+have been unlocked). The fast path then calculates the state diff from the
+empty version to that batch, avoiding replay of an unrelated large history.
+`ChangeStore::old_history_may_touch_root_names` answers the "absent from old
+history" part with a size-capped set of every root name in the store, built
+once by scanning encoded block container arenas (no op parsing, no
+parsed-change cache fill) and updated incrementally on each inserted change.
+Because the set is only ever conservative, a rollback needs no invalidation —
+stale names just force the general diff path. Decode failures or exceeding the
+name-byte cap permanently disable the optimization for that store.
+
+For a large snapshot regression check, first build the Node package, then run:
+
+```sh
+pnpm -C crates/loro-wasm test:snapshot-memory -- /path/to/input.procloud 100
+```
+
+The budget argument is in MiB. Use `95` when the requirement is a strict
+100,000,000-byte ceiling; 95 MiB is about 99.6 MB.
+
+The gate keeps the `toJSON()` result alive through update import and snapshot
+export. It measures the memory directly attributable to this API round: input
+snapshot/update buffers, the WASM linear-memory high-water mark, the returned
+snapshot `Uint8Array`, retained JS heap growth, and unique binary backing stores
+reachable from the retained JSON value. It reports process RSS separately; RSS
+also includes the Node/V8 runtime and executable/code pages.
 
 ## Shallow, State-Only, And SnapshotAt
 
