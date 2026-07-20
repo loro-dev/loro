@@ -150,7 +150,10 @@ fn print_report(r: &Report) {
     println!("  import snapshot:           {:?}", r.import_time);
     println!("  resident after import:     {}", r.imported_resident);
     println!("  get_deep_value:            {:?}", r.deep_value_time);
-    println!("  resident after deep_value: {}", r.after_deep_value_resident);
+    println!(
+        "  resident after deep_value: {}",
+        r.after_deep_value_resident
+    );
 }
 
 fn main() {

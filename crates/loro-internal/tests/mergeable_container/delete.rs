@@ -261,7 +261,10 @@ fn three_peer_delete_then_recreate_converges() {
     sync(&a, &c);
 
     // C recreates "revision" as a text with a post-delete IdLp.
-    let c_text = c.get_map("state").ensure_mergeable_text("revision").unwrap();
+    let c_text = c
+        .get_map("state")
+        .ensure_mergeable_text("revision")
+        .unwrap();
     c_text.insert(0, "after-delete", PosType::Unicode).unwrap();
     c.commit_then_renew();
 

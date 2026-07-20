@@ -569,7 +569,12 @@ impl Transaction {
             let expected = self
                 .doc
                 .upgrade()
-                .map(|d| d.state.lock().peer.load(std::sync::atomic::Ordering::Relaxed))
+                .map(|d| {
+                    d.state
+                        .lock()
+                        .peer
+                        .load(std::sync::atomic::Ordering::Relaxed)
+                })
                 .unwrap_or(found);
             return Err(LoroError::UnmatchedContext { expected, found });
         }

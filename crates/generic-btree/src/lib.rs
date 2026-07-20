@@ -1319,16 +1319,15 @@ impl<B: BTreeTrait> BTree<B> {
             (false, splitted)
         } else if new_insert_1.is_none() {
             debug_assert!(new_insert_2.is_none());
-            return (true, splitted);
+            (true, splitted)
         } else {
-            if new_insert_1.is_some() && new_insert_2.is_none() {
+            if let (Some(new), None) = (&new_insert_1, &new_insert_2) {
                 // try merge new insert to next element
                 let parent = self.in_nodes.get_mut(parent_idx.unwrap()).unwrap();
                 let slot = Self::get_leaf_slot(node_idx.0, parent);
                 if slot + 1 < parent.children.len() {
                     let next_idx = parent.children[slot + 1].arena.unwrap().into();
                     let next = self.get_elem_mut(next_idx).unwrap();
-                    let new = new_insert_1.as_ref().unwrap();
                     if new.can_merge(next) {
                         next.merge_left(new);
                         self.recursive_update_cache(next_idx.into(), B::USE_DIFF, None);
@@ -1609,11 +1608,11 @@ impl<B: BTreeTrait> BTree<B> {
         })
     }
 
-    pub fn drain(&mut self, range: Range<QueryResult>) -> iter::Drain<B> {
+    pub fn drain(&mut self, range: Range<QueryResult>) -> iter::Drain<'_, B> {
         iter::Drain::new(self, Some(range.start), Some(range.end))
     }
 
-    pub fn drain_by_query<Q: Query<B>>(&mut self, range: Range<Q::QueryArg>) -> iter::Drain<B> {
+    pub fn drain_by_query<Q: Query<B>>(&mut self, range: Range<Q::QueryArg>) -> iter::Drain<'_, B> {
         let start = self.query::<Q>(&range.start);
         let end = self.query::<Q>(&range.end);
         iter::Drain::new(self, start, end)
@@ -2245,16 +2244,14 @@ impl<B: BTreeTrait> BTree<B> {
         let mut node = self.get_internal_mut(node_idx);
         let mut this_arr = node.parent_slot;
         if can_use_diff {
-            if node.parent.is_some() {
-                let parent_idx = node.parent.unwrap();
+            if let Some(parent_idx) = node.parent {
                 let (parent, this) = self.get2_mut(parent_idx, this_idx);
                 let diff =
                     this.calc_cache(&mut parent.children[this_arr as usize].cache, cache_diff);
                 return self.recursive_update_cache_with_diff(parent_idx, diff);
             }
         } else {
-            while node.parent.is_some() {
-                let parent_idx = node.parent.unwrap();
+            while let Some(parent_idx) = node.parent {
                 let (parent, this) = self.get2_mut(parent_idx, this_idx);
                 this.calc_cache(&mut parent.children[this_arr as usize].cache, None);
                 this_idx = parent_idx;
@@ -2650,7 +2647,7 @@ impl<B: BTreeTrait> BTree<B> {
     pub fn iter_with_filter<'a, R: Default + Copy + AddAssign + 'a>(
         &'a self,
         mut f: impl FnMut(&B::Cache) -> (bool, R) + 'a,
-    ) -> impl Iterator<Item = (R, &'_ B::Elem)> + '_ {
+    ) -> impl Iterator<Item = (R, &'a B::Elem)> + 'a {
         let mut queue = VecDeque::new();
         queue.push_back((self.root, R::default()));
         std::iter::from_fn(move || {
@@ -2866,7 +2863,7 @@ impl<B: BTreeTrait, T: Into<B::Elem>> FromIterator<T> for BTree<B> {
             arena_index: RawArenaIndex,
         }
 
-        let parent_num = (min_size + max_child_size - 1) / max_child_size;
+        let parent_num = min_size.div_ceil(max_child_size);
         let mut internal_nodes: Vec<TempInternalNode<B>> = Vec::with_capacity(parent_num);
         let index = tree.in_nodes.insert(Default::default());
         internal_nodes.push(TempInternalNode {
@@ -2911,7 +2908,7 @@ impl<B: BTreeTrait, T: Into<B::Elem>> FromIterator<T> for BTree<B> {
 
         // recursively create the internal nodes in higher level, until we reach root
         while internal_nodes.len() > 1 {
-            let parent_num = (internal_nodes.len() + max_child_size - 1) / max_child_size;
+            let parent_num = internal_nodes.len().div_ceil(max_child_size);
             let children = std::mem::replace(&mut internal_nodes, Vec::with_capacity(parent_num));
             let index = tree.in_nodes.insert(Default::default());
             internal_nodes.push(TempInternalNode {

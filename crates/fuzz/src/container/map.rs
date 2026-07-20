@@ -209,7 +209,9 @@ impl Actionable for MapAction {
                 // Type-conflict rejection (`ArgErr`) is an expected outcome — swallow it
                 // here rather than via `unwrap` so unrelated `ArgErr` sources still panic.
                 let result = match kind {
-                    ContainerType::Map => handler.ensure_mergeable_map(key).map(|m| m.to_container()),
+                    ContainerType::Map => {
+                        handler.ensure_mergeable_map(key).map(|m| m.to_container())
+                    }
                     ContainerType::List => {
                         handler.ensure_mergeable_list(key).map(|l| l.to_container())
                     }
@@ -222,9 +224,9 @@ impl Actionable for MapAction {
                     ContainerType::Tree => {
                         handler.ensure_mergeable_tree(key).map(|t| t.to_container())
                     }
-                    ContainerType::Counter => {
-                        handler.ensure_mergeable_counter(key).map(|c| c.to_container())
-                    }
+                    ContainerType::Counter => handler
+                        .ensure_mergeable_counter(key)
+                        .map(|c| c.to_container()),
                     ContainerType::Unknown(_) => return None,
                 };
                 match result {
