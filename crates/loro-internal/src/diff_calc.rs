@@ -793,6 +793,19 @@ impl RichtextDiffCalculator {
             RichtextCalcMode::Linear { .. } => unreachable!(),
         }
     }
+
+    /// Compare the tombstone-stable total order of two insertion ids on the
+    /// tracker built by this calculator. Should be called after calc_diff.
+    ///
+    /// Returns `None` when either id cannot be resolved, or when the calculator
+    /// is in linear mode (which keeps no tracker).
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub fn compare_ids(&self, a: ID, b: ID) -> Option<std::cmp::Ordering> {
+        match &*self.mode {
+            RichtextCalcMode::Crdt { tracker, .. } => tracker.compare_ids(a, b),
+            RichtextCalcMode::Linear { .. } => None,
+        }
+    }
 }
 
 impl DiffCalculatorTrait for RichtextDiffCalculator {

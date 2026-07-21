@@ -1236,6 +1236,37 @@ impl LoroDoc {
         self.doc.query_pos(cursor)
     }
 
+    /// Compare the stable total order of two cursors within a text container.
+    ///
+    /// Unlike [`Self::get_cursor_pos`], the order is tombstone-stable: it is
+    /// defined for both live and deleted characters and converges across peers,
+    /// where a comparison of live positions would be underdetermined at a
+    /// deletion seam.
+    ///
+    /// A cursor with no id is a sentinel bound to the edges of its container:
+    /// `Side::Left` orders before every character, `Side::Middle` and
+    /// `Side::Right` order after every character. A sentinel short-circuits and
+    /// never errors. Note the empty-container asymmetry from `get_cursor`: an
+    /// empty container yields `None` + `Side::Left` (Start) while end-of-nonempty
+    /// yields `None` + `Side::Right` (End), so opposite-side sentinels captured
+    /// at the same position of a then-empty container bracket it once it fills.
+    ///
+    /// The two cursors must reference the same container. Comparing cursors from
+    /// different containers returns `Err(CannotFindRelativePosition::IdNotFound)`.
+    /// When both cursors carry concrete ids, `IdNotFound` is returned if either
+    /// id is foreign or unknown, lands in a deletion fragment, or names a
+    /// non-text container; `HistoryCleared` is returned if an id fails to resolve
+    /// because its history was dropped by a shallow snapshot.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[inline]
+    pub fn compare_cursors(
+        &self,
+        a: &Cursor,
+        b: &Cursor,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        self.doc.compare_cursors(a, b)
+    }
+
     /// Get the inner LoroDoc ref.
     #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {

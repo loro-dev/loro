@@ -618,6 +618,51 @@ impl Tracker {
         None
     }
 
+    /// Compare the tombstone-stable total order of two insertion ids.
+    ///
+    /// Both ids are resolved to a `(leaf, within-leaf offset)` position in the
+    /// rope and compared structurally, so the order is defined for live and
+    /// tombstoned elements alike. The within-leaf offset is required: two
+    /// distinct ids that were run-length merged into one span share a leaf, and
+    /// a leaf-only comparison would wrongly report them as equal.
+    ///
+    /// Returns `None` when either id cannot be resolved to a tracked insertion
+    /// (unknown id, an id that landed in a deletion fragment, or an id whose
+    /// leaf is no longer present).
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn compare_ids(&self, a: ID, b: ID) -> Option<std::cmp::Ordering> {
+        let (leaf_a, offset_a) = self.resolve_id(a)?;
+        let (leaf_b, offset_b) = self.resolve_id(b)?;
+        Some(self.rope.tree().compare_pos(
+            generic_btree::Cursor {
+                leaf: leaf_a,
+                offset: offset_a,
+            },
+            generic_btree::Cursor {
+                leaf: leaf_b,
+                offset: offset_b,
+            },
+        ))
+    }
+
+    /// Resolve an insertion id to its current `(leaf, within-leaf offset)`.
+    ///
+    /// Never panics: an id that is not tracked, whose leaf has been removed, or
+    /// whose counter falls outside the resolved leaf yields `None`.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    fn resolve_id(&self, id: ID) -> Option<(LeafIndex, usize)> {
+        let leaf = self.id_to_cursor.try_get_insert(id)?;
+        let elem = self.rope.tree().get_elem(leaf)?;
+        if elem.id.peer != id.peer {
+            return None;
+        }
+        let offset = usize::try_from(id.counter.checked_sub(elem.id.counter)?).ok()?;
+        if offset >= elem.rle_len() {
+            return None;
+        }
+        Some((leaf, offset))
+    }
+
     // #[tracing::instrument(skip(self), level = "info")]
     pub(crate) fn diff(
         &mut self,

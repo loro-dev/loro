@@ -289,6 +289,42 @@ impl IdToCursor {
             .get_insert((id.counter - list[index].counter) as usize)
     }
 
+    /// Resolve an insert `id` to the leaf that currently holds it, without ever
+    /// panicking on ids that are unknown, out of range, or that land in a
+    /// deletion fragment.
+    ///
+    /// Returns `None` when the id is not tracked as an insertion (foreign peer,
+    /// counter before the first recorded fragment, counter past the tracked
+    /// range, or a counter that falls inside a `Delete`/`Move` fragment that
+    /// does not describe the queried position).
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn try_get_insert(&self, id: ID) -> Option<LeafIndex> {
+        let list = self.map.get(&id.peer)?;
+        let index = match list.binary_search_by_key(&id.counter, |x| x.counter) {
+            Ok(index) => index,
+            Err(0) => return None,
+            Err(index) => index - 1,
+        };
+
+        let fragment = list.get(index)?;
+        let offset = usize::try_from(id.counter.checked_sub(fragment.counter)?).ok()?;
+        if offset >= fragment.cursor.rle_len() {
+            return None;
+        }
+
+        match &fragment.cursor {
+            Cursor::Insert(set) => set.get_insert(offset),
+            Cursor::Move { to, .. } => {
+                if offset == 0 {
+                    Some(*to)
+                } else {
+                    None
+                }
+            }
+            Cursor::Delete(_) => None,
+        }
+    }
+
     #[allow(unused)]
     pub fn diagnose(&self) {
         let fragment_num = self.map.iter().map(|x| x.1.len()).sum::<usize>();
@@ -1188,6 +1224,41 @@ mod test {
             }
             insert_set::InsertSet::Large(_) => panic!("expected small insert set"),
         }
+    }
+
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[test]
+    fn try_get_insert_resolves_and_never_panics() {
+        let peer: PeerID = 1;
+        let leaf = dummy_leaf();
+        let mut map = IdToCursor::default();
+        // Insert fragment for counters 0..3, then a deletion fragment for 3..6.
+        map.insert(ID::new(peer, 0), Cursor::new_insert(leaf, 3));
+        map.insert(ID::new(peer, 3), Cursor::Delete(IdSpan::new(9, 0, 3)));
+
+        // A live insert id resolves to its leaf.
+        assert_eq!(map.try_get_insert(ID::new(peer, 1)), Some(leaf));
+        // A counter that lands inside a deletion fragment yields None (this is
+        // the `Cursor::Delete => unreachable!()` path made reachable by a
+        // user-supplied cursor), never a panic.
+        assert_eq!(map.try_get_insert(ID::new(peer, 4)), None);
+        // A counter past the tracked range yields None.
+        assert_eq!(map.try_get_insert(ID::new(peer, 99)), None);
+        // An unknown peer yields None.
+        assert_eq!(map.try_get_insert(ID::new(42, 0)), None);
+
+        // A counter before the peer's first fragment underflows the slow path's
+        // `index - 1`; the safe variant returns None instead.
+        map.insert(ID::new(2, 10), Cursor::new_insert(dummy_leaf(), 2));
+        assert_eq!(map.try_get_insert(ID::new(2, 5)), None);
+
+        // A `Cursor::Move` fragment (width 1) resolves to its target leaf at
+        // offset 0 and yields None for any counter past it.
+        let move_to = dummy_leaf();
+        let mut move_map = IdToCursor::default();
+        move_map.insert(ID::new(3, 0), Cursor::new_move(move_to, ID::new(9, 0)));
+        assert_eq!(move_map.try_get_insert(ID::new(3, 0)), Some(move_to));
+        assert_eq!(move_map.try_get_insert(ID::new(3, 1)), None);
     }
 
     #[test]

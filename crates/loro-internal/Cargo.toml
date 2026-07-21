@@ -96,6 +96,7 @@ test_utils = ["arbitrary", "tabled"]
 counter = ["loro-common/counter"]
 logging = ["loro-common/logging"]
 jsonpath = []
+persistent-anchor-tracker = []
 
 [[bench]]
 name = "text_r"

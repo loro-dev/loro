@@ -1872,6 +1872,134 @@ impl LoroDoc {
         self.query_pos_internal(pos, true)
     }
 
+    /// Compare the stable total order of two cursors within a text container.
+    ///
+    /// The order is tombstone-stable: it is defined for both live and deleted
+    /// characters, and two peers that observe the same set of operations will
+    /// always agree on it. A naive comparison of live positions, by contrast,
+    /// is underdetermined at a deletion seam.
+    ///
+    /// A cursor with no id is a sentinel bound to the edges of its container:
+    /// `Side::Left` binds to the start (ordering before every character) and
+    /// `Side::Middle` or `Side::Right` bind to the end (ordering after every
+    /// character). Two sentinels of the same kind compare equal. A sentinel
+    /// short-circuits: it orders below/above the counterpart without resolving
+    /// it, so a sentinel comparison never errors.
+    ///
+    /// Note the empty-container asymmetry inherited from `get_cursor`: on an
+    /// empty container `get_cursor` emits `None` + `Side::Left`, which classifies
+    /// as Start, whereas the end of a non-empty container emits `None` +
+    /// `Side::Right`, which classifies as End. So two cursors captured at the
+    /// same position of a then-empty container with opposite sides sort to
+    /// opposite ends once it fills — vacuous while empty, defensible bracketing
+    /// afterwards, but worth flagging for callers that persist sentinels.
+    ///
+    /// The two cursors must reference the same container; comparing cursors from
+    /// different containers returns `Err(CannotFindRelativePosition::IdNotFound)`.
+    /// When both cursors carry concrete ids, `IdNotFound` is returned if either
+    /// id is foreign or unknown, lands in a deletion fragment, or names a
+    /// non-text container; `HistoryCleared` is returned if an id fails to resolve
+    /// because its history was dropped by a shallow snapshot.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub fn compare_cursors(
+        &self,
+        a: &Cursor,
+        b: &Cursor,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        use std::cmp::Ordering;
+
+        // A sentinel end of the container, or a concrete character id.
+        enum Endpoint {
+            Start,
+            End,
+            Id(loro_common::ID),
+        }
+
+        fn classify(cursor: &Cursor) -> Endpoint {
+            match cursor.id {
+                None => match cursor.side {
+                    crate::cursor::Side::Left => Endpoint::Start,
+                    crate::cursor::Side::Middle | crate::cursor::Side::Right => Endpoint::End,
+                },
+                Some(id) => Endpoint::Id(id),
+            }
+        }
+
+        if a.container != b.container {
+            return Err(CannotFindRelativePosition::IdNotFound);
+        }
+
+        let (id_a, id_b) = match (classify(a), classify(b)) {
+            (Endpoint::Start, Endpoint::Start) => return Ok(Ordering::Equal),
+            (Endpoint::End, Endpoint::End) => return Ok(Ordering::Equal),
+            (Endpoint::Start, _) => return Ok(Ordering::Less),
+            (_, Endpoint::Start) => return Ok(Ordering::Greater),
+            (Endpoint::End, _) => return Ok(Ordering::Greater),
+            (_, Endpoint::End) => return Ok(Ordering::Less),
+            (Endpoint::Id(id_a), Endpoint::Id(id_b)) => (id_a, id_b),
+        };
+
+        if !self.has_container(&a.container) {
+            return Err(CannotFindRelativePosition::IdNotFound);
+        }
+
+        // commit the txn so we can query the history correctly, preserving options
+        self.with_barrier(|| {
+            let oplog = self.oplog().lock();
+            // Ensure the container is registered if it exists lazily
+            if oplog.arena.id_to_idx(&a.container).is_none() {
+                let mut s = self.state.lock();
+                if !s.does_container_exist(&a.container) {
+                    return Err(CannotFindRelativePosition::ContainerDeleted);
+                }
+                s.ensure_container(&a.container);
+                drop(s);
+            }
+            let Some(idx) = oplog.arena.id_to_idx(&a.container) else {
+                return Err(CannotFindRelativePosition::IdNotFound);
+            };
+
+            // Build a fresh tracker from genesis so both ids are present in the
+            // rope, whether they are live or tombstoned. Persist mode forces the
+            // diff calculators to use the `checkout` traversal that visits every
+            // op in causal order.
+            let mut diff_calc = DiffCalculator::new(true);
+            let before = VersionVector::new();
+            let before_frontiers = Frontiers::default();
+            diff_calc.calc_diff_internal(
+                &oplog,
+                &before,
+                &before_frontiers,
+                oplog.vv(),
+                oplog.frontiers(),
+                Some(&|target| idx == target),
+            );
+
+            let depth = self.arena.get_depth(idx);
+            let (_, calc) = &mut diff_calc.get_or_create_calc(idx, depth);
+            match calc {
+                crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
+                    match text.compare_ids(id_a, id_b) {
+                        Some(ord) => Ok(ord),
+                        // Mirror the slow path's taxonomy: a concrete id that
+                        // fails to resolve because its history was dropped by a
+                        // shallow snapshot is `HistoryCleared`, not `IdNotFound`.
+                        None => {
+                            if oplog.shallow_since_vv().includes_id(id_a)
+                                || oplog.shallow_since_vv().includes_id(id_b)
+                            {
+                                Err(CannotFindRelativePosition::HistoryCleared)
+                            } else {
+                                Err(CannotFindRelativePosition::IdNotFound)
+                            }
+                        }
+                    }
+                }
+                _ => Err(CannotFindRelativePosition::IdNotFound),
+            }
+        })
+    }
+
     /// Get position in a seq container
     pub(crate) fn query_pos_internal(
         &self,
