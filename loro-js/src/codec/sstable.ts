@@ -23,6 +23,11 @@ export interface EncodeSstableOptions {
   readonly compression?: SstableCompression;
 }
 
+export interface SstableReplacement {
+  readonly key: Uint8Array;
+  readonly value: Uint8Array | undefined;
+}
+
 interface BlockMetadata {
   readonly offset: number;
   readonly large: boolean;
@@ -43,58 +48,243 @@ export function decodeSstable(
   bytes: Uint8Array,
   options: DecodeSstableOptions = {},
 ): SstableEntry[] {
-  if (bytes.length === 0) {
-    return [];
-  }
-  decodeAssert(bytes.length >= 17, "SSTable is too short", 0);
-  decodeAssert(
-    bytesEqual(bytes.subarray(0, 4), SSTABLE_MAGIC),
-    "invalid SSTable magic",
-    0,
-  );
-  decodeAssert(bytes[4] === SSTABLE_SCHEMA, "unsupported SSTable schema", 4);
-  const footer = new ByteReader(bytes, bytes.length - 4, 4);
-  const metadataOffset = footer.readU32LE();
-  decodeAssert(
-    metadataOffset >= 5 && metadataOffset < bytes.length - 4,
-    "invalid SSTable metadata offset",
-    bytes.length - 4,
-  );
-  const metadataBytes = bytes.subarray(metadataOffset, bytes.length - 4);
-  const metadata = decodeMetadata(metadataBytes, options.checkChecksum !== false);
-  const entries: SstableEntry[] = [];
-  for (let index = 0; index < metadata.length; index += 1) {
-    const current = metadata[index]!;
-    const end =
-      index + 1 < metadata.length ? metadata[index + 1]!.offset : metadataOffset;
-    decodeAssert(current.offset >= 5, "invalid SSTable block offset", current.offset);
+  if (bytes.length === 0) return [];
+  return [...new SstableReader(bytes, options).entries()];
+}
+
+/**
+ * A validated, low-retention view over an SSTable.
+ *
+ * Unlike `decodeSstable`, this keeps the encoded table and only retains one
+ * decompressed block while iterating or looking up an entry. This matters for
+ * latest-state snapshots containing hundreds of thousands of small containers.
+ */
+export class SstableReader {
+  readonly bytes: Uint8Array;
+  readonly #options: DecodeSstableOptions;
+  readonly #metadataOffset: number;
+  readonly #metadata: readonly BlockMetadata[];
+  #validated = false;
+
+  constructor(bytes: Uint8Array, options: DecodeSstableOptions = {}) {
+    decodeAssert(bytes.length >= 17, "SSTable is too short", 0);
     decodeAssert(
-      end > current.offset && end <= metadataOffset,
-      "invalid SSTable block range",
-      current.offset,
+      bytesEqual(bytes.subarray(0, 4), SSTABLE_MAGIC),
+      "invalid SSTable magic",
+      0,
     );
-    const stored = bytes.subarray(current.offset, end);
-    decodeAssert(stored.length >= 4, "SSTable block lacks checksum", current.offset);
+    decodeAssert(bytes[4] === SSTABLE_SCHEMA, "unsupported SSTable schema", 4);
+    const footer = new ByteReader(bytes, bytes.length - 4, 4);
+    const metadataOffset = footer.readU32LE();
+    decodeAssert(
+      metadataOffset >= 5 && metadataOffset < bytes.length - 4,
+      "invalid SSTable metadata offset",
+      bytes.length - 4,
+    );
+    const metadata = decodeMetadata(
+      bytes.subarray(metadataOffset, bytes.length - 4),
+      options.checkChecksum !== false,
+    );
+    for (let index = 0; index < metadata.length; index += 1) {
+      const current = metadata[index]!;
+      const end =
+        index + 1 < metadata.length ? metadata[index + 1]!.offset : metadataOffset;
+      decodeAssert(current.offset >= 5, "invalid SSTable block offset", current.offset);
+      decodeAssert(
+        end > current.offset && end <= metadataOffset,
+        "invalid SSTable block range",
+        current.offset,
+      );
+    }
+    this.bytes = bytes;
+    this.#options = options;
+    this.#metadataOffset = metadataOffset;
+    this.#metadata = metadata;
+  }
+
+  validate(): void {
+    if (this.#validated) return;
+    for (const _entry of this.entries()) {
+      // Iteration validates checksums, compression, entry encoding, and order.
+    }
+    this.#validated = true;
+  }
+
+  *entries(): IterableIterator<SstableEntry> {
+    let previous: Uint8Array | undefined;
+    for (let index = 0; index < this.#metadata.length; index += 1) {
+      for (const entry of this.#decodeBlock(index)) {
+        if (previous !== undefined) {
+          decodeAssert(
+            compareBytes(previous, entry.key) < 0,
+            "SSTable keys are not strictly increasing",
+          );
+        }
+        previous = entry.key;
+        yield entry;
+      }
+    }
+    this.#validated = true;
+  }
+
+  get(key: Uint8Array): Uint8Array | undefined {
+    this.validate();
+    let low = 0;
+    let high = this.#metadata.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (compareBytes(this.#metadata[middle]!.firstKey, key) <= 0) low = middle + 1;
+      else high = middle;
+    }
+    const index = low - 1;
+    if (index < 0) return undefined;
+    const metadata = this.#metadata[index]!;
+    if (metadata.large) {
+      return bytesEqual(metadata.firstKey, key)
+        ? this.#decodeBlock(index)[0]!.value
+        : undefined;
+    }
+    if (metadata.lastKey === undefined || compareBytes(key, metadata.lastKey) > 0) {
+      return undefined;
+    }
+    const entries = this.#decodeBlock(index);
+    let entryLow = 0;
+    let entryHigh = entries.length;
+    while (entryLow < entryHigh) {
+      const middle = (entryLow + entryHigh) >>> 1;
+      if (compareBytes(entries[middle]!.key, key) < 0) entryLow = middle + 1;
+      else entryHigh = middle;
+    }
+    const entry = entries[entryLow];
+    return entry !== undefined && bytesEqual(entry.key, key) ? entry.value : undefined;
+  }
+
+  rewrite(
+    input: readonly SstableReplacement[],
+    options: EncodeSstableOptions = {},
+  ): Uint8Array {
+    this.validate();
+    const replacements = input.map(({ key, value }) => ({
+      key: key.slice(),
+      value: value?.slice(),
+    }));
+    replacements.sort((left, right) => compareBytes(left.key, right.key));
+    validateReplacementOrder(replacements);
+    if (replacements.length === 0) return this.bytes.slice();
+
+    const blockSize = checkedBlockSize(options.blockSize);
+    const compression = options.compression ?? "auto";
+    const blocks: EncodedBlock[] = [];
+    let replacementIndex = 0;
+    const encodeReplacementRange = (end: number): void => {
+      const entries: SstableEntry[] = [];
+      while (replacementIndex < end) {
+        const replacement = replacements[replacementIndex++]!;
+        if (replacement.value !== undefined) {
+          entries.push({ key: replacement.key, value: replacement.value });
+        }
+      }
+      blocks.push(...encodeBlocks(entries, blockSize, compression));
+    };
+
+    for (let blockIndex = 0; blockIndex < this.#metadata.length; blockIndex += 1) {
+      const metadata = this.#metadata[blockIndex]!;
+      let beforeEnd = replacementIndex;
+      while (
+        beforeEnd < replacements.length &&
+        compareBytes(replacements[beforeEnd]!.key, metadata.firstKey) < 0
+      ) {
+        beforeEnd += 1;
+      }
+      encodeReplacementRange(beforeEnd);
+
+      const upperKey = metadata.large ? metadata.firstKey : metadata.lastKey!;
+      let rangeEnd = replacementIndex;
+      while (
+        rangeEnd < replacements.length &&
+        compareBytes(replacements[rangeEnd]!.key, upperKey) <= 0
+      ) {
+        rangeEnd += 1;
+      }
+      if (rangeEnd === replacementIndex) {
+        blocks.push(this.#storedBlock(blockIndex));
+        continue;
+      }
+
+      const source = this.#decodeBlock(blockIndex);
+      const merged: SstableEntry[] = [];
+      let sourceIndex = 0;
+      while (sourceIndex < source.length || replacementIndex < rangeEnd) {
+        const sourceEntry = source[sourceIndex];
+        const replacement = replacements[replacementIndex];
+        const order =
+          sourceEntry === undefined
+            ? 1
+            : replacement === undefined || replacementIndex >= rangeEnd
+              ? -1
+              : compareBytes(sourceEntry.key, replacement.key);
+        if (order < 0) {
+          merged.push(sourceEntry!);
+          sourceIndex += 1;
+        } else if (order > 0) {
+          if (replacement!.value !== undefined) {
+            merged.push({ key: replacement!.key, value: replacement!.value });
+          }
+          replacementIndex += 1;
+        } else {
+          if (replacement!.value !== undefined) {
+            merged.push({ key: replacement!.key, value: replacement!.value });
+          }
+          sourceIndex += 1;
+          replacementIndex += 1;
+        }
+      }
+      blocks.push(...encodeBlocks(merged, blockSize, compression));
+    }
+    encodeReplacementRange(replacements.length);
+    return blocks.length === 0 ? new Uint8Array() : encodeTable(blocks);
+  }
+
+  #decodeBlock(index: number): SstableEntry[] {
+    const metadata = this.#metadata[index]!;
+    const stored = this.#storedBytes(index);
     const payload = stored.subarray(0, stored.length - 4);
     const checksum = new ByteReader(stored, stored.length - 4, 4).readU32LE();
-    if (options.checkChecksum !== false) {
+    if (this.#options.checkChecksum !== false) {
       decodeAssert(
         checksum === xxhash32(payload, LORO_XXHASH_SEED),
         "SSTable block checksum mismatch",
-        end - 4,
+        metadata.offset + stored.length - 4,
       );
     }
     const decoded =
-      current.compression === 0 ? payload : decodeLz4Frame(payload, options);
-    if (current.large) {
-      entries.push({ key: current.firstKey, value: decoded });
-      continue;
-    }
-    const blockEntries = decodeNormalBlock(decoded, current);
-    entries.push(...blockEntries);
+      metadata.compression === 0 ? payload : decodeLz4Frame(payload, this.#options);
+    return metadata.large
+      ? [{ key: metadata.firstKey, value: decoded }]
+      : decodeNormalBlock(decoded, metadata);
   }
-  validateEntryOrder(entries);
-  return entries;
+
+  #storedBytes(index: number): Uint8Array {
+    const metadata = this.#metadata[index]!;
+    const end =
+      index + 1 < this.#metadata.length
+        ? this.#metadata[index + 1]!.offset
+        : this.#metadataOffset;
+    const stored = this.bytes.subarray(metadata.offset, end);
+    decodeAssert(stored.length >= 4, "SSTable block lacks checksum", metadata.offset);
+    return stored;
+  }
+
+  #storedBlock(index: number): EncodedBlock {
+    const metadata = this.#metadata[index]!;
+    return {
+      bytes: this.#storedBytes(index),
+      large: metadata.large,
+      compression: metadata.compression,
+      firstKey: metadata.firstKey,
+      lastKey: metadata.lastKey,
+    };
+  }
 }
 
 export function encodeSstable(
@@ -104,17 +294,22 @@ export function encodeSstable(
   if (input.length === 0) {
     return new Uint8Array();
   }
-  const blockSize = options.blockSize ?? 4096;
+  const blockSize = checkedBlockSize(options.blockSize);
   const compression = options.compression ?? "auto";
-  if (!Number.isSafeInteger(blockSize) || blockSize <= 0 || blockSize > 0xffff) {
-    throw new LoroEncodeError(`invalid SSTable block size ${blockSize}`);
-  }
   const entries = input.map(({ key, value }) => ({
-    key: key.slice(),
-    value: value.slice(),
+    key,
+    value,
   }));
   entries.sort((left, right) => compareBytes(left.key, right.key));
   validateEntriesForEncoding(entries);
+  return encodeTable(encodeBlocks(entries, blockSize, compression));
+}
+
+function encodeBlocks(
+  entries: readonly SstableEntry[],
+  blockSize: number,
+  compression: SstableCompression,
+): EncodedBlock[] {
   const blocks: EncodedBlock[] = [];
   for (let index = 0; index < entries.length; ) {
     const first = entries[index]!;
@@ -164,7 +359,15 @@ export function encodeSstable(
       encodeStoredBlock(body.toUint8Array(), false, firstKey, lastKey, compression),
     );
   }
-  return encodeTable(blocks);
+  return blocks;
+}
+
+function checkedBlockSize(value: number | undefined): number {
+  const blockSize = value ?? 4096;
+  if (!Number.isSafeInteger(blockSize) || blockSize <= 0 || blockSize > 0xffff) {
+    throw new LoroEncodeError(`invalid SSTable block size ${blockSize}`);
+  }
+  return blockSize;
 }
 
 function decodeMetadata(bytes: Uint8Array, checkChecksum: boolean): BlockMetadata[] {
@@ -298,7 +501,14 @@ function encodeTable(blocks: readonly EncodedBlock[]): Uint8Array {
     encodeAssert(offset <= 0xffff_ffff, "SSTable exceeds u32 offsets");
   }
   const metadataOffset = offset;
-  const metadataWriter = new ByteWriter();
+  const metadataLength =
+    8 +
+    metadata.reduce(
+      (length, item) =>
+        length + 7 + item.firstKey.length + (item.large ? 0 : 2 + item.lastKey!.length),
+      0,
+    );
+  const metadataWriter = new ByteWriter(metadataLength);
   metadataWriter.writeU32LE(metadata.length);
   for (const item of metadata) {
     encodeAssert(item.firstKey.length <= 0xffff, "SSTable key exceeds u16 length");
@@ -317,7 +527,7 @@ function encodeTable(blocks: readonly EncodedBlock[]): Uint8Array {
   metadataWriter.writeU32LE(
     xxhash32(metadataWithoutChecksum.subarray(4), LORO_XXHASH_SEED),
   );
-  const writer = new ByteWriter();
+  const writer = new ByteWriter(metadataOffset + metadataLength + 4);
   writer.writeBytes(SSTABLE_MAGIC);
   writer.writeU8(SSTABLE_SCHEMA);
   for (const block of blocks) {
@@ -348,6 +558,21 @@ function validateEntriesForEncoding(entries: readonly SstableEntry[]): void {
     }
     if (index > 0 && compareBytes(entries[index - 1]!.key, current.key) >= 0) {
       throw new LoroEncodeError("SSTable keys must be unique");
+    }
+  }
+}
+
+function validateReplacementOrder(replacements: readonly SstableReplacement[]): void {
+  for (let index = 0; index < replacements.length; index += 1) {
+    const current = replacements[index]!;
+    if (current.key.length === 0) {
+      throw new LoroEncodeError("SSTable keys cannot be empty");
+    }
+    if (current.key.length > 0xffff) {
+      throw new LoroEncodeError("SSTable key exceeds u16 length");
+    }
+    if (index > 0 && compareBytes(replacements[index - 1]!.key, current.key) >= 0) {
+      throw new LoroEncodeError("SSTable replacement keys must be unique");
     }
   }
 }

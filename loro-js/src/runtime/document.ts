@@ -24,9 +24,13 @@ import {
 import { decodeChangeBlockKey, encodeChangeBlockKey } from "../codec/id";
 import { decodeSstable, encodeSstable, type SstableEntry } from "../codec/sstable";
 import {
+  decodeLazyStateSnapshotStore,
   decodeStateSnapshotStore,
   encodeStateSnapshotStore,
+  getLazyStateSnapshotContainer,
+  rewriteLazyStateSnapshotStore,
   type ContainerStateSnapshot,
+  type LazyStateSnapshotStore,
   type MapStateMetadata,
   type StateSnapshotContainerEntry,
   type StateSnapshotStore,
@@ -158,10 +162,14 @@ interface DecodedImportData {
 
 interface DeferredSnapshotHistory {
   readonly entries: readonly SstableEntry[];
-  readonly validatedBlocks: ReadonlyMap<SstableEntry, readonly HistoryRecord[]>;
+  readonly validatedBlocks: Map<SstableEntry, readonly HistoryRecord[]>;
   readonly endVersion: VersionVector;
   readonly frontiers: readonly CodecId[];
   readonly operationCount: number;
+}
+
+interface DeferredSnapshotState {
+  readonly store: Extract<LazyStateSnapshotStore, { readonly kind: "sstable" }>;
 }
 
 interface IndexedHistoryOperation {
@@ -246,6 +254,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #containerKeys = new WeakMap<CodecContainerId, string>();
   #pendingHistory = new Map<string, HistoryRecord>();
   #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
+  #deferredSnapshotState: DeferredSnapshotState | undefined;
+  #hydratedSnapshotContainers = new Set<string>();
+  #hydratingSnapshotContainers = new Set<string>();
+  #snapshotContainerDepths = new Map<string, bigint>();
+  #dirtySnapshotContainers = new Set<string>();
+  #deletedSnapshotContainers = new Map<string, CodecContainerId>();
   #containers = new Map<string, LoroContainer>();
   #roots = new Map<string, LoroContainer>();
   #pending: PendingChange | undefined;
@@ -376,7 +390,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (parsed.kind === "root" && !isMergeableContainerId(parsed)) {
       return this.#getOrCreateContainer(parsed) as Container;
     }
-    const container = this.#containers.get(formatContainerId(parsed));
+    let container = this.#containers.get(formatContainerId(parsed));
+    if (
+      container === undefined &&
+      getLazyStateSnapshotContainer(
+        this.#deferredSnapshotState?.store ?? { kind: "absent" },
+        parsed,
+      ) !== undefined
+    ) {
+      container = this.#getOrCreateContainer(parsed);
+    }
     if (
       container !== undefined &&
       isMergeableContainerId(parsed) &&
@@ -403,6 +426,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       throw new TypeError("only root containers can be deleted directly");
     this.#roots.delete(parsed.name);
     this.#containers.delete(formatContainerId(parsed));
+    this.#deletedSnapshotContainers.set(formatContainerId(parsed), parsed);
   }
 
   setHideEmptyRootContainers(hide: boolean): void {
@@ -551,6 +575,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const from = mode.from ?? new VersionVector();
       const effectiveFrom = from.clone();
       effectiveFrom.merge(this.#shallowStartVersion);
+      if (
+        this.#deferredSnapshotHistory !== undefined &&
+        effectiveFrom.compare(this.#shallowStartVersion) === 0
+      ) {
+        return this.#encodeDeferredUpdates();
+      }
       const records = this.#recordsInVersionRange(effectiveFrom, this.#historyVersion());
       return this.#encodeUpdates(records);
     }
@@ -601,7 +631,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const before = this.#frontiersCodec();
     const beforeVersion = this.#historyVersion();
     const parsed = decodeDocument(bytes);
-    if (this.#deferredSnapshotHistory !== undefined) {
+    if (
+      this.#deferredSnapshotHistory !== undefined &&
+      parsed.mode !== EncodeMode.FastUpdates
+    ) {
       this.#materializeDeferredHistory();
     }
     const imported: HistoryRecord[] = [];
@@ -692,11 +725,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           encodedStartVersion !== undefined && encodedStartFrontiers !== undefined;
       }
 
-      const stateStore = decodeStateSnapshotStore(snapshot.state);
+      const canUseLazyState =
+        initializeFromSnapshot &&
+        !this.#detached &&
+        !isShallowSnapshot &&
+        canonicalStartMetadata &&
+        encodedEndVersion !== undefined &&
+        encodedEndFrontiers !== undefined &&
+        !this.#hasEventSubscribers();
+      const lazyStateStore = canUseLazyState
+        ? decodeLazyStateSnapshotStore(snapshot.state.slice())
+        : undefined;
+      const stateStore =
+        lazyStateStore?.kind === "sstable"
+          ? undefined
+          : decodeStateSnapshotStore(snapshot.state);
       const hydratedStore =
-        rootStore === undefined
-          ? stateStore
-          : mergeStateSnapshotStores(rootStore, stateStore);
+        stateStore === undefined
+          ? undefined
+          : rootStore === undefined
+            ? stateStore
+            : mergeStateSnapshotStores(rootStore, stateStore);
       if (
         stagedShallowRootVersion !== undefined &&
         encodedEndVersion !== undefined &&
@@ -724,8 +773,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         canonicalStartMetadata &&
         encodedEndVersion !== undefined &&
         encodedEndFrontiers !== undefined &&
-        stateStore.kind === "sstable" &&
-        hydratedStore.kind === "sstable";
+        (lazyStateStore?.kind === "sstable" ||
+          (stateStore?.kind === "sstable" && hydratedStore?.kind === "sstable"));
 
       if (canDeferHistory) {
         const endVersion = encodedEndVersion!;
@@ -736,13 +785,22 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           endFrontiers,
         );
         installStagedShallowRoot();
-        deferredChanged = new Set(
-          hydratedStore.containers.map(({ id }) => formatContainerId(id)),
-        );
-        if (this.#hasEventSubscribers()) {
-          beforeValues = this.#captureContainerEventValues(deferredChanged);
+        if (lazyStateStore?.kind === "sstable") {
+          this.#deferredSnapshotState = { store: lazyStateStore };
+          deferredChanged = new Set(lazyStateStore.roots.map(formatContainerId));
+          for (const root of lazyStateStore.roots) this.#getOrCreateContainer(root);
+        } else {
+          if (hydratedStore?.kind !== "sstable") {
+            throw new Error("deferred snapshot state must be an SSTable");
+          }
+          deferredChanged = new Set(
+            hydratedStore.containers.map(({ id }) => formatContainerId(id)),
+          );
+          if (this.#hasEventSubscribers()) {
+            beforeValues = this.#captureContainerEventValues(deferredChanged);
+          }
+          this.#hydrateState(hydratedStore);
         }
-        this.#hydrateState(hydratedStore);
         this.#deferredSnapshotHistory = {
           entries: oplogEntries,
           validatedBlocks,
@@ -753,6 +811,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             endVersion,
           ),
         };
+        this.#historyFrontiers = new Map(
+          endFrontiers.map((id) => [idKey(id), { ...id }] as const),
+        );
         for (const { peer } of endVersion._codecEntriesUnsorted()) {
           this.#seenCommittedPeers.add(peer);
         }
@@ -778,10 +839,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (this.#hasEventSubscribers()) {
             beforeValues = this.#captureEventValues(integration.added);
           }
-          if (rootStore !== undefined && stateStore.kind === "empty") {
+          if (rootStore !== undefined && stateStore!.kind === "empty") {
             this.#rebuildFromHistory();
           } else {
-            this.#hydrateState(hydratedStore);
+            this.#hydrateState(hydratedStore!);
           }
         } else if (!this.#detached && integration.added.length > 0) {
           const recording = this.#hasEventSubscribers()
@@ -1352,10 +1413,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #historyVersion(): VersionVector {
-    if (this.#deferredSnapshotHistory !== undefined) {
-      return this.#deferredSnapshotHistory.endVersion.clone();
-    }
-    const version = this.#shallowStartVersion.clone();
+    const version =
+      this.#deferredSnapshotHistory?.endVersion.clone() ??
+      this.#shallowStartVersion.clone();
     for (const [peer, end] of this.#historyEndByPeer) {
       if (end > (version.get(peer) ?? 0)) version.set(peer, end);
     }
@@ -1367,11 +1427,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   oplogFrontiers(): Frontiers {
-    if (this.#deferredSnapshotHistory !== undefined) {
-      return [...this.#deferredSnapshotHistory.frontiers]
-        .sort(compareIds)
-        .map(formatOpId);
-    }
     return [...this.#historyFrontiers.values()].sort(compareIds).map(formatOpId);
   }
 
@@ -1426,7 +1481,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   opCount(): number {
-    return this.#deferredSnapshotHistory?.operationCount ?? this.#historyOperationCount;
+    return (
+      (this.#deferredSnapshotHistory?.operationCount ?? 0) + this.#historyOperationCount
+    );
   }
 
   getAllChanges(): Map<PeerID, Change[]> {
@@ -1581,15 +1638,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #recordContaining(id: CodecId): HistoryRecord | undefined {
-    this.#materializeDeferredHistory();
     const records = this.#historyByPeer.get(id.peer);
-    if (records === undefined) return undefined;
-    const index = lowerBoundHistory(records, id.counter + 1) - 1;
-    const record = records[index];
-    return record !== undefined &&
+    const index =
+      records === undefined ? -1 : lowerBoundHistory(records, id.counter + 1) - 1;
+    const record = index < 0 ? undefined : records![index];
+    if (
+      record !== undefined &&
       id.counter < record.change.id.counter + changeLength(record.change)
-      ? record
-      : undefined;
+    ) {
+      return record;
+    }
+    return this.#deferredRecordContaining(id);
   }
 
   #greatestTimestampAt(frontiers: readonly CodecId[]): bigint {
@@ -1612,7 +1671,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       peer: change.id.peer,
       counter: change.id.counter - 1,
     });
-    return previous !== undefined && canMergeChanges(previous.change, change, interval)
+    return previous !== undefined &&
+      this.#history.get(changeKey(previous.change.id)) === previous &&
+      canMergeChanges(previous.change, change, interval)
       ? previous
       : undefined;
   }
@@ -2553,7 +2614,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (
       byId &&
       (id.kind === "normal" || isMergeableContainerId(id)) &&
-      !this.#containers.has(formatContainerId(id))
+      !this.#containers.has(formatContainerId(id)) &&
+      getLazyStateSnapshotContainer(
+        this.#deferredSnapshotState?.store ?? { kind: "absent" },
+        id,
+      ) === undefined
     ) {
       throw new RangeError(`container ${nameOrId} does not exist in this document`);
     }
@@ -2564,11 +2629,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return container;
   }
 
-  #getOrCreateContainer(id: CodecContainerId, parent?: LoroContainer): LoroContainer {
+  #getOrCreateContainer(
+    id: CodecContainerId,
+    parent?: LoroContainer,
+    hydrate = true,
+  ): LoroContainer {
     const key = this.#containerKey(id);
     const existing = this.#containers.get(key);
     if (existing !== undefined) {
       if (parent !== undefined) existing._parentLink = { container: parent };
+      if (hydrate) this._ensureContainerHydrated(existing);
       return existing;
     }
     const container = createContainer(codecTypeToPublic(id.containerType));
@@ -2577,7 +2647,42 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (id.kind === "root" && !isMergeableContainerId(id)) {
       this.#roots.set(id.name, container);
     }
+    if (hydrate) this._ensureContainerHydrated(container);
     return container;
+  }
+
+  _ensureContainerHydrated(container: LoroContainer): void {
+    const deferred = this.#deferredSnapshotState;
+    const id = container._codecId;
+    if (deferred === undefined || id === undefined) return;
+    const key = this.#containerKey(id);
+    if (
+      this.#hydratedSnapshotContainers.has(key) ||
+      this.#hydratingSnapshotContainers.has(key)
+    ) {
+      return;
+    }
+    const entry = getLazyStateSnapshotContainer(deferred.store, id);
+    if (entry === undefined) {
+      this.#hydratedSnapshotContainers.add(key);
+      this.#dirtySnapshotContainers.add(key);
+      return;
+    }
+
+    this.#hydratingSnapshotContainers.add(key);
+    try {
+      const parent =
+        entry.wrapper.parent === undefined
+          ? undefined
+          : this.#getOrCreateContainer(entry.wrapper.parent, undefined, false);
+      container._attach(this, id, parent);
+      container._reset();
+      this.#hydrateContainerState(container, entry.wrapper.state);
+      this.#snapshotContainerDepths.set(key, entry.wrapper.depth);
+      this.#hydratedSnapshotContainers.add(key);
+    } finally {
+      this.#hydratingSnapshotContainers.delete(key);
+    }
   }
 
   #containerKey(id: CodecContainerId): string {
@@ -2591,7 +2696,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #ensurePending(): PendingChange {
     if (this.#pending !== undefined) return this.#pending;
-    this.#materializeDeferredHistory();
     if (this.#detached && !this.#detachedEditing) {
       throw new Error("cannot edit a detached document; call attach() first");
     }
@@ -2633,6 +2737,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   ): DecodedOperation {
     if (container._codecId === undefined || container._doc !== this)
       throw new Error("container is detached");
+    this._ensureContainerHydrated(container);
     const pending = this.#ensurePending();
     const counter = this.#nextOperationCounter(pending);
     const operation: DecodedOperation = {
@@ -2645,6 +2750,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const childId = this.#childIdForOperation(operation, preferredChild.kind());
       preferredChild._attach(this, childId, container);
       this.#containers.set(preferredChild.id, preferredChild);
+      this.#dirtySnapshotContainers.add(preferredChild.id);
     }
     if (!appendToTrailingListInsert(pending.operations, operation)) {
       pending.operations.push(operation);
@@ -2672,6 +2778,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       causalVersion,
       container,
     );
+    this.#dirtySnapshotContainers.add(container.id);
     finishEvent?.();
     return operation;
   }
@@ -3427,6 +3534,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const key = changeKey(record.change.id);
       const knownEnd = Math.max(
         this.#shallowStartVersion.get(record.change.id.peer) ?? 0,
+        this.#deferredSnapshotHistory?.endVersion.get(record.change.id.peer) ?? 0,
         this.#historyEndByPeer.get(record.change.id.peer) ?? 0,
       );
       const recordEnd = record.change.id.counter + changeLength(record.change);
@@ -3510,6 +3618,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #historyContainsId(id: CodecId): boolean {
     if (id.counter < (this.#shallowStartVersion.get(id.peer) ?? 0)) return true;
+    if (id.counter < (this.#deferredSnapshotHistory?.endVersion.get(id.peer) ?? 0)) {
+      return true;
+    }
     return id.counter < (this.#historyEndByPeer.get(id.peer) ?? 0);
   }
 
@@ -3562,6 +3673,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           causalVersion,
           container,
         );
+        this.#dirtySnapshotContainers.add(container.id);
         finishEvent?.();
         causalVersion.set(
           record.change.id.peer,
@@ -4673,7 +4785,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     entries: readonly SstableEntry[],
     endVersion: VersionVector,
     frontiers: readonly CodecId[],
-  ): ReadonlyMap<SstableEntry, readonly HistoryRecord[]> {
+  ): Map<SstableEntry, readonly HistoryRecord[]> {
     const changeEntriesByPeer = new Map<
       bigint,
       { readonly entry: SstableEntry; readonly start: CodecId }[]
@@ -4737,9 +4849,51 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return validated;
   }
 
+  #deferredRecordContaining(id: CodecId): HistoryRecord | undefined {
+    const deferred = this.#deferredSnapshotHistory;
+    if (
+      deferred === undefined ||
+      id.counter < 0 ||
+      id.counter >= (deferred.endVersion.get(id.peer) ?? 0)
+    ) {
+      return undefined;
+    }
+    let candidate: SstableEntry | undefined;
+    let candidateStart = -1;
+    for (const entry of deferred.entries) {
+      if (entry.key.length !== 12) continue;
+      const start = decodeChangeBlockKey(entry.key);
+      if (
+        start.peer === id.peer &&
+        start.counter <= id.counter &&
+        start.counter > candidateStart
+      ) {
+        candidate = entry;
+        candidateStart = start.counter;
+      }
+    }
+    if (candidate === undefined) return undefined;
+    let records = deferred.validatedBlocks.get(candidate);
+    if (records === undefined) {
+      records = this.#readChangeBlock(candidate.value);
+      const expected = decodeChangeBlockKey(candidate.key);
+      if (records[0] !== undefined && !idsEqual(records[0].change.id, expected)) {
+        throw new Error("snapshot change key does not match its block");
+      }
+      deferred.validatedBlocks.set(candidate, records);
+    }
+    return records.find(
+      ({ change }) =>
+        change.id.peer === id.peer &&
+        change.id.counter <= id.counter &&
+        id.counter < change.id.counter + changeLength(change),
+    );
+  }
+
   #materializeDeferredHistory(): void {
     const deferred = this.#deferredSnapshotHistory;
     if (deferred === undefined) return;
+    const overlay = this.#historyOrder.values().map(cloneHistoryRecord);
 
     const records: HistoryRecord[] = [];
     for (const entry of deferred.entries) {
@@ -4773,6 +4927,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     if (staged.#historyOperationCount !== deferred.operationCount) {
       throw new Error("snapshot operation count does not match its history");
+    }
+
+    const overlayIntegration = staged.#integrateHistory(overlay, undefined);
+    if (overlayIntegration.pending.length > 0) {
+      throw new Error("snapshot overlay contains changes with missing dependencies");
     }
 
     // State was already hydrated from the latest-state SSTable. Installing these
@@ -4915,8 +5074,28 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #causalVersionAt(frontiers: readonly CodecId[]): Map<bigint, number> {
+    if (
+      this.#deferredSnapshotHistory !== undefined &&
+      frontierSetsEqual(
+        frontiers.map(formatOpId),
+        [...this.#historyFrontiers.values()].map(formatOpId),
+      )
+    ) {
+      return new Map(
+        this.#historyVersion()
+          ._codecEntriesUnsorted()
+          .map(({ peer, counter }) => [peer, counter] as const),
+      );
+    }
     const version = new Map(
-      this.#shallowStartVersion
+      (this.#deferredSnapshotHistory !== undefined &&
+      frontierSetsEqual(
+        frontiers.map(formatOpId),
+        this.#deferredSnapshotHistory.frontiers.map(formatOpId),
+      )
+        ? this.#deferredSnapshotHistory.endVersion
+        : this.#shallowStartVersion
+      )
         ._codecEntriesUnsorted()
         .map(({ peer, counter }) => [peer, counter] as const),
     );
@@ -4935,11 +5114,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #dependencyVersion(change: DecodedChange): ReadonlyMap<bigint, number> {
     const cached = this.#dependencyVersionCache.get(change);
     if (cached !== undefined) return cached;
+    const deferredBase =
+      this.#deferredSnapshotHistory !== undefined &&
+      frontierSetsEqual(
+        change.dependencies.map(formatOpId),
+        this.#deferredSnapshotHistory.frontiers.map(formatOpId),
+      );
     const version = new Map(
-      this.#shallowStartVersion
+      (deferredBase
+        ? this.#deferredSnapshotHistory!.endVersion
+        : this.#shallowStartVersion
+      )
         ._codecEntriesUnsorted()
         .map(({ peer, counter }) => [peer, counter] as const),
     );
+    if (deferredBase) {
+      this.#dependencyVersionCache.set(change, version);
+      return version;
+    }
     for (const dependency of change.dependencies) {
       const dependencyRecord = this.#recordContaining(dependency);
       if (dependencyRecord !== undefined && dependencyRecord.change !== change) {
@@ -4991,10 +5183,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       for (const frontier of this.#frontiersForVersion(this.#checkoutVersion)) {
         candidates.set(idKey(frontier), frontier);
       }
-    } else if (this.#deferredSnapshotHistory !== undefined) {
-      for (const frontier of this.#deferredSnapshotHistory.frontiers) {
-        candidates.set(idKey(frontier), frontier);
-      }
     } else {
       for (const [key, frontier] of this.#historyFrontiers) {
         candidates.set(key, frontier);
@@ -5032,9 +5220,68 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
   }
 
+  #encodeDeferredUpdates(): Uint8Array {
+    const deferred = this.#deferredSnapshotHistory;
+    if (deferred === undefined) return this.#encodeUpdates(this.#sortedHistory());
+    const blocks = deferred.entries
+      .filter((entry) => entry.key.length === 12)
+      .map((entry) => entry.value);
+    for (const record of this.#historyOrder.values()) {
+      blocks.push(
+        encodeChangeBlock({
+          peers: [record.change.id.peer],
+          keys: record.keys,
+          containers: [],
+          positions: [],
+          changes: [record.change],
+        }),
+      );
+    }
+    return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
+  }
+
   #encodeSnapshot(): Uint8Array {
     if (this.isShallow()) {
       return this.#encodeShallowSnapshot(this.shallowSinceFrontiers());
+    }
+    if (
+      this.#deferredSnapshotHistory !== undefined &&
+      this.#deferredSnapshotState !== undefined
+    ) {
+      const historyEntries = this.#deferredSnapshotHistory.entries
+        .filter(
+          (entry) =>
+            !bytesEqual(entry.key, VERSION_KEY) && !bytesEqual(entry.key, FRONTIERS_KEY),
+        )
+        .map(({ key, value }) => ({ key, value }));
+      for (const record of this.#historyOrder.values()) {
+        historyEntries.push({
+          key: encodeChangeBlockKey(record.change.id),
+          value: encodeChangeBlock({
+            peers: [record.change.id.peer],
+            keys: record.keys,
+            containers: [],
+            positions: [],
+            changes: [record.change],
+          }),
+        });
+      }
+      historyEntries.push(
+        {
+          key: VERSION_KEY,
+          value: encodePostcardVersionVector(this.version().codecEntries()),
+        },
+        {
+          key: FRONTIERS_KEY,
+          value: encodePostcardFrontiers(this.#frontiersCodec()),
+        },
+      );
+      const body = encodeFastSnapshotBody({
+        oplog: encodeSstable(historyEntries, { compression: "auto" }),
+        state: this.#encodeDeferredSnapshotState(),
+        shallowRootState: new Uint8Array(),
+      });
+      return encodeDocument(EncodeMode.FastSnapshot, body);
     }
     const historyEntries = this.#sortedHistory().map((record) => ({
       key: encodeChangeBlockKey(record.change.id),
@@ -5060,6 +5307,49 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
+  }
+
+  #encodeDeferredSnapshotState(): Uint8Array {
+    const deferred = this.#deferredSnapshotState;
+    if (deferred === undefined) {
+      return encodeStateSnapshotStore(this.#buildStateStore(), {
+        compression: "auto",
+      });
+    }
+    const replacements = [] as {
+      id: CodecContainerId;
+      wrapper:
+        | {
+            containerType: CodecContainerId["containerType"];
+            depth: bigint;
+            parent: CodecContainerId | undefined;
+            state: ContainerStateSnapshot;
+          }
+        | undefined;
+    }[];
+    for (const id of this.#deletedSnapshotContainers.values()) {
+      replacements.push({ id, wrapper: undefined });
+    }
+    for (const key of this.#dirtySnapshotContainers) {
+      if (this.#deletedSnapshotContainers.has(key)) continue;
+      const container = this.#containers.get(key);
+      const id = container?._codecId;
+      if (container === undefined || id === undefined) continue;
+      this._ensureContainerHydrated(container);
+      replacements.push({
+        id,
+        wrapper: {
+          containerType: id.containerType,
+          depth:
+            this.#snapshotContainerDepths.get(key) ?? BigInt(containerDepth(container)),
+          parent: container.parent()?._codecId,
+          state: this.#containerState(container),
+        },
+      });
+    }
+    return rewriteLazyStateSnapshotStore(deferred.store, replacements, {
+      compression: "auto",
+    });
   }
 
   #encodeShallowSnapshot(requestedFrontiers: Frontiers): Uint8Array {
@@ -5463,188 +5753,184 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #hydrateState(store: StateSnapshotStore): void {
     if (store.kind !== "sstable") return;
-    for (const { id } of store.containers) this.#getOrCreateContainer(id);
+    for (const { id } of store.containers) {
+      this.#getOrCreateContainer(id, undefined, false);
+    }
     for (const { id, wrapper } of store.containers) {
-      const container = this.#getOrCreateContainer(id);
+      const container = this.#getOrCreateContainer(id, undefined, false);
       const parent =
         wrapper.parent === undefined
           ? undefined
-          : this.#getOrCreateContainer(wrapper.parent);
+          : this.#getOrCreateContainer(wrapper.parent, undefined, false);
       container._attach(this, id, parent);
       container._reset();
     }
     for (const { id, wrapper } of store.containers) {
-      const container = this.#getOrCreateContainer(id);
-      const state = wrapper.state;
-      if (container instanceof LoroMap && state.kind === CodecContainerType.Map) {
-        const metadata = new Map(state.metadata.map((item) => [item.key, item]));
-        for (const [key, value] of state.values) {
-          const item = metadata.get(key)!;
-          const rawValue = this.#decodeSnapshotValue(value, container);
-          container._applyValue(
-            key,
-            this.#materializeMapValue(container, key, rawValue),
-            {
-              peer: state.peers[Number(item.peerIndex)]!,
-              lamport: Number(item.lamport),
-            },
-            rawValue,
-          );
-        }
-        for (const key of state.deletedKeys) {
-          const item = metadata.get(key)!;
-          container._applyDelete(key, {
+      const container = this.#getOrCreateContainer(id, undefined, false);
+      this.#hydrateContainerState(container, wrapper.state);
+    }
+  }
+
+  #hydrateContainerState(container: LoroContainer, state: ContainerStateSnapshot): void {
+    if (container instanceof LoroMap && state.kind === CodecContainerType.Map) {
+      const metadata = new Map(state.metadata.map((item) => [item.key, item]));
+      for (const [key, value] of state.values) {
+        const item = metadata.get(key)!;
+        const rawValue = this.#decodeSnapshotValue(value, container);
+        container._applyValue(
+          key,
+          this.#materializeMapValue(container, key, rawValue, false),
+          {
             peer: state.peers[Number(item.peerIndex)]!,
             lamport: Number(item.lamport),
-          });
-        }
-      } else if (
-        container instanceof LoroText &&
-        state.kind === CodecContainerType.Text
-      ) {
-        const characters = Array.from(state.text);
-        const ids: CodecId[] = [];
-        const lamports: number[] = [];
-        const styleRuns: {
-          readonly run: { readonly start: CodecId; readonly length: number };
-          readonly key: string;
-          readonly meta: TextStyleMeta;
-        }[] = [];
-        const stylesById = new Map<string, { key: string; meta: TextStyleMeta }>();
-        const active = new Map<string, TextStyleMeta[]>();
-        let characterIndex = 0;
-        let markIndex = 0;
-        for (const span of state.spans) {
-          const peer = state.peers[Number(span.peerIndex)]!;
-          if (span.length === 0) {
-            const mark = state.marks[markIndex++]!;
-            const key = state.keys[mark.keyIndex]!;
-            const value = this.#decodeSnapshotValue(mark.value);
-            const meta: TextStyleMeta = {
-              startId: { peer, counter: span.counter },
-              lamport: span.counter + span.lamportSub,
-              info: mark.info,
-              value,
-            };
-            stylesById.set(idKey(meta.startId), { key, meta });
-            const stack = active.get(key) ?? [];
-            stack.push(meta);
-            active.set(key, stack);
-            continue;
-          }
-          if (span.length === -1) {
-            const style = stylesById.get(idKey({ peer, counter: span.counter - 1 }));
-            if (style !== undefined) {
-              const stack = active.get(style.key);
-              if (stack !== undefined) {
-                const index = stack.lastIndexOf(style.meta);
-                if (index >= 0) stack.splice(index, 1);
-                if (stack.length === 0) active.delete(style.key);
-              }
-            }
-            continue;
-          }
-          if (span.length < -1) continue;
-          for (const [key, stack] of active) {
-            const meta = stack.at(-1);
-            if (meta !== undefined) {
-              styleRuns.push({
-                run: { start: { peer, counter: span.counter }, length: span.length },
-                key,
-                meta,
-              });
-            }
-          }
-          for (let offset = 0; offset < span.length; offset += 1) {
-            ids.push({ peer, counter: span.counter + offset });
-            lamports.push(span.counter + offset + span.lamportSub);
-            characterIndex += 1;
-          }
-        }
-        container._insertVisible(0, characters.slice(0, characterIndex), ids, lamports);
-        for (const { run, key, meta } of styleRuns) {
-          container._styleIndex.add([run], key, meta);
-        }
-        container._attributeHistoryComplete = false;
-      } else if (
-        container instanceof LoroTree &&
-        state.kind === CodecContainerType.Tree
-      ) {
-        const records: TreeNodeRecord[] = [];
-        for (let index = 0; index < state.nodes.length; index += 1) {
-          const node = state.nodes[index]!;
-          const nodeId = {
-            peer: state.peers[Number(node.peerIndex)]!,
-            counter: node.counter,
-          };
-          const dataId: CodecContainerId = {
-            kind: "normal",
-            ...nodeId,
-            containerType: CodecContainerType.Map,
-          };
-          const record: TreeNodeRecord = {
-            id: nodeId,
-            parent: undefined,
-            position: state.positions[node.fractionalIndexIndex]!.slice(),
-            deleted: node.parentIndexPlusTwo === 1n,
-            writer: {
-              peer: state.peers[Number(node.lastSetPeerIndex)]!,
-              lamport: node.lastSetCounter + node.lastSetLamportSub,
-            },
-            lastMoveId: {
-              peer: state.peers[Number(node.lastSetPeerIndex)]!,
-              counter: node.lastSetCounter,
-            },
-            data: this.#getOrCreateContainer(dataId, container) as LoroMap,
-          };
-          records.push(record);
-        }
-        for (let index = 0; index < state.nodes.length; index += 1) {
-          const parent = state.nodes[index]!.parentIndexPlusTwo;
-          if (parent >= 2n) records[index]!.parent = records[Number(parent - 2n)]!.id;
-        }
-        for (const record of records) container._setRecord(record);
-      } else if (
-        container instanceof LoroCounter &&
-        state.kind === CodecContainerType.Counter
-      ) {
-        const bytes = new Uint8Array(8);
-        let bits = state.bits;
-        for (let index = 0; index < 8; index += 1) {
-          bytes[index] = Number(bits & 0xffn);
-          bits >>= 8n;
-        }
-        container._value = new DataView(bytes.buffer).getFloat64(0, true);
-      } else if (
-        container instanceof LoroMovableList &&
-        state.kind === CodecContainerType.MovableList
-      ) {
-        const ids = state.listItemIds.slice(0, state.values.length);
-        container._insertVisible(
-          0,
-          state.values.map((value) => this.#decodeSnapshotValue(value, container)),
-          ids.map((item) => ({
-            peer: state.peers[Number(item.peerIndex)]!,
-            counter: item.counter,
-          })),
-          ids.map((item) => item.counter + item.lamportSub),
-        );
-        container._valueHistoryComplete = false;
-        container._moveHistoryComplete = false;
-      } else if (
-        container instanceof LoroList &&
-        state.kind === CodecContainerType.List
-      ) {
-        container._insertVisible(
-          0,
-          state.values.map((value) => this.#decodeSnapshotValue(value, container)),
-          state.ids.map((item) => ({
-            peer: state.peers[Number(item.peerIndex)]!,
-            counter: item.counter,
-          })),
-          state.ids.map((item) => item.counter + item.lamportSub),
+          },
+          rawValue,
         );
       }
+      for (const key of state.deletedKeys) {
+        const item = metadata.get(key)!;
+        container._applyDelete(key, {
+          peer: state.peers[Number(item.peerIndex)]!,
+          lamport: Number(item.lamport),
+        });
+      }
+    } else if (container instanceof LoroText && state.kind === CodecContainerType.Text) {
+      const characters = Array.from(state.text);
+      const ids: CodecId[] = [];
+      const lamports: number[] = [];
+      const styleRuns: {
+        readonly run: { readonly start: CodecId; readonly length: number };
+        readonly key: string;
+        readonly meta: TextStyleMeta;
+      }[] = [];
+      const stylesById = new Map<string, { key: string; meta: TextStyleMeta }>();
+      const active = new Map<string, TextStyleMeta[]>();
+      let characterIndex = 0;
+      let markIndex = 0;
+      for (const span of state.spans) {
+        const peer = state.peers[Number(span.peerIndex)]!;
+        if (span.length === 0) {
+          const mark = state.marks[markIndex++]!;
+          const key = state.keys[mark.keyIndex]!;
+          const value = this.#decodeSnapshotValue(mark.value);
+          const meta: TextStyleMeta = {
+            startId: { peer, counter: span.counter },
+            lamport: span.counter + span.lamportSub,
+            info: mark.info,
+            value,
+          };
+          stylesById.set(idKey(meta.startId), { key, meta });
+          const stack = active.get(key) ?? [];
+          stack.push(meta);
+          active.set(key, stack);
+          continue;
+        }
+        if (span.length === -1) {
+          const style = stylesById.get(idKey({ peer, counter: span.counter - 1 }));
+          if (style !== undefined) {
+            const stack = active.get(style.key);
+            if (stack !== undefined) {
+              const index = stack.lastIndexOf(style.meta);
+              if (index >= 0) stack.splice(index, 1);
+              if (stack.length === 0) active.delete(style.key);
+            }
+          }
+          continue;
+        }
+        if (span.length < -1) continue;
+        for (const [key, stack] of active) {
+          const meta = stack.at(-1);
+          if (meta !== undefined) {
+            styleRuns.push({
+              run: { start: { peer, counter: span.counter }, length: span.length },
+              key,
+              meta,
+            });
+          }
+        }
+        for (let offset = 0; offset < span.length; offset += 1) {
+          ids.push({ peer, counter: span.counter + offset });
+          lamports.push(span.counter + offset + span.lamportSub);
+          characterIndex += 1;
+        }
+      }
+      container._insertVisible(0, characters.slice(0, characterIndex), ids, lamports);
+      for (const { run, key, meta } of styleRuns) {
+        container._styleIndex.add([run], key, meta);
+      }
+      container._attributeHistoryComplete = false;
+    } else if (container instanceof LoroTree && state.kind === CodecContainerType.Tree) {
+      const records: TreeNodeRecord[] = [];
+      for (let index = 0; index < state.nodes.length; index += 1) {
+        const node = state.nodes[index]!;
+        const nodeId = {
+          peer: state.peers[Number(node.peerIndex)]!,
+          counter: node.counter,
+        };
+        const dataId: CodecContainerId = {
+          kind: "normal",
+          ...nodeId,
+          containerType: CodecContainerType.Map,
+        };
+        const record: TreeNodeRecord = {
+          id: nodeId,
+          parent: undefined,
+          position: state.positions[node.fractionalIndexIndex]!.slice(),
+          deleted: node.parentIndexPlusTwo === 1n,
+          writer: {
+            peer: state.peers[Number(node.lastSetPeerIndex)]!,
+            lamport: node.lastSetCounter + node.lastSetLamportSub,
+          },
+          lastMoveId: {
+            peer: state.peers[Number(node.lastSetPeerIndex)]!,
+            counter: node.lastSetCounter,
+          },
+          data: this.#getOrCreateContainer(dataId, container, false) as LoroMap,
+        };
+        records.push(record);
+      }
+      for (let index = 0; index < state.nodes.length; index += 1) {
+        const parent = state.nodes[index]!.parentIndexPlusTwo;
+        if (parent >= 2n) records[index]!.parent = records[Number(parent - 2n)]!.id;
+      }
+      for (const record of records) container._setRecord(record);
+    } else if (
+      container instanceof LoroCounter &&
+      state.kind === CodecContainerType.Counter
+    ) {
+      const bytes = new Uint8Array(8);
+      let bits = state.bits;
+      for (let index = 0; index < 8; index += 1) {
+        bytes[index] = Number(bits & 0xffn);
+        bits >>= 8n;
+      }
+      container._value = new DataView(bytes.buffer).getFloat64(0, true);
+    } else if (
+      container instanceof LoroMovableList &&
+      state.kind === CodecContainerType.MovableList
+    ) {
+      const ids = state.listItemIds.slice(0, state.values.length);
+      container._insertVisible(
+        0,
+        state.values.map((value) => this.#decodeSnapshotValue(value, container)),
+        ids.map((item) => ({
+          peer: state.peers[Number(item.peerIndex)]!,
+          counter: item.counter,
+        })),
+        ids.map((item) => item.counter + item.lamportSub),
+      );
+      container._valueHistoryComplete = false;
+      container._moveHistoryComplete = false;
+    } else if (container instanceof LoroList && state.kind === CodecContainerType.List) {
+      container._insertVisible(
+        0,
+        state.values.map((value) => this.#decodeSnapshotValue(value, container)),
+        state.ids.map((item) => ({
+          peer: state.peers[Number(item.peerIndex)]!,
+          counter: item.counter,
+        })),
+        state.ids.map((item) => item.counter + item.lamportSub),
+      );
     }
   }
 
@@ -5669,7 +5955,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           value.value.map(([key, item]) => [key, this.#decodeSnapshotValue(item)]),
         );
       case "container":
-        return this.#getOrCreateContainer(value.value, parent);
+        return this.#getOrCreateContainer(value.value, parent, false);
     }
   }
 
@@ -5677,6 +5963,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     parent: LoroMap,
     key: string,
     rawValue: RuntimeValue,
+    hydrate = true,
   ): RuntimeValue {
     const parentId = parent._codecId;
     if (parentId === undefined) return rawValue;
@@ -5685,6 +5972,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return this.#getOrCreateContainer(
       newMergeableContainerId(parentId, key, childType),
       parent,
+      hydrate,
     );
   }
 
@@ -7831,6 +8119,7 @@ function recoverParentBinding(
   | { readonly kind: "sequence"; readonly element: SequenceElement }
   | { readonly kind: "tree"; readonly record: TreeNodeRecord }
   | undefined {
+  parent._ensureHydrated();
   if (parent instanceof LoroMap) {
     for (const [key, record] of parent._entries) {
       if (record.value !== child) continue;

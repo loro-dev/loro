@@ -28,8 +28,10 @@ import {
 import {
   decodeSstable,
   encodeSstable,
+  SstableReader,
   type DecodeSstableOptions,
   type EncodeSstableOptions,
+  type SstableReplacement,
 } from "./sstable";
 import {
   ContainerType,
@@ -182,6 +184,21 @@ export type StateSnapshotStore =
       readonly frontiers: Frontiers | undefined;
       readonly containers: readonly StateSnapshotContainerEntry[];
     };
+
+export type LazyStateSnapshotStore =
+  | { readonly kind: "absent" }
+  | { readonly kind: "empty" }
+  | {
+      readonly kind: "sstable";
+      readonly frontiers: Frontiers | undefined;
+      readonly roots: readonly ContainerId[];
+      readonly table: SstableReader;
+    };
+
+export interface LazyStateSnapshotReplacement {
+  readonly id: ContainerId;
+  readonly wrapper: ContainerStateWrapper | undefined;
+}
 
 export function decodeMapStateSnapshot(bytes: Uint8Array): MapStateSnapshot {
   const reader = new PostcardReader(bytes);
@@ -663,6 +680,77 @@ export function decodeStateSnapshotStore(
     containers.push({ id, wrapper });
   }
   return { kind: "sstable", frontiers, containers };
+}
+
+/**
+ * Validates a state snapshot without retaining every decoded container.
+ * Individual container states can then be decoded by key as they are accessed.
+ */
+export function decodeLazyStateSnapshotStore(
+  bytes: Uint8Array,
+  options?: DecodeSstableOptions,
+): LazyStateSnapshotStore {
+  if (bytes.length === 0) return { kind: "absent" };
+  if (bytesEqual(bytes, EMPTY_STATE_SENTINEL)) return { kind: "empty" };
+
+  const table = new SstableReader(bytes, options);
+  const roots: ContainerId[] = [];
+  let frontiers: Frontiers | undefined;
+  for (const entry of table.entries()) {
+    if (bytesEqual(entry.key, FRONTIERS_KEY)) {
+      decodeAssert(frontiers === undefined, "duplicate state frontiers entry");
+      frontiers = decodePostcardFrontiers(entry.value);
+      continue;
+    }
+    const id = decodeContainerId(entry.key);
+    const wrapper = decodeContainerStateWrapper(entry.value);
+    decodeAssert(
+      sameContainerType(id.containerType, wrapper.containerType),
+      "state container key and wrapper types differ",
+    );
+    if (id.kind === "root" && wrapper.parent === undefined) roots.push(id);
+  }
+  table.validate();
+  return { kind: "sstable", frontiers, roots, table };
+}
+
+export function getLazyStateSnapshotContainer(
+  store: LazyStateSnapshotStore,
+  id: ContainerId,
+): StateSnapshotContainerEntry | undefined {
+  if (store.kind !== "sstable") return undefined;
+  const bytes = store.table.get(encodeContainerId(id));
+  if (bytes === undefined) return undefined;
+  const wrapper = decodeContainerStateWrapper(bytes);
+  decodeAssert(
+    sameContainerType(id.containerType, wrapper.containerType),
+    "state container key and wrapper types differ",
+  );
+  return { id, wrapper };
+}
+
+export function rewriteLazyStateSnapshotStore(
+  store: LazyStateSnapshotStore,
+  replacements: readonly LazyStateSnapshotReplacement[],
+  options?: EncodeSstableOptions,
+): Uint8Array {
+  if (store.kind !== "sstable") {
+    const containers = replacements.flatMap(({ id, wrapper }) =>
+      wrapper === undefined ? [] : [{ id, wrapper }],
+    );
+    return encodeStateSnapshotStore(
+      containers.length === 0
+        ? store
+        : { kind: "sstable", frontiers: undefined, containers },
+      options,
+    );
+  }
+  const encoded: SstableReplacement[] = replacements.map(({ id, wrapper }) => ({
+    key: encodeContainerId(id),
+    value: wrapper === undefined ? undefined : encodeContainerStateWrapper(wrapper),
+  }));
+  const rewritten = store.table.rewrite(encoded, options);
+  return rewritten.length === 0 ? EMPTY_STATE_SENTINEL.slice() : rewritten;
 }
 
 export function encodeStateSnapshotStore(

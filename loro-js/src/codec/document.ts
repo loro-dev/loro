@@ -63,16 +63,17 @@ export function encodeDocument(mode: EncodeMode, body: Uint8Array): Uint8Array {
   if (mode !== EncodeMode.FastSnapshot && mode !== EncodeMode.FastUpdates) {
     throw new LoroEncodeError(`unsupported document mode ${mode as number}`);
   }
-  const checksumInput = new ByteWriter(2 + body.length);
-  checksumInput.writeU16BE(mode);
-  checksumInput.writeBytes(body);
-  const checksumBytes = checksumInput.toUint8Array();
-  const writer = new ByteWriter(DOCUMENT_HEADER_LENGTH + body.length);
-  writer.writeBytes(DOCUMENT_MAGIC);
-  writer.writeBytes(new Uint8Array(12));
-  writer.writeU32LE(xxhash32(checksumBytes, LORO_XXHASH_SEED));
-  writer.writeBytes(checksumBytes);
-  return writer.toUint8Array();
+  const output = new Uint8Array(DOCUMENT_HEADER_LENGTH + body.length);
+  output.set(DOCUMENT_MAGIC, 0);
+  output[20] = mode >>> 8;
+  output[21] = mode & 0xff;
+  output.set(body, DOCUMENT_HEADER_LENGTH);
+  new DataView(output.buffer, output.byteOffset, output.byteLength).setUint32(
+    16,
+    xxhash32(output.subarray(20), LORO_XXHASH_SEED),
+    true,
+  );
+  return output;
 }
 
 export function decodeFastSnapshotBody(body: Uint8Array): FastSnapshotBody {
@@ -85,13 +86,27 @@ export function decodeFastSnapshotBody(body: Uint8Array): FastSnapshotBody {
 }
 
 export function encodeFastSnapshotBody(snapshot: FastSnapshotBody): Uint8Array {
-  const writer = new ByteWriter(
+  for (const [value, label] of [
+    [snapshot.oplog, "oplog"],
+    [snapshot.state, "state"],
+    [snapshot.shallowRootState, "shallow root state"],
+  ] as const) {
+    if (value.length > 0xffff_ffff) {
+      throw new LoroEncodeError(`${label} is too large`);
+    }
+  }
+  const output = new Uint8Array(
     12 + snapshot.oplog.length + snapshot.state.length + snapshot.shallowRootState.length,
   );
-  writeU32LengthPrefixed(writer, snapshot.oplog, "oplog");
-  writeU32LengthPrefixed(writer, snapshot.state, "state");
-  writeU32LengthPrefixed(writer, snapshot.shallowRootState, "shallow root state");
-  return writer.toUint8Array();
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  let offset = 0;
+  for (const value of [snapshot.oplog, snapshot.state, snapshot.shallowRootState]) {
+    view.setUint32(offset, value.length, true);
+    offset += 4;
+    output.set(value, offset);
+    offset += value.length;
+  }
+  return output;
 }
 
 export function decodeFastUpdatesBody(body: Uint8Array): Uint8Array[] {
@@ -105,12 +120,25 @@ export function decodeFastUpdatesBody(body: Uint8Array): Uint8Array[] {
 }
 
 export function encodeFastUpdatesBody(blocks: readonly Uint8Array[]): Uint8Array {
-  const writer = new ByteWriter();
+  const length = blocks.reduce(
+    (sum, block) => sum + ulebByteLength(block.length) + block.length,
+    0,
+  );
+  const writer = new ByteWriter(length);
   for (const block of blocks) {
     writeUleb128(writer, block.length);
     writer.writeBytes(block);
   }
   return writer.toUint8Array();
+}
+
+function ulebByteLength(value: number): number {
+  let length = 1;
+  while (value >= 0x80) {
+    value = Math.floor(value / 0x80);
+    length += 1;
+  }
+  return length;
 }
 
 export function decodeFastSnapshot(
@@ -154,16 +182,4 @@ function readU32LengthPrefixed(reader: ByteReader, label: string): Uint8Array {
     throw new LoroDecodeError(`${label} length exceeds remaining input`, offset);
   }
   return reader.readBytes(length);
-}
-
-function writeU32LengthPrefixed(
-  writer: ByteWriter,
-  value: Uint8Array,
-  label: string,
-): void {
-  if (value.length > 0xffff_ffff) {
-    throw new LoroEncodeError(`${label} is too large`);
-  }
-  writer.writeU32LE(value.length);
-  writer.writeBytes(value);
 }

@@ -182,7 +182,9 @@ export class ByteWriter {
   }
 
   toUint8Array(): Uint8Array {
-    return this.#buffer.slice(0, this.#length);
+    return this.#length === this.#buffer.length
+      ? this.#buffer
+      : this.#buffer.slice(0, this.#length);
   }
 
   private ensureCapacity(extra: number): void {
