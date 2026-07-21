@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-21.
+Verified against code 2026-07-22.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -77,16 +77,27 @@ JavaScript constant factor.
   version incrementally. Never recover either by reducing all pending ops.
 - Plain Text/List elements allocate delete, value, and move metadata only when
   an operation needs it; Text style metadata lives in the range index. A
-  multi-scalar Text insertion is stored as a compact string/ID span and creates
-  scalar views only when an API needs them. Single-scalar edits retain the
-  smaller object path because the B4 trace consists entirely of single-scalar
-  inserts and constructing a temporary span for every edit costs more than it
-  saves. Text iteration stops directly in the index when its callback
-  returns `false`; `toString` and `slice` traverse visible ranges directly and
-  join bounded 32-character chunks instead of allocating element and character
-  arrays for the full output. Range predicates can also stop inside the index;
-  `Text.unmark` therefore does not materialize the inspected range before
-  applying the mark operation.
+  multi-scalar Text insertion stores its string and UTF-16 boundaries once in a
+  `TextRunBuffer`. Physical spans retain only buffer ranges, so splitting a
+  piece does not copy its text or materialize its ID columns. Scalar views are
+  created only when an API asks for one. Single-scalar edits retain the smaller
+  object path because the B4 trace consists entirely of single-scalar inserts
+  and constructing a temporary packed span for every edit costs more than it
+  saves. `LoroText.compact()` is the explicit safe point for rebuilding heavily
+  fragmented scalar storage as adjacent 32-element spans without changing
+  history. Text iteration stops directly in the index when its callback returns
+  `false`; `toString`, `slice`, and `iter` consume contiguous visible storage
+  ranges and read a whole text-buffer range at once instead of allocating a
+  scalar view and substring for every character. Range predicates can also stop
+  inside the index; `Text.unmark` therefore does not materialize the inspected
+  range before applying the mark operation.
+- Text line metadata is optional. The first `lineCount`, `lineStart`, `lineAt`,
+  or `getLine` query builds sparse per-buffer and per-node line-break offsets plus
+  subtree totals. Splits share the buffer offsets rather than copying them. The
+  node totals live in a sidecar so unopened line APIs do not enlarge the hot
+  treap-node shape. Later edits maintain the index, and line/position lookup is
+  expected O(log n). A line break is LF; `getLine` removes the preceding CR for
+  CRLF input. Positions remain UTF-16 offsets.
 - Text and List Fugue insertion use an incremental `originLeft` direct-child
   index only when a concurrent/future interval needs ordering. Consecutive IDs
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
@@ -128,6 +139,27 @@ Build and run the complete Automerge-paper B4 trace:
 ```sh
 pnpm --dir loro-js bench:b4 -- 259778 7
 ```
+
+Measure text storage, reads, line lookup, explicit compaction, and retained heap
+with:
+
+```sh
+pnpm --dir loro-js bench:text-buffer -- 131072 50000 7
+```
+
+In a same-machine Node 22.23.1 A/B against `origin/main`, the July 22 text
+benchmark measured bulk 131,072-scalar insertion at 21.8 ms versus 33.2 ms,
+`toString` at 0.40 ms versus 6.34 ms, a middle-half `slice` at 0.22 ms versus
+3.67 ms, and `iter` at 2.00 ms versus 8.05 ms. Retained heap for the bulk
+document fell from 22.9 MB to 10.7 MB. A separate alternating scalar-only probe
+measured 31.0 ms versus 30.8 ms, a 0.8% difference within noise. Building the
+optional line index took about 16.0 ms and retained about 1.46 MB; 1,000 indexed
+middle-line lookups took about 0.71 ms versus 103.8 ms for repeated flat-string
+scans. Explicitly compacting 50,000 maximally fragmented middle inserts took
+about 20.6 ms and reduced physical nodes from 50,000 to 1,563. Six fresh-process
+B4 pairs with alternating run order measured 234.4 ms at `origin/main` and 234.8
+ms with the text changes, a 0.2% difference within run-to-run noise. The main
+ESM bundle grew from 461.87 kB / 88.41 kB gzip to 485.79 kB / 92.11 kB gzip.
 
 The script fully warms the largest requested prefix and releases the previous
 sample before forced GC. It reports local editing plus snapshot/update import
@@ -262,14 +294,16 @@ Rust.
 
 The remaining differences are representation and JavaScript constant factors:
 
-- Multi-scalar Text operations use compact string/ID spans, but B4 inserts all
+- Multi-scalar Text operations use shared string/ID spans, but B4 inserts all
   182,315 scalars as separate operations. Its scalar fast path therefore still
-  retains one object per inserted scalar. Bounded physical spans cut B4's
-  treap-node count by about 13.4x; inline locations also remove one location
-  object and WeakMap entry per scalar. Together with the run indexes they cut
-  the early 913.5 ms scalar-object apply median by roughly two thirds. Matching
-  Rust's memory use and constant factors needs a direct scalar-to-compact-span
-  append path that does not construct a temporary span for every edit.
+  retains one object per inserted scalar until an explicit `compact()`. Bounded
+  physical nodes cut B4's treap-node count by about 13.4x; inline locations also
+  remove one location object and WeakMap entry per scalar. A direct
+  scalar-to-packed-span mutation path was measured and rejected: Fugue ordering
+  immediately reads IDs and origins, so temporary packed views slowed B4 more
+  than they saved. Closing the remaining Rust memory gap needs raw column access
+  in Fugue or compaction at a caller-chosen quiet point, not packing every edit
+  unconditionally.
 - A subscribed restoration of a large insertion or deletion must include the
   restored text/list values in its event, so its work is proportional to that
   emitted output. Without a subscriber, both hide and show transitions use the

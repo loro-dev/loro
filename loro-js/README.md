@@ -44,6 +44,24 @@ are available as attached or detached containers. The runtime also includes snap
 shallow snapshots, checkout and fork, cursors, rich-text deltas, mergeable children,
 JSON updates, JSONPath, diffs, events, undo/redo, `Awareness`, and `EphemeralStore`.
 
+## Navigate text by line
+
+`LoroText` builds its line index on the first line query and maintains it through later
+edits, imports, and checkouts. Positions use UTF-16 code units, matching the rest of the
+text API. A line break is `\n`; `getLine()` removes the preceding `\r` from CRLF text.
+
+```ts
+const text = alice.getText("body");
+
+console.log(text.lineCount);
+console.log(text.lineStart(10));
+console.log(text.lineAt(120));
+console.log(text.getLine(10));
+```
+
+After an unusually fragmented edit workload, `text.compact()` rebuilds adjacent
+physical text spans without changing visible content or CRDT history.
+
 ## Read and rewrite the binary format
 
 ```ts
