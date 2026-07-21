@@ -604,81 +604,77 @@ impl UndoManager {
         let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_clone = remap_containers.clone();
-        let undo_sub = doc.subscribe_root(Arc::new(move |event| {
-            {
+        let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
+            EventTriggerKind::Local => {
+                // TODO: PERF undo can be significantly faster if we can get
+                // the DiffBatch for undo here
+                let lock = inner_clone.lock();
+                if lock.borrow().processing_undo || lock.borrow().paused {
+                    return;
+                }
+                if let Some(id) = event
+                    .event_meta
+                    .to
+                    .iter()
+                    .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    let should_exclude = lock
+                        .borrow()
+                        .exclude_origin_prefixes
+                        .iter()
+                        .any(|x| event.event_meta.origin.starts_with(&**x));
+                    if should_exclude {
+                        // If the event is from the excluded origin, we don't record it
+                        // in the undo stack. But we need to record its effect like it's
+                        // a remote event.
+                        let mut inner = lock.borrow_mut();
+                        inner.undo_stack.compose_remote_event(event.events);
+                        inner.redo_stack.compose_remote_event(event.events);
+                        inner.next_counter = Some(id.counter + 1);
+                    } else {
+                        UndoManagerInner::record_checkpoint(&lock, id.counter + 1, Some(event));
+                    }
+                }
+            }
+            EventTriggerKind::Import => {
+                let lock = inner_clone.lock();
+                let mut inner = lock.borrow_mut();
+
+                for e in event.events {
+                    if let Diff::Tree(tree) = &e.diff {
+                        for item in &tree.diff {
+                            let target = item.target;
+                            if let TreeExternalDiff::Create { .. } = &item.action {
+                                // If the concurrent event is a create event, it may bring the deleted tree node back,
+                                // so we need to remove it from the remap of the container.
+                                remap_containers_clone
+                                    .lock()
+                                    .remove(&target.associated_meta_container());
+                            }
+                        }
+                    }
+                }
+
+                let is_import_disjoint = inner.is_disjoint_with_group(event.events);
+
+                inner.undo_stack.compose_remote_event(event.events);
+                inner.redo_stack.compose_remote_event(event.events);
+
+                // If the import is not disjoint, we end the active group
+                // all subsequent changes will be new undo items
+                if !is_import_disjoint {
+                    inner.group = None;
+                }
+            }
+            EventTriggerKind::Checkout => {
                 let lock = inner_clone.lock();
                 if lock.borrow().paused {
                     return;
                 }
-            }
-            match event.event_meta.by {
-                EventTriggerKind::Local => {
-                    // TODO: PERF undo can be significantly faster if we can get
-                    // the DiffBatch for undo here
-                    let lock = inner_clone.lock();
-                    if lock.borrow().processing_undo {
-                        return;
-                    }
-                    if let Some(id) =
-                        event.event_meta.to.iter().find(|x| {
-                            x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed)
-                        })
-                    {
-                        let should_exclude = lock
-                            .borrow()
-                            .exclude_origin_prefixes
-                            .iter()
-                            .any(|x| event.event_meta.origin.starts_with(&**x));
-                        if should_exclude {
-                            // If the event is from the excluded origin, we don't record it
-                            // in the undo stack. But we need to record its effect like it's
-                            // a remote event.
-                            let mut inner = lock.borrow_mut();
-                            inner.undo_stack.compose_remote_event(event.events);
-                            inner.redo_stack.compose_remote_event(event.events);
-                            inner.next_counter = Some(id.counter + 1);
-                        } else {
-                            UndoManagerInner::record_checkpoint(&lock, id.counter + 1, Some(event));
-                        }
-                    }
-                }
-                EventTriggerKind::Import => {
-                    let lock = inner_clone.lock();
-                    let mut inner = lock.borrow_mut();
-
-                    for e in event.events {
-                        if let Diff::Tree(tree) = &e.diff {
-                            for item in &tree.diff {
-                                let target = item.target;
-                                if let TreeExternalDiff::Create { .. } = &item.action {
-                                    // If the concurrent event is a create event, it may bring the deleted tree node back,
-                                    // so we need to remove it from the remap of the container.
-                                    remap_containers_clone
-                                        .lock()
-                                        .remove(&target.associated_meta_container());
-                                }
-                            }
-                        }
-                    }
-
-                    let is_import_disjoint = inner.is_disjoint_with_group(event.events);
-
-                    inner.undo_stack.compose_remote_event(event.events);
-                    inner.redo_stack.compose_remote_event(event.events);
-
-                    // If the import is not disjoint, we end the active group
-                    // all subsequent changes will be new undo items
-                    if !is_import_disjoint {
-                        inner.group = None;
-                    }
-                }
-                EventTriggerKind::Checkout => {
-                    let lock = inner_clone.lock();
-                    let mut inner = lock.borrow_mut();
-                    inner.undo_stack.clear();
-                    inner.redo_stack.clear();
-                    inner.next_counter = None;
-                }
+                let mut inner = lock.borrow_mut();
+                inner.undo_stack.clear();
+                inner.redo_stack.clear();
+                inner.next_counter = None;
             }
         }));
 
@@ -986,12 +982,16 @@ impl UndoManager {
         self.inner.lock().borrow_mut().undo_stack.clear();
     }
 
-    /// Pause the UndoManager so it ignores all document events.
+    /// Pause the UndoManager so that local edits and checkout events are ignored.
     ///
-    /// While paused, Local events are not recorded as undo steps, Import events
-    /// do not transform the stacks, and Checkout events do not clear the stacks.
+    /// While paused, local edits are not recorded as undo steps and checkout
+    /// events do not clear the stacks. Import events (remote changes) are still
+    /// processed so that the stacks remain correctly transformed against
+    /// concurrent edits.
+    ///
     /// Use this before temporary checkouts (e.g. read-only history preview) that
-    /// should not disturb the undo/redo history.
+    /// should not disturb the undo/redo history. Close any open group (via
+    /// [`Self::group_end`]) before pausing.
     ///
     /// Call [`Self::resume`] after returning the document to its original state.
     pub fn pause(&self) {

@@ -71,6 +71,7 @@ export class UndoManager {
   #onPush: UndoConfig["onPush"];
   #onPop: UndoConfig["onPop"];
   #applying = false;
+  #paused = false;
   #groupDepth = 0;
   #unsubscribe: () => void;
 
@@ -186,6 +187,18 @@ export class UndoManager {
     this.#redo.length = 0;
   }
 
+  pause(): void {
+    this.#paused = true;
+  }
+
+  resume(): void {
+    this.#paused = false;
+  }
+
+  isPaused(): boolean {
+    return this.#paused;
+  }
+
   destroy(): void {
     this.#unsubscribe();
     this.clear();
@@ -195,13 +208,14 @@ export class UndoManager {
     if (this.#applying) return;
     const targets = new Set(event.events.map(({ target }) => target));
     if (event.by === "checkout") {
-      this.clear();
+      if (!this.#paused) this.clear();
       return;
     }
     if (event.by === "import") {
       for (const target of targets) this.#remoteTargets.add(target);
       return;
     }
+    if (this.#paused) return;
     if (
       event.origin !== undefined &&
       [...this.#excludeOriginPrefixes].some((prefix) => event.origin!.startsWith(prefix))

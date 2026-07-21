@@ -684,6 +684,39 @@ describe("loro-wasm-compatible runtime", () => {
     expect(text.toString()).toBe("Hello");
   });
 
+  test("pause preserves undo stacks across checkout", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const text = doc.getText("text");
+
+    text.insert(0, "Hello");
+    doc.commit();
+    text.insert(5, " World");
+    doc.commit();
+    expect(text.toString()).toBe("Hello World");
+    expect(undo.canUndo()).toBe(true);
+
+    undo.pause();
+    expect(undo.isPaused()).toBe(true);
+    doc.checkout([]);
+    expect(text.toString()).toBe("");
+    doc.attach();
+    expect(text.toString()).toBe("Hello World");
+    undo.resume();
+    expect(undo.isPaused()).toBe(false);
+
+    expect(undo.canUndo()).toBe(true);
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("Hello");
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("");
+
+    expect(undo.canRedo()).toBe(true);
+    expect(undo.redo()).toBe(true);
+    expect(text.toString()).toBe("Hello");
+  });
+
   test("round-trips compressed and uncompressed JSON updates", () => {
     const source = new LoroDoc();
     source.setPeerId(19);

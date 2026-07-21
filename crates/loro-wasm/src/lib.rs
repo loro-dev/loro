@@ -5453,13 +5453,17 @@ impl UndoManager {
         self.undo.lock().clear_undo();
     }
 
-    /// Pause the UndoManager so it ignores all document events.
+    /// Pause the UndoManager so that local edits and checkout events are ignored.
     ///
     /// While paused, local edits are not recorded as undo steps and checkout
-    /// events do not clear the stacks. Use this before temporary checkouts
-    /// (e.g. read-only history preview) that should not disturb undo/redo
-    /// history. Call `resume()` after returning the document to its original
-    /// state.
+    /// events do not clear the stacks. Import events (remote changes) are still
+    /// processed so that the stacks remain correctly transformed against
+    /// concurrent edits.
+    ///
+    /// Use this before temporary checkouts (e.g. read-only history preview) that
+    /// should not disturb undo/redo history. Close any open group before pausing.
+    ///
+    /// Call `resume()` after returning the document to its original state.
     pub fn pause(&self) {
         self.undo.lock().pause();
     }
