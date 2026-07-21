@@ -16,6 +16,8 @@ use self::pending_changes::{PendingChanges, PendingChangesRollback};
 use super::arena::{SharedArena, SharedArenaRollback};
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
+#[cfg(feature = "persistent-anchor-tracker")]
+use crate::container::idx::ContainerIdx;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils};
 use crate::diff_calc::DiffMode;
@@ -318,6 +320,25 @@ impl OpLog {
 
     pub fn has_history_cache(&self) -> bool {
         self.history_cache.lock().has_cache()
+    }
+
+    /// Compare two insertion ids in a text container by their tombstone-stable
+    /// order. Drives the warm per-container tracker under the history-cache
+    /// lock, which is held only for the duration of the query.
+    ///
+    /// The advance reads the dag (hence the entry point lives here, not on the
+    /// cache), and never re-enters the history-cache lock, so taking it while
+    /// holding the oplog lock matches the existing house style.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn compare_text_ids(
+        &self,
+        idx: ContainerIdx,
+        a: ID,
+        b: ID,
+        expected_entity_len: Option<usize>,
+    ) -> Option<std::cmp::Ordering> {
+        let mut history_cache = self.history_cache.lock();
+        history_cache.text_compare_ids(self, idx, a, b, expected_entity_len)
     }
 
     pub fn free_history_cache(&self) {

@@ -1267,6 +1267,20 @@ impl LoroDoc {
         self.doc.compare_cursors(a, b)
     }
 
+    /// Test-only sibling of [`Self::compare_cursors`] that always rebuilds the
+    /// tracker from genesis, bypassing the warm cache. Exposed so tests can
+    /// differentially check the cached path against a fresh rebuild.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[doc(hidden)]
+    #[inline]
+    pub fn __compare_cursors_via_genesis(
+        &self,
+        a: &Cursor,
+        b: &Cursor,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        self.doc.compare_cursors_via_genesis(a, b)
+    }
+
     /// Get the inner LoroDoc ref.
     #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {

@@ -1906,6 +1906,29 @@ impl LoroDoc {
         a: &Cursor,
         b: &Cursor,
     ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        self.compare_cursors_impl(a, b, false)
+    }
+
+    /// Test-only sibling of [`Self::compare_cursors`] that always rebuilds the
+    /// tracker from genesis, bypassing the warm per-container cache. Used to
+    /// differentially verify that the cached path returns identical answers.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[doc(hidden)]
+    pub fn compare_cursors_via_genesis(
+        &self,
+        a: &Cursor,
+        b: &Cursor,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        self.compare_cursors_impl(a, b, true)
+    }
+
+    #[cfg(feature = "persistent-anchor-tracker")]
+    fn compare_cursors_impl(
+        &self,
+        a: &Cursor,
+        b: &Cursor,
+        force_genesis: bool,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
         use std::cmp::Ordering;
 
         // A sentinel end of the container, or a concrete character id.
@@ -1959,45 +1982,92 @@ impl LoroDoc {
                 return Err(CannotFindRelativePosition::IdNotFound);
             };
 
-            // Build a fresh tracker from genesis so both ids are present in the
-            // rope, whether they are live or tombstoned. Persist mode forces the
-            // diff calculators to use the `checkout` traversal that visits every
-            // op in causal order.
-            let mut diff_calc = DiffCalculator::new(true);
-            let before = VersionVector::new();
-            let before_frontiers = Frontiers::default();
-            diff_calc.calc_diff_internal(
-                &oplog,
-                &before,
-                &before_frontiers,
-                oplog.vv(),
-                oplog.frontiers(),
-                Some(&|target| idx == target),
-            );
+            // A cursor can only name a text container; anything else fails to
+            // resolve, matching the genesis path's non-richtext arm.
+            if idx.get_type() != ContainerType::Text {
+                return Err(CannotFindRelativePosition::IdNotFound);
+            }
 
-            let depth = self.arena.get_depth(idx);
-            let (_, calc) = &mut diff_calc.get_or_create_calc(idx, depth);
-            match calc {
-                crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
-                    match text.compare_ids(id_a, id_b) {
-                        Some(ord) => Ok(ord),
-                        // Mirror the slow path's taxonomy: a concrete id that
-                        // fails to resolve because its history was dropped by a
-                        // shallow snapshot is `HistoryCleared`, not `IdNotFound`.
-                        None => {
-                            if oplog.shallow_since_vv().includes_id(id_a)
-                                || oplog.shallow_since_vv().includes_id(id_b)
-                            {
-                                Err(CannotFindRelativePosition::HistoryCleared)
-                            } else {
-                                Err(CannotFindRelativePosition::IdNotFound)
-                            }
-                        }
-                    }
-                }
-                _ => Err(CannotFindRelativePosition::IdNotFound),
+            // Shallow documents keep the older genesis behavior: pre-root
+            // tombstones are not indexed by the tracker, so the warm path would
+            // miss them.
+            if force_genesis || oplog.is_shallow() {
+                return self.compare_ids_via_genesis(&oplog, idx, id_a, id_b);
+            }
+
+            // On an attached, full-history document the tracker's live entity
+            // length must match the state's; check it in debug builds only, and
+            // only when the state is at head (an attached doc), because
+            // `compare_cursors` reads the oplog regardless of the checked-out
+            // version.
+            let expected_entity_len = if cfg!(debug_assertions) && !self.is_detached() {
+                let mut s = self.state.lock();
+                Some(s.get_text_len(idx, crate::cursor::PosType::Entity))
+            } else {
+                None
+            };
+
+            match oplog.compare_text_ids(idx, id_a, id_b, expected_entity_len) {
+                Some(ord) => Ok(ord),
+                None => Err(Self::unresolved_id_error(&oplog, id_a, id_b)),
             }
         })
+    }
+
+    /// Compare two ids by rebuilding a fresh tracker from genesis. This is the
+    /// original construction: it is the fallback on shallow documents and the
+    /// oracle behind [`Self::compare_cursors_via_genesis`].
+    #[cfg(feature = "persistent-anchor-tracker")]
+    fn compare_ids_via_genesis(
+        &self,
+        oplog: &OpLog,
+        idx: ContainerIdx,
+        id_a: loro_common::ID,
+        id_b: loro_common::ID,
+    ) -> Result<std::cmp::Ordering, CannotFindRelativePosition> {
+        // Build a fresh tracker from genesis so both ids are present in the
+        // rope, whether they are live or tombstoned. Persist mode forces the
+        // diff calculators to use the `checkout` traversal that visits every
+        // op in causal order.
+        let mut diff_calc = DiffCalculator::new(true);
+        let before = VersionVector::new();
+        let before_frontiers = Frontiers::default();
+        diff_calc.calc_diff_internal(
+            oplog,
+            &before,
+            &before_frontiers,
+            oplog.vv(),
+            oplog.frontiers(),
+            Some(&|target| idx == target),
+        );
+
+        let depth = self.arena.get_depth(idx);
+        let (_, calc) = &mut diff_calc.get_or_create_calc(idx, depth);
+        match calc {
+            crate::diff_calc::ContainerDiffCalculator::Richtext(text) => {
+                match text.compare_ids(id_a, id_b) {
+                    Some(ord) => Ok(ord),
+                    None => Err(Self::unresolved_id_error(oplog, id_a, id_b)),
+                }
+            }
+            _ => Err(CannotFindRelativePosition::IdNotFound),
+        }
+    }
+
+    /// Classify an unresolved id: `HistoryCleared` if it was dropped by a
+    /// shallow snapshot, otherwise `IdNotFound`.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    fn unresolved_id_error(
+        oplog: &OpLog,
+        id_a: loro_common::ID,
+        id_b: loro_common::ID,
+    ) -> CannotFindRelativePosition {
+        if oplog.shallow_since_vv().includes_id(id_a) || oplog.shallow_since_vv().includes_id(id_b)
+        {
+            CannotFindRelativePosition::HistoryCleared
+        } else {
+            CannotFindRelativePosition::IdNotFound
+        }
     }
 
     /// Get position in a seq container
@@ -3146,5 +3216,236 @@ mod test {
             String::new()
         };
         assert!(msg.contains("poisoned LoroMutex"), "{msg}");
+    }
+}
+
+/// Cache-effectiveness and gate coverage for the warm text tracker. The build
+/// and advance counters (and the genesis-check force flag) live in loro-internal
+/// because the public integration tests cannot observe them. All phases run in
+/// one test so the process-global counters are never raced by a concurrent test.
+#[cfg(all(test, feature = "persistent-anchor-tracker"))]
+mod cache_effectiveness_tests {
+    use std::cmp::Ordering;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    use crate::cursor::{PosType, Side};
+    use crate::diff_calc::{
+        FORCE_GENESIS_CHECK, TEXT_TRACKER_ADVANCE_COUNT, TEXT_TRACKER_BUILD_COUNT,
+    };
+    use crate::LoroDoc;
+
+    fn reset_counters() {
+        TEXT_TRACKER_BUILD_COUNT.store(0, Relaxed);
+        TEXT_TRACKER_ADVANCE_COUNT.store(0, Relaxed);
+    }
+
+    #[test]
+    fn warm_tracker_cache_counters_and_gate() {
+        batches_at_one_version();
+        linear_single_peer_run();
+        multi_container_gate();
+        forced_genesis_cross_check();
+    }
+
+    /// Many queries at one version cost one build and zero advances; a query
+    /// after new ops advances in place rather than rebuilding.
+    fn batches_at_one_version() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        text.insert(0, "abcde", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        text.delete(1, 2, PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        let left = text.get_cursor(0, Side::Middle).unwrap();
+        let right = text.get_cursor(1, Side::Middle).unwrap();
+
+        reset_counters();
+        let first = doc.compare_cursors(&left, &right).unwrap();
+        for _ in 0..5 {
+            assert_eq!(doc.compare_cursors(&left, &right).unwrap(), first);
+        }
+        assert_eq!(
+            TEXT_TRACKER_BUILD_COUNT.load(Relaxed),
+            1,
+            "expected exactly one build across a batch of queries"
+        );
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            0,
+            "expected no advances while the version is unchanged"
+        );
+
+        text.insert(0, "Z", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        let _ = doc.compare_cursors(&left, &right).unwrap();
+        assert_eq!(
+            TEXT_TRACKER_BUILD_COUNT.load(Relaxed),
+            1,
+            "must advance in place, not rebuild, after new ops"
+        );
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            1,
+            "expected exactly one advance over the new ops"
+        );
+
+        for _ in 0..3 {
+            let _ = doc.compare_cursors(&left, &right).unwrap();
+        }
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            1,
+            "no extra advances once the version is stable again"
+        );
+    }
+
+    /// A long purely-sequential single-peer history: one build for the whole run
+    /// and one advance per new-op batch queried, with correct per-op ordering.
+    /// This pins the caching contract on a linear LCA-to-head segment.
+    fn linear_single_peer_run() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+
+        text.insert(0, "a", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        let mut cursors = vec![text.get_cursor(0, Side::Middle).unwrap()];
+
+        reset_counters();
+        // First query builds once.
+        let _ = doc.compare_cursors(&cursors[0], &cursors[0]).unwrap();
+        assert_eq!(TEXT_TRACKER_BUILD_COUNT.load(Relaxed), 1);
+        assert_eq!(TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed), 0);
+
+        let n = 25usize;
+        for i in 1..n {
+            let ch = (b'a' + (i % 26) as u8) as char;
+            text.insert(i, &ch.to_string(), PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+            let cur = text.get_cursor(i, Side::Middle).unwrap();
+            // Each appended char orders strictly after its predecessor, and the
+            // query advances exactly one batch.
+            assert_eq!(
+                doc.compare_cursors(&cursors[i - 1], &cur).unwrap(),
+                Ordering::Less,
+                "appended char {i} must order after its predecessor"
+            );
+            cursors.push(cur);
+        }
+
+        assert_eq!(
+            TEXT_TRACKER_BUILD_COUNT.load(Relaxed),
+            1,
+            "a linear history must never trigger a rebuild"
+        );
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            n - 1,
+            "expected one advance per appended-op batch"
+        );
+    }
+
+    /// A text container beside a map container. Map ops move the document head
+    /// with no text op, so the version-gated advance is exercised: the gate is
+    /// keyed on the whole-document version, giving exactly one advance per
+    /// map-only batch regardless of how many queries follow. A gate keyed on the
+    /// per-container applied version would never match the document version here
+    /// and would advance on every query — the counter catches that regression.
+    fn multi_container_gate() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        let map = doc.get_map("m");
+        text.insert(0, "ABCDE", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        map.insert("k", 1).unwrap();
+        doc.commit_then_renew();
+
+        let b = text.get_cursor(1, Side::Middle).unwrap();
+        let d = text.get_cursor(3, Side::Middle).unwrap();
+        text.delete(0, 5, PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+
+        reset_counters();
+        let first = doc.compare_cursors(&b, &d).unwrap();
+        assert_eq!(first, Ordering::Less);
+        assert_eq!(TEXT_TRACKER_BUILD_COUNT.load(Relaxed), 1);
+        assert_eq!(TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed), 0);
+
+        // A map-only op, then five queries at the stable head: one advance.
+        map.insert("k2", 2).unwrap();
+        doc.commit_then_renew();
+        for _ in 0..5 {
+            assert_eq!(doc.compare_cursors(&b, &d).unwrap(), first);
+        }
+        assert_eq!(
+            TEXT_TRACKER_BUILD_COUNT.load(Relaxed),
+            1,
+            "no rebuild on a multi-container doc"
+        );
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            1,
+            "exactly one advance despite five queries after a map-only op"
+        );
+
+        // A second map-only batch: one more advance, still no rebuild.
+        map.insert("k3", 3).unwrap();
+        doc.commit_then_renew();
+        for _ in 0..4 {
+            let _ = doc.compare_cursors(&b, &d).unwrap();
+        }
+        assert_eq!(
+            TEXT_TRACKER_ADVANCE_COUNT.load(Relaxed),
+            2,
+            "one more advance for the second map-only batch"
+        );
+        assert_eq!(TEXT_TRACKER_BUILD_COUNT.load(Relaxed), 1);
+        assert_eq!(doc.compare_cursors(&d, &b).unwrap(), Ordering::Greater);
+    }
+
+    /// With the genesis cross-check forced on, every query runs Guard B (the full
+    /// fragmentation-invariant rebuild comparison) over an interleaved
+    /// insert/delete script. It must complete without a coherence panic.
+    fn forced_genesis_cross_check() {
+        struct FlagGuard;
+        impl Drop for FlagGuard {
+            fn drop(&mut self) {
+                FORCE_GENESIS_CHECK.store(false, Relaxed);
+            }
+        }
+        FORCE_GENESIS_CHECK.store(true, Relaxed);
+        let _guard = FlagGuard;
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(7).unwrap();
+        let text = doc.get_text("text");
+        let mut len = 0usize;
+        let mut cursors = Vec::new();
+        for round in 0..30usize {
+            if len < 2 || round % 4 != 0 {
+                let pos = round % (len + 1);
+                let ch = (b'a' + (round % 26) as u8) as char;
+                text.insert(pos, &ch.to_string(), PosType::Unicode).unwrap();
+                doc.commit_then_renew();
+                len += 1;
+                cursors.push(text.get_cursor(pos, Side::Middle).unwrap());
+            } else {
+                let start = round % len;
+                text.delete(start, 1, PosType::Unicode).unwrap();
+                doc.commit_then_renew();
+                len -= 1;
+            }
+
+            if cursors.len() >= 2 {
+                // Forced on: this call runs the full genesis cross-check inside
+                // compare_cursors and panics if the incremental tracker diverges.
+                let a = &cursors[cursors.len() - 1];
+                let b = &cursors[cursors.len() - 2];
+                let _ = doc.compare_cursors(a, b).unwrap();
+            }
+        }
     }
 }

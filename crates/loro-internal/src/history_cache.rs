@@ -42,6 +42,10 @@ pub(crate) struct ContainerHistoryCache {
     shallow_root_state: Option<Arc<GcStore>>,
     for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
+    /// Warm per-container richtext trackers, advanced pull-on-query. Derived
+    /// from the oplog and rebuilt lazily, so nothing is serialized.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    text_trackers: Option<FxHashMap<ContainerIdx, crate::diff_calc::CachedTextTracker>>,
 }
 
 #[derive(Debug, Default)]
@@ -72,6 +76,8 @@ impl ContainerHistoryCache {
             for_checkout: Default::default(),
             for_importing: Default::default(),
             shallow_root_state: gc,
+            #[cfg(feature = "persistent-anchor-tracker")]
+            text_trackers: None,
         }
     }
 
@@ -295,11 +301,42 @@ impl ContainerHistoryCache {
 
     pub(crate) fn free(&mut self) {
         self.for_checkout = None;
+        #[cfg(feature = "persistent-anchor-tracker")]
+        {
+            self.text_trackers = None;
+        }
     }
 
     pub(crate) fn free_all(&mut self) {
         self.for_checkout = None;
         self.for_importing = None;
+        #[cfg(feature = "persistent-anchor-tracker")]
+        {
+            self.text_trackers = None;
+        }
+    }
+
+    /// Compare two insertion ids in a text container using a warm tracker,
+    /// building it from genesis on first use and advancing it to the oplog head
+    /// otherwise. Returns the order by value; `None` when an id cannot be
+    /// resolved.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn text_compare_ids(
+        &mut self,
+        oplog: &OpLog,
+        idx: ContainerIdx,
+        a: ID,
+        b: ID,
+        expected_entity_len: Option<usize>,
+    ) -> Option<std::cmp::Ordering> {
+        let cached = self
+            .text_trackers
+            .get_or_insert_with(Default::default)
+            .entry(idx)
+            .or_insert_with(|| crate::diff_calc::CachedTextTracker::build(oplog, idx));
+        cached.ensure_advanced(oplog, idx);
+        cached.debug_check(oplog, idx, expected_entity_len);
+        cached.compare_ids(a, b)
     }
 
     pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {

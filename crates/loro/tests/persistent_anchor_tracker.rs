@@ -586,3 +586,178 @@ fn property_total_order_over_multi_peer_script() {
         }
     }
 }
+
+#[test]
+fn cached_path_matches_genesis_over_fuzz_corpus() {
+    let mut rng = Rng(0xD1B54A32D192ED03);
+
+    let a = doc_with_peer(1);
+    let b = doc_with_peer(2);
+    let c = doc_with_peer(3);
+    let docs = [&a, &b, &c];
+
+    a.get_text("text").insert(0, "seed-content").unwrap();
+    a.commit();
+    sync(&a, &b);
+    sync(&a, &c);
+    sync(&b, &c);
+
+    // Compare full results, including which `Err` variant, so the cached path's
+    // unresolved-id taxonomy is checked against the oracle, not only the `Ok`
+    // orderings. `CannotFindRelativePosition` is not `PartialEq`, so fold each
+    // result to a form that is.
+    fn norm(
+        r: Result<Ordering, loro::cursor::CannotFindRelativePosition>,
+    ) -> Result<Ordering, String> {
+        r.map_err(|e| format!("{e:?}"))
+    }
+
+    let mut captured: Vec<Cursor> = Vec::new();
+
+    for round in 0..60 {
+        let doc = docs[rng.below(docs.len())];
+        let text = doc.get_text("text");
+        let len = text.len_unicode();
+
+        if len == 0 || rng.below(3) != 0 {
+            let pos = if len == 0 { 0 } else { rng.below(len + 1) };
+            let ch = (b'a' + (round % 26) as u8) as char;
+            text.insert(pos, &ch.to_string()).unwrap();
+            doc.commit();
+            captured.push(cursor_at(doc, pos, Side::Middle));
+        } else {
+            let start = rng.below(len);
+            let del_len = 1 + rng.below((len - start).min(3));
+            captured.push(cursor_at(doc, start, Side::Middle));
+            text.delete(start, del_len).unwrap();
+            doc.commit();
+        }
+
+        if rng.below(2) == 0 {
+            let i = rng.below(docs.len());
+            let j = (i + 1 + rng.below(docs.len() - 1)) % docs.len();
+            sync(docs[i], docs[j]);
+        }
+
+        // Query mid-stream so the cached tracker advances incrementally across
+        // the whole script rather than building once at the end, and check each
+        // advance against a fresh genesis rebuild.
+        if captured.len() >= 2 {
+            let x = &captured[captured.len() - 1];
+            let y = &captured[captured.len() - 2];
+            assert_eq!(
+                norm(doc.compare_cursors(x, y)),
+                norm(doc.__compare_cursors_via_genesis(x, y)),
+                "cached vs genesis disagreed mid-stream"
+            );
+        }
+    }
+
+    // Full merge so every doc holds the same history.
+    sync(&a, &b);
+    sync(&a, &c);
+    sync(&b, &c);
+    sync(&a, &b);
+
+    captured.sort_by(|x, y| format!("{:?}", x.id).cmp(&format!("{:?}", y.id)));
+    captured.dedup_by(|x, y| x.id == y.id);
+    assert!(captured.len() >= 10, "expected a decent pool of ids");
+
+    // Add an unresolvable (foreign) id so the `Err` taxonomy is differentially
+    // checked: both paths must reject it identically.
+    let container = a.get_text("text").id();
+    captured.push(Cursor::new(
+        Some(ID::new(1 << 40, 0)),
+        container,
+        Side::Middle,
+        0,
+    ));
+
+    // The cached warm-tracker path must agree with a fresh genesis rebuild for
+    // every pair on every peer, including the error taxonomy.
+    for doc in docs {
+        for x in &captured {
+            for y in &captured {
+                assert_eq!(
+                    norm(doc.compare_cursors(x, y)),
+                    norm(doc.__compare_cursors_via_genesis(x, y)),
+                    "cached path diverged from the genesis rebuild"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn multi_container_document_orders_correctly() {
+    // A document with a text container beside a map container: the map ops
+    // advance the document version without touching the text tracker, which the
+    // version-gated advance must handle without misfiring.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    let map = doc.get_map("m");
+
+    text.insert(0, "ABCDE").unwrap();
+    doc.commit();
+    map.insert("k", 1).unwrap();
+    doc.commit();
+
+    let b = cursor_at(&doc, 1, Side::Middle);
+    let d = cursor_at(&doc, 3, Side::Middle);
+
+    text.delete(0, 5).unwrap();
+    doc.commit();
+
+    // More map ops: the document head moves forward with no new text ops.
+    map.insert("k2", 2).unwrap();
+    doc.commit();
+    map.insert("k3", 3).unwrap();
+    doc.commit();
+
+    assert_eq!(doc.compare_cursors(&b, &d).unwrap(), Ordering::Less);
+    assert_eq!(doc.compare_cursors(&d, &b).unwrap(), Ordering::Greater);
+    assert_eq!(
+        doc.compare_cursors(&b, &d).ok(),
+        doc.__compare_cursors_via_genesis(&b, &d).ok(),
+        "cached path diverged from genesis on a multi-container doc"
+    );
+
+    // Repeated queries at the stable head remain identical.
+    let first = doc.compare_cursors(&b, &d).unwrap();
+    for _ in 0..5 {
+        assert_eq!(doc.compare_cursors(&b, &d).unwrap(), first);
+    }
+}
+
+#[test]
+fn query_after_insert_flushes_pending_edit_and_survives_checkout() {
+    // Auto-commit flushes the open transaction through `with_barrier` before the
+    // query reads the oplog, so a just-typed char resolves without a manual
+    // commit.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "AB").unwrap();
+    // Deliberately no doc.commit() here.
+    let a = cursor_at(&doc, 0, Side::Middle);
+    let b = cursor_at(&doc, 1, Side::Middle);
+    assert_eq!(doc.compare_cursors(&a, &b).unwrap(), Ordering::Less);
+
+    // Insert more, remember the head, then insert once more.
+    text.insert(2, "C").unwrap();
+    doc.commit();
+    let mid = doc.oplog_frontiers();
+    text.insert(3, "D").unwrap();
+    doc.commit();
+
+    // Checked out to an earlier version, the document is detached, yet
+    // `compare_cursors` reads the oplog head and returns the same answer.
+    doc.checkout(&mid).unwrap();
+    let c = cursor_at(&doc, 2, Side::Middle); // 'C', live in the checked-out state
+    assert_eq!(doc.compare_cursors(&a, &c).unwrap(), Ordering::Less);
+    assert_eq!(
+        doc.compare_cursors(&a, &c).ok(),
+        doc.__compare_cursors_via_genesis(&a, &c).ok()
+    );
+    doc.checkout_to_latest();
+    assert_eq!(doc.compare_cursors(&a, &c).unwrap(), Ordering::Less);
+}

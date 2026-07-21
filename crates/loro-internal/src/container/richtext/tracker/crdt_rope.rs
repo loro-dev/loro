@@ -35,6 +35,14 @@ impl CrdtRope {
         self.tree.root_cache().len as usize
     }
 
+    /// The number of leaves whose diff status differs from their applied
+    /// status. Zero means the rope is fully settled (no diff in progress).
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[inline(always)]
+    pub(super) fn changed_num(&self) -> i32 {
+        self.tree.root_cache().changed_num
+    }
+
     #[inline(always)]
     pub(super) fn tree(&self) -> &BTree<CrdtRopeTrait> {
         &self.tree

@@ -12,6 +12,8 @@ use crate::{cursor::AbsolutePosition, VersionVector};
 
 use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
+#[cfg(feature = "persistent-anchor-tracker")]
+use super::{fugue_span::RichtextChunkValue, AnchorType};
 use super::{
     fugue_span::{FugueSpan, Status},
     RichtextChunk,
@@ -36,6 +38,41 @@ impl Default for Tracker {
 }
 
 pub(super) const UNKNOWN_PEER_ID: PeerID = u64::MAX;
+
+/// A single entity's activation class, used by the fragmentation-invariant
+/// coherence check.
+#[cfg(feature = "persistent-anchor-tracker")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NormalizedStatus {
+    Live,
+    Tombstoned,
+    Future,
+}
+
+/// A single entity's normalized content kind. Only the structural kind is kept:
+/// the actual character is already pinned by the entity's real id, and both the
+/// arena unicode index (text) and the calculator-local style index (style
+/// anchors) are rebuild-local and would make two correct trackers compare
+/// unequal.
+#[cfg(feature = "persistent-anchor-tracker")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NormalizedContent {
+    Text,
+    StyleStart,
+    StyleEnd,
+    Move,
+    Unknown,
+}
+
+/// A per-entity view of a rope element, keyed by real id, that is invariant to
+/// how the underlying spans happen to be fragmented.
+#[cfg(feature = "persistent-anchor-tracker")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NormalizedEntity {
+    id: ID,
+    status: NormalizedStatus,
+    content: NormalizedContent,
+}
 impl Tracker {
     pub fn new_with_unknown() -> Self {
         let mut this = Self {
@@ -661,6 +698,70 @@ impl Tracker {
             return None;
         }
         Some((leaf, offset))
+    }
+
+    /// Number of leaves currently carrying a diff status. Zero means the rope is
+    /// settled at a single version with no diff in progress.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn changed_num(&self) -> i32 {
+        self.rope.changed_num()
+    }
+
+    /// Total activated (live) entity length across all real spans, excluding the
+    /// unknown baseline placeholder. On a full-history document this equals the
+    /// live text container's entity length.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn activated_entity_len(&self) -> usize {
+        self.rope
+            .tree()
+            .iter()
+            .filter(|span| span.id.peer != UNKNOWN_PEER_ID)
+            .map(|span| span.activated_len())
+            .sum()
+    }
+
+    /// Flatten the rope into a per-entity sequence keyed by real id, so two
+    /// trackers that hold the same op-set but fragmented differently compare
+    /// equal. The unknown baseline placeholder is skipped and style anchors are
+    /// reduced to their kind, because their calculator-local style index is not
+    /// stable across independent rebuilds.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn normalized_entities(&self) -> Vec<NormalizedEntity> {
+        let mut out = Vec::new();
+        for span in self.rope.tree().iter() {
+            if span.id.peer == UNKNOWN_PEER_ID {
+                continue;
+            }
+            let status = if span.status.future {
+                NormalizedStatus::Future
+            } else if span.status.delete_times > 0 {
+                NormalizedStatus::Tombstoned
+            } else {
+                NormalizedStatus::Live
+            };
+            let real = span.real_id();
+            let content = match span.content.value() {
+                RichtextChunkValue::Text(_) => NormalizedContent::Text,
+                RichtextChunkValue::StyleAnchor {
+                    anchor_type: AnchorType::Start,
+                    ..
+                } => NormalizedContent::StyleStart,
+                RichtextChunkValue::StyleAnchor {
+                    anchor_type: AnchorType::End,
+                    ..
+                } => NormalizedContent::StyleEnd,
+                RichtextChunkValue::MoveAnchor => NormalizedContent::Move,
+                RichtextChunkValue::Unknown(_) => NormalizedContent::Unknown,
+            };
+            for offset in 0..span.content.len() {
+                out.push(NormalizedEntity {
+                    id: real.inc(offset as Counter),
+                    status,
+                    content,
+                });
+            }
+        }
+        out
     }
 
     // #[tracing::instrument(skip(self), level = "info")]

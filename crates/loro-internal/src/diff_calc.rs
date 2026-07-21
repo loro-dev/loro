@@ -808,6 +808,225 @@ impl RichtextDiffCalculator {
     }
 }
 
+/// How many times a persistent per-container text tracker was built from
+/// genesis, and how many incremental advances were performed. Used only by the
+/// cache-effectiveness tests to prove queries at one version cost one build and
+/// zero advances, and a query after new ops costs one advance and no rebuild.
+#[cfg(feature = "persistent-anchor-tracker")]
+pub(crate) static TEXT_TRACKER_BUILD_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(feature = "persistent-anchor-tracker")]
+pub(crate) static TEXT_TRACKER_ADVANCE_COUNT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// When set, the debug-only genesis cross-check runs on every query rather than
+/// being sampled. Tests that want to exercise it on every call force it on.
+#[cfg(feature = "persistent-anchor-tracker")]
+pub(crate) static FORCE_GENESIS_CHECK: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Rolling call counter for sampling the genesis cross-check.
+#[cfg(feature = "persistent-anchor-tracker")]
+static GENESIS_CHECK_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Run the O(history) genesis cross-check on the first call and then on one call
+/// in this many. The cheap settle and length invariants still run on every
+/// query; only the full rebuild is sampled, so a debug build issuing frequent
+/// queries on a large document does not pay a rebuild every time.
+#[cfg(feature = "persistent-anchor-tracker")]
+const GENESIS_CHECK_SAMPLE_RATE: usize = 32;
+
+/// A warm per-container richtext tracker, kept settled at `built_at` and
+/// advanced forward pull-on-query. Homing the whole [`RichtextDiffCalculator`]
+/// (not a bare tracker) keeps its style registry and start version alongside the
+/// tracker, so the op-to-tracker translation is reused verbatim.
+#[cfg(feature = "persistent-anchor-tracker")]
+#[derive(Debug)]
+pub(crate) struct CachedTextTracker {
+    calc: RichtextDiffCalculator,
+    built_at: Frontiers,
+    built_at_vv: VersionVector,
+}
+
+#[cfg(feature = "persistent-anchor-tracker")]
+impl CachedTextTracker {
+    /// Build a tracker from genesis for `idx`, settled at the current oplog head.
+    pub(crate) fn build(oplog: &OpLog, idx: ContainerIdx) -> Self {
+        TEXT_TRACKER_BUILD_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut calc = RichtextDiffCalculator::new();
+        calc.advance_to(oplog, idx, &VersionVector::new(), &Frontiers::default());
+        Self {
+            calc,
+            built_at: oplog.frontiers().clone(),
+            built_at_vv: oplog.vv().clone(),
+        }
+    }
+
+    /// Advance the tracker to the current oplog head if it has moved. Keyed on
+    /// the version rather than a per-container applied version, which is only a
+    /// subset on multi-container documents.
+    pub(crate) fn ensure_advanced(&mut self, oplog: &OpLog, idx: ContainerIdx) {
+        if self.built_at_vv == *oplog.vv() {
+            return;
+        }
+        TEXT_TRACKER_ADVANCE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let from_vv = std::mem::take(&mut self.built_at_vv);
+        let from_frontiers = std::mem::take(&mut self.built_at);
+        self.calc.advance_to(oplog, idx, &from_vv, &from_frontiers);
+        self.built_at = oplog.frontiers().clone();
+        self.built_at_vv = oplog.vv().clone();
+    }
+
+    pub(crate) fn compare_ids(&self, a: ID, b: ID) -> Option<std::cmp::Ordering> {
+        self.calc.compare_ids(a, b)
+    }
+
+    /// Debug-only coherence checks run after the tracker is settled at head.
+    pub(crate) fn debug_check(
+        &self,
+        oplog: &OpLog,
+        idx: ContainerIdx,
+        expected_entity_len: Option<usize>,
+    ) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        self.calc.debug_check_settled(oplog.vv());
+        if let Some(expected) = expected_entity_len {
+            self.calc.debug_check_activated_len(expected);
+        }
+        let forced = FORCE_GENESIS_CHECK.load(std::sync::atomic::Ordering::Relaxed);
+        let n = GENESIS_CHECK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if forced || n.is_multiple_of(GENESIS_CHECK_SAMPLE_RATE) {
+            self.calc.debug_check_matches_genesis(oplog, idx);
+        }
+    }
+}
+
+#[cfg(feature = "persistent-anchor-tracker")]
+impl RichtextDiffCalculator {
+    /// Replay `[from .. oplog head]` into the tracker, then settle it at head.
+    ///
+    /// Ops are applied through the same causal traversal the diff path uses:
+    /// each op is checked out to its own dependency version before it is
+    /// inserted or deleted, which is what keeps concurrent orderings correct.
+    /// The first op of a container within a change carries that dependency
+    /// version; later ops of the same change reuse the already-established
+    /// checkout.
+    ///
+    /// Unlike the diff path this does not call `start_tracking`: that helper's
+    /// rebuild guard compares the tracker's per-container applied version to the
+    /// whole-document version and would discard the warm tracker (and its
+    /// resolvable insert ids) on any multi-container document. The persistent
+    /// tracker only ever moves forward, so no rebuild-to-a-later-baseline is
+    /// wanted; the closing `checkout` forwards every retreated branch to head
+    /// without entering diff mode.
+    fn advance_to(
+        &mut self,
+        oplog: &OpLog,
+        idx: ContainerIdx,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+    ) {
+        let to = oplog.vv();
+        let to_frontiers = oplog.frontiers();
+        let (_lca, _origin_diff_mode, iter) =
+            oplog.iter_from_lca_causally(from, from_frontiers, to, to_frontiers);
+        for (change, (start_counter, end_counter), vv) in iter {
+            let iter_start = change
+                .ops
+                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                .unwrap_or_else(|e| e);
+            let mut visited = false;
+            for mut op in &change.ops.vec()[iter_start..] {
+                if op.counter >= end_counter {
+                    break;
+                }
+
+                if op.container != idx {
+                    continue;
+                }
+
+                let stack_sliced_op;
+                if op.ctr_last() < start_counter {
+                    continue;
+                }
+
+                if op.counter < start_counter || op.ctr_end() > end_counter {
+                    stack_sliced_op = Some(op.slice(
+                        (start_counter as usize).saturating_sub(op.counter as usize),
+                        op.atom_len().min((end_counter - op.counter) as usize),
+                    ));
+                    op = stack_sliced_op.as_ref().unwrap();
+                }
+
+                let vv = &mut vv.borrow_mut();
+                vv.extend_to_include_end_id(ID::new(change.peer(), op.counter));
+                if visited {
+                    self.apply_change(oplog, RichOp::new_by_change(&change, op), None);
+                } else {
+                    self.apply_change(oplog, RichOp::new_by_change(&change, op), Some(vv));
+                    visited = true;
+                }
+            }
+        }
+
+        // Settle: forward all retreated branches to head without setting diff
+        // status, so a later query reads apply-time positions rather than a
+        // half-finished diff.
+        self.checkout_tracker(to);
+    }
+
+    fn checkout_tracker(&mut self, vv: &VersionVector) {
+        if let RichtextCalcMode::Crdt { tracker, .. } = &mut *self.mode {
+            tracker.checkout(vv);
+        }
+    }
+
+    fn tracker(&self) -> Option<&RichtextTracker> {
+        match &*self.mode {
+            RichtextCalcMode::Crdt { tracker, .. } => Some(&**tracker),
+            RichtextCalcMode::Linear { .. } => None,
+        }
+    }
+
+    fn debug_check_settled(&self, oplog_vv: &VersionVector) {
+        if let Some(tracker) = self.tracker() {
+            debug_assert_eq!(
+                tracker.current_vv(),
+                oplog_vv,
+                "persistent text tracker is not settled at head"
+            );
+            debug_assert_eq!(
+                tracker.changed_num(),
+                0,
+                "persistent text tracker was left mid-diff"
+            );
+        }
+    }
+
+    fn debug_check_activated_len(&self, expected: usize) {
+        if let Some(tracker) = self.tracker() {
+            debug_assert_eq!(
+                tracker.activated_entity_len(),
+                expected,
+                "persistent text tracker activated length diverged from the state entity length"
+            );
+        }
+    }
+
+    fn debug_check_matches_genesis(&self, oplog: &OpLog, idx: ContainerIdx) {
+        let mut oracle = RichtextDiffCalculator::new();
+        oracle.advance_to(oplog, idx, &VersionVector::new(), &Frontiers::default());
+        debug_assert_eq!(
+            self.tracker().map(|t| t.normalized_entities()),
+            oracle.tracker().map(|t| t.normalized_entities()),
+            "incremental text tracker diverged from a fresh genesis rebuild"
+        );
+    }
+}
+
 impl DiffCalculatorTrait for RichtextDiffCalculator {
     fn start_tracking(
         &mut self,
