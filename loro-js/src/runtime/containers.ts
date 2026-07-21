@@ -595,21 +595,100 @@ export interface TextElement extends SequenceElement {
   attributeHistory?: Map<string, TextStyleMeta[]> | undefined;
 }
 
-const TEXT_NUMBER_STRIDE = 6;
+class TextRunBuffer {
+  #text = "";
+  readonly #utf16Ends: number[] = [];
+  #lineBreakItems: number[] | undefined;
+
+  static fromText(text: string): TextRunBuffer {
+    const buffer = new TextRunBuffer();
+    buffer.#text = text;
+    let utf16End = 0;
+    for (const value of text) {
+      utf16End += value.length;
+      buffer.#utf16Ends.push(utf16End);
+    }
+    return buffer;
+  }
+
+  static fromItems(items: Iterable<string>): TextRunBuffer {
+    const buffer = new TextRunBuffer();
+    const chunks: string[] = [];
+    let utf16End = 0;
+    for (const value of items) {
+      chunks.push(value);
+      utf16End += value.length;
+      buffer.#utf16Ends.push(utf16End);
+    }
+    buffer.#text = chunks.join("");
+    return buffer;
+  }
+
+  get length(): number {
+    return this.#utf16Ends.length;
+  }
+
+  valueAt(offset: number): string {
+    return this.textRange(offset, offset + 1);
+  }
+
+  textRange(start: number, end: number): string {
+    const utf16Start = start === 0 ? 0 : this.#utf16Ends[start - 1]!;
+    const utf16End = end === 0 ? 0 : this.#utf16Ends[end - 1]!;
+    if (utf16Start === 0 && utf16End === this.#text.length) return this.#text;
+    return this.#text.slice(utf16Start, utf16End);
+  }
+
+  utf16LengthAt(offset: number): number {
+    const start = offset === 0 ? 0 : this.#utf16Ends[offset - 1]!;
+    return this.#utf16Ends[offset]! - start;
+  }
+
+  lineBreakCountAt(item: number): number {
+    const lineBreakItems = this.#ensureLineBreakItems();
+    let low = 0;
+    let high = lineBreakItems.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (lineBreakItems[middle]! < item) low = middle + 1;
+      else high = middle;
+    }
+    let end = low;
+    while (lineBreakItems[end] === item) end += 1;
+    return end - low;
+  }
+
+  #ensureLineBreakItems(): number[] {
+    if (this.#lineBreakItems !== undefined) return this.#lineBreakItems;
+    const lineBreakItems: number[] = [];
+    let start = 0;
+    for (let item = 0; item < this.#utf16Ends.length; item += 1) {
+      const end = this.#utf16Ends[item]!;
+      for (let offset = start; offset < end; offset += 1) {
+        if (this.#text.charCodeAt(offset) === 0x0a) lineBreakItems.push(item);
+      }
+      start = end;
+    }
+    this.#lineBreakItems = lineBreakItems;
+    return lineBreakItems;
+  }
+}
+
+const TEXT_NUMBER_STRIDE = 5;
 const TEXT_PEER_STRIDE = 4;
 const TEXT_COUNTER = 0;
 const TEXT_LAMPORT = 1;
-const TEXT_UTF16_END = 2;
-const TEXT_ORIGIN_LEFT_COUNTER = 3;
-const TEXT_ORIGIN_RIGHT_COUNTER = 4;
-const TEXT_DELETED_BY_COUNTER = 5;
+const TEXT_ORIGIN_LEFT_COUNTER = 2;
+const TEXT_ORIGIN_RIGHT_COUNTER = 3;
+const TEXT_DELETED_BY_COUNTER = 4;
 const TEXT_ID_PEER = 0;
 const TEXT_ORIGIN_LEFT_PEER = 1;
 const TEXT_ORIGIN_RIGHT_PEER = 2;
 const TEXT_DELETED_BY_PEER = 3;
 
 class TextSequenceSpan extends SequenceSpan<TextElement> {
-  #text = "";
+  #buffer = TextRunBuffer.fromText("");
+  #bufferStart = 0;
   #length = 0;
   #numbers: number[] | undefined;
   #peers: (bigint | undefined)[] | undefined;
@@ -637,8 +716,8 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     originRight: CodecId | undefined,
   ): TextSequenceSpan {
     const span = new TextSequenceSpan();
-    span.#text = text;
-    for (const _value of text) span.#length += 1;
+    span.#buffer = TextRunBuffer.fromText(text);
+    span.#length = span.#buffer.length;
     span.#pendingStartPeer = startId.peer;
     span.#pendingStartCounter = startId.counter;
     span.#pendingLamport = lamport;
@@ -646,6 +725,48 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     span.#pendingOriginLeftCounter = originLeft?.counter ?? 0;
     span.#pendingOriginRightPeer = originRight?.peer;
     span.#pendingOriginRightCounter = originRight?.counter ?? 0;
+    return span;
+  }
+
+  static fromElements(elements: readonly TextElement[]): TextSequenceSpan {
+    const span = new TextSequenceSpan();
+    span.#buffer = TextRunBuffer.fromItems(elements.map(({ value }) => value));
+    span.#length = elements.length;
+    span.#numbers = [];
+    span.#peers = [];
+    for (let offset = 0; offset < elements.length; offset += 1) {
+      const element = elements[offset]!;
+      span.#numbers.push(
+        element.id.counter,
+        element.lamport,
+        element.originLeft?.counter ?? 0,
+        element.originRight?.counter ?? 0,
+        element.deletedByCounter ?? 0,
+      );
+      span.#peers.push(
+        element.id.peer,
+        element.originLeft?.peer,
+        element.originRight?.peer,
+        element.deletedByPeer,
+      );
+      if (element.deleted) span.#deletedBits |= 2 ** offset;
+      span.#deletedBy = setOffsetMap(span.#deletedBy, offset, element.deletedBy);
+      span.#attributes = setOffsetMap(span.#attributes, offset, element.attributes);
+      span.#attributeMeta = setOffsetMap(
+        span.#attributeMeta,
+        offset,
+        element.attributeMeta,
+      );
+      span.#attributeHistory = setOffsetMap(
+        span.#attributeHistory,
+        offset,
+        element.attributeHistory,
+      );
+      span.#valueHistory = setOffsetMap(span.#valueHistory, offset, element.valueHistory);
+      span.#moveHistory = setOffsetMap(span.#moveHistory, offset, element.moveHistory);
+      span.retain(offset, element);
+    }
+    span.#deletedBits >>>= 0;
     return span;
   }
 
@@ -691,33 +812,60 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
       : (this.#deletedBits & ~bit) >>> 0;
   }
 
-  metricsAt(offset: number): { utf16: number; utf8: number } {
+  metricsAt(
+    offset: number,
+    includeLineBreaks = true,
+  ): {
+    utf16: number;
+    utf8: number;
+    lineBreaks?: number;
+  } {
     const value = this.valueAt(offset);
-    return { utf16: value.length, utf8: utf8CodePointLength(value) };
+    const metrics: { utf16: number; utf8: number; lineBreaks?: number } = {
+      utf16: this.#buffer.utf16LengthAt(this.#bufferStart + offset),
+      utf8: utf8CodePointLength(value),
+    };
+    if (includeLineBreaks) {
+      metrics.lineBreaks = this.#buffer.lineBreakCountAt(this.#bufferStart + offset);
+    }
+    return metrics;
   }
 
   slice(start: number, end: number): TextSequenceSpan {
-    this.#materializeColumns();
     const output = new TextSequenceSpan();
-    output.#numbers = [];
-    output.#peers = [];
+    output.#buffer = this.#buffer;
+    output.#bufferStart = this.#bufferStart + start;
     output.#length = end - start;
-    const utf16Start = start === 0 ? 0 : this.#number(start - 1, TEXT_UTF16_END);
-    const utf16End = end === 0 ? 0 : this.#number(end - 1, TEXT_UTF16_END);
-    output.#text = this.#text.slice(utf16Start, utf16End);
-    for (let offset = start; offset < end; offset += 1) {
-      const numberBase = offset * TEXT_NUMBER_STRIDE;
-      for (let column = 0; column < TEXT_NUMBER_STRIDE; column += 1) {
-        const value = this.#numbers![numberBase + column]!;
-        output.#numbers.push(column === TEXT_UTF16_END ? value - utf16Start : value);
+    if (this.#numbers === undefined) {
+      output.#pendingStartPeer = this.#pendingStartPeer;
+      output.#pendingStartCounter = this.#pendingStartCounter + start;
+      output.#pendingLamport = this.#pendingLamport + start;
+      output.#pendingOriginLeftPeer =
+        start === 0 ? this.#pendingOriginLeftPeer : this.#pendingStartPeer;
+      output.#pendingOriginLeftCounter =
+        start === 0
+          ? this.#pendingOriginLeftCounter
+          : this.#pendingStartCounter + start - 1;
+      output.#pendingOriginRightPeer = this.#pendingOriginRightPeer;
+      output.#pendingOriginRightCounter = this.#pendingOriginRightCounter;
+    } else {
+      output.#numbers = [];
+      output.#peers = [];
+      for (let offset = start; offset < end; offset += 1) {
+        const numberBase = offset * TEXT_NUMBER_STRIDE;
+        for (let column = 0; column < TEXT_NUMBER_STRIDE; column += 1) {
+          output.#numbers.push(this.#numbers[numberBase + column]!);
+        }
+        const peerBase = offset * TEXT_PEER_STRIDE;
+        output.#peers.push(
+          this.#peers![peerBase],
+          this.#peers![peerBase + 1],
+          this.#peers![peerBase + 2],
+          this.#peers![peerBase + 3],
+        );
       }
-      const peerBase = offset * TEXT_PEER_STRIDE;
-      output.#peers.push(
-        this.#peers![peerBase],
-        this.#peers![peerBase + 1],
-        this.#peers![peerBase + 2],
-        this.#peers![peerBase + 3],
-      );
+    }
+    for (let offset = start; offset < end; offset += 1) {
       const retained = this.#retained?.get(offset);
       if (retained !== undefined) {
         const nextOffset = offset - start;
@@ -740,20 +888,29 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   override append(other: SequenceSpan<TextElement>): boolean {
     if (!(other instanceof TextSequenceSpan)) return false;
     const oldLength = this.length;
-    const utf16Base = this.#text.length;
-    this.#materializeColumns();
-    this.#text += other.#text;
-    for (let offset = 0; offset < other.length; offset += 1) {
-      for (let column = 0; column < TEXT_NUMBER_STRIDE; column += 1) {
-        const value = other.#number(offset, column);
-        this.#numbers!.push(column === TEXT_UTF16_END ? value + utf16Base : value);
+    const keepPending = this.#canAppendPending(other);
+    if (!keepPending) this.#materializeColumns();
+    if (
+      this.#buffer !== other.#buffer ||
+      this.#bufferStart + oldLength !== other.#bufferStart
+    ) {
+      this.#buffer = TextRunBuffer.fromItems(this.#valuesWith(other));
+      this.#bufferStart = 0;
+    }
+    if (!keepPending) {
+      for (let offset = 0; offset < other.length; offset += 1) {
+        for (let column = 0; column < TEXT_NUMBER_STRIDE; column += 1) {
+          this.#numbers!.push(other.#number(offset, column));
+        }
+        this.#peers!.push(
+          other.#peer(offset, 0),
+          other.#peer(offset, 1),
+          other.#peer(offset, 2),
+          other.#peer(offset, 3),
+        );
       }
-      this.#peers!.push(
-        other.#peer(offset, 0),
-        other.#peer(offset, 1),
-        other.#peer(offset, 2),
-        other.#peer(offset, 3),
-      );
+    }
+    for (let offset = 0; offset < other.length; offset += 1) {
       const retained = other.#retained?.get(offset);
       if (retained !== undefined) {
         const nextOffset = oldLength + offset;
@@ -807,25 +964,21 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   }
 
   valueAt(offset: number): string {
-    const start = offset === 0 ? 0 : this.#number(offset - 1, TEXT_UTF16_END);
-    return this.#text.slice(start, this.#number(offset, TEXT_UTF16_END));
+    return this.#buffer.valueAt(this.#bufferStart + offset);
+  }
+
+  textRange(start: number, end: number): string {
+    return this.#buffer.textRange(this.#bufferStart + start, this.#bufferStart + end);
   }
 
   setValueAt(offset: number, value: string): void {
     const current = this.valueAt(offset);
     if (current === value) return;
-    this.#materializeColumns();
-    const start = offset === 0 ? 0 : this.#number(offset - 1, TEXT_UTF16_END);
-    const end = this.#number(offset, TEXT_UTF16_END);
-    this.#text = this.#text.slice(0, start) + value + this.#text.slice(end);
-    const difference = value.length - (end - start);
-    for (let index = offset; index < this.length; index += 1) {
-      this.#setNumber(
-        index,
-        TEXT_UTF16_END,
-        this.#number(index, TEXT_UTF16_END) + difference,
-      );
-    }
+    const values = Array.from({ length: this.length }, (_, index) =>
+      index === offset ? value : this.valueAt(index),
+    );
+    this.#buffer = TextRunBuffer.fromItems(values);
+    this.#bufferStart = 0;
   }
 
   originLeftAt(offset: number): CodecId | undefined {
@@ -925,16 +1078,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
         return this.#pendingStartCounter + offset;
       case TEXT_LAMPORT:
         return this.#pendingLamport + offset;
-      case TEXT_UTF16_END: {
-        let utf16End = 0;
-        let index = 0;
-        for (const value of this.#text) {
-          utf16End += value.length;
-          if (index === offset) return utf16End;
-          index += 1;
-        }
-        throw new RangeError("text span offset is out of range");
-      }
       case TEXT_ORIGIN_LEFT_COUNTER:
         return offset === 0
           ? this.#pendingOriginLeftCounter
@@ -980,14 +1123,10 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     if (this.#numbers !== undefined) return;
     const numbers: number[] = [];
     const peers: (bigint | undefined)[] = [];
-    let utf16End = 0;
-    let offset = 0;
-    for (const value of this.#text) {
-      utf16End += value.length;
+    for (let offset = 0; offset < this.length; offset += 1) {
       numbers.push(
         this.#pendingStartCounter + offset,
         this.#pendingLamport + offset,
-        utf16End,
         offset === 0
           ? this.#pendingOriginLeftCounter
           : this.#pendingStartCounter + offset - 1,
@@ -1000,10 +1139,31 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
         this.#pendingOriginRightPeer,
         undefined,
       );
-      offset += 1;
     }
     this.#numbers = numbers;
     this.#peers = peers;
+  }
+
+  #canAppendPending(other: TextSequenceSpan): boolean {
+    if (this.#numbers !== undefined || other.#numbers !== undefined) return false;
+    return (
+      this.#pendingStartPeer === other.#pendingStartPeer &&
+      this.#pendingStartCounter + this.length === other.#pendingStartCounter &&
+      this.#pendingLamport + this.length === other.#pendingLamport &&
+      other.#pendingOriginLeftPeer === this.#pendingStartPeer &&
+      other.#pendingOriginLeftCounter === this.#pendingStartCounter + this.length - 1 &&
+      other.#pendingOriginRightPeer === this.#pendingOriginRightPeer &&
+      other.#pendingOriginRightCounter === this.#pendingOriginRightCounter
+    );
+  }
+
+  *#values(): Iterable<string> {
+    for (let offset = 0; offset < this.length; offset += 1) yield this.valueAt(offset);
+  }
+
+  *#valuesWith(other: TextSequenceSpan): Iterable<string> {
+    yield* this.#values();
+    for (let offset = 0; offset < other.length; offset += 1) yield other.valueAt(offset);
   }
 
   #idColumnAt(
@@ -1202,10 +1362,13 @@ export interface TextStyleMeta {
 }
 
 export class LoroText extends LoroContainer {
-  readonly _sequence = new SequenceIndex<TextElement>((element) => ({
-    utf16: element.value.length,
-    utf8: utf8CodePointLength(element.value),
-  }));
+  readonly _sequence = new SequenceIndex<TextElement>(
+    (element) => ({
+      utf16: element.value.length,
+      utf8: utf8CodePointLength(element.value),
+    }),
+    (element) => countLineBreaks(element.value),
+  );
   _detachedCounter = 0;
   _detachedStyleCounter = 0;
   _attributeHistoryComplete = true;
@@ -1221,6 +1384,12 @@ export class LoroText extends LoroContainer {
     return this._sequence.all();
   }
 
+  /** Rebuilds fragmented physical text spans without changing CRDT history. */
+  compact(): void {
+    this._ensureHydrated();
+    this._sequence.compact((elements) => TextSequenceSpan.fromElements(elements));
+  }
+
   kind(): "Text" {
     return "Text";
   }
@@ -1228,6 +1397,46 @@ export class LoroText extends LoroContainer {
   get length(): number {
     this._ensureHydrated();
     return this._sequence.visibleUtf16Length;
+  }
+
+  /** Number of LF-delimited lines. Empty text contains one line. */
+  get lineCount(): number {
+    this._ensureLineIndex();
+    return this._sequence.visibleLineBreaks + 1;
+  }
+
+  /** Returns a line's UTF-16 start position. */
+  lineStart(line: number): number | undefined {
+    this._ensureLineIndex();
+    if (!Number.isSafeInteger(line) || line < 0 || line >= this.lineCount) {
+      return undefined;
+    }
+    const unicodePosition = this._sequence.visibleIndexAfterLineBreaks(line);
+    return unicodePosition === undefined
+      ? undefined
+      : this._sequence.metricOffsetAtVisibleIndex(unicodePosition, "utf16");
+  }
+
+  /** Returns the zero-based line containing a UTF-16 position. */
+  lineAt(position: number): number | undefined {
+    this._ensureLineIndex();
+    if (!Number.isSafeInteger(position) || position < 0 || position > this.length) {
+      return undefined;
+    }
+    const unicodePosition = this.convertPos(position, "utf16", "unicode");
+    return unicodePosition === undefined
+      ? undefined
+      : this._sequence.lineBreakOffsetAtVisibleIndex(unicodePosition);
+  }
+
+  /** Returns a line without its LF or CRLF terminator. */
+  getLine(line: number): string | undefined {
+    const start = this.lineStart(line);
+    if (start === undefined) return undefined;
+    const nextStart = this.lineStart(line + 1);
+    if (nextStart === undefined) return this.slice(start, this.length);
+    const value = this.slice(start, nextStart - 1);
+    return value.endsWith("\r") ? value.slice(0, -1) : value;
   }
 
   toString(): string {
@@ -1238,31 +1447,43 @@ export class LoroText extends LoroContainer {
   _stringRange(start: number, end: number): string {
     this._ensureHydrated();
     const chunks: string[] = [];
-    let chunk = "";
-    let chunkLength = 0;
-    this._sequence.forEachVisibleRange(start, end, (element) => {
-      chunk += element.value;
-      chunkLength += 1;
-      if (chunkLength === 32) {
+    this._sequence.forEachVisibleStorageRange(
+      start,
+      end,
+      (span, spanStart, spanEnd) => {
+        if (span instanceof TextSequenceSpan) {
+          chunks.push(span.textRange(spanStart, spanEnd));
+          return;
+        }
+        let chunk = "";
+        for (let offset = spanStart; offset < spanEnd; offset += 1) {
+          chunk += span.elementAt(offset).value;
+        }
         chunks.push(chunk);
-        chunk = "";
-        chunkLength = 0;
-      }
-    });
-    if (chunkLength > 0) chunks.push(chunk);
+      },
+      (element) => {
+        chunks.push(element.value);
+      },
+    );
     return chunks.join("");
   }
 
   iter(callback: (chunk: string) => boolean | void | null): void {
     this._ensureHydrated();
     let chunk: string[] = [];
-    let previous: TextElement | undefined;
+    let previousPeer: bigint | undefined;
+    let previousCounter: number | undefined;
     let stopped = false;
-    this._sequence.forEachVisible((element) => {
+    const append = (
+      value: string,
+      peer: bigint,
+      counter: number,
+      endCounter = counter,
+    ): boolean => {
       const continues =
-        previous !== undefined &&
-        previous.id.peer === element.id.peer &&
-        previous.id.counter + 1 === element.id.counter;
+        previousPeer !== undefined &&
+        previousPeer === peer &&
+        previousCounter! + 1 === counter;
       if (!continues && chunk.length > 0) {
         if (callback(chunk.join("")) === false) {
           stopped = true;
@@ -1270,9 +1491,55 @@ export class LoroText extends LoroContainer {
         }
         chunk = [];
       }
-      chunk.push(element.value);
-      previous = element;
-    });
+      chunk.push(value);
+      previousPeer = peer;
+      previousCounter = endCounter;
+      return true;
+    };
+    this._sequence.forEachVisibleStorageRange(
+      0,
+      this._sequence.visibleLength,
+      (span, spanStart, spanEnd) => {
+        if (!(span instanceof TextSequenceSpan)) {
+          for (let offset = spanStart; offset < spanEnd; offset += 1) {
+            const element = span.elementAt(offset);
+            if (!append(element.value, element.id.peer, element.id.counter)) {
+              return false;
+            }
+          }
+          return;
+        }
+        let runStart = spanStart;
+        let runPeer = span.peerAt(runStart);
+        let previousRunCounter = span.counterAt(runStart);
+        for (let offset = runStart + 1; offset < spanEnd; offset += 1) {
+          const peer = span.peerAt(offset);
+          const counter = span.counterAt(offset);
+          if (peer !== runPeer || counter !== previousRunCounter + 1) {
+            if (
+              !append(
+                span.textRange(runStart, offset),
+                runPeer,
+                span.counterAt(runStart),
+                previousRunCounter,
+              )
+            ) {
+              return false;
+            }
+            runStart = offset;
+            runPeer = peer;
+          }
+          previousRunCounter = counter;
+        }
+        return append(
+          span.textRange(runStart, spanEnd),
+          runPeer,
+          span.counterAt(runStart),
+          previousRunCounter,
+        );
+      },
+      (element) => append(element.value, element.id.peer, element.id.counter),
+    );
     if (!stopped && chunk.length > 0) callback(chunk.join(""));
   }
 
@@ -1713,6 +1980,11 @@ export class LoroText extends LoroContainer {
       throw new RangeError(`text position ${position} is not on a UTF-16 boundary`);
     }
     return unicodePosition;
+  }
+
+  _ensureLineIndex(): void {
+    this._ensureHydrated();
+    this._sequence.enableLineBreaks();
   }
 
   _reset(): void {
@@ -3076,6 +3348,17 @@ function utf8CodePointLength(value: string): number {
   if (codePoint <= 0x7ff) return 2;
   if (codePoint <= 0xffff) return 3;
   return 4;
+}
+
+function countLineBreaks(value: string): number {
+  if (value.length === 1) return value === "\n" ? 1 : 0;
+  let count = 0;
+  let offset = value.indexOf("\n");
+  while (offset !== -1) {
+    count += 1;
+    offset = value.indexOf("\n", offset + 1);
+  }
+  return count;
 }
 
 function updateText(container: LoroText, target: string): void {

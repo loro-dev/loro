@@ -1611,6 +1611,170 @@ describe("loro-wasm-compatible runtime", () => {
     expect(left.getText("text").getEditorOf(3)).toBe("2");
   });
 
+  test("indexes line starts and content in UTF-16 positions", () => {
+    const text = new LoroText();
+    text.insert(0, "zero\n\ud83d\ude00one\r\nlast\n");
+
+    expect(text.lineCount).toBe(4);
+    expect([0, 1, 2, 3, 4].map((line) => text.lineStart(line))).toEqual([
+      0,
+      5,
+      12,
+      17,
+      undefined,
+    ]);
+    expect([0, 1, 2, 3].map((line) => text.getLine(line))).toEqual([
+      "zero",
+      "\ud83d\ude00one",
+      "last",
+      "",
+    ]);
+    expect(text.lineAt(0)).toBe(0);
+    expect(text.lineAt(4)).toBe(0);
+    expect(text.lineAt(5)).toBe(1);
+    expect(text.lineAt(6)).toBeUndefined();
+    expect(text.lineAt(12)).toBe(2);
+    expect(text.lineAt(17)).toBe(3);
+
+    text.delete(11, 1);
+    expect(text.lineCount).toBe(3);
+    expect(text.getLine(1)).toBe("\ud83d\ude00one\rlast");
+  });
+
+  test("keeps the lazy line index correct across fragmented edits", () => {
+    const text = new LoroText();
+    const scalars = Array.from("a\n\ud83d\ude00b\r\nc");
+    text.insert(0, scalars.join(""));
+    expect(text.lineCount).toBe(3);
+
+    let randomState = 0x12_34_56_78;
+    const random = (): number => {
+      randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) >>> 0;
+      return randomState / 0x1_00_00_00_00;
+    };
+    const insertions = ["x", "\n", "\r", "\ud83d\ude00", "yz", "\r\n"];
+
+    for (let step = 0; step < 100; step += 1) {
+      if (scalars.length === 0 || random() < 0.6) {
+        const index = Math.floor(random() * (scalars.length + 1));
+        const value = insertions[Math.floor(random() * insertions.length)]!;
+        const position = scalars.slice(0, index).join("").length;
+        text.insert(position, value);
+        scalars.splice(index, 0, ...Array.from(value));
+      } else {
+        const start = Math.floor(random() * scalars.length);
+        const count = Math.min(1 + Math.floor(random() * 3), scalars.length - start);
+        const position = scalars.slice(0, start).join("").length;
+        const length = scalars.slice(start, start + count).join("").length;
+        text.delete(position, length);
+        scalars.splice(start, count);
+      }
+      if (step === 49) text.compact();
+
+      const expected = scalars.join("");
+      const starts = [0];
+      let utf16Offset = 0;
+      for (const scalar of scalars) {
+        utf16Offset += scalar.length;
+        if (scalar === "\n") starts.push(utf16Offset);
+      }
+      const lines = expected
+        .split("\n")
+        .map((line, index, all) =>
+          index < all.length - 1 && line.endsWith("\r") ? line.slice(0, -1) : line,
+        );
+
+      expect(text.toString()).toBe(expected);
+      expect(text.lineCount).toBe(starts.length);
+      expect(starts.map((_start, line) => text.lineStart(line))).toEqual(starts);
+      expect(lines.map((_line, line) => text.getLine(line))).toEqual(lines);
+      expect(starts.map((start) => text.lineAt(start))).toEqual(
+        starts.map((_start, line) => line),
+      );
+
+      let line = 0;
+      utf16Offset = 0;
+      expect(text.lineAt(0)).toBe(0);
+      for (let scalarIndex = 0; scalarIndex < scalars.length; scalarIndex += 1) {
+        const scalar = scalars[scalarIndex]!;
+        utf16Offset += scalar.length;
+        if (scalar === "\n") line += 1;
+        expect(text.convertPos(utf16Offset, "utf16", "unicode")).toBe(scalarIndex + 1);
+        expect(text.lineAt(utf16Offset)).toBe(line);
+      }
+    }
+  });
+
+  test("rebuilds line indexes through checkout and snapshot import", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(8);
+    const text = doc.getText("text");
+    text.insert(0, "first\nsecond");
+    doc.commit();
+    const firstVersion = doc.frontiers();
+    expect(text.lineCount).toBe(2);
+
+    text.push("\nthird");
+    doc.commit();
+    const snapshot = doc.export({ mode: "snapshot" });
+    expect(text.lineCount).toBe(3);
+
+    doc.checkout(firstVersion);
+    expect(text.lineCount).toBe(2);
+    expect(text.lineStart(1)).toBe(6);
+    doc.checkoutToLatest();
+    expect(text.lineCount).toBe(3);
+    expect(text.getLine(2)).toBe("third");
+
+    const restored = LoroDoc.fromSnapshot(snapshot).getText("text");
+    expect(restored.lineCount).toBe(3);
+    expect(restored.lineStart(2)).toBe(13);
+  });
+
+  test("maintains an enabled line index during remote import", () => {
+    const left = new LoroDoc();
+    left.setPeerId(1);
+    left.getText("text").insert(0, "a\nc");
+    left.commit();
+    const from = left.oplogVersion();
+    expect(left.getText("text").lineCount).toBe(2);
+
+    const right = left.fork();
+    right.setPeerId(2);
+    right.getText("text").insert(2, "b\n");
+    right.commit();
+    left.import(right.export({ mode: "update", from }));
+
+    expect(left.getText("text").toString()).toBe("a\nb\nc");
+    expect([0, 1, 2].map((line) => left.getText("text").lineStart(line))).toEqual([
+      0, 2, 4,
+    ]);
+  });
+
+  test("compacts text storage without changing deletion history", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(9);
+    const text = doc.getText("text");
+    for (const value of "abcdef") text.push(value);
+    doc.commit();
+    const beforeDelete = doc.frontiers();
+    text.delete(2, 2);
+    text.mark({ start: 0, end: 2 }, "bold", true);
+    doc.commit();
+    const snapshotBefore = doc.export({ mode: "snapshot" });
+    const deltaBefore = text.toDelta();
+
+    text.compact();
+    expect(text.toString()).toBe("abef");
+    expect(text.toDelta()).toEqual(deltaBefore);
+    expect(doc.export({ mode: "snapshot" })).toEqual(snapshotBefore);
+
+    doc.checkout(beforeDelete);
+    expect(text.toString()).toBe("abcdef");
+    doc.checkoutToLatest();
+    expect(text.toString()).toBe("abef");
+  });
+
   test("guards tree cycles and reports move and fractional-index state", () => {
     const doc = new LoroDoc();
     doc.setPeerId(7);
