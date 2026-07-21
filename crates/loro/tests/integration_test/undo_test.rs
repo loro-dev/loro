@@ -1761,3 +1761,63 @@ fn undo_with_custom_commit_options() -> anyhow::Result<()> {
     assert_eq!(trigger_times.load(atomic::Ordering::SeqCst), 2);
     Ok(())
 }
+
+#[test]
+fn pause_preserves_undo_stacks_across_checkout() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+    text.insert(5, " World")?;
+    doc.commit();
+    assert_eq!(text.to_string(), "Hello World");
+    assert!(undo.can_undo());
+
+    // Pause before checkout so undo stacks survive
+    undo.pause();
+    assert!(undo.is_paused());
+    doc.checkout(&Frontiers::default())?;
+    assert_eq!(text.to_string(), "");
+    doc.attach();
+    assert_eq!(text.to_string(), "Hello World");
+    undo.resume();
+    assert!(!undo.is_paused());
+
+    // Undo stacks should still be intact
+    assert!(undo.can_undo());
+    undo.undo()?;
+    assert_eq!(text.to_string(), "Hello");
+    undo.undo()?;
+    assert_eq!(text.to_string(), "");
+
+    // Redo should also work
+    assert!(undo.can_redo());
+    undo.redo()?;
+    assert_eq!(text.to_string(), "Hello");
+    undo.redo()?;
+    assert_eq!(text.to_string(), "Hello World");
+
+    Ok(())
+}
+
+#[test]
+fn checkout_without_pause_clears_undo_stacks() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let undo = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+    assert!(undo.can_undo());
+
+    // Checkout without pausing should still clear stacks (existing behavior)
+    doc.checkout(&Frontiers::default())?;
+    assert!(!undo.can_undo());
+    assert!(!undo.can_redo());
+
+    Ok(())
+}

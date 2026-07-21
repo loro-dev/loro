@@ -5452,6 +5452,27 @@ impl UndoManager {
     pub fn clearUndo(&self) {
         self.undo.lock().clear_undo();
     }
+
+    /// Pause the UndoManager so it ignores all document events.
+    ///
+    /// While paused, local edits are not recorded as undo steps and checkout
+    /// events do not clear the stacks. Use this before temporary checkouts
+    /// (e.g. read-only history preview) that should not disturb undo/redo
+    /// history. Call `resume()` after returning the document to its original
+    /// state.
+    pub fn pause(&self) {
+        self.undo.lock().pause();
+    }
+
+    /// Resume the UndoManager after a `pause()`.
+    pub fn resume(&self) {
+        self.undo.lock().resume();
+    }
+
+    /// Returns whether the UndoManager is currently paused.
+    pub fn isPaused(&self) -> bool {
+        self.undo.lock().is_paused()
+    }
 }
 
 /// Use this function to throw an error after the micro task.
