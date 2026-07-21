@@ -136,6 +136,10 @@ export abstract class LoroContainer {
   ): void {
     this._parentLink = { container: parent, binding };
   }
+
+  _ensureHydrated(): void {
+    this._doc?._ensureContainerHydrated(this);
+  }
 }
 
 export interface MapRecord {
@@ -165,6 +169,7 @@ export class LoroMap<
   get<Key extends keyof T>(key: Key): T[Key] | undefined;
   get(key: string): unknown;
   get(key: string): unknown {
+    this._ensureHydrated();
     const record = this._entries.get(key);
     return record === undefined || record.deleted
       ? undefined
@@ -174,6 +179,7 @@ export class LoroMap<
   set<Key extends keyof T>(key: Key, value: T[Key]): void;
   set(key: string, value: unknown): void;
   set(key: string, value: unknown): void {
+    this._ensureHydrated();
     if (isContainer(value)) {
       throw new TypeError("use setContainer() to attach a child container");
     }
@@ -189,6 +195,7 @@ export class LoroMap<
   }
 
   delete(key: string): void {
+    this._ensureHydrated();
     if (this._doc === undefined) {
       if (this._entries.has(key)) this._removeVisibleKey(key);
       this._entries.delete(key);
@@ -202,6 +209,7 @@ export class LoroMap<
   }
 
   keys(): string[] {
+    this._ensureHydrated();
     return this._keyIndex.values().map(({ key }) => key);
   }
 
@@ -214,10 +222,12 @@ export class LoroMap<
   }
 
   get size(): number {
+    this._ensureHydrated();
     return this._keyIndex.size;
   }
 
   setContainer<C extends Container>(key: string, child: C): C {
+    this._ensureHydrated();
     if (this._doc === undefined) {
       this._applyValue(key, child, { peer: 0n, lamport: 0 });
       return child;
@@ -261,6 +271,7 @@ export class LoroMap<
   }
 
   getLastEditor(key: string): string | undefined {
+    this._ensureHydrated();
     return this._entries.get(key)?.writer.peer.toString();
   }
 
@@ -343,6 +354,7 @@ export class LoroMap<
   }
 
   private _ensureMergeable(key: string, type: ContainerType): Container {
+    this._ensureHydrated();
     if (this._doc === undefined) {
       throw new Error("cannot ensure a mergeable child on a detached map");
     }
@@ -355,6 +367,7 @@ export class LoroList<T = unknown> extends LoroContainer {
   _detachedCounter = 0;
 
   get _elements(): SequenceElement[] {
+    this._ensureHydrated();
     return this._sequence.all();
   }
 
@@ -363,10 +376,12 @@ export class LoroList<T = unknown> extends LoroContainer {
   }
 
   get length(): number {
+    this._ensureHydrated();
     return this._sequence.visibleLength;
   }
 
   get(index: number): T | undefined {
+    this._ensureHydrated();
     return cloneRuntimeValue(this._sequence.atVisible(index)?.value) as T | undefined;
   }
 
@@ -460,20 +475,24 @@ export class LoroList<T = unknown> extends LoroContainer {
   }
 
   _visibleElements(): SequenceElement[] {
+    this._ensureHydrated();
     return this._sequence.visible();
   }
 
   _visibleElementsRange(start: number, end: number): SequenceElement[] {
+    this._ensureHydrated();
     return this._sequence.visibleRange(start, end);
   }
 
   _valuesRange(start: number, end: number): unknown[] {
+    this._ensureHydrated();
     return this._sequence
       .visibleRange(start, end)
       .map((element) => cloneRuntimeValue(element.value));
   }
 
   _visibleElementAt(position: number): SequenceElement | undefined {
+    this._ensureHydrated();
     return this._sequence.atVisible(position);
   }
 
@@ -1198,6 +1217,7 @@ export class LoroText extends LoroContainer {
   >();
 
   get _elements(): TextElement[] {
+    this._ensureHydrated();
     return this._sequence.all();
   }
 
@@ -1206,14 +1226,17 @@ export class LoroText extends LoroContainer {
   }
 
   get length(): number {
+    this._ensureHydrated();
     return this._sequence.visibleUtf16Length;
   }
 
   toString(): string {
+    this._ensureHydrated();
     return this._stringRange(0, this._sequence.visibleLength);
   }
 
   _stringRange(start: number, end: number): string {
+    this._ensureHydrated();
     const chunks: string[] = [];
     let chunk = "";
     let chunkLength = 0;
@@ -1231,6 +1254,7 @@ export class LoroText extends LoroContainer {
   }
 
   iter(callback: (chunk: string) => boolean | void | null): void {
+    this._ensureHydrated();
     let chunk: string[] = [];
     let previous: TextElement | undefined;
     let stopped = false;
@@ -1387,6 +1411,7 @@ export class LoroText extends LoroContainer {
   }
 
   sliceDelta(start: number, end: number): Delta<string>[] {
+    this._ensureHydrated();
     validateRange(start, end - start, this.length);
     const unicodeStart = this._unicodePosition(start);
     const unicodeEnd = this._unicodePosition(end);
@@ -1397,6 +1422,7 @@ export class LoroText extends LoroContainer {
   }
 
   sliceDeltaUtf8(start: number, end: number): Delta<string>[] {
+    this._ensureHydrated();
     const utf16Start = this.convertPos(start, "utf8", "utf16");
     const utf16End = this.convertPos(end, "utf8", "utf16");
     if (utf16Start === undefined || utf16End === undefined) {
@@ -1406,6 +1432,7 @@ export class LoroText extends LoroContainer {
   }
 
   convertPos(index: number, from: TextPosType, to: TextPosType): number | undefined {
+    this._ensureHydrated();
     if (!isTextPosType(from) || !isTextPosType(to)) return undefined;
     const visibleLength = this._sequence.visibleLength;
     const directMetric =
@@ -1467,14 +1494,17 @@ export class LoroText extends LoroContainer {
   }
 
   _visibleElements(): TextElement[] {
+    this._ensureHydrated();
     return this._sequence.visible();
   }
 
   _visibleElementsRange(start: number, end: number): TextElement[] {
+    this._ensureHydrated();
     return this._sequence.visibleRange(start, end);
   }
 
   _visibleElementAt(position: number): TextElement | undefined {
+    this._ensureHydrated();
     return this._sequence.atVisible(position);
   }
 
@@ -1668,6 +1698,7 @@ export class LoroText extends LoroContainer {
   }
 
   _validateInsertPosition(position: number): number {
+    this._ensureHydrated();
     const unicodePosition = this.convertPos(position, "utf16", "unicode");
     if (unicodePosition === undefined) {
       throw new RangeError(`text position ${position} is out of range`);
@@ -1676,6 +1707,7 @@ export class LoroText extends LoroContainer {
   }
 
   _unicodePosition(position: number): number {
+    this._ensureHydrated();
     const unicodePosition = this.convertPos(position, "utf16", "unicode");
     if (unicodePosition === undefined) {
       throw new RangeError(`text position ${position} is not on a UTF-16 boundary`);
@@ -1865,6 +1897,7 @@ export class LoroCounter extends LoroContainer {
   }
 
   increment(value: number): void {
+    this._ensureHydrated();
     if (!Number.isFinite(value)) throw new TypeError("counter increment must be finite");
     if (this._doc === undefined) {
       this._value += value;
@@ -1878,14 +1911,17 @@ export class LoroCounter extends LoroContainer {
   }
 
   get value(): number {
+    this._ensureHydrated();
     return this._value;
   }
 
   getValue(): number {
+    this._ensureHydrated();
     return this._value;
   }
 
   toJSON(): number {
+    this._ensureHydrated();
     return this._value;
   }
 
@@ -1929,23 +1965,27 @@ export class LoroTree<
   }
 
   createNode(parent?: TreeID, index?: number): LoroTreeNode<T> {
+    this._ensureHydrated();
     if (this._doc === undefined)
       throw new Error("tree nodes can only be created on an attached tree");
     return this._doc._treeCreate(this, parent, index);
   }
 
   move(target: TreeID, parent?: TreeID, index?: number): void {
+    this._ensureHydrated();
     if (this._doc === undefined)
       throw new Error("tree nodes can only be moved on an attached tree");
     this._doc._treeMove(this, target, parent, index);
   }
 
   delete(target: TreeID): void {
+    this._ensureHydrated();
     if (this._doc === undefined) return;
     this._doc._treeDelete(this, target);
   }
 
   has(target: TreeID): boolean {
+    this._ensureHydrated();
     return this._nodes.has(target);
   }
 
@@ -1954,6 +1994,7 @@ export class LoroTree<
   }
 
   isNodeDeleted(target: TreeID): boolean {
+    this._ensureHydrated();
     return this._nodes.get(target)?.deleted ?? false;
   }
 
@@ -1973,11 +2014,13 @@ export class LoroTree<
   }
 
   getNodeByID(target: TreeID): LoroTreeNode<T> | undefined {
+    this._ensureHydrated();
     const record = this._nodes.get(target);
     return record === undefined ? undefined : new LoroTreeNode(this, record.id);
   }
 
   getNodes(options: { withDeleted?: boolean } = {}): LoroTreeNode<T>[] {
+    this._ensureHydrated();
     return [...this._nodes.values()]
       .filter((record) => options.withDeleted === true || !record.deleted)
       .map((record) => new LoroTreeNode<T>(this, record.id));
@@ -1988,18 +2031,21 @@ export class LoroTree<
   }
 
   roots(): LoroTreeNode<T>[] {
+    this._ensureHydrated();
     return this._childrenOf(undefined).map(
       (record) => new LoroTreeNode<T>(this, record.id),
     );
   }
 
   toArray(): TreeNodeValue<T>[] {
+    this._ensureHydrated();
     return this._childrenOf(undefined).map(
       (record, index) => this._recordToNodeValue(record, index) as TreeNodeValue<T>,
     );
   }
 
   toJSON(): TreeJsonValue<T>[] {
+    this._ensureHydrated();
     return this._childrenOf(undefined).map(
       (record, index) => this._recordToValue(record, index) as TreeJsonValue<T>,
     );
@@ -2012,6 +2058,7 @@ export class LoroTree<
   }
 
   _childrenOf(parent: CodecId | undefined): TreeNodeRecord[] {
+    this._ensureHydrated();
     return this._children.get(treeParentKey(parent))?.values() ?? [];
   }
 

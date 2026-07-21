@@ -1040,6 +1040,46 @@ describe("loro-wasm-compatible runtime", () => {
     expect(target.changeCount()).toBe(source.changeCount());
   });
 
+  test("edits and re-exports lazy snapshot state without hydrating siblings", () => {
+    const source = new LoroDoc();
+    source.setPeerId(7);
+    const root = source.getMap("root");
+    for (let index = 0; index < 200; index += 1) {
+      const child = root.setContainer(`child-${index}`, new LoroMap());
+      child.set("value", index);
+    }
+    source.commit();
+    const snapshotVersion = source.version();
+    const snapshot = source.export({ mode: "snapshot" });
+
+    const target = LoroDoc.fromSnapshot(snapshot);
+    snapshot.fill(0);
+    const child = target.getMap("root").get("child-123");
+    expect(child).toBeInstanceOf(LoroMap);
+    (child as LoroMap).set("local", true);
+    target.commit();
+
+    source.getMap("root").set("remote", true);
+    source.commit();
+    target.import(source.export({ mode: "update", from: snapshotVersion }));
+
+    const restoredFromUpdate = new LoroDoc();
+    restoredFromUpdate.import(target.export({ mode: "update" }));
+    expect(restoredFromUpdate.getMap("root").get("remote")).toBe(true);
+    expect(
+      (restoredFromUpdate.getMap("root").get("child-123") as LoroMap).toJSON(),
+    ).toEqual({ local: true, value: 123 });
+
+    const restored = LoroDoc.fromSnapshot(target.export({ mode: "snapshot" }));
+    expect(restored.getMap("root").get("remote")).toBe(true);
+    expect((restored.getMap("root").get("child-123") as LoroMap).toJSON()).toEqual({
+      local: true,
+      value: 123,
+    });
+    expect(restored.getMap("root").get("child-122")).toBeInstanceOf(LoroMap);
+    expect(target.getAllChanges().size).toBeGreaterThan(0);
+  });
+
   test("materializes a snapshot before local edits without repeating first-peer events", () => {
     const source = new LoroDoc();
     source.setPeerId(7);

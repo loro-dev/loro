@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-18.
+Verified against code 2026-07-21.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -102,12 +102,20 @@ JavaScript constant factor.
 - Snapshot SSTables choose interoperable LZ4 blocks when they reduce size.
   DeltaRLE state columns encode and decode as streams rather than allocating
   million-item BigInt intermediates, and LZ4 decode writes into typed storage.
-  Importing an initial latest-state snapshot hydrates current containers and
-  validates its frontier blocks immediately, while retaining the other owned
-  history blocks in encoded form. A history query, edit, checkout, export, or
-  later update builds and validates all history indexes once on a staging
-  document before installing them; current reads, version, frontiers, and
-  operation count do not force that work.
+  Importing an initial latest-state snapshot validates every state entry and
+  frontier block immediately, but retains current state as an owned encoded
+  SSTable. Root containers are hydrated at import; referenced descendants are
+  decoded one SSTable block at a time when first accessed. Untouched blocks are
+  copied directly during snapshot export, while dirty container entries are
+  locally rewritten. The encoded history remains a read-only base and later
+  local or imported changes use a small materialized overlay. Local edits, full
+  update export, latest snapshot export, current reads, version, frontiers, and
+  operation count therefore do not build the complete history DAG. Historical
+  queries, checkout, partial-range export, and other APIs requiring arbitrary
+  dependency traversal still build and validate all history indexes once on a
+  staging document before installing them. Import subscribers retain eager
+  state hydration because their import event must describe every changed
+  container.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
@@ -129,6 +137,28 @@ with:
 ```sh
 pnpm --dir loro-js bench:complexity -- 1000,2000,4000,8000
 ```
+
+Measure a real latest-state snapshot through import, a local Map edit, a remote
+update import, full update export, and snapshot export with:
+
+```sh
+pnpm --dir loro-js bench:snapshot-memory -- /path/to/document.snapshot
+```
+
+For the 11,387,982-byte ProCloud document with 423,797 operations and 115,147
+containers, Node 26.4.0 reports 70.92 MiB RSS after loading the input and a
+160.70 MiB process peak after snapshot export: an 89.78 MiB incremental peak.
+Used JS heap peaks at 8.58 MiB. Snapshot import takes about 0.90 seconds, the
+local commit about 1.9 ms, full update export about 6.6 ms, and snapshot export
+about 57 ms on the measured Apple M5 Pro. Before lazy state and history-overlay
+integration, the same workflow retained roughly 703 MiB heap immediately after
+import, exceeded 860 MiB after the first local edit, and reached roughly 1.66 GB
+RSS during snapshot export.
+
+The ordinary fully materialized snapshot path remains neutral in a same-machine
+A/B check. After three warmups, two 15-sample B4 snapshot-export runs measured
+110.5/107.0 ms medians at the parent revision and 107.7/107.7 ms with lazy
+snapshots. Both revisions emitted the same 309,780-byte snapshot.
 
 On an Apple M5 Pro with Node 26.4.0, the complete 259,778-action B4 trace now
 applies in a 353.5 ms three-sample median (351.8–354.9 ms samples) and finishes
