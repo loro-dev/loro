@@ -1,5 +1,6 @@
 ---
 "loro-crdt": minor
+"loro-js": minor
 ---
 
 Add `pause()`, `resume()`, and `isPaused()` to `UndoManager`. While paused,
