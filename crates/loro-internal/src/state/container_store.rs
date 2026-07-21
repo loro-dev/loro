@@ -120,11 +120,7 @@ impl ContainerStore {
         &mut self,
         idx: ContainerIdx,
     ) -> LoroResult<Option<LoroValue>> {
-        self.store
-            .try_with_container_for_ephemeral_read(idx, |c| {
-                c.try_get_value_ephemeral(idx, ctx!(self))
-            })
-            .and_then(|value| value.transpose())
+        self.store.try_get_value_ephemeral(idx, ctx!(self))
     }
 
     pub(crate) fn try_get_parent_and_value_ephemeral(
@@ -573,12 +569,11 @@ mod test {
 
         let mut state = imported.app_state().lock();
         let map_idx = state.store.arena.register_container(&map_id);
-        assert!(state.alive_containers_cache.is_some());
         assert!(!state.store.store.has_cached_value_for_test(map_idx));
     }
 
     #[test]
-    fn snapshot_export_alive_cache_tracks_empty_root_without_version_change() {
+    fn snapshot_export_includes_empty_root_without_version_change() {
         let doc = LoroDoc::new_auto_commit();
         doc.get_map("first");
         doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
@@ -596,7 +591,7 @@ mod test {
     }
 
     #[test]
-    fn snapshot_export_alive_cache_tracks_new_empty_child() {
+    fn snapshot_export_includes_new_empty_child() {
         let doc = LoroDoc::new_auto_commit();
         let root = doc.get_map("root");
         root.insert("value", 1).unwrap();
@@ -611,6 +606,94 @@ mod test {
         round_tripped.import(&snapshot).unwrap();
         let mut state = round_tripped.app_state().lock();
         assert!(state.store.contains_id(&child_id));
+    }
+
+    /// An empty child created by a remote peer has no ops of its own, so the importer only
+    /// applies the parent's diff. The diff-apply hook must still create a store entry for the
+    /// child, or the importer's own full snapshot would silently drop it.
+    #[test]
+    fn snapshot_export_includes_remote_empty_child() {
+        let a = LoroDoc::new_auto_commit();
+        let map_child_id = a
+            .get_map("map")
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap()
+            .id();
+        let list_child_id = a
+            .get_list("list")
+            .insert_container(0, ListHandler::new_detached())
+            .unwrap()
+            .id();
+        let movable_child_id = a
+            .get_movable_list("movable")
+            .insert_container(0, MovableListHandler::new_detached())
+            .unwrap()
+            .id();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        assert_eq!(a.get_deep_value(), c.get_deep_value());
+        let mut state = c.app_state().lock();
+        for id in [&map_child_id, &list_child_id, &movable_child_id] {
+            assert!(state.store.contains_id(id), "missing {id:?}");
+        }
+    }
+
+    /// A remote tree node's associated meta map has no ops until someone writes metadata; the
+    /// tree diff's `Create` action must ensure its store entry on the importer.
+    #[test]
+    fn snapshot_export_includes_remote_tree_meta() {
+        let a = LoroDoc::new_auto_commit();
+        let node = a.get_tree("tree").create(TreeParentId::Root).unwrap();
+        let meta_id = node.associated_meta_container();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        let mut state = c.app_state().lock();
+        assert!(state.store.contains_id(&meta_id));
+    }
+
+    /// An ensured-but-empty mergeable child has no store entry anywhere — the parent map's
+    /// marker is its single source of truth. A full snapshot round-trip through an importer
+    /// must keep the child resolvable by id without materializing an entry for it.
+    #[test]
+    fn snapshot_export_keeps_empty_marker_child_resolvable_without_entry() {
+        let a = LoroDoc::new_auto_commit();
+        let child_id = a
+            .get_map("state")
+            .ensure_mergeable_text("notes")
+            .unwrap()
+            .id();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        let mut state = c.app_state().lock();
+        assert!(!state.store.contains_id(&child_id));
+        assert!(
+            state.does_container_exist(&child_id),
+            "empty mergeable child must resolve from the marker after round-trip"
+        );
     }
 
     #[test]
@@ -653,8 +736,10 @@ mod test {
         let target = LoroDoc::new();
         target.import(&updates).unwrap();
         {
+            // The diff-apply hook creates the empty child's store entry at import time; full
+            // snapshot export relies on this invariant instead of walking the alive graph.
             let mut state = target.app_state().lock();
-            assert!(!state.store.contains_id(&child_id));
+            assert!(state.store.contains_id(&child_id));
         }
 
         let snapshot = target

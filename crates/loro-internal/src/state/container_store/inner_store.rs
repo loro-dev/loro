@@ -191,6 +191,32 @@ impl InnerStore {
         Ok(None)
     }
 
+    /// Read a container's current value without retaining a wrapper loaded only for this read.
+    ///
+    /// Mirrors [`Self::try_get_parent_and_value_ephemeral`]: routing the kv branch through
+    /// `ContainerWrapper::try_get_value_ephemeral` would clone the bytes into a second temporary
+    /// wrapper, so decode the already-temporary wrapper in place instead.
+    pub(crate) fn try_get_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext<'_>,
+    ) -> LoroResult<Option<LoroValue>> {
+        if let Some(entry) = self.get_entry_mut(idx) {
+            return entry.try_get_value_ephemeral(idx, ctx).map(Some);
+        }
+
+        if self.load_state != LoadState::AllLoaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(bytes) = self.kv.get(&key) {
+                let mut container = ContainerWrapper::try_new_from_bytes(bytes)?;
+                return container.try_get_value(idx, ctx).map(Some);
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Read a container's encoded parent and current value together without retaining a wrapper
     /// loaded only for this read.
     ///

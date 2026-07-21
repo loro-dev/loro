@@ -315,14 +315,16 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Result<Snapshot, LoroEncod
             .unwrap();
         state = doc.app_state().lock();
     }
-    let snapshot = match state.ensure_all_alive_containers() {
-        Ok(_) => Ok(Snapshot {
-            oplog_bytes,
-            state_bytes: Some(state.store.encode()),
-            shallow_root_state_bytes: Bytes::new(),
-        }),
-        Err(err) => Err(LoroEncodeError::from(err)),
-    };
+    // Every container referenced by applied ops/diffs already has a store entry
+    // (`ensure_containers_created_by_op` / `ensure_containers_created_by_internal_diff`), so a
+    // full snapshot does not need to walk the alive-container graph: flushing the store and
+    // exporting the kv bytes is sufficient, and it keeps snapshot-backed state lazy. Only
+    // shallow snapshot export still derives the alive set (to filter retained keys).
+    let snapshot: Result<Snapshot, LoroEncodeError> = Ok(Snapshot {
+        oplog_bytes,
+        state_bytes: Some(state.store.encode()),
+        shallow_root_state_bytes: Bytes::new(),
+    });
     if was_detached {
         drop(state);
         doc._checkout_without_emitting(&old_state_frontiers, false, true)
@@ -441,7 +443,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_export_rejects_lazy_child_parent_conflict() {
+    fn full_export_round_trips_lazy_child_parent_conflict_but_shallow_rejects() {
         fn doc_with_child(root: &str) -> (LoroDoc, loro_common::ContainerID) {
             let doc = LoroDoc::new_auto_commit();
             doc.set_peer_id(42).unwrap();
@@ -481,14 +483,24 @@ mod tests {
         )
         .unwrap();
 
-        let err = target
+        // Full snapshot export is a byte-faithful round-trip of the imported kv and does not
+        // re-derive the container graph, so it must succeed even with conflicting lazy parent
+        // metadata. The alive-container walk (and its validation) now only runs for shallow
+        // exports, which must still reject the conflict.
+        let reexported = target
             .export(ExportMode::Snapshot)
-            .expect_err("conflicting lazy parent metadata must not be exported");
+            .expect("full export round-trips lazy state without walking it");
+        let reimported = LoroDoc::new();
+        reimported.import(&reexported).unwrap();
+
+        let err = target
+            .export(ExportMode::StateOnly(None))
+            .expect_err("shallow export walks the graph and must reject the conflict");
         assert!(err.to_string().contains("snapshot state encodes parent"));
     }
 
     #[test]
-    fn snapshot_export_rejects_malformed_lazy_container_wrapper() {
+    fn full_export_round_trips_malformed_lazy_wrapper_but_shallow_rejects() {
         let source = LoroDoc::new_auto_commit();
         source.get_map("root").insert("value", 1).unwrap();
         let mut sections = snapshot_sections(&source);
@@ -512,9 +524,16 @@ mod tests {
         )
         .unwrap();
 
-        let err = target
+        // Full snapshot export no longer decodes lazy wrappers, so the malformed entry is
+        // round-tripped as-is; the error surfaces where the wrapper is actually read, e.g. the
+        // shallow-export walk.
+        target
             .export(ExportMode::Snapshot)
-            .expect_err("malformed lazy state must return an export error");
+            .expect("full export round-trips lazy state without decoding it");
+
+        let err = target
+            .export(ExportMode::StateOnly(None))
+            .expect_err("shallow export decodes the wrapper and must return an error");
         assert!(err.to_string().contains("Decode container state failed"));
     }
 }

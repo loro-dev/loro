@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-07-20.
+Verified against code 2026-07-21.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -84,30 +84,37 @@ document. If a snapshot is imported into a non-empty document,
 `LoroDoc::_import_with` routes through decoded oplog changes instead. Failed
 direct snapshot import must reset both state and oplog.
 
-Default snapshot export must still persist alive empty child containers, but it
-must not materialize the full lazy state store to find them. The alive walk in
-`DocState::get_all_alive_containers` registers root keys, reads snapshot-backed
-values ephemerally (via `try_get_value_ephemeral`, which never caches the
-decoded value or retains a probe-only wrapper), and only inserts a wrapper when
-an alive container has no KV entry. Shallow snapshot retention reuses the same
-complete alive set of arena indices. Do not replace this with
-`InnerStore::load_all` or cache every decoded value: documents with many
-small/deleted containers retain that memory for the rest of the WASM instance.
-`DocState::ensure_all_alive_containers` may retain only the resulting set of
-arena indices after a successful walk, capped at an estimated 4 MiB. It reuses
-that set while both the state frontiers and the existing retention-root list
-are unchanged, bypasses the cache during a transaction, and drops an obsolete
-set before constructing its replacement. The root-list part is required
-because obtaining a new empty top-level root does not advance the CRDT version.
-The walk also reads an uncached container's encoded parent and value through one
-temporary wrapper, so a single export does not probe the same lazy KV entry
-twice. Neither cache retains decoded container values.
-Decompressed SSTable blocks are bounded separately by the kv-store's
-byte-weighted block cache (`BLOCK_CACHE_MAX_BYTES` in `sstable.rs`), so the walk
-uses plain cached reads. The walk reads each present wrapper's parent header
-and checks it against the reachable edge (or a mergeable ID's intrinsic edge).
-Conflicting external state must return an export error; an alive empty child
-with no wrapper may inherit the edge that made it reachable.
+Default snapshot export does not walk the alive-container graph. It relies on a
+write-time invariant: every container brought alive by an applied op or diff
+gets a store entry when the reference is applied
+(`DocState::ensure_containers_created_by_op` for local ops,
+`DocState::ensure_containers_created_by_internal_diff` for imported/checkout
+diffs — this covers empty children that have no ops of their own and therefore
+no diff, plus tree `Create` meta maps). Full export is then `flush` + KV export:
+byte-faithful, never decodes lazy wrappers, and never materializes state, so a
+malformed imported entry round-trips instead of erroring (validation happens
+where the wrapper is actually read). Ensured-but-empty mergeable children are
+deliberately NOT materialized — the parent map's marker is their single source
+of truth and `has_container` must stop resolving them when the marker is
+removed (`loro_get_container_for_deleted_mergeable_children`).
+
+Shallow snapshot export still needs the complete alive set for its
+`retain_keys` filter. The alive walk in `DocState::ensure_all_alive_containers`
+registers root keys, reads snapshot-backed values ephemerally (via
+`try_get_value_ephemeral`, which never caches the decoded value or retains a
+probe-only wrapper), and only inserts a wrapper when an alive container has no
+KV entry. Do not replace this with `InnerStore::load_all` or cache every
+decoded value: documents with many small/deleted containers retain that memory
+for the rest of the WASM instance. The walk may retain only the resulting set
+of arena indices, capped at an estimated 4 MiB, reused while both the state
+frontiers and the existing retention-root list are unchanged (an empty
+top-level root does not advance the CRDT version), bypassed during a
+transaction. The walk reads an uncached container's encoded parent and value
+through one temporary wrapper, checks the parent header against the reachable
+edge (or a mergeable ID's intrinsic edge), and returns an export error on
+conflicting external state. Decompressed SSTable blocks are bounded separately
+by the kv-store's byte-weighted block cache (`BLOCK_CACHE_MAX_BYTES` in
+`sstable.rs`).
 
 `Snapshot::encoded_len` is available after the three section `Bytes` values are
 created. The default exporter uses it to reserve the final envelope once; keep

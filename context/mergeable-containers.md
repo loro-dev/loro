@@ -1,6 +1,6 @@
 # Mergeable Container Context
 
-Verified against code 2026-06-16.
+Verified against code 2026-07-21.
 
 Mergeable containers let two peers independently create the same child container
 under a map key and converge to one deterministic container id. The source of
@@ -81,10 +81,13 @@ rewrites the marker.
 
 ## Snapshot And Retention Rules
 
-Snapshot and shallow snapshot alive-container walks must preserve mergeable child
-state even when that child is hidden by a different winning marker. This is
-covered by `tests/mergeable_container/snapshot.rs`, including shallow snapshot
-tests for losing-kind state.
+Snapshot and shallow snapshot export must preserve mergeable child state even
+when that child is hidden by a different winning marker (full export keeps every
+flushed KV entry; the shallow alive walk retains them explicitly). An
+ensured-but-empty mergeable child has no KV entry of its own: full export omits
+it and importers resolve it from the parent map's marker. This is covered by
+`tests/mergeable_container/snapshot.rs`, including shallow snapshot tests for
+losing-kind state.
 
 Raw marker bytes are the wire/storage representation. Public read and diff
 surfaces should translate an active marker to a container value. APIs that expose

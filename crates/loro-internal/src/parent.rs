@@ -4,13 +4,14 @@
 //!
 //!
 
-use loro_common::LoroValue;
+use loro_common::{ContainerID, LoroValue};
+use smallvec::SmallVec;
 
 use crate::{
     arena::SharedArena,
     change::Change,
     container::{list::list_op::ListOp, map::MapSet},
-    op::{ListSlice, RawOp, RawOpContent},
+    op::{ListSlice, Op, RawOp, RawOpContent},
     DocState, OpLog,
 };
 
@@ -83,6 +84,27 @@ impl DocState {
             #[cfg(feature = "counter")]
             RawOpContent::Counter(_) => {}
             RawOpContent::Unknown { .. } => {}
+        }
+    }
+
+    /// Create store entries for the containers this local op brings alive.
+    ///
+    /// Full snapshot export no longer walks the alive-container graph, so "every referenced
+    /// container has a store entry" must hold by construction: an empty child inserted via
+    /// `insert_container` would otherwise only exist inside its parent's value and be skipped
+    /// by `flush`.
+    ///
+    /// Mergeable markers are deliberately NOT handled here: an ensured-but-empty mergeable
+    /// child has no independent existence — the parent map's marker is its single source of
+    /// truth, and materializing a store entry for it would keep `has_container` true after the
+    /// marker is removed (see `loro_get_container_for_deleted_mergeable_children`).
+    pub(super) fn ensure_containers_created_by_op(&mut self, op: &Op) {
+        let mut to_ensure: SmallVec<[ContainerID; 2]> = SmallVec::new();
+        op.content
+            .visit_created_children(&self.arena, &mut |c| to_ensure.push(c.clone()));
+
+        for id in to_ensure {
+            self.ensure_container(&id);
         }
     }
 }

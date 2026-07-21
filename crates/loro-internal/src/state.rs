@@ -11,6 +11,7 @@ use enum_dispatch::enum_dispatch;
 use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tracing::{info_span, instrument, warn};
 
 use crate::{
@@ -747,7 +748,8 @@ impl DocState {
                         diff.diff = extern_diff.into();
                     }
                 }
-                crate::event::DiffVariant::Internal(_) => {
+                crate::event::DiffVariant::Internal(inner_diff) => {
+                    self.ensure_containers_created_by_internal_diff(inner_diff);
                     let cid = self.arena.idx_to_id(idx).unwrap();
                     info_span!("apply diff on", container_id = ?cid).in_scope(
                         || -> LoroResult<()> {
@@ -846,6 +848,72 @@ impl DocState {
         Ok(())
     }
 
+    /// Create store entries for every container this diff brings alive.
+    ///
+    /// Full snapshot export no longer walks the alive-container graph to discover containers
+    /// that exist only as references inside another container's value (e.g. an empty child
+    /// created by a remote peer, whose own container has no ops and therefore no diff). Such
+    /// entries must be created when the reference is applied so the next flush persists them.
+    fn ensure_containers_created_by_internal_diff(&mut self, diff: &InternalDiff) {
+        let mut to_ensure: SmallVec<[ContainerID; 2]> = SmallVec::new();
+        match diff {
+            InternalDiff::ListRaw(delta) => {
+                for item in delta.iter() {
+                    if let crate::delta::DeltaItem::Insert { insert, .. } = item {
+                        match &insert.values {
+                            either::Either::Left(range) => {
+                                for value in self.arena.iter_value_slice(range.to_range()) {
+                                    if let LoroValue::Container(c) = value {
+                                        to_ensure.push(c);
+                                    }
+                                }
+                            }
+                            either::Either::Right(LoroValue::Container(c)) => {
+                                to_ensure.push(c.clone())
+                            }
+                            either::Either::Right(_) => {}
+                        }
+                    }
+                }
+            }
+            InternalDiff::Map(delta) => {
+                // Mergeable markers are deliberately not materialized here: the parent map's
+                // marker is the single source of truth for an ensured-but-empty mergeable
+                // child, and it resolves lazily via `does_container_exist`/`get_reachable`.
+                for value in delta.updated.values() {
+                    let Some(Some(value)) = value.as_ref().map(|v| v.value.as_ref()) else {
+                        continue;
+                    };
+                    if let LoroValue::Container(c) = value {
+                        to_ensure.push(c.clone());
+                    }
+                }
+            }
+            InternalDiff::Tree(delta) => {
+                for item in delta.diff.iter() {
+                    if matches!(item.action, crate::delta::TreeInternalDiff::Create { .. }) {
+                        to_ensure.push(item.target.associated_meta_container());
+                    }
+                }
+            }
+            InternalDiff::MovableList(delta) => {
+                for elem in delta.elements.values() {
+                    if let LoroValue::Container(c) = &elem.value {
+                        to_ensure.push(c.clone());
+                    }
+                }
+            }
+            InternalDiff::RichtextRaw(_) => {}
+            #[cfg(feature = "counter")]
+            InternalDiff::Counter(_) => {}
+            InternalDiff::Unknown => {}
+        }
+
+        for id in to_ensure {
+            self.ensure_container(&id);
+        }
+    }
+
     fn validate_diff_batch(&mut self, diffs: &[InternalContainerDiff]) -> LoroResult<()> {
         for diff in diffs {
             let crate::event::DiffVariant::Internal(internal_diff) = &diff.diff else {
@@ -865,6 +933,7 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_raw_op(raw_op);
+        self.ensure_containers_created_by_op(op);
         let state = self.store.get_or_create_mut(op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
@@ -938,11 +1007,15 @@ impl DocState {
     }
 
     /// Ensure all alive containers are created in DocState and will be encoded in the next
-    /// `encode` call.
+    /// `encode` call, and return the alive set.
     ///
-    /// Returns arena indices rather than IDs so the full-snapshot export path does not have to
-    /// hold a second set of cloned container IDs; callers that need IDs map them through the
-    /// arena.
+    /// Only shallow snapshot export needs this now (its `retain_keys` filter requires the alive
+    /// set). Full snapshot export relies on the write-time invariant maintained by
+    /// `ensure_containers_created_by_op` / `ensure_containers_created_by_internal_diff` instead
+    /// of walking the graph.
+    ///
+    /// Returns arena indices rather than IDs so callers do not have to hold a second set of
+    /// cloned container IDs; callers that need IDs map them through the arena.
     pub(crate) fn ensure_all_alive_containers(
         &mut self,
     ) -> LoroResult<Arc<FxHashSet<ContainerIdx>>> {
