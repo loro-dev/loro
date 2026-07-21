@@ -1,13 +1,13 @@
-# loro-js
+# loro.js
 
-`loro-js` is an experimental, pure TypeScript implementation of the current Loro
+`loro.js` is an experimental, pure TypeScript implementation of the current Loro
 binary format and CRDT runtime. It targets wire and API compatibility with
 [`loro-crdt`](https://www.npmjs.com/package/loro-crdt) without loading WebAssembly.
 
 The package has no asynchronous initialization step and exposes two entry points:
 
-- `loro-js`: the `LoroDoc` runtime and container APIs.
-- `loro-js/codec`: low-level binary format readers and writers.
+- `loro.js`: the `LoroDoc` runtime and container APIs.
+- `loro.js/codec`: low-level binary format readers and writers.
 
 The published ESM output targets ES2022. Consumers need a runtime or bundler
 that supports ES2022 syntax and built-ins.
@@ -15,13 +15,13 @@ that supports ES2022 syntax and built-ins.
 ## Install
 
 ```sh
-pnpm add loro-js
+pnpm add loro.js
 ```
 
 ## Synchronize documents
 
 ```ts
-import { LoroDoc } from "loro-js";
+import { LoroDoc } from "loro.js";
 
 const alice = new LoroDoc();
 alice.setPeerId(1);
@@ -52,7 +52,7 @@ import {
   decodeFastUpdates,
   encodeChangeBlock,
   encodeFastUpdates,
-} from "loro-js/codec";
+} from "loro.js/codec";
 
 const blocks = decodeFastUpdates(bytes);
 const rewritten = encodeFastUpdates(

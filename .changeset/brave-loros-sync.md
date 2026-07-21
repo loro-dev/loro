@@ -1,5 +1,5 @@
 ---
-"loro-js": minor
+"loro.js": minor
 ---
 
 Add a pure TypeScript implementation of the current Loro binary format and a

@@ -1,5 +1,5 @@
 ---
-"loro-js": minor
+"loro.js": minor
 ---
 
 Improve pure TypeScript runtime performance for merged changes, concurrent

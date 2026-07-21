@@ -1,5 +1,5 @@
 ---
-"loro-js": patch
+"loro.js": patch
 ---
 
 Keep large latest-state snapshots encoded and hydrate containers on demand.

@@ -17,7 +17,7 @@
     "coverage": "mkdir -p coverage && cargo llvm-cov nextest --features test_utils,jsonpath --lcov > coverage/lcov-nextest.info && cargo llvm-cov report",
     "release-wasm": "deno run -A ./scripts/sync-loro-version.ts && cd crates/loro-wasm && pnpm i && pnpm build-release",
     "ci-release-wasm-version": "pnpm changeset version && deno run -A ./scripts/sync-loro-version.ts",
-    "ci-release-wasm-publish": "pnpm release-wasm && pnpm --filter loro-js build && node ./scripts/publish-wasm-packages.mjs",
+    "ci-release-wasm-publish": "pnpm release-wasm && pnpm --filter loro.js build && node ./scripts/publish-wasm-packages.mjs",
     "check": "cargo clippy --all-features -- -Dwarnings",
     "test-rsbuild": "pnpm --dir examples/test-rsbuild install --ignore-workspace --prefer-offline && pnpm --filter loro-test-rsbuild build",
     "test-esbuild": "pnpm --dir examples/test-esbuild install --ignore-workspace --prefer-offline && pnpm --filter loro-test-esbuild serve",
