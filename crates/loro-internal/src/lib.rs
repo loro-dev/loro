@@ -40,7 +40,7 @@ pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;
-pub use undo::UndoManager;
+pub use undo::{UndoManager, UndoScope};
 pub use utils::subscription::SubscriberSetWithQueue;
 pub use utils::subscription::Subscription;
 pub mod allocation;
