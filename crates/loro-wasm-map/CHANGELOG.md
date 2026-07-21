@@ -1,5 +1,11 @@
 # loro-crdt-map
 
+## 1.13.8
+
+### Patch Changes
+
+- 033f43a: Keep the source-map package changelog aligned with the matching `loro-crdt` release.
+
 ## 1.13.7
 
 ### Patch Changes
