@@ -1,9 +1,13 @@
 use crate::{
-    arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
-    state::container_store::FRONTIERS_KEY, utils::kv_wrapper::KvWrapper, version::Frontiers,
+    arena::SharedArena,
+    configure::Configure,
+    container::idx::ContainerIdx,
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
+    utils::kv_wrapper::KvWrapper,
+    version::Frontiers,
 };
 use bytes::Bytes;
-use loro_common::{ContainerID, LoroResult};
+use loro_common::{ContainerID, LoroResult, LoroValue};
 
 use super::ContainerWrapper;
 
@@ -181,6 +185,39 @@ impl InnerStore {
             if let Some(v) = self.kv.get(&key) {
                 let mut container = ContainerWrapper::try_new_from_bytes(v)?;
                 return Ok(Some(f(&mut container)));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Read a container's encoded parent and current value together without retaining a wrapper
+    /// loaded only for this read.
+    ///
+    /// The alive-container walk needs both fields. Reading them through two independent probes can
+    /// evict the first SSTable block before the value is requested, and it constructs the same lazy
+    /// wrapper twice. Decode an uncached wrapper in place here and drop it after returning the value.
+    pub(crate) fn try_get_parent_and_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext<'_>,
+    ) -> LoroResult<Option<(Option<ContainerID>, LoroValue)>> {
+        if let Some(entry) = self.get_entry_mut(idx) {
+            let parent = entry.parent().cloned();
+            let value = entry.try_get_value_ephemeral(idx, ctx)?;
+            return Ok(Some((parent, value)));
+        }
+
+        if self.load_state != LoadState::AllLoaded {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let key = id.to_bytes();
+            if let Some(value) = self.kv.get(&key) {
+                let mut container = ContainerWrapper::try_new_from_bytes(value)?;
+                let parent = container.parent().cloned();
+                // This wrapper is already temporary, so decoding into it does not retain state in
+                // the document and avoids constructing another temporary wrapper internally.
+                let value = container.try_get_value(idx, ctx)?;
+                return Ok(Some((parent, value)));
             }
         }
 

@@ -93,6 +93,15 @@ an alive container has no KV entry. Shallow snapshot retention reuses the same
 complete alive set of arena indices. Do not replace this with
 `InnerStore::load_all` or cache every decoded value: documents with many
 small/deleted containers retain that memory for the rest of the WASM instance.
+`DocState::ensure_all_alive_containers` may retain only the resulting set of
+arena indices after a successful walk, capped at an estimated 4 MiB. It reuses
+that set while both the state frontiers and the existing retention-root list
+are unchanged, bypasses the cache during a transaction, and drops an obsolete
+set before constructing its replacement. The root-list part is required
+because obtaining a new empty top-level root does not advance the CRDT version.
+The walk also reads an uncached container's encoded parent and value through one
+temporary wrapper, so a single export does not probe the same lazy KV entry
+twice. Neither cache retains decoded container values.
 Decompressed SSTable blocks are bounded separately by the kv-store's
 byte-weighted block cache (`BLOCK_CACHE_MAX_BYTES` in `sstable.rs`), so the walk
 uses plain cached reads. The walk reads each present wrapper's parent header

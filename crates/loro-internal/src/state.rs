@@ -8,7 +8,6 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use itertools::Itertools;
 use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -171,6 +170,31 @@ pub struct DocState {
     event_recorder: EventRecorder,
 
     dead_containers_cache: DeadContainersCache,
+    alive_containers_cache: Option<AliveContainersCache>,
+}
+
+struct AliveContainersCache {
+    frontiers: Frontiers,
+    roots: Vec<ContainerIdx>,
+    indices: Arc<FxHashSet<ContainerIdx>>,
+}
+
+const ALIVE_CONTAINERS_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+fn estimated_alive_containers_cache_bytes(
+    roots_capacity: usize,
+    indices: &FxHashSet<ContainerIdx>,
+) -> usize {
+    // Hash-table control bytes and alignment are implementation details. A pointer of overhead per
+    // entry is deliberately conservative, so retaining the cache cannot silently become another
+    // form of full-state materialization on documents with very many small containers.
+    roots_capacity
+        .saturating_mul(std::mem::size_of::<ContainerIdx>())
+        .saturating_add(
+            indices
+                .capacity()
+                .saturating_mul(std::mem::size_of::<ContainerIdx>() + std::mem::size_of::<usize>()),
+        )
 }
 
 impl std::fmt::Debug for DocState {
@@ -453,6 +477,7 @@ impl DocState {
                 changed_idx_in_txn: FxHashSet::default(),
                 event_recorder: Default::default(),
                 dead_containers_cache: Default::default(),
+                alive_containers_cache: None,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -477,6 +502,7 @@ impl DocState {
             changed_idx_in_txn: FxHashSet::default(),
             event_recorder: Default::default(),
             dead_containers_cache: Default::default(),
+            alive_containers_cache: None,
         }))
     }
 
@@ -917,12 +943,41 @@ impl DocState {
     /// Returns arena indices rather than IDs so the full-snapshot export path does not have to
     /// hold a second set of cloned container IDs; callers that need IDs map them through the
     /// arena.
-    pub(crate) fn ensure_all_alive_containers(&mut self) -> LoroResult<FxHashSet<ContainerIdx>> {
-        let indices = self.get_all_alive_container_indices()?;
+    pub(crate) fn ensure_all_alive_containers(
+        &mut self,
+    ) -> LoroResult<Arc<FxHashSet<ContainerIdx>>> {
+        let roots = self.existing_retention_roots();
+        if !self.in_txn {
+            if let Some(cache) = &self.alive_containers_cache {
+                if cache.frontiers == self.frontiers && cache.roots == roots {
+                    return Ok(cache.indices.clone());
+                }
+            }
+        }
+        // Do not hold the previous version's set while constructing its replacement.
+        self.alive_containers_cache = None;
+
+        let indices = Arc::new(self.get_all_alive_container_indices_from_roots(&roots)?);
         for idx in indices.iter() {
             let id = self.arena.get_container_id(*idx).unwrap();
             if !self.store.contains_id(&id) {
                 self.store.ensure_container(&id);
+            }
+        }
+
+        if !self.in_txn {
+            // The walk can discover and ensure an empty mergeable child, which registers another
+            // retention root without advancing the document version. Store the post-walk roots so
+            // the next unchanged export can use the cache immediately.
+            let roots = self.existing_retention_roots();
+            if estimated_alive_containers_cache_bytes(roots.capacity(), &indices)
+                <= ALIVE_CONTAINERS_CACHE_MAX_BYTES
+            {
+                self.alive_containers_cache = Some(AliveContainersCache {
+                    frontiers: self.frontiers.clone(),
+                    roots,
+                    indices: indices.clone(),
+                });
             }
         }
 
@@ -1141,6 +1196,7 @@ impl DocState {
             self.start_recording();
         }
         self.dead_containers_cache = Default::default();
+        self.alive_containers_cache = None;
     }
 
     pub fn get_value(&mut self) -> LoroValue {
@@ -1495,24 +1551,45 @@ impl DocState {
     }
 
     fn get_all_alive_container_indices(&mut self) -> LoroResult<FxHashSet<ContainerIdx>> {
+        let roots = self.existing_retention_roots();
+        self.get_all_alive_container_indices_from_roots(&roots)
+    }
+
+    fn existing_retention_roots(&mut self) -> Vec<ContainerIdx> {
         let flag = self.store.load_root_containers();
-        let mut ans = FxHashSet::default();
-        let mut to_visit = self
-            .arena
+        self.arena
             .root_containers(flag)
-            .iter()
-            .copied()
+            .into_iter()
             .filter(|idx| {
                 let id = self.arena.get_container_id(*idx).unwrap();
                 self.store.contains_id(&id)
             })
-            .collect_vec();
+            .collect()
+    }
 
-        while let Some(idx) = to_visit.pop() {
+    fn get_all_alive_container_indices_from_roots(
+        &mut self,
+        roots: &[ContainerIdx],
+    ) -> LoroResult<FxHashSet<ContainerIdx>> {
+        let mut ans = FxHashSet::default();
+        let mut to_visit = Vec::new();
+        for &idx in roots {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let expected_parent = id
+                .parse_mergeable()
+                .map(|(parent_id, _, _)| self.arena.register_container(&parent_id));
+            to_visit.push((idx, expected_parent));
+        }
+
+        while let Some((idx, expected_parent)) = to_visit.pop() {
             if !ans.insert(idx) {
+                // The same child may be referenced by multiple parents. Even though its value was
+                // already traversed, every additional edge still has to agree with the encoded and
+                // registered parent.
+                self.validate_alive_parent(idx, expected_parent)?;
                 continue;
             }
-            self.get_alive_children_of(idx, &mut to_visit)?;
+            self.get_alive_children_of(idx, expected_parent, &mut to_visit)?;
         }
 
         Ok(ans)
@@ -1523,9 +1600,19 @@ impl DocState {
         child_idx: ContainerIdx,
         expected_parent: Option<ContainerIdx>,
     ) -> LoroResult<()> {
+        let encoded_parent = self.store.get_parent_ephemeral(child_idx)?;
+        self.validate_alive_parent_with_encoded(child_idx, expected_parent, encoded_parent)
+    }
+
+    fn validate_alive_parent_with_encoded(
+        &mut self,
+        child_idx: ContainerIdx,
+        expected_parent: Option<ContainerIdx>,
+        encoded_parent: Option<Option<ContainerID>>,
+    ) -> LoroResult<()> {
         let child_id = self.arena.get_container_id(child_idx).unwrap();
         let expected_parent_id = expected_parent.and_then(|idx| self.arena.get_container_id(idx));
-        if let Some(encoded_parent) = self.store.get_parent_ephemeral(child_idx)? {
+        if let Some(encoded_parent) = encoded_parent {
             if encoded_parent != expected_parent_id {
                 return Err(LoroError::DecodeError(
                     format!(
@@ -1558,30 +1645,24 @@ impl DocState {
         &mut self,
         parent_idx: ContainerIdx,
         child_id: &ContainerID,
-        ans: &mut Vec<ContainerIdx>,
-    ) -> LoroResult<()> {
+        ans: &mut Vec<(ContainerIdx, Option<ContainerIdx>)>,
+    ) {
         let child_idx = self.arena.register_container(child_id);
-        self.validate_alive_parent(child_idx, Some(parent_idx))?;
-        ans.push(child_idx);
-        Ok(())
+        ans.push((child_idx, Some(parent_idx)));
     }
 
     fn get_alive_children_of(
         &mut self,
         idx: ContainerIdx,
-        ans: &mut Vec<ContainerIdx>,
+        expected_parent: Option<ContainerIdx>,
+        ans: &mut Vec<(ContainerIdx, Option<ContainerIdx>)>,
     ) -> LoroResult<()> {
-        let id = self.arena.get_container_id(idx).unwrap();
-        if let Some((parent_id, _key, _kind)) = id.parse_mergeable() {
-            let parent_idx = self.arena.register_container(&parent_id);
-            self.validate_alive_parent(idx, Some(parent_idx))?;
-        } else if id.is_root() {
-            self.validate_alive_parent(idx, None)?;
-        }
-
-        let Some(value) = self.store.try_get_value_ephemeral(idx)? else {
+        let Some((encoded_parent, value)) = self.store.try_get_parent_and_value_ephemeral(idx)?
+        else {
+            self.validate_alive_parent_with_encoded(idx, expected_parent, None)?;
             return Ok(());
         };
+        self.validate_alive_parent_with_encoded(idx, expected_parent, Some(encoded_parent))?;
 
         match value {
             LoroValue::Container(_) => unreachable!(),
@@ -1596,7 +1677,7 @@ impl DocState {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();
                         let id = meta.as_container().unwrap();
-                        self.register_alive_child(idx, id, ans)?;
+                        self.register_alive_child(idx, id, ans);
                         let children = map.get("children").unwrap();
                         let children = children.as_list().unwrap();
                         for child in children.iter() {
@@ -1606,7 +1687,7 @@ impl DocState {
                 } else {
                     for item in list.iter() {
                         if let LoroValue::Container(id) = item {
-                            self.register_alive_child(idx, id, ans)?;
+                            self.register_alive_child(idx, id, ans);
                         }
                     }
                 }
@@ -1614,7 +1695,7 @@ impl DocState {
             LoroValue::Map(map) => {
                 for (_key, value) in map.iter() {
                     if let LoroValue::Container(id) = value {
-                        self.register_alive_child(idx, id, ans)?;
+                        self.register_alive_child(idx, id, ans);
                     }
                 }
                 // Mergeable children are resolved from compact binary markers stored in this
@@ -1635,7 +1716,7 @@ impl DocState {
                     })
                     .unwrap_or_default();
                 for cid in mergeable_cids {
-                    self.register_alive_child(idx, &cid, ans)?;
+                    self.register_alive_child(idx, &cid, ans);
                 }
             }
             _ => {}
