@@ -655,6 +655,76 @@ impl Tracker {
         None
     }
 
+    /// Seam-rank of an insertion id, read straight off a settled tracker in
+    /// O(log n): the number of activated (live) entities ordered strictly before
+    /// the id, plus the id's own within-leaf offset when it is still live.
+    ///
+    /// This is the settled-tracker analogue of
+    /// [`Self::get_target_id_latest_index_at_new_version`]. That method scans
+    /// every span and reads the mid-diff `is_activated_in_diff` status, because
+    /// its callers run while a diff is in flight; this method instead reads the
+    /// apply-time `Cache.len` prefix sum via the b-tree and is correct only on a
+    /// tracker settled at a single version (no diff in progress). On such a
+    /// tracker the two agree entity-for-entity.
+    ///
+    /// A live id yields `Side::Middle` at its live index; a tombstoned id yields
+    /// `Side::Left` at the seam index. Returns `None` for any id the rope cannot
+    /// resolve (unknown, foreign, deletion fragment, out of range); never panics.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn id_to_activated_index(&self, id: ID) -> Option<AbsolutePosition> {
+        use generic_btree::rle::HasLength as _;
+
+        let (leaf, offset) = self.resolve_id(id)?;
+        let elem = self.rope.tree().get_elem(leaf)?;
+        let activated = elem.is_activated();
+
+        // Prefix-sum the activated length of every entity strictly before the
+        // target leaf. `visit_previous_caches` folds the cursor's own within-leaf
+        // offset into the `ThisElemAndOffset` arm, so that arm already adds the
+        // live offset; both returns below therefore use `index` unadjusted.
+        let mut index = 0usize;
+        self.rope
+            .tree()
+            .visit_previous_caches(
+                generic_btree::Cursor { leaf, offset },
+                |cache| match cache {
+                    generic_btree::PreviousCache::NodeCache(c) => {
+                        index += c.len as usize;
+                    }
+                    generic_btree::PreviousCache::PrevSiblingElem(elem) => {
+                        // Not emitted by generic-btree 0.10.7 (prior leaf siblings
+                        // arrive as `NodeCache`), but summed defensively so a future
+                        // release that does emit it cannot silently drop live length.
+                        if elem.is_activated() {
+                            index += elem.rle_len();
+                        }
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
+                        if elem.is_activated() {
+                            index += offset;
+                        }
+                    }
+                },
+            );
+
+        // A latent placeholder-ordering violation or a mid-diff status would make
+        // `Cache.len` include the unknown baseline placeholder (~1e9) and blow the
+        // rank far past the live length; catch that loudly in debug builds.
+        debug_assert!(
+            index <= self.activated_entity_len(),
+            "id_to_activated_index produced a rank beyond the live entity length"
+        );
+
+        Some(AbsolutePosition {
+            pos: index,
+            side: if activated {
+                crate::cursor::Side::Middle
+            } else {
+                crate::cursor::Side::Left
+            },
+        })
+    }
+
     /// Compare the tombstone-stable total order of two insertion ids.
     ///
     /// Both ids are resolved to a `(leaf, within-leaf offset)` position in the

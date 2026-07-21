@@ -1281,6 +1281,19 @@ impl LoroDoc {
         self.doc.compare_cursors_via_genesis(a, b)
     }
 
+    /// Test-only sibling of [`Self::get_cursor_pos`] that suppresses the
+    /// tombstoned-text fast path, answering via the original genesis replay.
+    /// Exposed so tests can differentially check the fast path against it.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[doc(hidden)]
+    #[inline]
+    pub fn __get_cursor_pos_via_genesis(
+        &self,
+        cursor: &Cursor,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        self.doc.query_pos_via_genesis(cursor)
+    }
+
     /// Get the inner LoroDoc ref.
     #[inline]
     pub fn inner(&self) -> &InnerLoroDoc {

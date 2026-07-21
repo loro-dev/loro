@@ -77,6 +77,14 @@ impl std::fmt::Debug for LoroDocInner {
     }
 }
 
+#[cfg(feature = "persistent-anchor-tracker")]
+thread_local! {
+    /// When set on the calling thread, [`LoroDoc::query_pos`] skips the
+    /// tombstoned-text fast path and answers via the genesis replay. Test-only;
+    /// default `false`, so production always takes the fast path when eligible.
+    static FORCE_QUERY_POS_GENESIS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl LoroDoc {
     /// Run the provided closure within a commit barrier.
     ///
@@ -1872,6 +1880,36 @@ impl LoroDoc {
         self.query_pos_internal(pos, true)
     }
 
+    /// Whether the current thread is forcing [`Self::query_pos`] onto its slow
+    /// genesis path, suppressing the tombstoned-text fast path. Thread-local so
+    /// concurrent tests cannot perturb each other; always `false` in production.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    fn force_query_pos_genesis() -> bool {
+        FORCE_QUERY_POS_GENESIS.with(|f| f.get())
+    }
+
+    /// Test-only sibling of [`Self::query_pos`] that suppresses the tombstoned
+    /// fast path so the query is answered by the original genesis replay. Used to
+    /// differentially verify the fast path returns identical `PosQueryResult`s.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    #[doc(hidden)]
+    pub fn query_pos_via_genesis(
+        &self,
+        pos: &Cursor,
+    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+        // Reset the thread-local via a drop guard so a panic inside the forced
+        // query cannot leave the flag set and silently skew later tests.
+        struct ForceGuard;
+        impl Drop for ForceGuard {
+            fn drop(&mut self) {
+                FORCE_QUERY_POS_GENESIS.with(|f| f.set(false));
+            }
+        }
+        FORCE_QUERY_POS_GENESIS.with(|f| f.set(true));
+        let _guard = ForceGuard;
+        self.query_pos_internal(pos, true)
+    }
+
     /// Compare the stable total order of two cursors within a text container.
     ///
     /// The order is tombstone-stable: it is defined for both live and deleted
@@ -1997,10 +2035,15 @@ impl LoroDoc {
 
             // On an attached, full-history document the tracker's live entity
             // length must match the state's; check it in debug builds only, and
-            // only when the state is at head (an attached doc), because
-            // `compare_cursors` reads the oplog regardless of the checked-out
-            // version.
-            let expected_entity_len = if cfg!(debug_assertions) && !self.is_detached() {
+            // only when the state is provably at the oplog head. That needs both
+            // an attached doc AND auto-commit on: with auto-commit off an open
+            // transaction applies to the state but not to the oplog, so the
+            // tracker (built to head) is longer than the state and the guard
+            // would fire on a benign divergence.
+            let expected_entity_len = if cfg!(debug_assertions)
+                && !self.is_detached()
+                && self.auto_commit.load(Acquire)
+            {
                 let mut s = self.state.lock();
                 Some(s.get_text_len(idx, crate::cursor::PosType::Entity))
             } else {
@@ -2116,6 +2159,54 @@ impl LoroDoc {
                         drop(s);
                     }
                     let idx = oplog.arena.id_to_idx(&pos.container).unwrap();
+
+                    // Fast path for a tombstoned character in a text container:
+                    // read its seam rank off the warm settled tracker instead of
+                    // replaying a fresh diff calculator from the last delete.
+                    //
+                    // Restricted to attached, full-history text so the tracker
+                    // (which resolves at oplog head) agrees with DocState, and to
+                    // genuine tombstones by `text_id_to_pos` (a live id returns
+                    // `None` here and falls through unchanged). Any `None` falls
+                    // through to the slow path below, so behavior is preserved.
+                    //
+                    // Also gated on auto-commit: only then does the `with_barrier`
+                    // above flush every eager edit into the oplog, so the oplog
+                    // head is fully backed by committed changes and DocState is at
+                    // that head. With auto-commit off an open transaction bumps the
+                    // oplog version past the committed changes while its ops live
+                    // only in the transaction, so building the warm tracker to that
+                    // head would fail to find the pending change; the slow path
+                    // (which never replays to head) stays correct, so fall through.
+                    #[cfg(feature = "persistent-anchor-tracker")]
+                    if !Self::force_query_pos_genesis()
+                        && self.auto_commit.load(Acquire)
+                        && !self.is_detached()
+                        && idx.get_type() == ContainerType::Text
+                        && !oplog.is_shallow()
+                    {
+                        // Auto-commit is on and the doc is attached, so DocState is
+                        // provably at the oplog head; assert the tracker's live
+                        // entity length matches it in debug builds.
+                        let expected_entity_len = if cfg!(debug_assertions) {
+                            let mut s = self.state.lock();
+                            Some(s.get_text_len(idx, crate::cursor::PosType::Entity))
+                        } else {
+                            None
+                        };
+                        if let Some(c) = oplog.text_id_to_pos(idx, id, expected_entity_len) {
+                            let handler = self.get_text(&pos.container);
+                            let current_pos = handler.convert_entity_index_to_event_index(c.pos);
+                            return Ok(PosQueryResult {
+                                update: handler.get_cursor(current_pos, c.side),
+                                current: AbsolutePosition {
+                                    pos: current_pos,
+                                    side: c.side,
+                                },
+                            });
+                        }
+                    }
+
                     // We know where the target id is when we trace back to the delete_op_id.
                     let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
                         if oplog.shallow_since_vv().includes_id(id) {
@@ -3447,5 +3538,68 @@ mod cache_effectiveness_tests {
                 let _ = doc.compare_cursors(a, b).unwrap();
             }
         }
+    }
+}
+
+/// Cursor queries on a non-auto-commit document. This is only reachable through
+/// the manual-transaction API, which the public `loro` crate does not expose, so
+/// the tests live here.
+///
+/// Note on the `auto_commit` gate that fences the warm-tracker fast path: it is
+/// NOT guarding the committed case below (a committed tombstone resolves
+/// correctly whether the fast path runs or not). Its sole job is the
+/// *pending-uncommitted-txn* case: with auto-commit off, an open transaction
+/// applies to `DocState` but only bumps the oplog version — the change is not yet
+/// in the change store, so building the warm tracker to that head panics. The
+/// original slow path ALSO panics there (`find_last_delete_op` iterates to the
+/// same inflated version), so both paths panic identically and no positive
+/// regression test is possible; the gate exists purely to keep feature-on
+/// byte-identical to feature-off on a case both paths already fail on.
+#[cfg(all(test, feature = "persistent-anchor-tracker"))]
+mod non_auto_commit_fast_path_tests {
+    use crate::cursor::{PosType, Side};
+    use crate::LoroDoc;
+
+    /// A non-auto-commit document with a fully committed tombstone resolves
+    /// correctly and byte-matches a forced genesis replay.
+    #[test]
+    fn committed_tombstone_resolves_and_matches_genesis() {
+        let doc = LoroDoc::new(); // auto-commit OFF
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+
+        // Commit an insert, then commit a delete — a fully committed tombstone
+        // with no open transaction, so the oplog version is entirely backed by
+        // the change store and the slow path resolves cleanly.
+        let mut txn = doc.txn().unwrap();
+        text.insert_with_txn(&mut txn, 0, "ABCDE", PosType::Unicode)
+            .unwrap();
+        txn.commit().unwrap();
+
+        let c = text.get_cursor(2, Side::Middle).unwrap(); // 'C'
+
+        let mut txn = doc.txn().unwrap();
+        text.delete_with_txn(&mut txn, 1, 3, PosType::Unicode)
+            .unwrap(); // tombstone B, C, D
+        txn.commit().unwrap();
+
+        // Auto-commit is off, so the fast path never fires; the slow path must
+        // resolve the tombstone and agree with a forced genesis replay on both
+        // the seam index and the `update` cursor.
+        let fast = doc.query_pos(&c);
+        let genesis = doc.query_pos_via_genesis(&c);
+        assert!(
+            fast.as_ref().unwrap().update.is_some(),
+            "a tombstoned target must carry an update cursor"
+        );
+        let fold = |r: Result<crate::cursor::PosQueryResult, _>| {
+            r.map(|p| (p.current.pos, p.current.side, p.update))
+                .map_err(|e| format!("{e:?}"))
+        };
+        assert_eq!(
+            fold(fast),
+            fold(genesis),
+            "non-auto-commit tombstone query diverged from the genesis replay"
+        );
     }
 }

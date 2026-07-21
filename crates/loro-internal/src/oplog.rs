@@ -341,6 +341,20 @@ impl OpLog {
         history_cache.text_compare_ids(self, idx, a, b, expected_entity_len)
     }
 
+    /// Seam-rank of a tombstoned insertion id in a text container, read off the
+    /// warm per-container tracker under the history-cache lock. Returns `None`
+    /// for a live id or an unresolvable one, leaving the caller on its slow path.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn text_id_to_pos(
+        &self,
+        idx: ContainerIdx,
+        id: ID,
+        expected_entity_len: Option<usize>,
+    ) -> Option<crate::cursor::AbsolutePosition> {
+        let mut history_cache = self.history_cache.lock();
+        history_cache.text_id_to_pos(self, idx, id, expected_entity_len)
+    }
+
     pub fn free_history_cache(&self) {
         let mut history_cache = self.history_cache.lock();
         history_cache.free();

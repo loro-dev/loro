@@ -761,3 +761,381 @@ fn query_after_insert_flushes_pending_edit_and_survives_checkout() {
     doc.checkout_to_latest();
     assert_eq!(doc.compare_cursors(&a, &c).unwrap(), Ordering::Less);
 }
+
+// ----------------------------------------------------------------------------
+// `get_cursor_pos` fast path — a tombstoned-text query answered off the warm
+// settled tracker (O(log n)) instead of the per-call genesis replay. The
+// overriding constraint is byte-identical observable behavior: the fast path
+// must return the same `PosQueryResult` (including the `update` field) as the
+// original slow path, only faster.
+// ----------------------------------------------------------------------------
+
+/// Fold a `get_cursor_pos` result into a fully comparable form: the current
+/// position, its side, and the whole `update` cursor (so `update.is_some()` and
+/// its contents are both checked), with the error variant folded to a string
+/// (`CannotFindRelativePosition` is not `PartialEq`).
+fn norm_pos(
+    r: Result<loro::cursor::PosQueryResult, loro::cursor::CannotFindRelativePosition>,
+) -> Result<(usize, Side, Option<Cursor>), String> {
+    r.map(|p| (p.current.pos, p.current.side, p.update))
+        .map_err(|e| format!("{e:?}"))
+}
+
+#[test]
+fn tombstoned_cursor_pos_fast_path_matches_genesis_over_fuzz_corpus() {
+    // The crux end-to-end differential: a tombstoned `get_cursor_pos` served by
+    // the warm-tracker fast path must return the identical full `PosQueryResult`
+    // (incl. `update.is_some()` and its contents) as the original genesis replay,
+    // across an insert/delete/merge script on multiple peers.
+    let mut rng = Rng(0x5EED_1234_ABCD_00FF);
+
+    let a = doc_with_peer(1);
+    let b = doc_with_peer(2);
+    let c = doc_with_peer(3);
+    let docs = [&a, &b, &c];
+
+    a.get_text("text").insert(0, "seed-content").unwrap();
+    a.commit();
+    sync(&a, &b);
+    sync(&a, &c);
+    sync(&b, &c);
+
+    let mut captured: Vec<Cursor> = Vec::new();
+
+    for round in 0..60 {
+        let doc = docs[rng.below(docs.len())];
+        let text = doc.get_text("text");
+        let len = text.len_unicode();
+
+        if len == 0 || rng.below(3) != 0 {
+            let pos = if len == 0 { 0 } else { rng.below(len + 1) };
+            let ch = (b'a' + (round % 26) as u8) as char;
+            text.insert(pos, &ch.to_string()).unwrap();
+            doc.commit();
+            captured.push(cursor_at(doc, pos, Side::Middle));
+        } else {
+            let start = rng.below(len);
+            let del_len = 1 + rng.below((len - start).min(3));
+            for i in start..(start + del_len) {
+                captured.push(cursor_at(doc, i, Side::Middle));
+            }
+            text.delete(start, del_len).unwrap();
+            doc.commit();
+        }
+
+        if rng.below(2) == 0 {
+            let i = rng.below(docs.len());
+            let j = (i + 1 + rng.below(docs.len() - 1)) % docs.len();
+            sync(docs[i], docs[j]);
+        }
+
+        // Query mid-stream on the just-mutated doc so the warm tracker advances
+        // incrementally and each advance is checked against a fresh replay.
+        if let Some(cur) = captured.last() {
+            assert_eq!(
+                norm_pos(doc.get_cursor_pos(cur)),
+                norm_pos(doc.__get_cursor_pos_via_genesis(cur)),
+                "fast path diverged from genesis mid-stream"
+            );
+        }
+    }
+
+    // Full merge so every doc holds the same history.
+    sync(&a, &b);
+    sync(&a, &c);
+    sync(&b, &c);
+    sync(&a, &b);
+
+    captured.sort_by(|x, y| format!("{:?}", x.id).cmp(&format!("{:?}", y.id)));
+    captured.dedup_by(|x, y| x.id == y.id);
+    assert!(captured.len() >= 10, "expected a decent pool of ids");
+
+    // On every peer, the fast path must agree with the genesis replay for every
+    // captured id, and the corpus must actually exercise tombstoned ids (the
+    // ones whose answer carries an `update`).
+    let mut saw_tombstoned = false;
+    for doc in docs {
+        for cur in &captured {
+            let fast = doc.get_cursor_pos(cur);
+            let genesis = doc.__get_cursor_pos_via_genesis(cur);
+            assert_eq!(
+                norm_pos(fast.clone()),
+                norm_pos(genesis),
+                "fast path diverged from the genesis replay"
+            );
+            if let Ok(p) = fast {
+                if p.update.is_some() {
+                    saw_tombstoned = true;
+                }
+            }
+        }
+    }
+    assert!(
+        saw_tombstoned,
+        "corpus must exercise at least one tombstoned get_cursor_pos"
+    );
+}
+
+#[test]
+fn tombstoned_cursor_pos_full_result_matches_genesis_on_delete_script() {
+    // A hand-built script pinning the full `PosQueryResult` for a tombstone at a
+    // seam between live characters: both the seam index and the `update` cursor
+    // must equal the genesis replay's.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "ABCDEFG").unwrap();
+    doc.commit();
+
+    let b = cursor_at(&doc, 1, Side::Middle); // 'B'
+    let e = cursor_at(&doc, 4, Side::Middle); // 'E'
+
+    // Delete "BCD" so B sits inside a tombstoned run, then delete "E" too.
+    text.delete(1, 3).unwrap();
+    doc.commit();
+    text.delete(1, 1).unwrap(); // deletes 'E' (now at index 1: "AEFG" -> "AFG")
+    doc.commit();
+
+    for cur in [&b, &e] {
+        let fast = doc.get_cursor_pos(cur);
+        // A tombstoned target carries an `update`.
+        assert!(
+            fast.as_ref().unwrap().update.is_some(),
+            "expected a tombstoned target to carry an update cursor"
+        );
+        assert_eq!(
+            norm_pos(fast),
+            norm_pos(doc.__get_cursor_pos_via_genesis(cur)),
+            "full PosQueryResult diverged from genesis for a tombstoned id"
+        );
+    }
+}
+
+#[test]
+fn detached_doc_cursor_pos_is_unchanged() {
+    // A char that is live at the oplog head but absent in a checked-out earlier
+    // version must still resolve exactly as the original slow path did. The fast
+    // path is gated on `!is_detached()`, so a detached doc always takes the slow
+    // path; the answer must match the genesis replay.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "A").unwrap();
+    doc.commit();
+    let early = doc.oplog_frontiers(); // only 'A' exists here
+
+    text.insert(1, "B").unwrap();
+    doc.commit();
+    let b = cursor_at(&doc, 1, Side::Middle); // 'B', live at head
+
+    // Detach to the version before B existed: B is absent from the checked-out
+    // state but live at the oplog head.
+    doc.checkout(&early).unwrap();
+    assert!(doc.is_detached());
+
+    let result = doc.get_cursor_pos(&b);
+    assert!(
+        matches!(
+            result,
+            Err(loro::cursor::CannotFindRelativePosition::IdNotFound)
+        ),
+        "detached query for a not-yet-existing char must be IdNotFound, got {result:?}"
+    );
+    // And it agrees with the genesis replay.
+    assert_eq!(
+        norm_pos(doc.get_cursor_pos(&b)),
+        norm_pos(doc.__get_cursor_pos_via_genesis(&b)),
+    );
+}
+
+#[test]
+fn shallow_doc_tombstone_falls_back_to_slow_path() {
+    // On a shallow document the fast path is skipped (`!oplog.is_shallow()`),
+    // because pre-root tombstones are not indexed by the warm tracker. A
+    // tombstoned query must resolve via the untouched slow path, byte-identical
+    // to a fresh genesis replay on the same shallow doc.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "ABCDEFGH").unwrap();
+    doc.commit();
+    let b = cursor_at(&doc, 1, Side::Middle); // 'B'
+    text.delete(1, 1).unwrap(); // tombstone 'B'
+    doc.commit();
+    // Add more live history after the tombstone so the shallow root retains it.
+    text.insert(text.len_unicode(), "IJK").unwrap();
+    doc.commit();
+
+    // Export a shallow snapshot at the head and import into a fresh doc.
+    let frontiers = doc.oplog_frontiers();
+    let shallow_bytes = doc
+        .export(ExportMode::shallow_snapshot(&frontiers))
+        .unwrap();
+    let shallow = LoroDoc::new();
+    shallow.import(&shallow_bytes).unwrap();
+    assert!(shallow.is_shallow(), "imported doc must be shallow");
+
+    // On the shallow doc the fast path is skipped for every query, so the warm
+    // path and the genesis replay must return the identical result — whatever it
+    // is (a resolved seam or a HistoryCleared/IdNotFound), they agree and neither
+    // panics.
+    assert_eq!(
+        norm_pos(shallow.get_cursor_pos(&b)),
+        norm_pos(shallow.__get_cursor_pos_via_genesis(&b)),
+        "shallow-doc tombstone diverged between the warm path and the replay"
+    );
+}
+
+#[test]
+fn detached_tombstoned_at_head_query_matches_genesis() {
+    // A char TOMBSTONED at the oplog head, queried while the doc is detached to a
+    // version where it is absent, must resolve exactly as the genesis slow path.
+    //
+    // Unlike `detached_doc_cursor_pos_is_unchanged` (which queries a live-at-head
+    // id the tombstone-only filter drops before the `!is_detached()` gate can
+    // matter), this reaches the fast-path branch. The gate skips the warm tracker
+    // here; removing it is caught in debug because the debug length guard would
+    // then read DocState at the checked-out version — whose live length (4)
+    // differs from the head tracker's (6) — and fire.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "ABCDE").unwrap();
+    doc.commit();
+    let c = cursor_at(&doc, 2, Side::Middle); // 'C'
+
+    text.delete(2, 1).unwrap(); // tombstone 'C' -> "ABDE" (4 live)
+    doc.commit();
+    let after_del = doc.oplog_frontiers();
+
+    text.insert(0, "XY").unwrap(); // head "XYABDE" (6 live)
+    doc.commit();
+
+    // Detach to just after C's deletion: C is absent there and the checked-out
+    // live length (4) differs from head (6).
+    doc.checkout(&after_del).unwrap();
+    assert!(doc.is_detached());
+
+    let fast = doc.get_cursor_pos(&c);
+    assert!(
+        fast.as_ref().unwrap().update.is_some(),
+        "a tombstoned target must carry an update cursor"
+    );
+    assert_eq!(
+        norm_pos(fast),
+        norm_pos(doc.__get_cursor_pos_via_genesis(&c)),
+        "detached tombstone query diverged from the genesis replay"
+    );
+}
+
+#[test]
+fn style_anchor_tombstone_fast_path_matches_genesis() {
+    // Style marks insert style-anchor entities into the rope; when the marked
+    // span is deleted those anchors are tombstoned and counted in the seam rank.
+    // Nothing else covers them, so pin the fast path against genesis for cursors
+    // inside a deleted, previously-marked run.
+    let doc = doc_with_peer(1);
+    let text = doc.get_text("text");
+    text.insert(0, "abcdefgh").unwrap();
+    doc.commit();
+    text.mark(2..6, "bold", true).unwrap(); // style anchors around the c..f run
+    doc.commit();
+
+    // Capture ids inside the marked run before deleting it.
+    let c = cursor_at(&doc, 2, Side::Middle);
+    let e = cursor_at(&doc, 4, Side::Middle);
+
+    text.delete(2, 4).unwrap(); // tombstone the marked run
+    doc.commit();
+
+    for cur in [&c, &e] {
+        let fast = doc.get_cursor_pos(cur);
+        assert!(
+            fast.as_ref().unwrap().update.is_some(),
+            "a tombstoned marked char must carry an update cursor"
+        );
+        assert_eq!(
+            norm_pos(fast),
+            norm_pos(doc.__get_cursor_pos_via_genesis(cur)),
+            "style-anchor tombstone diverged between the fast path and genesis"
+        );
+    }
+}
+
+#[test]
+fn undo_resurrected_then_redeleted_fast_path_matches_genesis() {
+    // A char tombstoned, resurrected with a fresh id via undo, then re-deleted:
+    // both the original and resurrected ids are tombstoned at head. The fast path
+    // must resolve each identically to the genesis replay. The fuzz corpus never
+    // exercises undo resurrection, so pin it here.
+    let doc = doc_with_peer(1);
+    let mut undo = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    text.insert(0, "ABC").unwrap();
+    doc.commit();
+    let original_b = cursor_at(&doc, 1, Side::Middle); // 'B'
+
+    text.delete(1, 1).unwrap(); // tombstone B -> "AC"
+    doc.commit();
+    undo.record_new_checkpoint().unwrap();
+
+    // Undo resurrects B with a fresh id between A and C.
+    assert!(undo.undo().unwrap());
+    doc.commit();
+    assert_eq!(text.to_string(), "ABC");
+    let resurrected_b = cursor_at(&doc, 1, Side::Middle);
+
+    // Re-delete the resurrected B: now both B ids are tombstoned at head.
+    text.delete(1, 1).unwrap();
+    doc.commit();
+
+    for cur in [&original_b, &resurrected_b] {
+        let fast = doc.get_cursor_pos(cur);
+        assert!(
+            fast.as_ref().unwrap().update.is_some(),
+            "both the original and resurrected B must be tombstoned at head"
+        );
+        assert_eq!(
+            norm_pos(fast),
+            norm_pos(doc.__get_cursor_pos_via_genesis(cur)),
+            "undo-resurrection tombstone diverged between the fast path and genesis"
+        );
+    }
+}
+
+#[test]
+fn concurrent_insert_at_tombstone_seam_cursor_pos_matches_genesis() {
+    // A deterministic mirror of `concurrent_insert_at_tombstone_seam_...` but for
+    // `get_cursor_pos`: a concurrent insert splits a run that one peer then
+    // deletes, so the tombstone seam has a live neighbour spliced into it. The
+    // fuzz corpus's splits are probabilistic; this asserts the exact shape.
+    let a = doc_with_peer(1);
+    let text_a = a.get_text("text");
+    text_a.insert(0, "ABCDE").unwrap();
+    a.commit();
+
+    let b = doc_with_peer(2);
+    sync(&a, &b);
+
+    let c = cursor_at(&a, 2, Side::Middle); // 'C'
+
+    text_a.delete(1, 3).unwrap(); // A deletes "BCD"
+    a.commit();
+
+    let text_b = b.get_text("text");
+    text_b.insert(2, "X").unwrap(); // B inserts X at the B/C boundary (before it sees A's delete)
+    b.commit();
+
+    // Pull B's insert into A: on A, C is tombstoned and X is spliced into the
+    // seam. The fast path must still match the genesis replay.
+    a.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    let fast = a.get_cursor_pos(&c);
+    assert!(
+        fast.as_ref().unwrap().update.is_some(),
+        "C must be tombstoned on peer A"
+    );
+    assert_eq!(
+        norm_pos(fast),
+        norm_pos(a.__get_cursor_pos_via_genesis(&c)),
+        "concurrent-split tombstone diverged between the fast path and genesis on A"
+    );
+}

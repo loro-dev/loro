@@ -339,6 +339,37 @@ impl ContainerHistoryCache {
         cached.compare_ids(a, b)
     }
 
+    /// Seam-rank of an insertion id in a text container using the warm tracker,
+    /// building it from genesis on first use and advancing it to head otherwise.
+    ///
+    /// Returns `Some` only for a genuine tombstone. A live id (present in the
+    /// tracker, `Side::Middle`) yields `None` so it falls through to the caller's
+    /// slow path: the tracker resolves at oplog head while DocState resolves at
+    /// the checked-out version, and only tombstones are guaranteed to agree.
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub(crate) fn text_id_to_pos(
+        &mut self,
+        oplog: &OpLog,
+        idx: ContainerIdx,
+        id: ID,
+        expected_entity_len: Option<usize>,
+    ) -> Option<crate::cursor::AbsolutePosition> {
+        let cached = self
+            .text_trackers
+            .get_or_insert_with(Default::default)
+            .entry(idx)
+            .or_insert_with(|| crate::diff_calc::CachedTextTracker::build(oplog, idx));
+        cached.ensure_advanced(oplog, idx);
+        cached.debug_check(oplog, idx, expected_entity_len);
+        let pos = cached.id_to_activated_index(id)?;
+        // Tombstone-only: the readout encodes activation in the side (live ->
+        // Middle, tombstoned -> Left), so drop live ids to the slow path.
+        if pos.side != crate::cursor::Side::Left {
+            return None;
+        }
+        Some(pos)
+    }
+
     pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {
         self.shallow_root_state = shallow_root_store;
     }

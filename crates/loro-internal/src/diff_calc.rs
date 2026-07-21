@@ -806,6 +806,17 @@ impl RichtextDiffCalculator {
             RichtextCalcMode::Linear { .. } => None,
         }
     }
+
+    /// Seam-rank of an insertion id on the tracker built by this calculator.
+    /// Should be called after the tracker is settled at head. Returns `None`
+    /// when the id cannot be resolved, or in linear mode (which keeps no tracker).
+    #[cfg(feature = "persistent-anchor-tracker")]
+    pub fn id_to_activated_index(&self, id: ID) -> Option<AbsolutePosition> {
+        match &*self.mode {
+            RichtextCalcMode::Crdt { tracker, .. } => tracker.id_to_activated_index(id),
+            RichtextCalcMode::Linear { .. } => None,
+        }
+    }
 }
 
 /// How many times a persistent per-container text tracker was built from
@@ -880,6 +891,10 @@ impl CachedTextTracker {
 
     pub(crate) fn compare_ids(&self, a: ID, b: ID) -> Option<std::cmp::Ordering> {
         self.calc.compare_ids(a, b)
+    }
+
+    pub(crate) fn id_to_activated_index(&self, id: ID) -> Option<AbsolutePosition> {
+        self.calc.id_to_activated_index(id)
     }
 
     /// Debug-only coherence checks run after the tracker is settled at head.
@@ -1764,4 +1779,179 @@ fn test_size() {
     let calc = ContainerDiffCalculator::Richtext(text);
     let size = std::mem::size_of_val(&calc);
     assert!(size < 50, "ContainerDiffCalculator size: {}", size);
+}
+
+/// The crux differential for the O(log n) seam-rank readout: on one settled
+/// per-container tracker, [`RichtextDiffCalculator::id_to_activated_index`] must
+/// return exactly what the O(n) oracle
+/// (`get_target_id_latest_index_at_new_version`, reached via `get_id_latest_pos`)
+/// returns, for both live and tombstoned ids. This pins the prefix-sum and the
+/// offset-basis equivalence that make the fast path byte-exact. Full-history
+/// only: on a shallow doc the two readouts diverge in resolvability, not rank.
+#[cfg(all(test, feature = "persistent-anchor-tracker"))]
+mod readout_differential {
+    use crate::{cursor::Side, handler::HandlerTrait, LoroDoc};
+    use loro_common::ID;
+
+    /// Tiny deterministic xorshift PRNG so the corpus is reproducible.
+    struct Rng(u64);
+    impl Rng {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next_u64() % n as u64) as usize
+        }
+    }
+
+    fn doc(peer: u64) -> LoroDoc {
+        let doc = LoroDoc::default();
+        doc.set_peer_id(peer).unwrap();
+        doc.start_auto_commit();
+        doc
+    }
+
+    fn sync(a: &LoroDoc, b: &LoroDoc) {
+        a.import(
+            &b.export(crate::encoding::ExportMode::all_updates())
+                .unwrap(),
+        )
+        .unwrap();
+        b.import(
+            &a.export(crate::encoding::ExportMode::all_updates())
+                .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn id_to_activated_index_matches_oracle_on_settled_tracker() {
+        let mut rng = Rng(0x00C0_FFEE_1357_9BDF);
+        let a = doc(1);
+        let b = doc(2);
+        let docs = [&a, &b];
+
+        a.get_text("text")
+            .insert_unicode(0, "seed-content")
+            .unwrap();
+        sync(&a, &b);
+
+        let mut captured: Vec<ID> = Vec::new();
+        for round in 0..80 {
+            let d = docs[rng.below(docs.len())];
+            let text = d.get_text("text");
+            let len = text.len_unicode();
+
+            if len == 0 || rng.below(3) != 0 {
+                let pos = if len == 0 { 0 } else { rng.below(len + 1) };
+                let ch = (b'a' + (round % 26) as u8) as char;
+                text.insert_unicode(pos, &ch.to_string()).unwrap();
+                if let Some(id) = text.get_cursor(pos, Side::Middle).and_then(|c| c.id) {
+                    captured.push(id);
+                }
+            } else {
+                let start = rng.below(len);
+                let del = 1 + rng.below((len - start).min(3));
+                // Capture ids that are about to be tombstoned.
+                for i in start..(start + del) {
+                    if let Some(id) = text.get_cursor(i, Side::Middle).and_then(|c| c.id) {
+                        captured.push(id);
+                    }
+                }
+                text.delete_unicode(start, del).unwrap();
+            }
+
+            if rng.below(2) == 0 {
+                sync(&a, &b);
+            }
+        }
+
+        // Full merge so both docs hold the same history, then flush A's pending
+        // transaction so the oplog head reflects every op.
+        sync(&a, &b);
+        sync(&a, &b);
+
+        captured.sort();
+        captured.dedup();
+        assert!(captured.len() >= 10, "expected a decent pool of ids");
+
+        // Build a tracker straight from genesis, settled at head, then read both
+        // the O(log n) index and the O(n) oracle off that very same tracker.
+        let idx = a.get_text("text").idx();
+        let oplog = a.oplog().lock();
+        let cached = super::CachedTextTracker::build(&oplog, idx);
+
+        let mut saw_live = false;
+        let mut saw_tombstoned = false;
+        for id in &captured {
+            let fast = cached.id_to_activated_index(*id);
+            let oracle = cached.calc.get_id_latest_pos(*id);
+            assert_eq!(
+                fast, oracle,
+                "readout diverged from the O(n) oracle for {id:?}"
+            );
+            match fast.map(|p| p.side) {
+                Some(Side::Middle) => saw_live = true,
+                Some(Side::Left) => saw_tombstoned = true,
+                _ => {}
+            }
+        }
+        assert!(
+            saw_live && saw_tombstoned,
+            "corpus must exercise both live and tombstoned ids (live: {saw_live}, tomb: {saw_tombstoned})"
+        );
+    }
+
+    #[test]
+    fn id_to_activated_index_tracks_within_leaf_offset() {
+        // A multi-char run inserted in a SINGLE op shares one rope leaf, so the
+        // interior chars sit at within-leaf offset > 0. This is the only shape
+        // that pins the offset term of the readout: dropping the
+        // `ThisElemAndOffset` contribution (or double-counting it in the return)
+        // shifts every interior id and diverges from the O(n) oracle. The fuzz
+        // corpus inserts one char at a time, so every id there is at offset 0 and
+        // an offset regression stays green — this test is what turns it red.
+        let a = doc(1);
+        a.get_text("text").insert_unicode(0, "hello").unwrap();
+        // Flush the auto-commit transaction so the oplog head holds the op.
+        a.commit_then_renew();
+
+        let text = a.get_text("text");
+        let idx = text.idx();
+        // The id of each live char; interior chars (index > 0) have offset > 0.
+        let ids: Vec<ID> = (0..5)
+            .map(|i| {
+                text.get_cursor(i, Side::Middle)
+                    .and_then(|c| c.id)
+                    .expect("live char must have an id")
+            })
+            .collect();
+
+        let oplog = a.oplog().lock();
+        let cached = super::CachedTextTracker::build(&oplog, idx);
+
+        let mut saw_offset = false;
+        for (expected_pos, id) in ids.iter().enumerate() {
+            let fast = cached.id_to_activated_index(*id);
+            let oracle = cached.calc.get_id_latest_pos(*id);
+            assert_eq!(fast, oracle, "readout diverged from the oracle for {id:?}");
+            // A live char's activated index equals its insertion position; the
+            // interior ones exercise the within-leaf offset explicitly.
+            assert_eq!(
+                fast.as_ref().map(|p| p.pos),
+                Some(expected_pos),
+                "live char at {expected_pos} resolved to the wrong index"
+            );
+            assert_eq!(fast.as_ref().map(|p| p.side), Some(Side::Middle));
+            if expected_pos > 0 {
+                saw_offset = true;
+            }
+        }
+        assert!(saw_offset, "must query interior chars at offset > 0");
+    }
 }
