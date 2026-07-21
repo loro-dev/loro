@@ -372,12 +372,18 @@ pub(crate) fn parse_header_and_body(
     Ok(ans)
 }
 
-pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Vec<u8> {
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        fast_snapshot::encode_snapshot(doc, ans);
+pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Result<Vec<u8>, LoroEncodeError> {
+    let snapshot = fast_snapshot::encode_snapshot_inner(doc)?;
+    let expected_len = snapshot
+        .encoded_len()
+        .and_then(|len| MIN_HEADER_SIZE.checked_add(len))
+        .ok_or_else(|| LoroEncodeError::internal("snapshot length overflow"))?;
+    let encoded = encode_with_capacity(EncodeMode::FastSnapshot, expected_len, &mut |ans| {
+        fast_snapshot::_encode_snapshot(&snapshot, ans);
         Ok(())
-    })
-    .unwrap()
+    })?;
+    debug_assert_eq!(encoded.len(), expected_len);
+    Ok(encoded)
 }
 
 pub(crate) fn export_snapshot_at(
@@ -441,8 +447,16 @@ fn encode_with(
     mode: EncodeMode,
     f: &mut dyn FnMut(&mut Vec<u8>) -> Result<(), LoroEncodeError>,
 ) -> Result<Vec<u8>, LoroEncodeError> {
+    encode_with_capacity(mode, MIN_HEADER_SIZE, f)
+}
+
+fn encode_with_capacity(
+    mode: EncodeMode,
+    capacity: usize,
+    f: &mut dyn FnMut(&mut Vec<u8>) -> Result<(), LoroEncodeError>,
+) -> Result<Vec<u8>, LoroEncodeError> {
     // HEADER
-    let mut ans = Vec::with_capacity(MIN_HEADER_SIZE);
+    let mut ans = Vec::with_capacity(capacity);
     ans.extend(MAGIC_BYTES);
     let checksum = [0; 16];
     ans.extend(checksum);
@@ -556,8 +570,27 @@ impl LoroDoc {
 
 #[cfg(test)]
 mod test {
-
+    use super::*;
     use loro_common::{loro_value, ContainerID, ContainerType, LoroValue, ID};
+
+    #[test]
+    fn fast_snapshot_envelope_has_exact_length_and_valid_checksum() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.get_map("root").insert("key", "value").unwrap();
+        let encoded = doc.export(ExportMode::Snapshot).unwrap();
+        assert_eq!(&encoded[..4], &MAGIC_BYTES);
+        assert_eq!(&encoded[20..22], &EncodeMode::FastSnapshot.to_bytes());
+        let parsed = parse_header_and_body(&encoded, true).unwrap();
+        assert_eq!(parsed.mode, EncodeMode::FastSnapshot);
+        assert_eq!(encoded.len(), MIN_HEADER_SIZE + parsed.body.len());
+
+        let mut corrupted = encoded;
+        *corrupted.last_mut().unwrap() ^= 1;
+        assert!(matches!(
+            parse_header_and_body(&corrupted, true),
+            Err(LoroError::DecodeChecksumMismatchError)
+        ));
+    }
 
     #[test]
     fn test_value_encode_size() {

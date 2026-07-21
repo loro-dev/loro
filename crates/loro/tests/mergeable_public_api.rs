@@ -215,8 +215,14 @@ fn loro_map_ensure_mergeable_tree_through_public_api() {
     let a = doc(1);
     let b = doc(2);
 
-    let a_tree = a.get_map("state").ensure_mergeable_tree("hierarchy").unwrap();
-    let b_tree = b.get_map("state").ensure_mergeable_tree("hierarchy").unwrap();
+    let a_tree = a
+        .get_map("state")
+        .ensure_mergeable_tree("hierarchy")
+        .unwrap();
+    let b_tree = b
+        .get_map("state")
+        .ensure_mergeable_tree("hierarchy")
+        .unwrap();
     assert_eq!(
         a_tree.id(),
         b_tree.id(),

@@ -279,10 +279,7 @@ fn detached_map_ensure_mergeable_counter_rejects_misuse() {
         .ensure_mergeable_counter("revision")
         .expect_err("detached ensure_mergeable_* must error");
     assert!(
-        matches!(
-            err,
-            loro_common::LoroError::MisuseDetachedContainer { .. }
-        ),
+        matches!(err, loro_common::LoroError::MisuseDetachedContainer { .. }),
         "detached error must be MisuseDetachedContainer; got {err:?}"
     );
 }

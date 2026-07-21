@@ -1854,12 +1854,9 @@ impl TextHandler {
     ///
     /// This method requires auto_commit to be enabled.
     pub fn splice(&self, pos: usize, len: usize, s: &str, pos_type: PosType) -> LoroResult<String> {
-        let end = checked_range_end(
-            pos,
-            len,
-            self.len(pos_type),
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, self.len(pos_type), || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
         let x = self.slice(pos, end, pos_type)?;
         self.delete(pos, len, pos_type)?;
         self.insert(pos, s, pos_type)?;
@@ -1968,12 +1965,9 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        let end = checked_range_end(
-            pos,
-            len,
-            text_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, text_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
 
@@ -2236,12 +2230,9 @@ impl TextHandler {
         }
 
         let text_len = self.len(pos_type);
-        let end = checked_range_end(
-            pos,
-            len,
-            text_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )
+        let end = checked_range_end(pos, len, text_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })
         .inspect_err(|_| error!("pos={} len={} len={}", pos, len, text_len))?;
         self.validate_text_boundary(pos, pos_type)?;
         self.validate_text_boundary(end, pos_type)?;
@@ -3245,12 +3236,9 @@ impl ListHandler {
         match &self.inner {
             MaybeDetached::Detached(l) => {
                 let mut list = l.lock();
-                let end = checked_range_end(
-                    pos,
-                    len,
-                    list.value.len(),
-                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                )?;
+                let end = checked_range_end(pos, len, list.value.len(), || {
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+                })?;
                 list.value.drain(pos..end);
                 Ok(())
             }
@@ -3264,12 +3252,9 @@ impl ListHandler {
         }
 
         let list_len = self.len();
-        let end = checked_range_end(
-            pos,
-            len,
-            list_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, list_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
 
         let inner = self.inner.try_attached_state()?;
         let ids: Vec<_> = inner.with_state(|state| {
@@ -3919,12 +3904,9 @@ impl MovableListHandler {
         match &self.inner {
             MaybeDetached::Detached(d) => {
                 let mut d = d.lock();
-                let end = checked_range_end(
-                    pos,
-                    len,
-                    d.value.len(),
-                    || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                )?;
+                let end = checked_range_end(pos, len, d.value.len(), || {
+                    format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+                })?;
                 d.value.drain(pos..end);
                 Ok(())
             }
@@ -3939,12 +3921,9 @@ impl MovableListHandler {
         }
 
         let list_len = self.len();
-        let end = checked_range_end(
-            pos,
-            len,
-            list_len,
-            || format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        )?;
+        let end = checked_range_end(pos, len, list_len, || {
+            format!("Position: {}:{}", file!(), line!()).into_boxed_str()
+        })?;
 
         let (ids, new_poses) = self.with_state(|state| {
             let list = state.as_movable_list_state().unwrap();

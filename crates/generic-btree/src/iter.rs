@@ -84,7 +84,7 @@ impl<'a, B: BTreeTrait> Drain<'a, B> {
         }
     }
 
-    fn none(tree: &'a mut BTree<B>) -> Drain<B> {
+    fn none(tree: &'a mut BTree<B>) -> Drain<'a, B> {
         Self {
             current_path: Default::default(),
             done: true,

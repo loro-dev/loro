@@ -111,6 +111,33 @@ impl ContainerStore {
             .with_container_for_read(idx, |c| c.get_value(idx, ctx!(self)))
     }
 
+    pub(crate) fn get_value_ephemeral(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
+        self.try_get_value_ephemeral(idx)
+            .expect("snapshot-backed container should decode")
+    }
+
+    pub(crate) fn try_get_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<LoroValue>> {
+        self.store.try_get_value_ephemeral(idx, ctx!(self))
+    }
+
+    pub(crate) fn try_get_parent_and_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<(Option<ContainerID>, LoroValue)>> {
+        self.store
+            .try_get_parent_and_value_ephemeral(idx, ctx!(self))
+    }
+
+    pub(crate) fn get_parent_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<Option<ContainerID>>> {
+        self.store.get_parent_ephemeral(idx)
+    }
+
     pub fn map_get(&mut self, idx: ContainerIdx, key: &str) -> Option<LoroValue> {
         self.store
             .with_container_for_read(idx, |c| c.map_get(idx, ctx!(self), key))?
@@ -264,11 +291,6 @@ impl ContainerStore {
         self.store.iter_all_container_ids()
     }
 
-    pub fn load_all(&mut self) -> LoadAllFlag {
-        self.store.load_all();
-        LoadAllFlag
-    }
-
     pub fn load_root_containers(&mut self) -> LoadAllFlag {
         self.store.load_roots();
         LoadAllFlag
@@ -373,8 +395,8 @@ impl ContainerStore {
 mod test {
     use super::*;
     use crate::{
-        cursor::PosType, state::TreeParentId, ContainerType, ListHandler, LoroDoc, MapHandler,
-        MovableListHandler,
+        cursor::PosType, handler::HandlerTrait, state::TreeParentId, ContainerType, ListHandler,
+        LoroDoc, MapHandler, MovableListHandler,
     };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
@@ -425,7 +447,7 @@ mod test {
 
     fn export_container_store(doc: &LoroDoc) -> Bytes {
         let mut state = doc.app_state().lock();
-        state.ensure_all_alive_containers();
+        state.ensure_all_alive_containers().unwrap();
         state.store.encode()
     }
 
@@ -449,5 +471,284 @@ mod test {
         assert!(!store.store.has_cached_value_for_test(map_idx));
         assert_eq!(store.map_len(map_idx), 2);
         assert!(store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn ephemeral_lazy_read_does_not_cache_value() {
+        let doc = init_doc();
+        let bytes = export_container_store(&doc);
+        let mut store = decode_container_store(bytes);
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let map_idx = store.arena.register_container(&map_id);
+
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+        assert_eq!(
+            store
+                .get_value_ephemeral(map_idx)
+                .and_then(|value| value.as_map().map(|map| map.len())),
+            Some(2)
+        );
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn combined_ephemeral_parent_and_value_read_does_not_cache_value() {
+        let doc = init_doc();
+        let bytes = export_container_store(&doc);
+        let mut store = decode_container_store(bytes);
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let map_idx = store.arena.register_container(&map_id);
+
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+        let (parent, value) = store
+            .try_get_parent_and_value_ephemeral(map_idx)
+            .unwrap()
+            .unwrap();
+        assert_eq!(parent, None);
+        assert_eq!(value.as_map().map(|map| map.len()), Some(2));
+        assert!(!store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_does_not_materialize_map_value_after_key_read() {
+        let source = init_doc();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        assert_eq!(imported.get_map("map").get("key"), Some("value".into()));
+        {
+            let mut state = imported.app_state().lock();
+            let map_idx = state.store.arena.register_container(&map_id);
+            assert!(state.store.store.has_cached_value_for_test(map_idx));
+            assert!(!state
+                .store
+                .store
+                .has_materialized_map_value_for_test(map_idx));
+        }
+
+        imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        assert!(!state
+            .store
+            .store
+            .has_materialized_map_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_keeps_imported_state_lazy() {
+        let source = init_doc();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        {
+            let mut state = imported.app_state().lock();
+            let map_idx = state.store.arena.register_container(&map_id);
+            assert!(!state.store.store.has_cached_value_for_test(map_idx));
+        }
+
+        let exported = imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        assert!(!exported.is_empty());
+        let exported_again = imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        assert_eq!(exported_again, exported);
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        assert!(!state.store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_includes_empty_root_without_version_change() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.get_map("first");
+        doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+        let version_before = doc.state_frontiers();
+
+        let second_id = ContainerID::new_root("second", ContainerType::Map);
+        doc.get_map("second");
+        assert_eq!(doc.state_frontiers(), version_before);
+
+        let snapshot = doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+        let mut state = round_tripped.app_state().lock();
+        assert!(state.store.contains_id(&second_id));
+    }
+
+    #[test]
+    fn snapshot_export_includes_new_empty_child() {
+        let doc = LoroDoc::new_auto_commit();
+        let root = doc.get_map("root");
+        root.insert("value", 1).unwrap();
+        doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let child = root
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap();
+        let child_id = child.id();
+        let snapshot = doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+        let mut state = round_tripped.app_state().lock();
+        assert!(state.store.contains_id(&child_id));
+    }
+
+    /// An empty child created by a remote peer has no ops of its own, so the importer only
+    /// applies the parent's diff. The diff-apply hook must still create a store entry for the
+    /// child, or the importer's own full snapshot would silently drop it.
+    #[test]
+    fn snapshot_export_includes_remote_empty_child() {
+        let a = LoroDoc::new_auto_commit();
+        let map_child_id = a
+            .get_map("map")
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap()
+            .id();
+        let list_child_id = a
+            .get_list("list")
+            .insert_container(0, ListHandler::new_detached())
+            .unwrap()
+            .id();
+        let movable_child_id = a
+            .get_movable_list("movable")
+            .insert_container(0, MovableListHandler::new_detached())
+            .unwrap()
+            .id();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        assert_eq!(a.get_deep_value(), c.get_deep_value());
+        let mut state = c.app_state().lock();
+        for id in [&map_child_id, &list_child_id, &movable_child_id] {
+            assert!(state.store.contains_id(id), "missing {id:?}");
+        }
+    }
+
+    /// A remote tree node's associated meta map has no ops until someone writes metadata; the
+    /// tree diff's `Create` action must ensure its store entry on the importer.
+    #[test]
+    fn snapshot_export_includes_remote_tree_meta() {
+        let a = LoroDoc::new_auto_commit();
+        let node = a.get_tree("tree").create(TreeParentId::Root).unwrap();
+        let meta_id = node.associated_meta_container();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        let mut state = c.app_state().lock();
+        assert!(state.store.contains_id(&meta_id));
+    }
+
+    /// An ensured-but-empty mergeable child has no store entry anywhere — the parent map's
+    /// marker is its single source of truth. A full snapshot round-trip through an importer
+    /// must keep the child resolvable by id without materializing an entry for it.
+    #[test]
+    fn snapshot_export_keeps_empty_marker_child_resolvable_without_entry() {
+        let a = LoroDoc::new_auto_commit();
+        let child_id = a
+            .get_map("state")
+            .ensure_mergeable_text("notes")
+            .unwrap()
+            .id();
+        let updates = a
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.import(&updates).unwrap();
+        let snapshot = b.export(crate::encoding::ExportMode::Snapshot).unwrap();
+
+        let c = LoroDoc::new();
+        c.import(&snapshot).unwrap();
+        let mut state = c.app_state().lock();
+        assert!(!state.store.contains_id(&child_id));
+        assert!(
+            state.does_container_exist(&child_id),
+            "empty mergeable child must resolve from the marker after round-trip"
+        );
+    }
+
+    #[test]
+    fn deep_value_read_keeps_imported_state_lazy() {
+        let source = init_doc();
+        let expected = source.get_deep_value();
+        let child_map_id = source
+            .get_map("map")
+            .get("child_map")
+            .and_then(|value| value.as_container().cloned())
+            .unwrap();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+
+        assert_eq!(imported.get_deep_value(), expected);
+        assert_eq!(imported.get_deep_value(), expected);
+
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        let child_map_idx = state.store.arena.register_container(&child_map_id);
+        assert!(!state.store.store.has_cached_value_for_test(map_idx));
+        assert!(!state.store.store.has_cached_value_for_test(child_map_idx));
+    }
+
+    #[test]
+    fn snapshot_export_persists_empty_alive_child() {
+        let source = LoroDoc::new_auto_commit();
+        let child = source
+            .get_map("root")
+            .insert_container("empty", MapHandler::new_detached())
+            .unwrap();
+        let child_id = child.id();
+        let updates = source
+            .export(crate::encoding::ExportMode::all_updates())
+            .unwrap();
+        let target = LoroDoc::new();
+        target.import(&updates).unwrap();
+        {
+            // The diff-apply hook creates the empty child's store entry at import time; full
+            // snapshot export relies on this invariant instead of walking the alive graph.
+            let mut state = target.app_state().lock();
+            assert!(state.store.contains_id(&child_id));
+        }
+
+        let snapshot = target
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+
+        let mut state = round_tripped.app_state().lock();
+        assert!(state.store.contains_id(&child_id));
     }
 }

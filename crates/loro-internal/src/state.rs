@@ -8,10 +8,10 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use itertools::Itertools;
 use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tracing::{info_span, instrument, warn};
 
 use crate::{
@@ -171,6 +171,31 @@ pub struct DocState {
     event_recorder: EventRecorder,
 
     dead_containers_cache: DeadContainersCache,
+    alive_containers_cache: Option<AliveContainersCache>,
+}
+
+struct AliveContainersCache {
+    frontiers: Frontiers,
+    roots: Vec<ContainerIdx>,
+    indices: Arc<FxHashSet<ContainerIdx>>,
+}
+
+const ALIVE_CONTAINERS_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+fn estimated_alive_containers_cache_bytes(
+    roots_capacity: usize,
+    indices: &FxHashSet<ContainerIdx>,
+) -> usize {
+    // Hash-table control bytes and alignment are implementation details. A pointer of overhead per
+    // entry is deliberately conservative, so retaining the cache cannot silently become another
+    // form of full-state materialization on documents with very many small containers.
+    roots_capacity
+        .saturating_mul(std::mem::size_of::<ContainerIdx>())
+        .saturating_add(
+            indices
+                .capacity()
+                .saturating_mul(std::mem::size_of::<ContainerIdx>() + std::mem::size_of::<usize>()),
+        )
 }
 
 impl std::fmt::Debug for DocState {
@@ -453,6 +478,7 @@ impl DocState {
                 changed_idx_in_txn: FxHashSet::default(),
                 event_recorder: Default::default(),
                 dead_containers_cache: Default::default(),
+                alive_containers_cache: None,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -477,6 +503,7 @@ impl DocState {
             changed_idx_in_txn: FxHashSet::default(),
             event_recorder: Default::default(),
             dead_containers_cache: Default::default(),
+            alive_containers_cache: None,
         }))
     }
 
@@ -721,7 +748,8 @@ impl DocState {
                         diff.diff = extern_diff.into();
                     }
                 }
-                crate::event::DiffVariant::Internal(_) => {
+                crate::event::DiffVariant::Internal(inner_diff) => {
+                    self.ensure_containers_created_by_internal_diff(inner_diff);
                     let cid = self.arena.idx_to_id(idx).unwrap();
                     info_span!("apply diff on", container_id = ?cid).in_scope(
                         || -> LoroResult<()> {
@@ -820,6 +848,72 @@ impl DocState {
         Ok(())
     }
 
+    /// Create store entries for every container this diff brings alive.
+    ///
+    /// Full snapshot export no longer walks the alive-container graph to discover containers
+    /// that exist only as references inside another container's value (e.g. an empty child
+    /// created by a remote peer, whose own container has no ops and therefore no diff). Such
+    /// entries must be created when the reference is applied so the next flush persists them.
+    fn ensure_containers_created_by_internal_diff(&mut self, diff: &InternalDiff) {
+        let mut to_ensure: SmallVec<[ContainerID; 2]> = SmallVec::new();
+        match diff {
+            InternalDiff::ListRaw(delta) => {
+                for item in delta.iter() {
+                    if let crate::delta::DeltaItem::Insert { insert, .. } = item {
+                        match &insert.values {
+                            either::Either::Left(range) => {
+                                for value in self.arena.iter_value_slice(range.to_range()) {
+                                    if let LoroValue::Container(c) = value {
+                                        to_ensure.push(c);
+                                    }
+                                }
+                            }
+                            either::Either::Right(LoroValue::Container(c)) => {
+                                to_ensure.push(c.clone())
+                            }
+                            either::Either::Right(_) => {}
+                        }
+                    }
+                }
+            }
+            InternalDiff::Map(delta) => {
+                // Mergeable markers are deliberately not materialized here: the parent map's
+                // marker is the single source of truth for an ensured-but-empty mergeable
+                // child, and it resolves lazily via `does_container_exist`/`get_reachable`.
+                for value in delta.updated.values() {
+                    let Some(Some(value)) = value.as_ref().map(|v| v.value.as_ref()) else {
+                        continue;
+                    };
+                    if let LoroValue::Container(c) = value {
+                        to_ensure.push(c.clone());
+                    }
+                }
+            }
+            InternalDiff::Tree(delta) => {
+                for item in delta.diff.iter() {
+                    if matches!(item.action, crate::delta::TreeInternalDiff::Create { .. }) {
+                        to_ensure.push(item.target.associated_meta_container());
+                    }
+                }
+            }
+            InternalDiff::MovableList(delta) => {
+                for elem in delta.elements.values() {
+                    if let LoroValue::Container(c) = &elem.value {
+                        to_ensure.push(c.clone());
+                    }
+                }
+            }
+            InternalDiff::RichtextRaw(_) => {}
+            #[cfg(feature = "counter")]
+            InternalDiff::Counter(_) => {}
+            InternalDiff::Unknown => {}
+        }
+
+        for id in to_ensure {
+            self.ensure_container(&id);
+        }
+    }
+
     fn validate_diff_batch(&mut self, diffs: &[InternalContainerDiff]) -> LoroResult<()> {
         for diff in diffs {
             let crate::event::DiffVariant::Internal(internal_diff) = &diff.diff else {
@@ -839,6 +933,7 @@ impl DocState {
     pub fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<()> {
         // set parent first, `MapContainer` will only be created for TreeID that does not contain
         self.set_container_parent_by_raw_op(raw_op);
+        self.ensure_containers_created_by_op(op);
         let state = self.store.get_or_create_mut(op.container);
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
@@ -911,16 +1006,55 @@ impl DocState {
         self.store.ensure_container(id);
     }
 
-    /// Ensure all alive containers are created in DocState and will be encoded in the next `encode` call
-    pub(crate) fn ensure_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
-        // TODO: PERF This can be optimized because we shouldn't need to call get_value for
-        // all the containers every time we export
-        let ans = self.get_all_alive_containers();
-        for id in ans.iter() {
-            self.ensure_container(id);
+    /// Ensure all alive containers are created in DocState and will be encoded in the next
+    /// `encode` call, and return the alive set.
+    ///
+    /// Only shallow snapshot export needs this now (its `retain_keys` filter requires the alive
+    /// set). Full snapshot export relies on the write-time invariant maintained by
+    /// `ensure_containers_created_by_op` / `ensure_containers_created_by_internal_diff` instead
+    /// of walking the graph.
+    ///
+    /// Returns arena indices rather than IDs so callers do not have to hold a second set of
+    /// cloned container IDs; callers that need IDs map them through the arena.
+    pub(crate) fn ensure_all_alive_containers(
+        &mut self,
+    ) -> LoroResult<Arc<FxHashSet<ContainerIdx>>> {
+        let roots = self.existing_retention_roots();
+        if !self.in_txn {
+            if let Some(cache) = &self.alive_containers_cache {
+                if cache.frontiers == self.frontiers && cache.roots == roots {
+                    return Ok(cache.indices.clone());
+                }
+            }
+        }
+        // Do not hold the previous version's set while constructing its replacement.
+        self.alive_containers_cache = None;
+
+        let indices = Arc::new(self.get_all_alive_container_indices_from_roots(&roots)?);
+        for idx in indices.iter() {
+            let id = self.arena.get_container_id(*idx).unwrap();
+            if !self.store.contains_id(&id) {
+                self.store.ensure_container(&id);
+            }
         }
 
-        ans
+        if !self.in_txn {
+            // The walk can discover and ensure an empty mergeable child, which registers another
+            // retention root without advancing the document version. Store the post-walk roots so
+            // the next unchanged export can use the cache immediately.
+            let roots = self.existing_retention_roots();
+            if estimated_alive_containers_cache_bytes(roots.capacity(), &indices)
+                <= ALIVE_CONTAINERS_CACHE_MAX_BYTES
+            {
+                self.alive_containers_cache = Some(AliveContainersCache {
+                    frontiers: self.frontiers.clone(),
+                    roots,
+                    indices: indices.clone(),
+                });
+            }
+        }
+
+        Ok(indices)
     }
 
     pub(crate) fn get_value_by_idx(&mut self, container_idx: ContainerIdx) -> LoroValue {
@@ -1135,6 +1269,7 @@ impl DocState {
             self.start_recording();
         }
         self.dead_containers_cache = Default::default();
+        self.alive_containers_cache = None;
     }
 
     pub fn get_value(&mut self) -> LoroValue {
@@ -1303,7 +1438,7 @@ impl DocState {
     fn root_container_is_empty(&mut self, idx: ContainerIdx) -> bool {
         let value = self
             .store
-            .get_value(idx)
+            .get_value_ephemeral(idx)
             .unwrap_or_else(|| idx.get_type().default_value());
         visible_container_value_is_empty(idx.get_type(), &value)
     }
@@ -1325,7 +1460,7 @@ impl DocState {
         id: Option<ContainerID>,
     ) -> LoroValue {
         let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(value) = self.store.get_value(container) else {
+        let Some(value) = self.store.get_value_ephemeral(container) else {
             return container.get_type().default_value();
         };
         let cid_str = LoroValue::String(format!("idx:{}, id:{}", container.to_index(), id).into());
@@ -1413,7 +1548,7 @@ impl DocState {
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(value) = self.store.get_value(container) else {
+        let Some(value) = self.store.get_value_ephemeral(container) else {
             return container.get_type().default_value();
         };
         match value {
@@ -1480,30 +1615,127 @@ impl DocState {
         }
     }
 
-    pub(crate) fn get_all_alive_containers(&mut self) -> FxHashSet<ContainerID> {
-        let flag = self.store.load_all();
-        let mut ans = FxHashSet::default();
-        let mut to_visit = self
-            .arena
-            .root_containers(flag)
-            .iter()
-            .map(|x| self.arena.get_container_id(*x).unwrap())
-            .filter(|id| self.store.contains_id(id))
-            .collect_vec();
-
-        while let Some(id) = to_visit.pop() {
-            self.get_alive_children_of(&id, &mut to_visit);
-            ans.insert(id);
-        }
-
-        ans
+    pub(crate) fn get_all_alive_containers(&mut self) -> LoroResult<FxHashSet<ContainerID>> {
+        Ok(self
+            .get_all_alive_container_indices()?
+            .into_iter()
+            .map(|idx| self.arena.get_container_id(idx).unwrap())
+            .collect())
     }
 
-    pub(crate) fn get_alive_children_of(&mut self, id: &ContainerID, ans: &mut Vec<ContainerID>) {
-        let idx = self.arena.register_container(id);
-        let Some(value) = self.store.get_value(idx) else {
-            return;
+    fn get_all_alive_container_indices(&mut self) -> LoroResult<FxHashSet<ContainerIdx>> {
+        let roots = self.existing_retention_roots();
+        self.get_all_alive_container_indices_from_roots(&roots)
+    }
+
+    fn existing_retention_roots(&mut self) -> Vec<ContainerIdx> {
+        let flag = self.store.load_root_containers();
+        self.arena
+            .root_containers(flag)
+            .into_iter()
+            .filter(|idx| {
+                let id = self.arena.get_container_id(*idx).unwrap();
+                self.store.contains_id(&id)
+            })
+            .collect()
+    }
+
+    fn get_all_alive_container_indices_from_roots(
+        &mut self,
+        roots: &[ContainerIdx],
+    ) -> LoroResult<FxHashSet<ContainerIdx>> {
+        let mut ans = FxHashSet::default();
+        let mut to_visit = Vec::new();
+        for &idx in roots {
+            let id = self.arena.get_container_id(idx).unwrap();
+            let expected_parent = id
+                .parse_mergeable()
+                .map(|(parent_id, _, _)| self.arena.register_container(&parent_id));
+            to_visit.push((idx, expected_parent));
+        }
+
+        while let Some((idx, expected_parent)) = to_visit.pop() {
+            if !ans.insert(idx) {
+                // The same child may be referenced by multiple parents. Even though its value was
+                // already traversed, every additional edge still has to agree with the encoded and
+                // registered parent.
+                self.validate_alive_parent(idx, expected_parent)?;
+                continue;
+            }
+            self.get_alive_children_of(idx, expected_parent, &mut to_visit)?;
+        }
+
+        Ok(ans)
+    }
+
+    fn validate_alive_parent(
+        &mut self,
+        child_idx: ContainerIdx,
+        expected_parent: Option<ContainerIdx>,
+    ) -> LoroResult<()> {
+        let encoded_parent = self.store.get_parent_ephemeral(child_idx)?;
+        self.validate_alive_parent_with_encoded(child_idx, expected_parent, encoded_parent)
+    }
+
+    fn validate_alive_parent_with_encoded(
+        &mut self,
+        child_idx: ContainerIdx,
+        expected_parent: Option<ContainerIdx>,
+        encoded_parent: Option<Option<ContainerID>>,
+    ) -> LoroResult<()> {
+        let child_id = self.arena.get_container_id(child_idx).unwrap();
+        let expected_parent_id = expected_parent.and_then(|idx| self.arena.get_container_id(idx));
+        if let Some(encoded_parent) = encoded_parent {
+            if encoded_parent != expected_parent_id {
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "container {child_id:?} expects parent {expected_parent_id:?}, but its snapshot state encodes parent {encoded_parent:?}"
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        match self.arena.get_registered_parent(child_idx) {
+            Some(registered_parent) if registered_parent == expected_parent => {}
+            Some(registered_parent) => {
+                let registered_parent =
+                    registered_parent.and_then(|idx| self.arena.get_container_id(idx));
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "container {child_id:?} expects parent {expected_parent_id:?}, but its registered parent is {registered_parent:?}"
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+            None => self.arena.set_parent(child_idx, expected_parent),
+        }
+
+        Ok(())
+    }
+
+    fn register_alive_child(
+        &mut self,
+        parent_idx: ContainerIdx,
+        child_id: &ContainerID,
+        ans: &mut Vec<(ContainerIdx, Option<ContainerIdx>)>,
+    ) {
+        let child_idx = self.arena.register_container(child_id);
+        ans.push((child_idx, Some(parent_idx)));
+    }
+
+    fn get_alive_children_of(
+        &mut self,
+        idx: ContainerIdx,
+        expected_parent: Option<ContainerIdx>,
+        ans: &mut Vec<(ContainerIdx, Option<ContainerIdx>)>,
+    ) -> LoroResult<()> {
+        let Some((encoded_parent, value)) = self.store.try_get_parent_and_value_ephemeral(idx)?
+        else {
+            self.validate_alive_parent_with_encoded(idx, expected_parent, None)?;
+            return Ok(());
         };
+        self.validate_alive_parent_with_encoded(idx, expected_parent, Some(encoded_parent))?;
 
         match value {
             LoroValue::Container(_) => unreachable!(),
@@ -1518,7 +1750,7 @@ impl DocState {
                         let map = node.as_map().unwrap();
                         let meta = map.get("meta").unwrap();
                         let id = meta.as_container().unwrap();
-                        ans.push(id.clone());
+                        self.register_alive_child(idx, id, ans);
                         let children = map.get("children").unwrap();
                         let children = children.as_list().unwrap();
                         for child in children.iter() {
@@ -1528,7 +1760,7 @@ impl DocState {
                 } else {
                     for item in list.iter() {
                         if let LoroValue::Container(id) = item {
-                            ans.push(id.clone());
+                            self.register_alive_child(idx, id, ans);
                         }
                     }
                 }
@@ -1536,7 +1768,7 @@ impl DocState {
             LoroValue::Map(map) => {
                 for (_key, value) in map.iter() {
                     if let LoroValue::Container(id) = value {
-                        ans.push(id.clone());
+                        self.register_alive_child(idx, id, ans);
                     }
                 }
                 // Mergeable children are resolved from compact binary markers stored in this
@@ -1557,12 +1789,13 @@ impl DocState {
                     })
                     .unwrap_or_default();
                 for cid in mergeable_cids {
-                    self.arena.register_container(&cid);
-                    ans.push(cid);
+                    self.register_alive_child(idx, &cid, ans);
                 }
             }
             _ => {}
         }
+
+        Ok(())
     }
 
     // Because we need to calculate path based on [DocState], so we cannot extract

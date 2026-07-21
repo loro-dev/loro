@@ -83,6 +83,20 @@ impl LazyDecodedValue {
         }
     }
 
+    fn to_loro_value_ephemeral(&self) -> LoroValue {
+        match self {
+            Self::Value(value) | Self::Text { value, .. } => value.clone(),
+            Self::Map { ordered, value } => value.get().cloned().unwrap_or_else(|| {
+                LoroValue::Map(
+                    ordered
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect::<loro_common::LoroMapValue>(),
+                )
+            }),
+        }
+    }
+
     fn as_map(&self) -> Option<&BTreeMap<String, LoroValue>> {
         match self {
             Self::Map { ordered, .. } => Some(ordered),
@@ -197,6 +211,30 @@ impl ContainerWrapper {
 
     pub fn get_value(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> LoroValue {
         self.try_get_value(idx, ctx).unwrap()
+    }
+
+    /// Read the current value without populating the lazy-value cache.
+    ///
+    /// Snapshot export uses this while walking reachable containers. Keeping the decoded value
+    /// on every lazy wrapper would turn that walk into full state materialization.
+    pub(crate) fn try_get_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> LoroResult<LoroValue> {
+        match &mut self.data {
+            ContainerData::State(state) => Ok(state.get_value()),
+            ContainerData::Lazy(lazy) if lazy.value.is_some() => {
+                Ok(lazy.value.as_ref().unwrap().to_loro_value_ephemeral())
+            }
+            ContainerData::Lazy(lazy) => {
+                let Some(bytes) = lazy.bytes.clone() else {
+                    return Ok(self.kind.default_value());
+                };
+                let mut temporary = Self::try_new_from_bytes(bytes)?;
+                temporary.try_get_value(idx, ctx)
+            }
+        }
     }
 
     pub fn map_get(
@@ -522,6 +560,17 @@ impl ContainerWrapper {
     #[cfg(test)]
     pub(super) fn has_cached_value_for_test(&self) -> bool {
         self.has_cached_value()
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_materialized_map_value_for_test(&self) -> bool {
+        let ContainerData::Lazy(lazy) = &self.data else {
+            return false;
+        };
+        matches!(
+            lazy.value.as_ref(),
+            Some(LazyDecodedValue::Map { value, .. }) if value.get().is_some()
+        )
     }
 
     fn value_bytes_and_offset(&mut self) -> Option<(Bytes, usize)> {

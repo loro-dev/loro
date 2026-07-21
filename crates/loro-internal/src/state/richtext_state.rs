@@ -12,9 +12,7 @@ use crate::{
         list::list_op,
         richtext::{
             config::StyleConfigMap,
-            richtext_state::{
-                DrainInfo, EntityRanges, IterRangeItem, PosType, RichtextStateChunk,
-            },
+            richtext_state::{DrainInfo, EntityRanges, IterRangeItem, PosType, RichtextStateChunk},
             AnchorType, RichtextState as InnerState, StyleKey, StyleOp, Styles,
         },
     },

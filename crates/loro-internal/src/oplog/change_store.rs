@@ -1,4 +1,6 @@
-use self::block_encode::{decode_block, decode_header, encode_block, ChangesBlockHeader};
+use self::block_encode::{
+    decode_block, decode_cids, decode_header, encode_block, ChangesBlockHeader,
+};
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
 use crate::{
@@ -9,19 +11,22 @@ use crate::{
     op::Op,
     parent::register_container_and_parent_link,
     version::{Frontiers, ImVersionVector},
-    VersionVector,
+    InternalString, VersionVector,
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
 use itertools::Itertools;
 use loro_common::{
-    Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport, LoroError,
-    LoroResult, PeerID, ID,
+    ContainerID, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport,
+    LoroError, LoroResult, PeerID, ID,
 };
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
+use rustc_hash::FxHashSet;
 use std::sync::atomic::AtomicI64;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -37,6 +42,7 @@ pub(super) mod iter;
 const MAX_BLOCK_SIZE: usize = 1024 * 4;
 #[cfg(test)]
 const MAX_BLOCK_SIZE: usize = 128;
+const MAX_ROOT_HISTORY_NAME_BYTES: usize = 256 * 1024;
 
 /// # Invariance
 ///
@@ -69,6 +75,48 @@ pub struct ChangeStore {
     /// The version vector of the external kv store.
     external_vv: Arc<Mutex<VersionVector>>,
     merge_interval: Arc<AtomicI64>,
+    root_history_names: Arc<Mutex<RootHistoryNamesState>>,
+    #[cfg(test)]
+    root_history_scan_count: Arc<AtomicUsize>,
+}
+
+/// A conservative, size-capped set of every top-level root name that appears in the store's
+/// history. It only answers "may history have touched this root?", so retaining stale names
+/// (e.g. from a rolled-back import) is harmless — it just forces the general diff path.
+#[derive(Debug, Default)]
+enum RootHistoryNamesState {
+    #[default]
+    Uninitialized,
+    Valid {
+        names: FxHashSet<InternalString>,
+        name_bytes: usize,
+    },
+    Invalid,
+}
+
+/// Return false when retaining the name would exceed the fixed memory bound.
+fn record_root_name(
+    names: &mut FxHashSet<InternalString>,
+    name_bytes: &mut usize,
+    cid: &ContainerID,
+) -> bool {
+    let ContainerID::Root { name, .. } = cid else {
+        return true;
+    };
+    if cid.is_mergeable() || names.contains(name) {
+        return true;
+    }
+
+    let Some(new_bytes) = name_bytes.checked_add(name.len()) else {
+        return false;
+    };
+    if new_bytes > MAX_ROOT_HISTORY_NAME_BYTES {
+        return false;
+    }
+
+    names.insert(name.clone());
+    *name_bytes = new_bytes;
+    true
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +197,9 @@ impl ChangeStore {
             external_kv: Arc::new(Mutex::new(MemKvStore::new(MemKvConfig::default()))),
             // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
+            root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),
+            #[cfg(test)]
+            root_history_scan_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -301,6 +352,8 @@ impl ChangeStore {
     }
 
     pub(crate) fn rollback_import(&self, rollback: ChangeStoreRollback) {
+        // The name set may already include names from changes this rollback removes. That is
+        // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
         let mut inner = self.inner.lock();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
@@ -334,6 +387,125 @@ impl ChangeStore {
                 f(c);
             }
         }
+    }
+
+    fn build_root_history_names(&self) -> RootHistoryNamesState {
+        let mut names = FxHashSet::default();
+        let mut name_bytes = 0;
+
+        {
+            let external = self.external_kv.lock();
+            for (key, bytes) in external.scan(Bound::Unbounded, Bound::Unbounded) {
+                if key.len() != 12 {
+                    continue;
+                }
+                let header = match decode_header(&bytes)
+                    .and_then(|header| decode_cids(&bytes, Some(header)))
+                {
+                    Ok(header) => header,
+                    Err(_) => return RootHistoryNamesState::Invalid,
+                };
+                let Some(cids) = header.cids.get() else {
+                    return RootHistoryNamesState::Invalid;
+                };
+                for cid in cids.iter() {
+                    if !record_root_name(&mut names, &mut name_bytes, cid) {
+                        return RootHistoryNamesState::Invalid;
+                    }
+                }
+            }
+        }
+
+        let inner = self.inner.lock();
+        for block in inner.mem_parsed_kv.values() {
+            match &block.content {
+                ChangesBlockContent::Changes(changes) | ChangesBlockContent::Both(changes, _) => {
+                    for change in changes.iter() {
+                        for op in change.ops.iter() {
+                            let Some(cid) = self.arena.idx_to_id(op.container) else {
+                                return RootHistoryNamesState::Invalid;
+                            };
+                            if !record_root_name(&mut names, &mut name_bytes, &cid) {
+                                return RootHistoryNamesState::Invalid;
+                            }
+                        }
+                    }
+                }
+                ChangesBlockContent::Bytes(bytes) => {
+                    let header = bytes.header.get().map(|header| header.as_ref().clone());
+                    let header = match decode_cids(&bytes.bytes, header) {
+                        Ok(header) => header,
+                        Err(_) => return RootHistoryNamesState::Invalid,
+                    };
+                    let Some(cids) = header.cids.get() else {
+                        return RootHistoryNamesState::Invalid;
+                    };
+                    for cid in cids.iter() {
+                        if !record_root_name(&mut names, &mut name_bytes, cid) {
+                            return RootHistoryNamesState::Invalid;
+                        }
+                    }
+                }
+            }
+        }
+
+        RootHistoryNamesState::Valid { names, name_bytes }
+    }
+
+    fn record_change_in_root_history_names(&self, change: &Change) {
+        let mut cached = self.root_history_names.lock();
+        let RootHistoryNamesState::Valid { names, name_bytes } = &mut *cached else {
+            return;
+        };
+
+        for op in change.ops.iter() {
+            let recorded = self
+                .arena
+                .idx_to_id(op.container)
+                .is_some_and(|cid| record_root_name(names, name_bytes, &cid));
+            if !recorded {
+                *cached = RootHistoryNamesState::Invalid;
+                return;
+            }
+        }
+    }
+
+    /// Return whether the history already in this store may have touched any top-level root in
+    /// `names`. Must be called before the candidate changes are inserted.
+    ///
+    /// The first call scans encoded block container arenas without parsing operations or
+    /// populating the parsed-change cache; later inserts update the cached name set, so repeated
+    /// independent imports do not rescan the old history. Decode failures or exceeding the size
+    /// cap permanently disable this optimization for the store.
+    pub(crate) fn old_history_may_touch_root_names(
+        &self,
+        names: &FxHashSet<InternalString>,
+    ) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+
+        let mut cached = self.root_history_names.lock();
+        if matches!(*cached, RootHistoryNamesState::Uninitialized) {
+            #[cfg(test)]
+            self.root_history_scan_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            *cached = self.build_root_history_names();
+        }
+
+        match &*cached {
+            RootHistoryNamesState::Valid {
+                names: history_names,
+                ..
+            } => names.iter().any(|name| history_names.contains(name)),
+            RootHistoryNamesState::Invalid | RootHistoryNamesState::Uninitialized => true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn root_history_scan_count_for_test(&self) -> usize {
+        self.root_history_scan_count
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
@@ -529,6 +701,9 @@ impl ChangeStore {
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
             external_kv: self.external_kv.lock().clone_store(),
             merge_interval,
+            root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),
+            #[cfg(test)]
+            root_history_scan_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -638,13 +813,14 @@ mod mut_external_kv {
                 kv_store.len() <= 2,
                 "kv store should be empty when using decode_all"
             );
-            // The snapshot/update body is already integrity-checked by the
-            // document-level checksum in `parse_header_and_body(.., true)` before
-            // we reach here, so skip the redundant per-block checksum.
+            // Snapshot/update bytes are external input. Validate the checksums embedded in each
+            // SSTable block as well as the document envelope so malformed lazy blocks are rejected
+            // during import instead of surfacing from a later read.
             kv_store
-                .import_all_unchecked(bytes)
+                .import_all(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
             drop(kv_store);
+            *self.root_history_names.lock() = RootHistoryNamesState::Uninitialized;
             let vv_bytes = self.external_kv.lock().get(VV_KEY).unwrap_or_default();
             let vv = VersionVector::decode(&vv_bytes)
                 .map_err(|_| LoroError::DecodeDataCorruptionError)?;
@@ -798,6 +974,8 @@ mod mut_inner_kv {
             is_local: bool,
             mut rollback: Option<&mut ChangeStoreRollback>,
         ) {
+            self.record_change_in_root_history_names(&change);
+
             #[cfg(debug_assertions)]
             {
                 let vv = self.external_vv.lock();
@@ -1894,6 +2072,18 @@ mod test {
         assert_eq!(change.id.peer, 1);
         assert!(change.lamport <= 700);
         assert_eq!(change.id.counter + change.atom_len() as Counter, 500);
+    }
+
+    #[test]
+    fn root_history_names_reject_oversized_name_without_retaining_it() {
+        let mut names = FxHashSet::default();
+        let mut name_bytes = 0;
+        let oversized_name = "x".repeat(MAX_ROOT_HISTORY_NAME_BYTES + 1);
+        let oversized = ContainerID::new_root(&oversized_name, crate::ContainerType::Map);
+
+        assert!(!record_root_name(&mut names, &mut name_bytes, &oversized));
+        assert!(names.is_empty());
+        assert_eq!(name_bytes, 0);
     }
 
     #[test]

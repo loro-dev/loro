@@ -96,10 +96,10 @@ impl Rope {
         let (q, f) = self.tree.query_with_finder_return::<LengthFinder>(&index);
         self.cursor = q.and_then(|q| {
             if q.offset() == 0 {
-                if f.slot == 0 || f.parent.is_none() {
+                if f.slot == 0 {
                     None
                 } else {
-                    let node = self.tree.in_nodes.get(f.parent.unwrap()).unwrap();
+                    let node = self.tree.in_nodes.get(f.parent?).unwrap();
                     let child = &node.children[f.slot as usize - 1];
                     Some(Cursor {
                         pos: index - child.cache as usize,

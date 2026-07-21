@@ -39,7 +39,9 @@ impl DocAnalysis {
 
         let mut containers = FxHashMap::default();
         let mut state = doc.app_state().lock();
-        let alive_containers = state.get_all_alive_containers();
+        let alive_containers = state
+            .get_all_alive_containers()
+            .expect("analyzing a valid document should resolve its container hierarchy");
         for (idx, c) in state.iter_all_containers_mut() {
             let ops_num = ops_nums.get(&idx).unwrap_or(&0);
             let id = doc.arena().get_container_id(idx).unwrap();

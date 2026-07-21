@@ -30,6 +30,40 @@ fn corrupt_snapshot_state_bytes(snapshot: &mut [u8]) {
     let state_start = state_len_pos + 4;
     snapshot[state_start] ^= 0xff;
 
+    refresh_snapshot_checksum(snapshot);
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SnapshotKvSection {
+    OpLog,
+    State,
+}
+
+fn corrupt_snapshot_sstable_block(snapshot: &mut [u8], section: SnapshotKvSection) {
+    let body_start = 22;
+    let oplog_len =
+        u32::from_le_bytes(snapshot[body_start..body_start + 4].try_into().unwrap()) as usize;
+    let oplog_start = body_start + 4;
+    let state_len_pos = oplog_start + oplog_len;
+    let state_len = u32::from_le_bytes(
+        snapshot[state_len_pos..state_len_pos + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    let state_start = state_len_pos + 4;
+    let (section_start, section_len) = match section {
+        SnapshotKvSection::OpLog => (oplog_start, oplog_len),
+        SnapshotKvSection::State => (state_start, state_len),
+    };
+
+    // SSTable layout starts with four magic bytes and one schema byte. Corrupt the first block
+    // payload while leaving its embedded checksum stale, then refresh only the outer envelope.
+    assert!(section_len > 9);
+    snapshot[section_start + 5] ^= 0xff;
+    refresh_snapshot_checksum(snapshot);
+}
+
+fn refresh_snapshot_checksum(snapshot: &mut [u8]) {
     let checksum = xxhash_rust::xxh32::xxh32(&snapshot[20..], u32::from_le_bytes(*b"LORO"));
     snapshot[16..20].copy_from_slice(&checksum.to_le_bytes());
 }
@@ -301,4 +335,31 @@ fn corrupt_snapshot_import_rolls_back_empty_doc() {
 
     dst.import(&snapshot).unwrap();
     assert_eq!(dst.get_deep_value(), src.get_deep_value());
+}
+
+#[test]
+fn snapshot_import_rejects_corrupt_inner_sstable_with_valid_envelope_checksum() {
+    let src = LoroDoc::new_auto_commit();
+    src.set_peer_id(9).unwrap();
+    src.get_map("map").insert("key", "value").unwrap();
+    let snapshot = src.export(ExportMode::Snapshot).unwrap();
+
+    for section in [SnapshotKvSection::OpLog, SnapshotKvSection::State] {
+        let mut corrupted = snapshot.clone();
+        corrupt_snapshot_sstable_block(&mut corrupted, section);
+
+        let dst = LoroDoc::new();
+        let err = dst
+            .import(&corrupted)
+            .expect_err("invalid inner SSTable checksum must fail during import");
+        assert!(
+            err.to_string().contains("checksum") || err.to_string().contains("Checksum"),
+            "unexpected {section:?} import error: {err:?}"
+        );
+        assert!(dst.oplog().lock().is_empty());
+        assert!(dst
+            .get_deep_value()
+            .as_map()
+            .is_some_and(|value| value.is_empty()));
+    }
 }
