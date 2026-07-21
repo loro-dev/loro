@@ -446,6 +446,43 @@ impl ContainerHistoryCache {
         ans
     }
 
+    pub(crate) fn list_shallow_root_spans_in_order(
+        &self,
+        idx: ContainerIdx,
+        include_dead_items: bool,
+    ) -> Vec<(IdFull, usize)> {
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return Vec::new();
+        };
+
+        let mut binding = state.store.lock();
+        let Some(list) = binding.get_mut(idx) else {
+            return Vec::new();
+        };
+
+        let list_state = list.get_state(
+            idx,
+            ContainerCreationContext {
+                configure: &Default::default(),
+                peer: 0,
+            },
+        );
+
+        match list_state {
+            crate::state::State::ListState(list) => {
+                list.iter_with_id().map(|v| (v.id, 1)).collect()
+            }
+            crate::state::State::MovableListState(list) if include_dead_items => {
+                list.iter_list_item_ids_for_op().map(|id| (id, 1)).collect()
+            }
+            crate::state::State::MovableListState(list) => list
+                .iter_with_last_move_id_and_elem_id()
+                .map(|(id, _, _)| (id, 1))
+                .collect(),
+            _ => unreachable!(),
+        }
+    }
+
     pub(crate) fn find_list_chunks_in(
         &self,
         idx: ContainerIdx,
@@ -483,12 +520,16 @@ impl ContainerHistoryCache {
                 }
             }
             crate::state::State::MovableListState(list) => {
-                for (move_id, elem_id, v) in list.iter_with_last_move_id_and_elem_id() {
+                for (move_id, elem_id) in list.iter_list_items_for_op() {
                     if target_span.contains(move_id.id()) {
+                        let value = elem_id
+                            .and_then(|elem_id| list.elements().get(&elem_id))
+                            .map(|elem| elem.value.clone())
+                            .unwrap_or(LoroValue::Null);
                         ans.push(SliceWithId {
-                            values: Either::Right(v.clone()),
+                            values: Either::Right(value),
                             id: move_id,
-                            elem_id: Some(elem_id),
+                            elem_id,
                         })
                     }
                 }

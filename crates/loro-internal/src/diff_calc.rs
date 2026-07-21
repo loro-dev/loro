@@ -362,7 +362,7 @@ impl DiffCalculator {
                 ),
                 crate::ContainerType::List => (
                     depth,
-                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
+                    ContainerDiffCalculator::List(ListDiffCalculator::new(idx)),
                 ),
                 crate::ContainerType::Tree => (
                     depth,
@@ -442,17 +442,16 @@ trait RebuildOpVisitor {
 
 #[cold]
 #[inline(never)]
-fn replay_container_ops_from_empty(
+fn replay_container_ops_between(
     idx: ContainerIdx,
     oplog: &OpLog,
-    vv: &VersionVector,
+    from_vv: &VersionVector,
+    to_vv: &VersionVector,
+    to_frontiers: &Frontiers,
     visitor: &mut dyn RebuildOpVisitor,
 ) {
-    let empty_vv = VersionVector::default();
-    let empty_frontiers = Frontiers::default();
-    let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-    let (_, _, iter) =
-        oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+    let from_frontiers = oplog.dag.vv_to_frontiers(from_vv);
+    let (_, _, iter) = oplog.iter_from_lca_causally(from_vv, &from_frontiers, to_vv, to_frontiers);
 
     for (change, (start_counter, end_counter), vv) in iter {
         let iter_start = change
@@ -482,6 +481,19 @@ fn replay_container_ops_from_empty(
             visitor.visit(vv, RichOp::new_by_change(&change, op));
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn replay_container_ops_from_empty(
+    idx: ContainerIdx,
+    oplog: &OpLog,
+    vv: &VersionVector,
+    visitor: &mut dyn RebuildOpVisitor,
+) {
+    let empty_vv = VersionVector::default();
+    let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+    replay_container_ops_between(idx, oplog, &empty_vv, vv, &target_frontiers, visitor);
 }
 
 #[derive(Debug)]
@@ -617,20 +629,115 @@ impl DiffCalculatorTrait for MapDiffCalculator {
 
 use rle::{HasLength as _, Sliceable};
 
-#[derive(Default)]
 pub(crate) struct ListDiffCalculator {
+    container_idx: ContainerIdx,
     start_vv: VersionVector,
     tracker: Box<RichtextTracker>,
     source_not_in_op_context: bool,
 }
 
 impl ListDiffCalculator {
+    fn new(container_idx: ContainerIdx) -> Self {
+        Self {
+            container_idx,
+            start_vv: VersionVector::default(),
+            tracker: Box::new(RichtextTracker::new_with_unknown()),
+            source_not_in_op_context: false,
+        }
+    }
+
     pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
 
     fn mark_source_not_in_op_context(&mut self) {
         self.source_not_in_op_context = true;
+    }
+
+    fn shallow_root_vv(oplog: &OpLog) -> VersionVector {
+        oplog
+            .dag
+            .frontiers_to_vv(oplog.shallow_since_frontiers())
+            .unwrap_or_else(|| oplog.shallow_since_vv().to_vv())
+    }
+
+    fn seed_tracker_from_shallow_root(
+        idx: ContainerIdx,
+        oplog: &OpLog,
+        tracker: &mut RichtextTracker,
+        vv: &VersionVector,
+        include_dead_items: bool,
+    ) -> VersionVector {
+        let shallow_root_vv = Self::shallow_root_vv(oplog);
+        let seed_vv = if vv.includes_vv(&shallow_root_vv) {
+            shallow_root_vv
+        } else {
+            vv.clone()
+        };
+        let spans = oplog
+            .with_history_cache(|h| h.list_shallow_root_spans_in_order(idx, include_dead_items));
+
+        *tracker = RichtextTracker::new_empty();
+        let mut pos = 0;
+        for (id, len) in spans {
+            if len == 0 || !seed_vv.includes_id(id.id()) {
+                continue;
+            }
+
+            tracker.insert_seeded(pos, RichtextChunk::new_unknown(len as u32), id);
+            pos += len;
+        }
+        tracker.mark_shallow_root_applied(&seed_vv);
+        seed_vv
+    }
+
+    fn start_tracking_list(
+        &mut self,
+        oplog: &OpLog,
+        vv: &crate::VersionVector,
+        include_dead_items: bool,
+    ) {
+        self.source_not_in_op_context = false;
+        if oplog.shallow_since_vv().is_empty() {
+            if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
+                *self.tracker = RichtextTracker::new_with_unknown();
+                self.start_vv = vv.clone();
+            }
+        } else if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
+            let seed_vv = Self::seed_tracker_from_shallow_root(
+                self.container_idx,
+                oplog,
+                &mut *self.tracker,
+                vv,
+                include_dead_items,
+            );
+            let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+            struct ListStartTrackingVisitor<'a> {
+                tracker: &'a mut RichtextTracker,
+            }
+
+            impl RebuildOpVisitor for ListStartTrackingVisitor<'_> {
+                fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
+                    self.tracker.checkout(vv);
+                    ListDiffCalculator::apply_op_to_tracker(self.tracker, &op);
+                }
+            }
+
+            let mut visitor = ListStartTrackingVisitor {
+                tracker: &mut *self.tracker,
+            };
+            replay_container_ops_between(
+                self.container_idx,
+                oplog,
+                &seed_vv,
+                vv,
+                &target_frontiers,
+                &mut visitor,
+            );
+            self.start_vv = vv.clone();
+        }
+
+        self.tracker.checkout(vv);
     }
 
     #[inline(never)]
@@ -670,10 +777,19 @@ impl ListDiffCalculator {
         }
 
         let mut tracker = RichtextTracker::new_with_unknown();
-        let mut visitor = ListRebuildVisitor {
-            tracker: &mut tracker,
-        };
-        replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
+        if oplog.shallow_since_vv().is_empty() {
+            let mut visitor = ListRebuildVisitor {
+                tracker: &mut tracker,
+            };
+            replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
+        } else {
+            let seed_vv = Self::seed_tracker_from_shallow_root(idx, oplog, &mut tracker, vv, false);
+            let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+            let mut visitor = ListRebuildVisitor {
+                tracker: &mut tracker,
+            };
+            replay_container_ops_between(idx, oplog, &seed_vv, vv, &target_frontiers, &mut visitor);
+        }
 
         tracker
     }
@@ -700,14 +816,8 @@ impl std::fmt::Debug for ListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for ListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
-        self.source_not_in_op_context = false;
-        if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            *self.tracker = RichtextTracker::new_with_unknown();
-            self.start_vv = vv.clone();
-        }
-
-        self.tracker.checkout(vv);
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
+        self.start_tracking_list(oplog, vv, false);
     }
 
     fn apply_change(
@@ -1680,10 +1790,57 @@ struct MovableListInner {
 }
 
 impl DiffCalculatorTrait for MovableListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
+    fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         self.list.source_not_in_op_context = false;
-        if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
-            *self.list.tracker = RichtextTracker::new_with_unknown();
+        if oplog.shallow_since_vv().is_empty() {
+            if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
+                *self.list.tracker = RichtextTracker::new_with_unknown();
+                self.list.start_vv = vv.clone();
+            }
+        } else if !vv.includes_vv(&self.list.start_vv)
+            || !self.list.tracker.all_vv().includes_vv(vv)
+        {
+            let seed_vv = ListDiffCalculator::seed_tracker_from_shallow_root(
+                self.list.container_idx,
+                oplog,
+                &mut *self.list.tracker,
+                vv,
+                true,
+            );
+            let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+            struct MovableListStartTrackingVisitor<'a> {
+                oplog: &'a OpLog,
+                tracker: &'a mut RichtextTracker,
+                move_id_to_elem_id: &'a mut FxHashMap<ID, IdLp>,
+            }
+
+            impl RebuildOpVisitor for MovableListStartTrackingVisitor<'_> {
+                fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
+                    self.tracker.checkout(vv);
+                    MovableListDiffCalculator::apply_op_to_tracker(
+                        self.tracker,
+                        self.move_id_to_elem_id,
+                        self.oplog,
+                        &op,
+                        true,
+                    );
+                }
+            }
+
+            self.inner.move_id_to_elem_id.clear();
+            let mut visitor = MovableListStartTrackingVisitor {
+                oplog,
+                tracker: &mut *self.list.tracker,
+                move_id_to_elem_id: &mut self.inner.move_id_to_elem_id,
+            };
+            replay_container_ops_between(
+                self.list.container_idx,
+                oplog,
+                &seed_vv,
+                vv,
+                &target_frontiers,
+                &mut visitor,
+            );
             self.list.start_vv = vv.clone();
         }
 
@@ -1849,15 +2006,24 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         let mut new_insert = SmallVec::with_capacity(len);
                         for i in 0..len {
                             let id = id.inc(i as i32);
-                            let elem_id =
-                                if let Some(e) = self.inner.move_id_to_elem_id.get(&id.id()) {
-                                    e.compact()
-                                } else {
-                                    insert.elem_id.unwrap_or_else(|| id.idlp().compact())
-                                };
+                            let elem_id = self
+                                .inner
+                                .move_id_to_elem_id
+                                .get(&id.id())
+                                .map(|e| e.compact())
+                                .or(insert.elem_id)
+                                .or_else(|| {
+                                    let elem_id = id.idlp().compact();
+                                    self.inner
+                                        .changed_elements
+                                        .contains_key(&elem_id)
+                                        .then_some(elem_id)
+                                });
                             if is_checkout {
-                                // add the related element id
-                                element_changes.insert(elem_id, ElementDelta::placeholder());
+                                if let Some(elem_id) = elem_id {
+                                    // add the related element id
+                                    element_changes.insert(elem_id, ElementDelta::placeholder());
+                                }
                             }
                             new_insert.push(id);
                         }
@@ -1932,9 +2098,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 }
 
 impl MovableListDiffCalculator {
-    fn new(_container: ContainerIdx) -> MovableListDiffCalculator {
+    fn new(container: ContainerIdx) -> MovableListDiffCalculator {
         MovableListDiffCalculator {
-            list: Default::default(),
+            list: Box::new(ListDiffCalculator::new(container)),
             inner: Box::new(MovableListInner {
                 changed_elements: Default::default(),
                 current_mode: DiffMode::Checkout,
@@ -2007,12 +2173,29 @@ impl MovableListDiffCalculator {
 
         let mut tracker = RichtextTracker::new_with_unknown();
         let mut move_id_to_elem_id = FxHashMap::default();
-        let mut visitor = MovableListRebuildVisitor {
-            oplog,
-            tracker: &mut tracker,
-            move_id_to_elem_id: &mut move_id_to_elem_id,
-        };
-        replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
+        if oplog.shallow_since_vv().is_empty() {
+            let mut visitor = MovableListRebuildVisitor {
+                oplog,
+                tracker: &mut tracker,
+                move_id_to_elem_id: &mut move_id_to_elem_id,
+            };
+            replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
+        } else {
+            let seed_vv = ListDiffCalculator::seed_tracker_from_shallow_root(
+                idx,
+                oplog,
+                &mut tracker,
+                vv,
+                true,
+            );
+            let target_frontiers = oplog.dag.vv_to_frontiers(vv);
+            let mut visitor = MovableListRebuildVisitor {
+                oplog,
+                tracker: &mut tracker,
+                move_id_to_elem_id: &mut move_id_to_elem_id,
+            };
+            replay_container_ops_between(idx, oplog, &seed_vv, vv, &target_frontiers, &mut visitor);
+        }
 
         *self.list.tracker = tracker;
         self.inner.move_id_to_elem_id = move_id_to_elem_id;

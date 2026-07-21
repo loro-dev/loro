@@ -269,31 +269,34 @@ impl ApplyDiff for MovableListTracker {
                     is_move,
                 } => {
                     for v in value {
+                        let insert_index = index.min(self.len());
                         let value = match v {
                             ValueOrContainer::Container(c) => {
                                 if let Some(c) = id_to_container.remove(&c.id()) {
                                     Value::Container(c)
                                 } else {
                                     if *is_move {
-                                        maybe_from_move.insert(c.id().clone(), index);
+                                        maybe_from_move.insert(c.id().clone(), insert_index);
                                     }
                                     Value::empty_container(c.get_type(), c.id())
                                 }
                             }
                             ValueOrContainer::Value(v) => Value::Value(v.clone()),
                         };
-                        let insert_index = index.min(self.len());
                         self.insert(insert_index, value);
                         index = insert_index + 1;
                     }
                 }
                 ListDiffItem::Delete { delete: len } => {
-                    for v in self.drain(index..index + *len) {
+                    let start = index.min(self.len());
+                    let end = start.saturating_add(*len).min(self.len());
+                    for v in self.drain(start..end) {
                         if let Value::Container(c) = v {
                             let id = c.id().clone();
                             id_to_container.insert(id, c);
                         }
                     }
+                    index = start;
                 }
             }
         }

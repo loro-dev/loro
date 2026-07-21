@@ -756,6 +756,19 @@ impl MovableListState {
         self.inner.list()
     }
 
+    pub(crate) fn iter_list_item_ids_for_op(&self) -> impl Iterator<Item = IdFull> + '_ {
+        self.inner.list().iter().map(|list_item| list_item.id)
+    }
+
+    pub(crate) fn iter_list_items_for_op(
+        &self,
+    ) -> impl Iterator<Item = (IdFull, Option<CompactIdLp>)> + '_ {
+        self.inner
+            .list()
+            .iter()
+            .map(|list_item| (list_item.id, list_item.pointed_by))
+    }
+
     #[inline]
     pub(crate) fn elements(&self) -> &FxHashMap<CompactIdLp, Element> {
         self.inner.elements()
@@ -1203,12 +1216,10 @@ impl ContainerState for MovableListState {
                     }
                     None => {
                         // Need to create new element
-                        let result = self.create_new_elem(
-                            elem_id,
-                            pos.unwrap(),
-                            value.clone(),
-                            value_id.unwrap(),
-                        );
+                        let (Some(pos), Some(value_id)) = (pos, value_id) else {
+                            continue;
+                        };
+                        let result = self.create_new_elem(elem_id, pos, value.clone(), value_id);
                         // Composing events
                         let result = self.inner.convert_update_to_event_pos(result);
                         // Create event for pos change and value change
