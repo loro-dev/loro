@@ -145,7 +145,7 @@ update import, full update export, and snapshot export with:
 pnpm --dir loro-js bench:snapshot-memory -- /path/to/document.snapshot
 ```
 
-For the 11,387,982-byte ProCloud document with 423,797 operations and 115,147
+For the 11,387,982-byte test document with 423,797 operations and 115,147
 containers, Node 26.4.0 reports 70.92 MiB RSS after loading the input and a
 160.70 MiB process peak after snapshot export: an 89.78 MiB incremental peak.
 Used JS heap peaks at 8.58 MiB. Snapshot import takes about 0.90 seconds, the
