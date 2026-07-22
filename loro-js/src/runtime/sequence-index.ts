@@ -1439,7 +1439,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
   }
 
   #invalidateCausalView(): void {
-    this.#cachedCausalViews.length = 0;
+    if (this.#cachedCausalViews.length !== 0) this.#cachedCausalViews.length = 0;
   }
 
   reset(): void {

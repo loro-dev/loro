@@ -880,6 +880,48 @@ describe("loro-wasm-compatible runtime", () => {
     );
   });
 
+  test("coalesces consecutive text inserts in one pending change", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    const text = source.getText("text");
+    source.subscribeFirstCommitFromPeer(() => text.push("c"));
+    for (const value of ["a", "😀"]) text.push(value);
+
+    expect(source.getUncommittedOpsAsJson()?.changes[0]?.ops).toHaveLength(1);
+    text.push("b");
+    expect(source.getUncommittedOpsAsJson()?.changes[0]?.ops).toHaveLength(1);
+    source.commit();
+    expect(source.exportJsonUpdates().changes[0]?.ops).toEqual([
+      expect.objectContaining({
+        content: expect.objectContaining({ type: "insert", text: "a😀bc" }),
+      }),
+    ]);
+
+    const target = new LoroDoc();
+    target.import(source.export({ mode: "update" }));
+    expect(target.getText("text").toString()).toBe("a😀bc");
+  });
+
+  test("keeps a coalesced text run intact under a concurrent insert", () => {
+    const left = new LoroDoc();
+    left.setPeerId(1);
+    for (const value of ["a", "😀", "b"]) left.getText("text").push(value);
+
+    const right = new LoroDoc();
+    right.setPeerId(2);
+    right.getText("text").push("R");
+
+    const leftUpdate = left.export({ mode: "update" });
+    const rightUpdate = right.export({ mode: "update" });
+    expect(left.exportJsonUpdates().changes[0]?.ops).toHaveLength(1);
+
+    left.import(rightUpdate);
+    right.import(leftUpdate);
+    const merged = left.getText("text").toString();
+    expect(merged).toBe(right.getText("text").toString());
+    expect(merged).toContain("a😀b");
+  });
+
   test("preserves next commit options across implicit empty commits only", () => {
     const implicit = new LoroDoc();
     implicit.setPeerId(1);

@@ -75,6 +75,10 @@ JavaScript constant factor.
   produce the final event.
 - A pending transaction stores its accumulated operation length and causal
   version incrementally. Never recover either by reducing all pending ops.
+  Consecutive Text inserts at adjacent positions collect string chunks behind
+  one pending operation and join them once when the operation is observed or
+  committed. Character-by-character input therefore does not retain one
+  history operation object per character.
 - Plain Text/List elements allocate delete, value, and move metadata only when
   an operation needs it; Text style metadata lives in the range index. A
   multi-scalar Text insertion stores its string and UTF-16 boundaries once in a
@@ -110,6 +114,11 @@ JavaScript constant factor.
   a stream of mergeable commits does not repeatedly copy or reduce its complete
   history. Consecutive List/MovableList inserts in one transaction also share a
   single operation value array.
+- A newly committed local change installs its already-known operation length in
+  the change cache. History indexing records affected containers for every
+  operation type, but constructs ordered writer entries only for Map, Tree, and
+  MovableList operations whose historical winner/order queries consume them.
+  Consecutive operations for the same container also reuse its computed key.
 - Local-update encoding uses number arithmetic for safe-range LEB128/Postcard
   integers, exact-size buffers for the final document and change block, and
   canonical direct encoders for the common one-change/one-operation shape.
@@ -233,6 +242,20 @@ two builds. After forced GC, the retained document heap differed by less than
 and 1.53 kB gzip. The final CPU profile is dispersed: GC is 8.4% and no remaining
 JavaScript self-time bucket exceeds 5.5%, so further local micro-optimizations
 need a new workload or a structural change to justify their complexity.
+
+A second fresh-process probe puts all 259,778 B4 actions in one pending change,
+then times editing and `commit()` separately against `037acd68`. In 15 paired
+runs with alternating order, editing fell from 343.73 ms to 323.08 ms, the
+actual commit fell from 9.25 ms to 1.16 ms (87.4%), and their total fell from
+352.91 ms to 324.27 ms (8.1%); all 15 pairs were faster. Adjacent pending Text
+inserts reduce the encoded change from 189,681 operations (182,315 inserts and
+7,366 deletes) to 13,654 operations (6,288 inserts and 7,366 deletes). With a
+local-update subscriber, 11/11 paired runs were faster: commit plus update
+encoding fell from 66.34 ms to 16.08 ms (75.8%), total time fell from 409.00 ms
+to 338.54 ms (17.2%), and the update shrank from 1,153,540 to 274,574 bytes.
+Both revisions import each other's update, and the older revision also imports
+the new snapshot. The main ESM is now 488.12 kB / 92.63 kB gzip, an increase of
+2.37 kB / 0.52 kB gzip over `037acd68`.
 
 With 1k through 64k retained changes, exporting, importing, or checking out only
 the last change stays below 0.7 ms after warmup. Explicit one-operation span

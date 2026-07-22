@@ -198,12 +198,23 @@ interface PendingChange extends EventRecording {
   readonly from: CodecId[];
   readonly operations: DecodedOperation[];
   operationLength: number;
+  trailingTextInsert: PendingTextInsert | undefined;
+  lastChangedContainer: LoroContainer | undefined;
   readonly causalVersion: Map<bigint, number>;
   readonly keys: string[];
   readonly keyIndices: Map<string, number>;
   readonly changedContainers: Set<string>;
   readonly beforeValues: Map<string, unknown>;
   readonly eventStates: Map<string, PendingEventState>;
+}
+
+interface PendingTextInsert {
+  readonly operationIndex: number;
+  readonly container: CodecContainerId;
+  counterEnd: number;
+  positionEnd: number;
+  length: number;
+  readonly chunks: string[];
 }
 
 type PendingEventState =
@@ -460,6 +471,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
       }
 
+      flushPendingTextInsert(pending);
       const latestTimestamp = this.#greatestTimestampAt(pending.dependencies);
       const initialTimestamp = maxBigInt(
         latestTimestamp,
@@ -489,6 +501,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#preCommitRecord = undefined;
       }
 
+      flushPendingTextInsert(pending);
       const atomLength = pending.operationLength;
       const timestamp = maxBigInt(
         latestTimestamp,
@@ -504,6 +517,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         message: mergedOptions.message,
         operations: pending.operations,
       };
+      changeLengthCache.set(change, atomLength);
       this.#pending = undefined;
       const committedRecord: HistoryRecord = { change, keys: pending.keys };
       const previous = this.#mergeablePreviousRecord(change, this.#changeMergeInterval);
@@ -1543,6 +1557,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   getUncommittedOpsAsJson(): JsonSchema | undefined {
     const pending = this.#pending;
     if (pending === undefined || pending.operations.length === 0) return undefined;
+    flushPendingTextInsert(pending);
     const timestamp =
       this.#nextCommitOptions.timestamp ??
       (this.#recordTimestamp ? Date.now() / 1000 : 0);
@@ -2725,6 +2740,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       from,
       operations: [],
       operationLength: 0,
+      trailingTextInsert: undefined,
+      lastChangedContainer: undefined,
       causalVersion: this.#causalVersionAt(from),
       keys: [],
       keyIndices: new Map(),
@@ -2762,16 +2779,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       this.#containers.set(preferredChild.id, preferredChild);
       this.#dirtySnapshotContainers.add(preferredChild.id);
     }
-    if (!appendToTrailingListInsert(pending.operations, operation)) {
+    if (!appendToTrailingSequenceInsert(pending, operation)) {
       pending.operations.push(operation);
     }
     pending.operationLength += operation.length;
-    pending.changedContainers.add(container.id);
+    if (pending.lastChangedContainer !== container) {
+      pending.lastChangedContainer = container;
+      pending.changedContainers.add(container.id);
+      this.#dirtySnapshotContainers.add(container.id);
+    }
     const causalVersion = pending.causalVersion;
-    causalVersion.set(
-      pending.id.peer,
-      Math.max(causalVersion.get(pending.id.peer) ?? 0, operation.counter),
-    );
+    causalVersion.set(pending.id.peer, operation.counter);
     const finishEvent = this.#prepareEvent(
       pending,
       container,
@@ -2788,7 +2806,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       causalVersion,
       container,
     );
-    this.#dirtySnapshotContainers.add(container.id);
     finishEvent?.();
     return operation;
   }
@@ -4714,63 +4731,77 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #indexHistoryOperations(record: HistoryRecord): void {
+    let previousContainer: CodecContainerId | undefined;
+    let containerKey = "";
     for (const operation of record.change.operations) {
-      this.#containersWithOperations.add(this.#containerKey(operation.container));
+      if (operation.container !== previousContainer) {
+        previousContainer = operation.container;
+        containerKey = this.#containerKey(operation.container);
+        this.#containersWithOperations.add(containerKey);
+      }
       const content = operation.content;
+      let bySubject: Map<string, IndexedSubjectHistory>;
+      let subject: string;
+      let treeOperation = false;
+      switch (content.type) {
+        case "movable-list-insert":
+        case "movable-list-delete":
+        case "movable-list-move": {
+          const indexed = {
+            record,
+            operation,
+            writer: operationWriter(record.change, operation),
+          };
+          let history = this.#movableOrderHistory.get(containerKey);
+          if (history === undefined) {
+            history = new OrderedIndex((left, right) =>
+              compareWriter(left.writer, right.writer),
+            );
+            this.#movableOrderHistory.set(containerKey, history);
+          }
+          history.add(indexed);
+          if (content.type === "movable-list-move") {
+            let peers = this.#movableMovePeers.get(containerKey);
+            if (peers === undefined) {
+              peers = new Set();
+              this.#movableMovePeers.set(containerKey, peers);
+            }
+            peers.add(record.change.id.peer);
+          }
+          continue;
+        }
+        case "map-insert":
+        case "map-delete": {
+          let history = this.#mapOperationHistory.get(containerKey);
+          if (history === undefined) {
+            history = new Map();
+            this.#mapOperationHistory.set(containerKey, history);
+          }
+          bySubject = history;
+          subject = content.key;
+          break;
+        }
+        case "tree-create":
+        case "tree-move":
+        case "tree-delete": {
+          let history = this.#treeOperationHistory.get(containerKey);
+          if (history === undefined) {
+            history = new Map();
+            this.#treeOperationHistory.set(containerKey, history);
+          }
+          bySubject = history;
+          subject = idKey(content.subject);
+          treeOperation = true;
+          break;
+        }
+        default:
+          continue;
+      }
       const indexed = {
         record,
         operation,
         writer: operationWriter(record.change, operation),
       };
-      if (
-        content.type === "movable-list-insert" ||
-        content.type === "movable-list-delete" ||
-        content.type === "movable-list-move"
-      ) {
-        const container = this.#containerKey(operation.container);
-        let history = this.#movableOrderHistory.get(container);
-        if (history === undefined) {
-          history = new OrderedIndex((left, right) =>
-            compareWriter(left.writer, right.writer),
-          );
-          this.#movableOrderHistory.set(container, history);
-        }
-        history.add(indexed);
-        if (content.type === "movable-list-move") {
-          let peers = this.#movableMovePeers.get(container);
-          if (peers === undefined) {
-            peers = new Set();
-            this.#movableMovePeers.set(container, peers);
-          }
-          peers.add(record.change.id.peer);
-        }
-      }
-      let bySubject: Map<string, IndexedSubjectHistory> | undefined;
-      let subject: string | undefined;
-      let treeOperation = false;
-      if (content.type === "map-insert" || content.type === "map-delete") {
-        const container = this.#containerKey(operation.container);
-        bySubject = this.#mapOperationHistory.get(container);
-        if (bySubject === undefined) {
-          bySubject = new Map();
-          this.#mapOperationHistory.set(container, bySubject);
-        }
-        subject = content.key;
-      } else if (
-        content.type === "tree-create" ||
-        content.type === "tree-move" ||
-        content.type === "tree-delete"
-      ) {
-        const container = this.#containerKey(operation.container);
-        bySubject = this.#treeOperationHistory.get(container);
-        if (bySubject === undefined) {
-          bySubject = new Map();
-          this.#treeOperationHistory.set(container, bySubject);
-        }
-        subject = idKey(content.subject);
-        treeOperation = true;
-      }
-      if (bySubject === undefined || subject === undefined) continue;
       let history = bySubject.get(subject);
       if (history === undefined) {
         history = {
@@ -6472,11 +6503,51 @@ function cloneHistoryRecord(record: HistoryRecord): HistoryRecord {
   };
 }
 
-function appendToTrailingListInsert(
-  operations: DecodedOperation[],
+function appendToTrailingSequenceInsert(
+  pending: PendingChange,
   operation: DecodedOperation,
 ): boolean {
+  const operations = pending.operations;
   const content = operation.content;
+  if (content.type === "text-insert") {
+    const trailing = pending.trailingTextInsert;
+    if (
+      trailing !== undefined &&
+      (trailing.container === operation.container ||
+        containerIdsEqual(trailing.container, operation.container)) &&
+      trailing.counterEnd === operation.counter &&
+      trailing.positionEnd === content.position
+    ) {
+      trailing.chunks.push(content.value);
+      trailing.counterEnd += operation.length;
+      trailing.positionEnd += operation.length;
+      trailing.length += operation.length;
+      return true;
+    }
+    flushPendingTextInsert(pending);
+    const previousIndex = operations.length - 1;
+    const previous = operations[previousIndex];
+    if (
+      previous !== undefined &&
+      previous.content.type === "text-insert" &&
+      (previous.container === operation.container ||
+        containerIdsEqual(previous.container, operation.container)) &&
+      previous.counter + previous.length === operation.counter &&
+      previous.content.position + previous.length === content.position
+    ) {
+      pending.trailingTextInsert = {
+        operationIndex: previousIndex,
+        container: previous.container,
+        counterEnd: operation.counter + operation.length,
+        positionEnd: content.position + operation.length,
+        length: previous.length + operation.length,
+        chunks: [previous.content.value, content.value],
+      };
+      return true;
+    }
+    return false;
+  }
+  flushPendingTextInsert(pending);
   if (content.type !== "list-insert" && content.type !== "movable-list-insert") {
     return false;
   }
@@ -6500,6 +6571,21 @@ function appendToTrailingListInsert(
     content: { ...previous.content, values },
   };
   return true;
+}
+
+function flushPendingTextInsert(pending: PendingChange): void {
+  const trailing = pending.trailingTextInsert;
+  if (trailing === undefined) return;
+  pending.trailingTextInsert = undefined;
+  const previous = pending.operations[trailing.operationIndex];
+  if (previous === undefined || previous.content.type !== "text-insert") {
+    throw new Error("pending text insert no longer points to a text operation");
+  }
+  pending.operations[trailing.operationIndex] = {
+    ...previous,
+    length: trailing.length,
+    content: { ...previous.content, value: trailing.chunks.join("") },
+  };
 }
 
 function remapOperationKeys(
