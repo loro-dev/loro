@@ -110,6 +110,11 @@ JavaScript constant factor.
   a stream of mergeable commits does not repeatedly copy or reduce its complete
   history. Consecutive List/MovableList inserts in one transaction also share a
   single operation value array.
+- Local-update encoding uses number arithmetic for safe-range LEB128/Postcard
+  integers, exact-size buffers for the final document and change block, and
+  canonical direct encoders for the common one-change/one-operation shape.
+  Empty tables share an immutable zero-length byte array. General multi-change
+  and wide-integer paths keep using the regular codec implementation.
 - Snapshot SSTables choose interoperable LZ4 blocks when they reduce size.
   DeltaRLE state columns encode and decode as streams rather than allocating
   million-item BigInt intermediates, and LZ4 decode writes into typed storage.
@@ -193,17 +198,15 @@ A/B check. After three warmups, two 15-sample B4 snapshot-export runs measured
 snapshots. Both revisions emitted the same 309,780-byte snapshot.
 
 On an Apple M5 Pro with Node 26.4.0, the complete 259,778-action B4 trace now
-applies in a 353.5 ms three-sample median (351.8–354.9 ms samples) and finishes
-at 104,852 UTF-16 code units. The resulting process reported 107.1 MB of used JS
-heap and 322.1 MB RSS.
+applies in a 257.0 ms seven-sample median and finishes at 104,852 UTF-16 code
+units. The resulting process reported 107.4 MB of used JS heap and 323.4 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 7.4x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 5.4x slower in absolute time. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
-measured snapshot
-export at 162.4 ms, update export at 129.3 ms, snapshot import at 161.5 ms, and
-update import at 328.1 ms.
+measured snapshot export at 87.0 ms, update export at 58.7 ms, snapshot import
+at 120.6 ms, and update import at 278.1 ms.
 
 The `zxch3n/crdt-benchmarks` adapters provide a separate end-to-end comparison
 against the published Loro WASM adapter. With the local `loro-js` build, B4 fell
@@ -216,6 +219,20 @@ update is 231,840 bytes and a 120k-character Text update is 120,095 bytes, both
 matching the WASM output sizes. C1.1 still takes 6.988 seconds versus 1.728
 seconds; its remaining gap is described below rather than treated as an
 asymptotic regression.
+
+A fresh-process B4 probe isolates the cost of committing and publishing every
+individual delete/insert. Seven paired runs with alternating order measured
+1,873.1 ms at `bdfe9874` and 1,012.4 ms with the small-update codec paths, a
+46.0% median reduction with all seven pairs faster. Without a local-update
+subscriber, the medians were 621.6 ms and 580.3 ms (6.6%); applying the whole
+trace and committing only once measured 264.5 ms and 262.2 ms, which is within
+noise. All 259,778 published updates were byte-for-byte identical between the
+two builds. After forced GC, the retained document heap differed by less than
+1 KiB; external and ArrayBuffer memory were identical. The main ESM remains
+485.75 kB / 92.11 kB gzip, while the lazy codec/state chunk grows by 9.43 kB raw
+and 1.53 kB gzip. The final CPU profile is dispersed: GC is 8.4% and no remaining
+JavaScript self-time bucket exceeds 5.5%, so further local micro-optimizations
+need a new workload or a structural change to justify their complexity.
 
 With 1k through 64k retained changes, exporting, importing, or checking out only
 the last change stays below 0.7 ms after warmup. Explicit one-operation span

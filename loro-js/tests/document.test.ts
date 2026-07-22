@@ -10,6 +10,7 @@ import {
   encodeDocument,
   encodeFastSnapshot,
   encodeFastUpdates,
+  encodeFastUpdatesBody,
 } from "../src/codec/index";
 
 describe("Loro document envelope", () => {
@@ -55,5 +56,8 @@ describe("FastUpdates", () => {
   test("round trips length-prefixed postcard blocks", () => {
     const blocks = [new Uint8Array(), Uint8Array.of(1), new Uint8Array(300).fill(7)];
     expect(decodeFastUpdates(encodeFastUpdates(blocks))).toEqual(blocks);
+    expect(encodeFastUpdates(blocks)).toEqual(
+      encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks)),
+    );
   });
 });

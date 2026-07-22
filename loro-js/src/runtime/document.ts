@@ -15,8 +15,8 @@ import {
   decodeFastSnapshotBody,
   decodeFastUpdatesBody,
   encodeDocument,
+  encodeFastUpdates,
   encodeFastSnapshotBody,
-  encodeFastUpdatesBody,
   EncodeMode,
   type FastSnapshotBody,
   type ParsedDocument,
@@ -512,8 +512,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#setHistoryRecord(changeKey(change.id), committedRecord, committedRecord);
       } else {
         const previousLength = changeLength(previous.change);
-        updateRecord = appendHistoryRecord(previous, committedRecord, previousLength);
-        this.#appendMergedHistoryRecord(previous, updateRecord, previousLength);
+        updateRecord = appendHistoryRecord(
+          previous,
+          committedRecord,
+          previousLength,
+          atomLength,
+        );
+        this.#appendMergedHistoryRecord(
+          previous,
+          updateRecord,
+          previousLength,
+          atomLength,
+        );
       }
       this.#nextCounter = change.id.counter + atomLength;
       if (this.#detached) {
@@ -3587,6 +3597,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
 
         this.#pendingHistory.delete(key);
+        const recordLength = changeLength(change);
         const previous =
           mergeInterval === undefined
             ? undefined
@@ -3601,10 +3612,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             addedRecordIndices.delete(previous);
           }
           const previousLength = changeLength(previous.change);
-          const appended = appendHistoryRecord(previous, record, previousLength);
-          this.#appendMergedHistoryRecord(previous, appended, previousLength);
+          const appended = appendHistoryRecord(
+            previous,
+            record,
+            previousLength,
+            recordLength,
+          );
+          this.#appendMergedHistoryRecord(
+            previous,
+            appended,
+            previousLength,
+            recordLength,
+          );
         }
-        version.set(change.id.peer, change.id.counter + changeLength(change));
+        version.set(change.id.peer, change.id.counter + recordLength);
         added.push(record);
         this.#seenCommittedPeers.add(change.id.peer);
         promoted = true;
@@ -4668,8 +4689,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     record: HistoryRecord,
     appended: HistoryRecord,
     previousLength: number,
+    appendedLength: number,
   ): void {
-    const appendedLength = changeLength(appended.change);
     this.#historyOperationCount += appendedLength;
     this.#historyEndByPeer.set(
       record.change.id.peer,
@@ -5217,7 +5238,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         changes: [record.change],
       }),
     );
-    return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
+    return encodeFastUpdates(blocks);
   }
 
   #encodeDeferredUpdates(): Uint8Array {
@@ -5237,7 +5258,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }),
       );
     }
-    return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
+    return encodeFastUpdates(blocks);
   }
 
   #encodeSnapshot(): Uint8Array {
@@ -6400,6 +6421,7 @@ function appendHistoryRecord(
   left: HistoryRecord,
   right: HistoryRecord,
   leftLength: number,
+  rightLength: number,
 ): HistoryRecord {
   let keyIndices = left.keyIndices;
   let keys: string[];
@@ -6428,7 +6450,6 @@ function appendHistoryRecord(
   );
   const mergedOperations = left.change.operations as DecodedOperation[];
   for (const operation of appendedOperations) mergedOperations.push(operation);
-  const rightLength = changeLength(right.change);
   changeLengthCache.set(left.change, leftLength + rightLength);
 
   const appended = {

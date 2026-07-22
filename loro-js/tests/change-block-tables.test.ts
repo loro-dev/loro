@@ -59,6 +59,44 @@ describe("change block tables", () => {
     expect(decodeChangesMetadata(encodeChangesMetadata(metadata), 2)).toEqual(metadata);
   });
 
+  test.each([
+    { counter: 0, dependencies: [] },
+    {
+      counter: 10,
+      dependencies: [{ peer: 0xffff_ffff_ffff_ffffn, counter: 9 }],
+    },
+  ])(
+    "round trips a single-change header at counter $counter",
+    ({ counter, dependencies }) => {
+      const peer = 0xffff_ffff_ffff_ffffn;
+      const header: ChangesHeader = {
+        peer,
+        peers: [peer],
+        counters: [counter, counter + 1],
+        lengths: [1],
+        lamports: [20],
+        dependencies: [dependencies],
+      };
+      expect(
+        decodeChangesHeader(encodeChangesHeader(header), {
+          changeCount: 1,
+          counterStart: counter,
+          counterLength: 1,
+          lamportStart: 20,
+          lamportLength: 1,
+        }),
+      ).toEqual(header);
+    },
+  );
+
+  test("round trips default single-change metadata", () => {
+    const metadata: ChangesMetadata = {
+      timestamps: [0n],
+      commitMessages: [undefined],
+    };
+    expect(decodeChangesMetadata(encodeChangesMetadata(metadata), 1)).toEqual(metadata);
+  });
+
   test("round trips keys and the container arena", () => {
     const keys = ["map", "key 😀"];
     const containers: ContainerId[] = [
@@ -92,6 +130,31 @@ describe("change block tables", () => {
       operations,
     );
     expect(decodeDeleteStartIds(encodeDeleteStartIds(deletes))).toEqual(deletes);
+  });
+
+  test("round trips a single operation at numeric boundaries", () => {
+    const operations: EncodedOperationRow[] = [
+      {
+        containerIndex: 0xffff_ffff,
+        property: -0x8000_0000,
+        valueType: 0xff,
+        length: 0xffff_ffff,
+      },
+    ];
+    expect(decodeEncodedOperations(encodeEncodedOperations(operations))).toEqual(
+      operations,
+    );
+  });
+
+  test("round trips one ASCII root container", () => {
+    const keys = ["x".repeat(0x7f)];
+    const containers: ContainerId[] = [
+      { kind: "root", name: keys[0]!, containerType: ContainerType.Text },
+    ];
+    expect(decodeChangeKeys(encodeChangeKeys(keys))).toEqual(keys);
+    expect(
+      decodeContainerArena(encodeContainerArena(containers, [], keys), [], keys),
+    ).toEqual(containers);
   });
 
   test("round trips the prefix-compressed position arena", () => {

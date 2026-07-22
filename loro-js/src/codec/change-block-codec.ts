@@ -34,6 +34,7 @@ const DELETED_TREE_ROOT: Id = {
   peer: 0xffff_ffff_ffff_ffffn,
   counter: 0x7fff_ffff,
 };
+const EMPTY_BYTES = new Uint8Array();
 
 export interface LamportId {
   readonly peer: bigint;
@@ -348,10 +349,12 @@ export function encodeChangeBlock(block: DecodedChangeBlock): Uint8Array {
     }),
     containerIds: encodeContainerArena(tables.containers, tables.peers, tables.keys),
     keys: encodeChangeKeys(tables.keys),
-    positions: encodePositionArena(tables.positions),
+    positions:
+      tables.positions.length === 0 ? EMPTY_BYTES : encodePositionArena(tables.positions),
     operations: encodeEncodedOperations(rows),
-    deleteStartIds: encodeDeleteStartIds(deleteStartIds),
-    values: valueWriter.toUint8Array(),
+    deleteStartIds:
+      deleteStartIds.length === 0 ? EMPTY_BYTES : encodeDeleteStartIds(deleteStartIds),
+    values: valueWriter.length === 0 ? EMPTY_BYTES : valueWriter.toUint8Array(),
   });
 }
 

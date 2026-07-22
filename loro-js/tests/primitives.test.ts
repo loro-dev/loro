@@ -38,6 +38,17 @@ describe("LEB128", () => {
     },
   );
 
+  test.each([0, 1, 127, 128, 0xffff_ffff, Number.MAX_SAFE_INTEGER])(
+    "encodes unsigned number %s like bigint",
+    (value) => {
+      const numberWriter = new ByteWriter();
+      writeUleb128(numberWriter, value);
+      const bigintWriter = new ByteWriter();
+      writeUleb128(bigintWriter, BigInt(value));
+      expect(numberWriter.toUint8Array()).toEqual(bigintWriter.toUint8Array());
+    },
+  );
+
   test.each([-0x8000_0000_0000_0000n, -65n, -1n, 0n, 63n, 64n, 0x7fff_ffff_ffff_ffffn])(
     "round trips signed %s",
     (value) => {
@@ -46,6 +57,17 @@ describe("LEB128", () => {
       const reader = new ByteReader(writer.toUint8Array());
       expect(readSleb128(reader)).toBe(value);
       expect(reader.remaining).toBe(0);
+    },
+  );
+
+  test.each([Number.MIN_SAFE_INTEGER, -65, -64, -1, 0, 63, 64, Number.MAX_SAFE_INTEGER])(
+    "encodes signed number %s like bigint",
+    (value) => {
+      const numberWriter = new ByteWriter();
+      writeSleb128(numberWriter, value);
+      const bigintWriter = new ByteWriter();
+      writeSleb128(bigintWriter, BigInt(value));
+      expect(numberWriter.toUint8Array()).toEqual(bigintWriter.toUint8Array());
     },
   );
 

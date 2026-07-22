@@ -11,6 +11,8 @@ import {
 
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
+const MIN_FAST_I64 = -4_503_599_627_370_496n;
+const MAX_FAST_I64 = 4_503_599_627_370_495n;
 
 export class PostcardReader {
   readonly input: ByteReader;
@@ -144,10 +146,15 @@ export class PostcardWriter {
     if (!Number.isSafeInteger(value) || value < -0x8000_0000 || value > 0x7fff_ffff) {
       throw new LoroEncodeError(`i32 is out of range: ${value}`);
     }
-    this.writeSigned(BigInt(value), 32);
+    writeUleb128(this.output, value >= 0 ? value * 2 : -value * 2 - 1);
   }
 
   writeI64(value: bigint): void {
+    if (value >= MIN_FAST_I64 && value <= MAX_FAST_I64) {
+      const number = Number(value);
+      writeUleb128(this.output, number >= 0 ? number * 2 : -number * 2 - 1);
+      return;
+    }
     this.writeSigned(value, 64);
   }
 

@@ -1,3 +1,4 @@
+import { ByteWriter } from "./bytes";
 import { PostcardReader, PostcardWriter } from "./postcard";
 
 export interface EncodedChangeBlock {
@@ -38,7 +39,26 @@ export function decodeEncodedChangeBlock(bytes: Uint8Array): EncodedChangeBlock 
 }
 
 export function encodeEncodedChangeBlock(block: EncodedChangeBlock): Uint8Array {
-  const writer = new PostcardWriter();
+  const byteFields = [
+    block.header,
+    block.changeMetadata,
+    block.containerIds,
+    block.keys,
+    block.positions,
+    block.operations,
+    block.deleteStartIds,
+    block.values,
+  ];
+  let length =
+    ulebNumberLength(block.counterStart) +
+    ulebNumberLength(block.counterLength) +
+    ulebNumberLength(block.lamportStart) +
+    ulebNumberLength(block.lamportLength) +
+    ulebNumberLength(block.changeCount);
+  for (const field of byteFields) {
+    length += ulebNumberLength(field.length) + field.length;
+  }
+  const writer = new PostcardWriter(new ByteWriter(length));
   writer.writeU32(block.counterStart);
   writer.writeU32(block.counterLength);
   writer.writeU32(block.lamportStart);
@@ -53,4 +73,13 @@ export function encodeEncodedChangeBlock(block: EncodedChangeBlock): Uint8Array 
   writer.writeBytes(block.deleteStartIds);
   writer.writeBytes(block.values);
   return writer.toUint8Array();
+}
+
+function ulebNumberLength(value: number): number {
+  let length = 1;
+  while (value >= 128) {
+    value = Math.floor(value / 128);
+    length += 1;
+  }
+  return length;
 }

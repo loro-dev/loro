@@ -10,6 +10,9 @@ const I128_MIN = -(1n << 127n);
 const I128_MAX = (1n << 127n) - 1n;
 const U128_MAX = (1n << 128n) - 1n;
 const MAX_COLUMN_VALUES = 10_000_000;
+const MAX_SAFE_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+const MIN_FAST_I64 = -4_503_599_627_370_496n;
+const MAX_FAST_I64 = 4_503_599_627_370_495n;
 
 export function decodeColumnarVec(bytes: Uint8Array): Uint8Array[] {
   const reader = new ByteReader(bytes);
@@ -38,7 +41,11 @@ export function decodeColumnarVecMaybeWrapped(bytes: Uint8Array): Uint8Array[] {
 }
 
 export function encodeColumnarVec(columns: readonly Uint8Array[]): Uint8Array {
-  const writer = new ByteWriter();
+  let length = ulebNumberLength(columns.length);
+  for (const column of columns) {
+    length += ulebNumberLength(column.length) + column.length;
+  }
+  const writer = new ByteWriter(length);
   writeUleb128(writer, columns.length);
   for (const column of columns) {
     writeUleb128(writer, column.length);
@@ -48,9 +55,17 @@ export function encodeColumnarVec(columns: readonly Uint8Array[]): Uint8Array {
 }
 
 export function encodeColumnarVecWrapped(columns: readonly Uint8Array[]): Uint8Array {
-  const writer = new ByteWriter();
+  let length = 1 + ulebNumberLength(columns.length);
+  for (const column of columns) {
+    length += ulebNumberLength(column.length) + column.length;
+  }
+  const writer = new ByteWriter(length);
   writeUleb128(writer, 1);
-  writer.writeBytes(encodeColumnarVec(columns));
+  writeUleb128(writer, columns.length);
+  for (const column of columns) {
+    writeUleb128(writer, column.length);
+    writer.writeBytes(column);
+  }
   return writer.toUint8Array();
 }
 
@@ -70,10 +85,13 @@ export function decodeBoolRle(bytes: Uint8Array): boolean[] {
 }
 
 export function encodeBoolRle(values: readonly boolean[]): Uint8Array {
-  const writer = new ByteWriter();
   if (values.length === 0) {
-    return writer.toUint8Array();
+    return new Uint8Array();
   }
+  if (values.length === 1) {
+    return values[0] ? Uint8Array.of(0, 1) : Uint8Array.of(1);
+  }
+  const writer = new ByteWriter();
   let state = false;
   let runLength = 0;
   for (const value of values) {
@@ -111,6 +129,16 @@ export function decodeRleU8(bytes: Uint8Array): number[] {
 }
 
 export function encodeRleU8(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    const value = values[0]!;
+    if (!Number.isSafeInteger(value) || value < 0 || value > 0xff) {
+      throw new LoroEncodeError(`u8 is out of range: ${value}`);
+    }
+    return Uint8Array.of(1, value);
+  }
   return encodeAnyRleLiteral(values, writePostcardU8);
 }
 
@@ -119,6 +147,12 @@ export function decodeRleU32(bytes: Uint8Array): number[] {
 }
 
 export function encodeRleU32(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    return encodeUlebNumbers(1, assertU32(values[0]!));
+  }
   return encodeAnyRleLiteral(values, writePostcardU32);
 }
 
@@ -127,6 +161,12 @@ export function decodeAnyRleU32(bytes: Uint8Array): number[] {
 }
 
 export function encodeAnyRleU32(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    return encodeUlebNumbers(1, assertU32(values[0]!));
+  }
   return encodeAnyRleLiteral(values, writePostcardU32);
 }
 
@@ -139,6 +179,12 @@ export function decodeAnyRleU64(bytes: Uint8Array): bigint[] {
 }
 
 export function encodeAnyRleU64(values: readonly bigint[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1 && values[0]! >= 0n && values[0]! <= MAX_SAFE_BIGINT) {
+    return encodeUlebNumbers(1, Number(values[0]!));
+  }
   return encodeAnyRleLiteral(values, writePostcardU64);
 }
 
@@ -162,6 +208,13 @@ export function decodeAnyRleI32(bytes: Uint8Array): number[] {
 }
 
 export function encodeAnyRleI32(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    const value = assertI32(values[0]!);
+    return encodeUlebNumbers(1, value >= 0 ? value * 2 : -value * 2 - 1);
+  }
   return encodeAnyRleLiteral(values, writePostcardI32);
 }
 
@@ -174,6 +227,12 @@ export function decodeDeltaRleU32(bytes: Uint8Array): number[] {
 }
 
 export function encodeDeltaRleU32(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    return encodeUlebNumbers(1, assertU32(values[0]!) * 2);
+  }
   return encodeDeltaNumber(values, assertU32);
 }
 
@@ -182,6 +241,13 @@ export function decodeDeltaRleI32(bytes: Uint8Array): number[] {
 }
 
 export function encodeDeltaRleI32(values: readonly number[]): Uint8Array {
+  if (values.length === 0) {
+    return new Uint8Array();
+  }
+  if (values.length === 1) {
+    const value = assertI32(values[0]!);
+    return encodeUlebNumbers(1, value >= 0 ? value * 2 : -value * 2 - 1);
+  }
   return encodeDeltaNumber(values, assertI32);
 }
 
@@ -264,12 +330,14 @@ export function takeDeltaOfDeltaI64(
 }
 
 export function encodeDeltaOfDeltaI64(values: readonly bigint[]): Uint8Array {
-  const writer = new ByteWriter();
   if (values.length === 0) {
-    writePostcardOptionalI64(writer, undefined);
-    writer.writeU8(0);
-    return writer.toUint8Array();
+    return Uint8Array.of(0, 0);
   }
+  if (values.length === 1 && values[0]! >= MIN_FAST_I64 && values[0]! <= MAX_FAST_I64) {
+    const value = Number(values[0]!);
+    return encodeUlebNumbers(1, value >= 0 ? value * 2 : -value * 2 - 1, 0);
+  }
+  const writer = new ByteWriter();
   for (const value of values) {
     assertBigIntRange(value, I64_MIN, I64_MAX, "i64");
   }
@@ -447,6 +515,34 @@ function encodeDeltaNumber(
     previous = value;
   }
   return writer.toUint8Array();
+}
+
+function encodeUlebNumbers(...values: number[]): Uint8Array {
+  const output = new Uint8Array(
+    values.reduce((length, value) => length + ulebNumberLength(value), 0),
+  );
+  let offset = 0;
+  for (let value of values) {
+    do {
+      let byte = value % 128;
+      value = Math.floor(value / 128);
+      if (value !== 0) {
+        byte |= 0x80;
+      }
+      output[offset] = byte;
+      offset += 1;
+    } while (value !== 0);
+  }
+  return output;
+}
+
+function ulebNumberLength(value: number): number {
+  let length = 1;
+  while (value >= 128) {
+    value = Math.floor(value / 128);
+    length += 1;
+  }
+  return length;
 }
 
 function decodeDeltaNumber(bytes: Uint8Array, min: number, max: number): number[] {

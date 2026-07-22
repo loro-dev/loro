@@ -1,7 +1,7 @@
 import { ByteReader, ByteWriter, concatBytes } from "./bytes";
 import { containerTypeFromRawByte, containerTypeToRawByte } from "./container-id";
 import { LoroDecodeError, LoroEncodeError, decodeAssert } from "./errors";
-import { readUlebNumber, writeUleb128 } from "./leb128";
+import { U64_MAX, readUlebNumber, writeUleb128 } from "./leb128";
 import { PostcardReader, PostcardWriter } from "./postcard";
 import {
   decodeColumnarVecMaybeWrapped,
@@ -33,6 +33,7 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const textEncoder = new TextEncoder();
 const I32_MIN = -0x8000_0000;
 const I32_MAX = 0x7fff_ffff;
+const EMPTY_SINGLE_CHANGE_HEADER_SUFFIX = Uint8Array.of(1, 0, 0, 0, 0, 0);
 
 export interface ChangesHeader {
   readonly peer: bigint;
@@ -189,6 +190,34 @@ export function encodeChangesHeader(header: ChangesHeader): Uint8Array {
   ) {
     throw new LoroEncodeError("inconsistent change header arrays");
   }
+  if (changeCount === 1 && header.peers.length === 1) {
+    const dependencies = header.dependencies[0]!;
+    const selfDependent =
+      dependencies.length === 1 &&
+      dependencies[0]!.peer === header.peer &&
+      dependencies[0]!.counter === header.counters[0]! - 1;
+    if (dependencies.length === 0 || selfDependent) {
+      if (header.peer < 0n || header.peer > U64_MAX) {
+        throw new LoroEncodeError(`u64 is out of range: ${header.peer}`);
+      }
+      const output = new Uint8Array(selfDependent ? 17 : 16);
+      // Canonical one-change headers contain one peer and no explicit
+      // length/lamport columns. Only the self-dependency columns differ.
+      output[0] = 1;
+      new DataView(output.buffer).setBigUint64(1, header.peer, true);
+      let offset = 9;
+      if (selfDependent) {
+        output[offset] = 0;
+        output[offset + 1] = 1;
+        offset += 2;
+      } else {
+        output[offset] = 1;
+        offset += 1;
+      }
+      output.set(EMPTY_SINGLE_CHANGE_HEADER_SUFFIX, offset);
+      return output;
+    }
+  }
   const writer = new ByteWriter();
   writeUleb128(writer, header.peers.length);
   for (const peer of header.peers) {
@@ -270,6 +299,13 @@ export function encodeChangesMetadata(metadata: ChangesMetadata): Uint8Array {
   if (metadata.timestamps.length !== metadata.commitMessages.length) {
     throw new LoroEncodeError("inconsistent change metadata arrays");
   }
+  if (
+    metadata.timestamps.length === 1 &&
+    metadata.timestamps[0] === 0n &&
+    metadata.commitMessages[0] === undefined
+  ) {
+    return Uint8Array.of(1, 0, 0, 1, 0);
+  }
   const lengths: number[] = [];
   const messages: Uint8Array[] = [];
   for (const message of metadata.commitMessages) {
@@ -304,6 +340,21 @@ export function decodeChangeKeys(bytes: Uint8Array): string[] {
 }
 
 export function encodeChangeKeys(keys: readonly string[]): Uint8Array {
+  if (keys.length === 1 && keys[0]!.length <= 0x7f) {
+    const key = keys[0]!;
+    let ascii = true;
+    for (let index = 0; ascii && index < key.length; index += 1) {
+      ascii = key.charCodeAt(index) < 0x80;
+    }
+    if (ascii) {
+      const output = new Uint8Array(key.length + 1);
+      output[0] = key.length;
+      for (let index = 0; index < key.length; index += 1) {
+        output[index + 1] = key.charCodeAt(index);
+      }
+      return output;
+    }
+  }
   const writer = new ByteWriter();
   for (const key of keys) {
     const bytes = textEncoder.encode(key);
@@ -357,6 +408,21 @@ export function encodeContainerArena(
   peers: readonly bigint[],
   keys: readonly string[],
 ): Uint8Array {
+  if (
+    containers.length === 1 &&
+    containers[0]!.kind === "root" &&
+    keys.length === 1 &&
+    keys[0] === containers[0]!.name
+  ) {
+    return Uint8Array.of(
+      1,
+      4,
+      1,
+      containerTypeToRawByte(containers[0]!.containerType),
+      0,
+      0,
+    );
+  }
   const writer = new PostcardWriter();
   writer.writeUsize(containers.length);
   const peerIndices = new Map(peers.map((peer, index) => [peer, index]));
@@ -411,6 +477,38 @@ export function decodeEncodedOperations(bytes: Uint8Array): EncodedOperationRow[
 export function encodeEncodedOperations(
   rows: readonly EncodedOperationRow[],
 ): Uint8Array {
+  if (rows.length === 1) {
+    const row = rows[0]!;
+    const containerIndex = assertU32(row.containerIndex, "u32");
+    const property = assertI32(row.property, "i32");
+    const valueType = assertU8(row.valueType, "u8");
+    const operationLength = assertU32(row.length, "u32");
+    const encodedContainer = containerIndex * 2;
+    const encodedProperty = property >= 0 ? property * 2 : -property * 2 - 1;
+    const containerLength = 1 + ulebNumberLength(encodedContainer);
+    const propertyLength = 1 + ulebNumberLength(encodedProperty);
+    const operationLengthLength = 1 + ulebNumberLength(operationLength);
+    const output = new Uint8Array(
+      2 + 1 + containerLength + 1 + propertyLength + 3 + 1 + operationLengthLength,
+    );
+    // Wrapped column vector followed by four one-value columns.
+    let offset = 0;
+    output[offset++] = 1;
+    output[offset++] = 4;
+    output[offset++] = containerLength;
+    output[offset++] = 1;
+    offset = writeUlebNumber(output, offset, encodedContainer);
+    output[offset++] = propertyLength;
+    output[offset++] = 1;
+    offset = writeUlebNumber(output, offset, encodedProperty);
+    output[offset++] = 2;
+    output[offset++] = 1;
+    output[offset++] = valueType;
+    output[offset++] = operationLengthLength;
+    output[offset++] = 1;
+    writeUlebNumber(output, offset, operationLength);
+    return output;
+  }
   return encodeColumnarVecWrapped([
     encodeDeltaRleU32(rows.map((row) => row.containerIndex)),
     encodeDeltaRleI32(rows.map((row) => row.property)),
@@ -470,4 +568,47 @@ function assertNonnegativeI32(value: number, label: string): number {
     throw new LoroEncodeError(`${label} is out of range: ${value}`);
   }
   return value;
+}
+
+function assertU8(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xff) {
+    throw new LoroEncodeError(`${label} is out of range: ${value}`);
+  }
+  return value;
+}
+
+function assertU32(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new LoroEncodeError(`${label} is out of range: ${value}`);
+  }
+  return value;
+}
+
+function assertI32(value: number, label: string): number {
+  if (!Number.isSafeInteger(value) || value < I32_MIN || value > I32_MAX) {
+    throw new LoroEncodeError(`${label} is out of range: ${value}`);
+  }
+  return value;
+}
+
+function writeUlebNumber(output: Uint8Array, offset: number, input: number): number {
+  let value = input;
+  do {
+    let byte = value % 128;
+    value = Math.floor(value / 128);
+    if (value !== 0) {
+      byte |= 0x80;
+    }
+    output[offset++] = byte;
+  } while (value !== 0);
+  return offset;
+}
+
+function ulebNumberLength(value: number): number {
+  let length = 1;
+  while (value >= 128) {
+    value = Math.floor(value / 128);
+    length += 1;
+  }
+  return length;
 }

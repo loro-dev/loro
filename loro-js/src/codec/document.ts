@@ -172,7 +172,40 @@ export function decodeFastUpdates(
 }
 
 export function encodeFastUpdates(blocks: readonly Uint8Array[]): Uint8Array {
-  return encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody(blocks));
+  const bodyLength = blocks.reduce(
+    (sum, block) => sum + ulebByteLength(block.length) + block.length,
+    0,
+  );
+  const output = new Uint8Array(DOCUMENT_HEADER_LENGTH + bodyLength);
+  output.set(DOCUMENT_MAGIC, 0);
+  output[20] = EncodeMode.FastUpdates >>> 8;
+  output[21] = EncodeMode.FastUpdates & 0xff;
+  let offset = DOCUMENT_HEADER_LENGTH;
+  for (const block of blocks) {
+    offset = writeUlebNumber(output, offset, block.length);
+    output.set(block, offset);
+    offset += block.length;
+  }
+  new DataView(output.buffer, output.byteOffset, output.byteLength).setUint32(
+    16,
+    xxhash32(output.subarray(20), LORO_XXHASH_SEED),
+    true,
+  );
+  return output;
+}
+
+function writeUlebNumber(output: Uint8Array, offset: number, input: number): number {
+  let value = input;
+  do {
+    let byte = value % 128;
+    value = Math.floor(value / 128);
+    if (value !== 0) {
+      byte |= 0x80;
+    }
+    output[offset] = byte;
+    offset += 1;
+  } while (value !== 0);
+  return offset;
 }
 
 function readU32LengthPrefixed(reader: ByteReader, label: string): Uint8Array {

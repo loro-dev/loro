@@ -437,6 +437,14 @@ function readUtf8(reader: ByteReader): string {
 }
 
 function writeUtf8(writer: ByteWriter, value: string): void {
+  if (value.length === 1) {
+    const code = value.charCodeAt(0);
+    if (code < 0x80) {
+      writer.writeU8(1);
+      writer.writeU8(code);
+      return;
+    }
+  }
   writeLengthPrefixedBytes(writer, textEncoder.encode(value));
 }
 
