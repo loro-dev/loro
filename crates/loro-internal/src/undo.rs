@@ -245,6 +245,16 @@ impl UndoGroup {
     }
 }
 
+struct ProcessingUndoGuard {
+    inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
+}
+
+impl Drop for ProcessingUndoGuard {
+    fn drop(&mut self) {
+        self.inner.lock().borrow_mut().processing_undo = false;
+    }
+}
+
 #[derive(Debug)]
 struct Stack {
     stack: VecDeque<(VecDeque<StackItem>, Arc<Mutex<DiffBatch>>)>,
@@ -609,7 +619,7 @@ impl UndoManager {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
                 let lock = inner_clone.lock();
-                if lock.borrow().processing_undo || lock.borrow().paused {
+                if lock.borrow().processing_undo {
                     return;
                 }
                 if let Some(id) = event
@@ -618,15 +628,18 @@ impl UndoManager {
                     .iter()
                     .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
                 {
+                    let is_paused = lock.borrow().paused;
                     let should_exclude = lock
                         .borrow()
                         .exclude_origin_prefixes
                         .iter()
                         .any(|x| event.event_meta.origin.starts_with(&**x));
-                    if should_exclude {
-                        // If the event is from the excluded origin, we don't record it
-                        // in the undo stack. But we need to record its effect like it's
-                        // a remote event.
+                    if is_paused || should_exclude {
+                        // Paused and excluded-origin edits are not recorded as
+                        // undo steps, but their effects must be composed into
+                        // both stacks so transforms stay correct, and
+                        // next_counter must advance so the next recorded item
+                        // does not fold these edits into its span.
                         let mut inner = lock.borrow_mut();
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
@@ -771,6 +784,9 @@ impl UndoManager {
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
     ) -> LoroResult<bool> {
+        if self.inner.lock().borrow().paused {
+            return Ok(false);
+        }
         let doc = &self.doc.clone();
         // When in the undo/redo loop, the new undo/redo stack item should restore the selection
         // to the state it was in before the item that was popped two steps ago from the stack.
@@ -833,6 +849,9 @@ impl UndoManager {
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
         };
+        let _guard = ProcessingUndoGuard {
+            inner: self.inner.clone(),
+        };
 
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
@@ -841,7 +860,7 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
-                let commit = doc.undo_internal(
+                let commit = match doc.undo_internal(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
@@ -855,7 +874,14 @@ impl UndoManager {
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
-                )?;
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        get_stack(&mut self.inner.lock().borrow_mut())
+                            .push(span.span, span.meta);
+                        return Err(e);
+                    }
+                };
                 drop(commit);
                 let inner = self.inner.lock();
                 let mut is_some = false;
@@ -919,7 +945,6 @@ impl UndoManager {
             }
         }
 
-        self.inner.lock().borrow_mut().processing_undo = false;
         Ok(executed)
     }
 

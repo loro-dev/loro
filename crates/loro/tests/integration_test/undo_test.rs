@@ -1821,3 +1821,94 @@ fn checkout_without_pause_clears_undo_stacks() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn undo_while_paused_does_not_leak_processing_flag() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+    assert!(undo.can_undo());
+
+    undo.pause();
+    assert_eq!(undo.undo()?, false);
+    undo.resume();
+
+    assert!(undo.can_undo());
+    undo.undo()?;
+    assert_eq!(text.to_string(), "");
+
+    text.insert(0, "World")?;
+    doc.commit();
+    assert!(undo.can_undo());
+    undo.undo()?;
+    assert_eq!(text.to_string(), "");
+
+    Ok(())
+}
+
+#[test]
+fn paused_local_edits_are_not_folded_into_next_undo() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    let text = doc.get_text("text");
+
+    text.insert(0, "A")?;
+    doc.commit();
+
+    undo.pause();
+    text.insert(1, "B")?;
+    doc.commit();
+
+    undo.resume();
+    text.insert(2, "C")?;
+    doc.commit();
+    assert_eq!(text.to_string(), "ABC");
+
+    undo.undo()?;
+    assert_eq!(text.to_string(), "AB");
+
+    undo.undo()?;
+    assert_eq!(text.to_string(), "B");
+
+    assert!(!undo.can_undo());
+
+    Ok(())
+}
+
+#[test]
+fn import_during_pause_transforms_undo_stack_correctly() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc_a);
+    let text_a = doc_a.get_text("text");
+
+    text_a.insert(0, "Hello")?;
+    doc_a.commit();
+
+    undo.pause();
+
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    let updates_a = doc_a.export(ExportMode::all_updates())?;
+    doc_b.import(&updates_a)?;
+    doc_b.get_text("text").insert(0, "XY")?;
+    doc_b.commit();
+    let updates_b = doc_b.export(ExportMode::updates(&doc_a.oplog_vv()))?;
+
+    doc_a.import(&updates_b)?;
+    assert_eq!(text_a.to_string(), "XYHello");
+
+    undo.resume();
+    undo.undo()?;
+    assert_eq!(text_a.to_string(), "XY");
+
+    undo.redo()?;
+    assert_eq!(text_a.to_string(), "XYHello");
+
+    Ok(())
+}

@@ -93,6 +93,7 @@ export class UndoManager {
   }
 
   undo(): boolean {
+    if (this.#paused) return false;
     const item = this.#undo.pop();
     if (item === undefined) return false;
     try {
@@ -106,6 +107,7 @@ export class UndoManager {
   }
 
   redo(): boolean {
+    if (this.#paused) return false;
     const item = this.#redo.pop();
     if (item === undefined) return false;
     try {
@@ -215,7 +217,10 @@ export class UndoManager {
       for (const target of targets) this.#remoteTargets.add(target);
       return;
     }
-    if (this.#paused) return;
+    if (this.#paused) {
+      for (const target of targets) this.#remoteTargets.add(target);
+      return;
+    }
     if (
       event.origin !== undefined &&
       [...this.#excludeOriginPrefixes].some((prefix) => event.origin!.startsWith(prefix))
