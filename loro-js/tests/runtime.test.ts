@@ -684,6 +684,93 @@ describe("loro-wasm-compatible runtime", () => {
     expect(text.toString()).toBe("Hello");
   });
 
+  test("pause preserves undo stacks across checkout", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const text = doc.getText("text");
+
+    text.insert(0, "Hello");
+    doc.commit();
+    text.insert(5, " World");
+    doc.commit();
+    expect(text.toString()).toBe("Hello World");
+    expect(undo.canUndo()).toBe(true);
+
+    undo.pause();
+    expect(undo.isPaused()).toBe(true);
+    doc.checkout([]);
+    expect(text.toString()).toBe("");
+    doc.attach();
+    expect(text.toString()).toBe("Hello World");
+    undo.resume();
+    expect(undo.isPaused()).toBe(false);
+
+    expect(undo.canUndo()).toBe(true);
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("Hello");
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("");
+
+    expect(undo.canRedo()).toBe(true);
+    expect(undo.redo()).toBe(true);
+    expect(text.toString()).toBe("Hello");
+  });
+
+  test("paused local edits are not folded into next undo", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const text = doc.getText("text");
+
+    text.insert(0, "A");
+    doc.commit();
+
+    undo.pause();
+    text.insert(1, "B");
+    doc.commit();
+
+    undo.resume();
+    text.insert(2, "C");
+    doc.commit();
+    expect(text.toString()).toBe("ABC");
+
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("AB");
+
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("B");
+
+    expect(undo.canUndo()).toBe(false);
+  });
+
+  test("import during pause transforms undo stack correctly", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const text = doc.getText("text");
+
+    text.insert(0, "Hello");
+    doc.commit();
+
+    undo.pause();
+
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.import(doc.export({ mode: "snapshot" }));
+    remote.getText("text").insert(0, "XY");
+    remote.commit();
+    doc.import(remote.export({ mode: "update", from: doc.version() }));
+    expect(text.toString()).toBe("XYHello");
+
+    undo.resume();
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("XY");
+
+    expect(undo.redo()).toBe(true);
+    expect(text.toString()).toBe("XYHello");
+  });
+
   test("round-trips compressed and uncompressed JSON updates", () => {
     const source = new LoroDoc();
     source.setPeerId(19);

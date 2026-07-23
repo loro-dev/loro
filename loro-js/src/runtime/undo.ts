@@ -71,6 +71,7 @@ export class UndoManager {
   #onPush: UndoConfig["onPush"];
   #onPop: UndoConfig["onPop"];
   #applying = false;
+  #paused = false;
   #groupDepth = 0;
   #unsubscribe: () => void;
 
@@ -92,6 +93,7 @@ export class UndoManager {
   }
 
   undo(): boolean {
+    if (this.#paused) return false;
     const item = this.#undo.pop();
     if (item === undefined) return false;
     try {
@@ -105,6 +107,7 @@ export class UndoManager {
   }
 
   redo(): boolean {
+    if (this.#paused) return false;
     const item = this.#redo.pop();
     if (item === undefined) return false;
     try {
@@ -186,6 +189,18 @@ export class UndoManager {
     this.#redo.length = 0;
   }
 
+  pause(): void {
+    this.#paused = true;
+  }
+
+  resume(): void {
+    this.#paused = false;
+  }
+
+  isPaused(): boolean {
+    return this.#paused;
+  }
+
   destroy(): void {
     this.#unsubscribe();
     this.clear();
@@ -195,10 +210,14 @@ export class UndoManager {
     if (this.#applying) return;
     const targets = new Set(event.events.map(({ target }) => target));
     if (event.by === "checkout") {
-      this.clear();
+      if (!this.#paused) this.clear();
       return;
     }
     if (event.by === "import") {
+      for (const target of targets) this.#remoteTargets.add(target);
+      return;
+    }
+    if (this.#paused) {
       for (const target of targets) this.#remoteTargets.add(target);
       return;
     }

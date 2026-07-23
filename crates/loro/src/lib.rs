@@ -3976,6 +3976,32 @@ impl UndoManager {
     pub fn top_redo_value(&self) -> Option<LoroValue> {
         self.0.top_redo_value()
     }
+
+    /// Pause the UndoManager so that local edits and checkout events are ignored.
+    ///
+    /// While paused, local edits are not recorded as undo steps and checkout
+    /// events do not clear the stacks. Import events (remote changes) are still
+    /// processed so that the stacks remain correctly transformed against
+    /// concurrent edits.
+    ///
+    /// Use this before temporary checkouts (e.g. read-only history preview) that
+    /// should not disturb undo/redo history. Close any open group (via
+    /// [`Self::group_end`]) before pausing.
+    ///
+    /// Call [`Self::resume`] after returning the document to its original state.
+    pub fn pause(&self) {
+        self.0.pause();
+    }
+
+    /// Resume the UndoManager after a [`Self::pause`].
+    pub fn resume(&self) {
+        self.0.resume();
+    }
+
+    /// Returns whether the UndoManager is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.0.is_paused()
+    }
 }
 /// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
 /// The returned cursors will be recorded for a new pushed undo item.
