@@ -1645,6 +1645,23 @@ mod tests {
         assert_eq!(mode, DiffMode::Checkout);
     }
 
+    /// Regression for loro-dev/loro#1056: checking out (or `fork_at`-ing) to a
+    /// version that is a strict subset of the current frontiers used to discard
+    /// the exact common ancestor and fall back to empty frontiers, which forces
+    /// the diff calculator to replay the whole history for every container.
+    #[test]
+    fn common_ancestor_of_subset_target_is_the_target_itself() {
+        let a = node(1, 0, 11, 0, Frontiers::default());
+        let b = node(2, 0, 6, 4, ID::new(1, 3).into());
+        let current = Frontiers::from([ID::new(1, 10), ID::new(2, 5)]);
+        let target = Frontiers::from_id(ID::new(1, 10));
+        let dag = TestDag::new(vec![a, b], current.clone());
+
+        let (ancestor, mode) = dag.find_common_ancestor(&current, &target);
+        assert_eq!(ancestor, target);
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
     #[test]
     fn import_greater_updates_requires_new_ops_after_all_left_heads() {
         // Movable-tree staleness issue shape: B3 → B4..B6 and B3 → A0 → A1..A3.
