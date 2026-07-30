@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
+use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, LoroValue, ID};
 
 #[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
@@ -510,6 +510,69 @@ fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Re
     let p2_updates = p2.export(ExportMode::all_updates())?;
     s.import(&p2_updates)
         .expect("shallow doc should accept cross-peer op whose deps include the shallow boundary");
+
+    Ok(())
+}
+
+/// Shallow snapshots are documented as a content-redaction mechanism: exporting at the
+/// current frontiers is supposed to drop the trimmed history, leaving only the live state.
+/// Deleted *character* content is indeed dropped, but the value of a rich-text style op
+/// whose whole range has been deleted is still shipped verbatim in the exported bytes,
+/// even though no API can read it back.
+#[test]
+fn shallow_snapshot_drops_deleted_text_but_retains_dead_style_values() -> anyhow::Result<()> {
+    const SECRET_STYLE_VALUE: &str = "SECRET-STYLE-VALUE-e5f1";
+    const SECRET_TEXT: &str = "SECRET-TEXT-a7b2";
+
+    fn contains(haystack: &[u8], needle: &str) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|w| w == needle.as_bytes())
+    }
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, SECRET_TEXT)?;
+    let len = SECRET_TEXT.chars().count();
+    text.mark(
+        0..len,
+        "comment",
+        LoroValue::String(SECRET_STYLE_VALUE.into()),
+    )?;
+    doc.commit();
+
+    text.delete(0, len)?;
+    doc.commit();
+
+    // Both secrets are unreachable through every read API.
+    assert_eq!(text.to_string(), "");
+    let live_state = format!("{:?}", doc.get_deep_value());
+    assert!(!live_state.contains(SECRET_TEXT));
+    assert!(!live_state.contains(SECRET_STYLE_VALUE));
+
+    let shallow = doc.export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))?;
+
+    // Control: the deleted characters are gone from the export, which is what makes the
+    // style leak below an asymmetry rather than "shallow snapshots keep history".
+    assert!(
+        !contains(&shallow, SECRET_TEXT),
+        "deleted text content must not survive a shallow snapshot"
+    );
+    assert!(
+        !contains(&shallow, SECRET_STYLE_VALUE),
+        "style value of a fully deleted range must not survive a shallow snapshot"
+    );
+
+    // The leak also survives a re-export from the imported shallow doc, so it cannot be
+    // laundered by round-tripping.
+    let imported = LoroDoc::new();
+    imported.import(&shallow)?;
+    let reexported = imported.export(ExportMode::shallow_snapshot(&imported.oplog_frontiers()))?;
+    assert!(
+        !contains(&reexported, SECRET_STYLE_VALUE),
+        "style value must not survive re-export of an imported shallow snapshot"
+    );
 
     Ok(())
 }
