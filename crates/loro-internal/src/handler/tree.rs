@@ -382,6 +382,13 @@ impl TreeHandler {
         }
     }
 
+    pub(crate) fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        for node in self.get_nodes_under(TreeParentId::Root) {
+            self.delete_with_txn(txn, node.id)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn delete_with_txn(&self, txn: &mut Transaction, target: TreeID) -> LoroResult<()> {
         let inner = self.inner.try_attached_state()?;
         let index = match self.get_index_by_tree_id(&target) {

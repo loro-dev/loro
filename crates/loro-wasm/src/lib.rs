@@ -2460,7 +2460,7 @@ impl LoroDoc {
     /// Only works on root containers (containers without parents).
     pub fn deleteRootContainer(&self, cid: JsContainerID) -> JsResult<()> {
         let cid: ContainerID = cid.to_owned().try_into()?;
-        self.doc.delete_root_container(cid);
+        self.doc.delete_root_container(cid)?;
         Ok(())
     }
 

@@ -49,13 +49,25 @@ fn deleted_imported_root_containers_are_removed_from_snapshots() -> anyhow::Resu
     #[cfg(feature = "counter")]
     doc.get_counter("counter");
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
-    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
-    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
-    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
-    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
-    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    restored
+        .delete_root_container(ContainerID::new_root("list", ContainerType::List))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("map", ContainerType::Map))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("text", ContainerType::Text))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("tree", ContainerType::Tree))
+        .unwrap();
     #[cfg(feature = "counter")]
-    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
+    restored
+        .delete_root_container(ContainerID::new_root("counter", ContainerType::Counter))
+        .unwrap();
     assert_eq!(deep_json(&restored), json!({}));
 
     let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
@@ -79,13 +91,25 @@ fn deleted_imported_non_empty_root_containers_are_removed_from_snapshots() -> an
     doc.commit();
 
     let restored = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot)?)?;
-    restored.delete_root_container(ContainerID::new_root("list", ContainerType::List));
-    restored.delete_root_container(ContainerID::new_root("map", ContainerType::Map));
-    restored.delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList));
-    restored.delete_root_container(ContainerID::new_root("text", ContainerType::Text));
-    restored.delete_root_container(ContainerID::new_root("tree", ContainerType::Tree));
+    restored
+        .delete_root_container(ContainerID::new_root("list", ContainerType::List))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("map", ContainerType::Map))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("movable", ContainerType::MovableList))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("text", ContainerType::Text))
+        .unwrap();
+    restored
+        .delete_root_container(ContainerID::new_root("tree", ContainerType::Tree))
+        .unwrap();
     #[cfg(feature = "counter")]
-    restored.delete_root_container(ContainerID::new_root("counter", ContainerType::Counter));
+    restored
+        .delete_root_container(ContainerID::new_root("counter", ContainerType::Counter))
+        .unwrap();
     assert_eq!(deep_json(&restored), json!({}));
 
     let restored_again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot)?)?;
