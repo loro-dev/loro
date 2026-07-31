@@ -583,3 +583,138 @@ fn tree_concurrent_moves_incremental_state_matches_replay() {
     run(true);
     run(false);
 }
+
+/// Checkout between divergent versions whose meet is NOT a critical version
+/// (diamond: the region op `1@1` is concurrent with the meet head `0@2`).
+/// The tree/movable-list/text calculators replay relatively around the base;
+/// this pins that such checkouts stay canonical.
+#[test]
+fn checkout_across_non_critical_meet_stays_canonical() {
+    use loro::{Frontiers, TreeID, ID};
+    let s = LoroDoc::new();
+    s.set_peer_id(9).unwrap();
+    s.get_tree("tree").enable_fractional_index(0);
+    let ts = s.get_tree("tree");
+    let _n = ts.create(None).unwrap();
+    let _sib = ts.create(None).unwrap();
+    s.commit();
+    let prefix = s.export(ExportMode::all_updates()).unwrap();
+
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_tree("tree").enable_fractional_index(0);
+    p1.import(&prefix).unwrap();
+    let t1 = p1.get_tree("tree");
+    let _m1 = t1.create(None).unwrap();
+    t1.mov_to(TreeID::new(9, 0), None, 2).unwrap();
+    p1.commit();
+    let b1 = p1.export(ExportMode::updates(&s.oplog_vv())).unwrap();
+
+    let p2 = LoroDoc::new();
+    p2.set_peer_id(2).unwrap();
+    p2.get_tree("tree").enable_fractional_index(0);
+    p2.import(&prefix).unwrap();
+    let t2 = p2.get_tree("tree");
+    t2.mov_to(TreeID::new(9, 0), None, 1).unwrap();
+    let _m2 = t2.create(None).unwrap();
+    p2.commit();
+    let b2 = p2.export(ExportMode::updates(&s.oplog_vv())).unwrap();
+
+    let v1 = Frontiers::from(vec![ID::new(1, 1), ID::new(2, 0)]);
+    let v2 = Frontiers::from(vec![ID::new(2, 1), ID::new(1, 0)]);
+    let make_full = || {
+        let d = LoroDoc::new();
+        d.get_tree("tree").enable_fractional_index(0);
+        d.import(&prefix).unwrap();
+        d.import(&b1).unwrap();
+        d.import(&b2).unwrap();
+        d
+    };
+    let ref1 = make_full();
+    ref1.checkout(&v1).unwrap();
+    let ref2 = make_full();
+    ref2.checkout(&v2).unwrap();
+
+    let d = make_full();
+    d.checkout(&v1).unwrap();
+    assert_eq!(d.get_deep_value(), ref1.get_deep_value());
+    d.checkout(&v2).unwrap();
+    assert_eq!(d.get_deep_value(), ref2.get_deep_value());
+    d.checkout(&v1).unwrap();
+    assert_eq!(d.get_deep_value(), ref1.get_deep_value());
+}
+
+/// Checkout where the diff region contains a LOW-lamport concurrent branch
+/// (below the meet frontier's lamport window). The tree calculator's
+/// retreat/forward windows skip ops below `lca_min_lamport`, so this is only
+/// safe because the walk retreats the base to a critical version (the
+/// latest-singleton-cut sweep) whenever such a branch exists. Pins that
+/// interplay: weakening the sweep would silently break this.
+#[test]
+fn checkout_with_low_lamport_concurrent_branch_stays_canonical() {
+    use loro::{Frontiers, TreeID, ID};
+    let p = LoroDoc::new();
+    p.set_peer_id(9).unwrap();
+    p.get_tree("tree").enable_fractional_index(0);
+    let tp = p.get_tree("tree");
+    let _n = tp.create(None).unwrap();
+    p.commit();
+    let blob_first = p.export(ExportMode::all_updates()).unwrap();
+    for _ in 0..4 {
+        tp.create(None).unwrap();
+    }
+    p.commit();
+    let prefix = p.export(ExportMode::all_updates()).unwrap();
+
+    let p3 = LoroDoc::new();
+    p3.set_peer_id(3).unwrap();
+    p3.get_tree("tree").enable_fractional_index(0);
+    p3.import(&blob_first).unwrap();
+    let _x = p3.get_tree("tree").create(None).unwrap(); // 0@3, lamport 1
+    p3.commit();
+    let blob_o = p3.export(ExportMode::updates(&p.oplog_vv())).unwrap();
+
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_tree("tree").enable_fractional_index(0);
+    p1.import(&prefix).unwrap();
+    let t1 = p1.get_tree("tree");
+    let _m1 = t1.create(None).unwrap();
+    t1.mov_to(TreeID::new(9, 0), None, 3).unwrap();
+    p1.commit();
+    let bx = p1.export(ExportMode::updates(&p.oplog_vv())).unwrap();
+
+    let p2 = LoroDoc::new();
+    p2.set_peer_id(2).unwrap();
+    p2.get_tree("tree").enable_fractional_index(0);
+    p2.import(&prefix).unwrap();
+    let t2 = p2.get_tree("tree");
+    t2.mov_to(TreeID::new(9, 0), None, 1).unwrap();
+    let _m2 = t2.create(None).unwrap();
+    p2.commit();
+    let by = p2.export(ExportMode::updates(&p.oplog_vv())).unwrap();
+
+    let make_full = || {
+        let d = LoroDoc::new();
+        d.get_tree("tree").enable_fractional_index(0);
+        d.import(&prefix).unwrap();
+        d.import(&blob_o).unwrap();
+        d.import(&bx).unwrap();
+        d.import(&by).unwrap();
+        d
+    };
+    let v1 = Frontiers::from(vec![ID::new(1, 1), ID::new(2, 0), ID::new(3, 0)]);
+    let v2 = Frontiers::from(vec![ID::new(2, 1), ID::new(1, 0)]);
+    let ref1 = make_full();
+    ref1.checkout(&v1).unwrap();
+    let ref2 = make_full();
+    ref2.checkout(&v2).unwrap();
+
+    let d = make_full();
+    d.checkout(&v2).unwrap();
+    assert_eq!(d.get_deep_value(), ref2.get_deep_value());
+    d.checkout(&v1).unwrap(); // forward the lamport-1 branch across the window
+    assert_eq!(d.get_deep_value(), ref1.get_deep_value());
+    d.checkout(&v2).unwrap(); // and retreat it again
+    assert_eq!(d.get_deep_value(), ref2.get_deep_value());
+}
