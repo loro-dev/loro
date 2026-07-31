@@ -694,6 +694,80 @@ where
         false
     }
 
+    /// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
+    /// union graph `ancestry(left) ∪ ancestry(right)`: the newest event `v`
+    /// such that every other event in the union is an ancestor of `v` or
+    /// causally after `v`. Replaying from `{v}` is safe because no concurrency
+    /// crosses it, and it skips the fully-synced prefix of common history that
+    /// the old `∅` fallback would replay.
+    ///
+    /// Method: a one-colour descent from both frontiers using the same
+    /// coalesce/align machinery as the main walk. The pending heap is always a
+    /// cut of the unexplored region, so the first moment it narrows to a
+    /// single span, that span's `id_last` is the latest such `v`. If a chain
+    /// dies at a root or at trimmed history while other chains remain, its
+    /// endpoint is concurrent with everything below the current level, so no
+    /// later singleton can be valid — bail out to the empty version, which is
+    /// the old behaviour.
+    fn latest_singleton_common_cut<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) -> Frontiers {
+        let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
+        let Some(spans) = ids_to_ord_id_spans(left, get) else {
+            return Default::default();
+        };
+        queue.extend(spans);
+        let Some(spans) = ids_to_ord_id_spans(right, get) else {
+            return Default::default();
+        };
+        queue.extend(spans);
+
+        while let Some(mut node) = queue.pop() {
+            while let Some(other) = queue.peek() {
+                if node == *other || node.id_last() == other.id_last() {
+                    queue.pop();
+                } else {
+                    break;
+                }
+            }
+
+            if queue.is_empty() {
+                return node.id_last().into();
+            }
+
+            if let Some(other) = queue.peek() {
+                if node.contains_id(other.id_last()) {
+                    node.len = (other.id_last().counter - node.id.counter + 1) as usize;
+                    queue.push(node);
+                    continue;
+                }
+
+                if node.len > 1 {
+                    node.len = if other.lamport_last() >= node.lamport {
+                        (other.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
+                    } else {
+                        1
+                    };
+                    queue.push(node);
+                    continue;
+                }
+            }
+
+            match deps_to_ord_id_spans(&node, get) {
+                Some(deps) if !deps.is_empty() => {
+                    for dep in deps {
+                        queue.push(dep);
+                    }
+                }
+                _ => return Default::default(),
+            }
+        }
+
+        Default::default()
+    }
+
     fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         get: &'a F,
         frontier: ID,
@@ -854,7 +928,11 @@ where
     let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
         || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
     if has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
-        ans = Default::default();
+        // A genuine concurrent branch invalidates the meet as a replay base.
+        // Instead of always retreating to the beginning of history, retreat to
+        // the latest single-head critical version below both sides (empty when
+        // no such cut exists, which matches the old behaviour).
+        ans = latest_singleton_common_cut(get, left, right);
     }
 
     if has_uncovered_unmatched_branch {
@@ -1390,6 +1468,7 @@ mod tests {
     #[test]
     fn common_ancestor_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
         let root = node(1, 0, 1, 0, Frontiers::default());
+        let root_id = root.id;
         let left = node(2, 0, 1, 1, root.id.into());
         let concurrent = node(3, 0, 1, 2, root.id.into());
         let merge = node(4, 0, 1, 3, Frontiers::from([left.id, concurrent.id]));
@@ -1399,7 +1478,10 @@ mod tests {
         );
 
         let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
-        assert_eq!(ancestor, Frontiers::default());
+        // The conservative base retreats to the latest single-head critical
+        // version below both sides — here the shared root — instead of the
+        // beginning of history.
+        assert_eq!(ancestor, root_id.into());
         assert_eq!(mode, DiffMode::Checkout);
     }
 
@@ -1412,7 +1494,9 @@ mod tests {
         let dag = TestDag::new(vec![root, left.clone(), concurrent], right.clone());
 
         let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right);
-        assert_eq!(ancestor, Frontiers::default());
+        // Conservative base = the shared root (latest single-head critical
+        // version), not the beginning of history.
+        assert_eq!(ancestor, ID::new(1, 0).into());
         assert_eq!(mode, DiffMode::Checkout);
     }
 
@@ -1428,7 +1512,9 @@ mod tests {
         // right side. Only the tip seeded for the multi-element left frontier can
         // prove it uncovered; the deep node it dies at is itself covered.
         let (ancestor, mode) = dag.find_common_ancestor(&left, &shared.id.into());
-        assert_eq!(ancestor, Frontiers::default());
+        // Conservative base = the shared root (latest single-head critical
+        // version), not the beginning of history.
+        assert_eq!(ancestor, ID::new(1, 0).into());
         assert_eq!(mode, DiffMode::Checkout);
     }
 

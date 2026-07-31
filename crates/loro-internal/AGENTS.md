@@ -28,6 +28,8 @@ over graceful degradation.
   `MapHandler::ensure_mergeable_*`.
 - `src/diff_calc/`: diff calculation when moving between versions.
 - `docs/diff_calc.md`: design notes for diff calculation.
+- `docs/lca_spec_draft.md`: specification and proof skeleton for the LCA
+  walk / replay-base selection (draft, aligned with Eg-walker terminology).
 - `docs/mergeable-container-id.md`: current mergeable container id encoding.
 - `tests/mergeable_container/` and `tests/mergeable_cid_encoding.rs`: focused
   mergeable container regression tests.
