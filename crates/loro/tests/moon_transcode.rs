@@ -5,6 +5,16 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Tmp dirs used to be keyed by (pid, nanos) alone; parallel tests in the
+/// same process can hit the same nanosecond bucket, sharing a dir and
+/// overwriting each other's in.blob (which surfaces as another test's peers
+/// showing up in the decoded output). A process-wide counter makes every call
+/// unique.
+fn next_tmp_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 use loro::{
     ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue, StyleConfig, StyleConfigMap, Timestamp,
     ToJson, TreeParentId, VersionVector,
@@ -81,7 +91,7 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let tmp = std::env::temp_dir().join(format!("loro-moon-transcode-{}-{ts}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("loro-moon-transcode-{}-{ts}-{}", std::process::id(), next_tmp_id()));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
     let out_path = tmp.join("out.blob");
@@ -107,8 +117,9 @@ fn run_decode_updates(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Re
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-decode-updates-{}-{ts}",
-        std::process::id()
+        "loro-moon-decode-updates-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -128,8 +139,9 @@ fn run_export_jsonschema(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow:
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-export-jsonschema-{}-{ts}",
-        std::process::id()
+        "loro-moon-export-jsonschema-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -155,8 +167,9 @@ fn run_export_deep_json(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-export-deep-json-{}-{ts}",
-        std::process::id()
+        "loro-moon-export-deep-json-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -180,8 +193,9 @@ fn run_encode_jsonschema(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-encode-jsonschema-{}-{ts}",
-        std::process::id()
+        "loro-moon-encode-jsonschema-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.json");
@@ -212,8 +226,9 @@ fn run_transcode_output(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-transcode-raw-{}-{ts}",
-        std::process::id()
+        "loro-moon-transcode-raw-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -240,8 +255,9 @@ fn run_decode_updates_output(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-decode-updates-raw-{}-{ts}",
-        std::process::id()
+        "loro-moon-decode-updates-raw-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -263,8 +279,9 @@ fn run_export_jsonschema_output(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-export-jsonschema-raw-{}-{ts}",
-        std::process::id()
+        "loro-moon-export-jsonschema-raw-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -286,8 +303,9 @@ fn run_export_deep_json_output(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-export-deep-json-raw-{}-{ts}",
-        std::process::id()
+        "loro-moon-export-deep-json-raw-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
@@ -309,8 +327,9 @@ fn run_encode_jsonschema_output(
         .unwrap()
         .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "loro-moon-encode-jsonschema-raw-{}-{ts}",
-        std::process::id()
+        "loro-moon-encode-jsonschema-raw-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
     ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.json");
