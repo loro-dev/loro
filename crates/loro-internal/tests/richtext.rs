@@ -361,3 +361,66 @@ fn insert_after_link() {
     doc_a.check_state_diff_calc_consistency_slow();
     doc_b.check_state_diff_calc_consistency_slow();
 }
+
+#[test]
+fn redundant_mark_spanning_style_boundaries_creates_no_ops() {
+    let doc = init("Hello World");
+    mark(&doc, 0..5, Kind::Bold);
+    // This range spans a style boundary, so it genuinely changes 5..11.
+    mark(&doc, 0..11, Kind::Bold);
+    doc.commit_then_renew();
+    let vv = doc.oplog_vv();
+
+    // The whole text is already bold; re-asserting the mark must not record
+    // new ops, even though the range spans multiple style ranges. Every
+    // redundant mark op leaves a pair of style anchors in the container state
+    // forever, permanently slowing down styled reads.
+    mark(&doc, 0..11, Kind::Bold);
+    doc.commit_then_renew();
+    assert_eq!(doc.oplog_vv(), vv);
+    expect_result(
+        &doc,
+        serde_json::json!([
+            {"insert": "Hello World", "attributes": {"bold": true}},
+        ]),
+    );
+}
+
+#[test]
+fn redundant_unmark_spanning_style_boundaries_creates_no_ops() {
+    let doc = init("Hello World");
+    mark(&doc, 0..5, Kind::Bold);
+    mark(&doc, 6..11, Kind::Bold);
+    unmark(&doc, 0..11, Kind::Bold);
+    doc.commit_then_renew();
+    let vv = doc.oplog_vv();
+
+    unmark(&doc, 0..11, Kind::Bold);
+    doc.commit_then_renew();
+    assert_eq!(doc.oplog_vv(), vv);
+    expect_result(
+        &doc,
+        serde_json::json!([
+            {"insert": "Hello World", "attributes": {"bold": false}},
+        ]),
+    );
+}
+
+#[test]
+fn mark_that_changes_part_of_the_range_still_applies() {
+    let doc = init("Hello World");
+    mark(&doc, 0..5, Kind::Bold);
+    doc.commit_then_renew();
+    let vv = doc.oplog_vv();
+
+    // 0..5 is already bold but 5..11 is not, so this must not be skipped.
+    mark(&doc, 0..11, Kind::Bold);
+    doc.commit_then_renew();
+    assert_ne!(doc.oplog_vv(), vv);
+    expect_result(
+        &doc,
+        serde_json::json!([
+            {"insert": "Hello World", "attributes": {"bold": true}},
+        ]),
+    );
+}

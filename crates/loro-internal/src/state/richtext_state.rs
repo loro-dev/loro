@@ -961,6 +961,17 @@ impl RichtextState {
         self.state.get_mut().range_has_style_key(range, key)
     }
 
+    pub(crate) fn has_style_key_value_in_entity_range(
+        &mut self,
+        range: Range<usize>,
+        key: &str,
+        value: &LoroValue,
+    ) -> bool {
+        self.state
+            .get_mut()
+            .range_has_style_key_value(range, key, value)
+    }
+
     /// Check if the content and style ranges are consistent.
     ///
     /// Panic if inconsistent.

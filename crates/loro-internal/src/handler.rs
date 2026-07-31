@@ -2340,10 +2340,16 @@ impl TextHandler {
         }
         let (entity_range, styles) =
             state.get_entity_range_and_text_styles_at_range(start..end, pos_type);
-        if let Some(styles) = styles {
-            if styles.has_key_value(&key, value) {
-                return Ok(());
-            }
+        // `styles` is None when the range spans multiple style ranges; fall
+        // back to scanning them so redundant marks are still skipped instead
+        // of accumulating style anchors.
+        let already_applied = styles.map(|styles| styles.has_key_value(&key, value));
+        let already_applied = match already_applied {
+            Some(applied) => applied,
+            None => state.range_has_style_key_value(entity_range.clone(), &key, value),
+        };
+        if already_applied {
+            return Ok(());
         }
 
         let has_target_style =
@@ -2436,10 +2442,20 @@ impl TextHandler {
                 let (entity_range, styles) =
                     state.get_entity_range_and_styles_at_range(start..end, pos_type);
 
-                let skip = styles
+                // `styles` is None when the range spans multiple style
+                // ranges; fall back to scanning them so redundant marks are
+                // still skipped instead of accumulating style anchors.
+                let skip = match styles
                     .as_ref()
                     .map(|styles| styles.has_key_value(&key, &value))
-                    .unwrap_or(false);
+                {
+                    Some(skip) => skip,
+                    None => state.has_style_key_value_in_entity_range(
+                        entity_range.clone(),
+                        &key,
+                        &value,
+                    ),
+                };
                 let has_target_style = state.has_style_key_in_entity_range(
                     entity_range.clone(),
                     &StyleKey::Key(key.clone()),
