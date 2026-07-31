@@ -117,11 +117,34 @@ fn changed_containers_between(
     after: &VersionVector,
 ) -> FxHashSet<ContainerIdx> {
     let (retreat, forward) = before.diff_iter(after);
-    retreat
-        .chain(forward)
-        .flat_map(|span| oplog.iter_ops(span))
-        .map(|op| op.raw_op().container)
-        .collect()
+    let mut containers = FxHashSet::default();
+    // Only `op.container` is needed, so scan the borrowed changes directly
+    // instead of materializing a cloned RichOp per op via `oplog.iter_ops`.
+    let mut last_container = None;
+    for span in retreat.chain(forward) {
+        for change in oplog.change_store().iter_changes(span) {
+            let start_counter = span.counter.min().max(change.id.counter);
+            let end_counter = span.counter.norm_end();
+            let start = change
+                .ops
+                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                .unwrap_or_else(|e| e);
+            for op in &change.ops.vec()[start..] {
+                if op.counter >= end_counter {
+                    break;
+                }
+
+                // Consecutive ops overwhelmingly share a container; skip the
+                // hash probe when it hasn't changed.
+                if last_container != Some(op.container) {
+                    containers.insert(op.container);
+                    last_container = Some(op.container);
+                }
+            }
+        }
+    }
+
+    containers
 }
 
 impl DiffCalculator {
@@ -2062,20 +2085,11 @@ fn test_size() {
     assert!(size < 50, "ContainerDiffCalculator size: {}", size);
 }
 
-#[test]
-fn causal_existing_peer_import_uses_current_version_as_replay_base() {
-    use crate::{
-        handler::{HandlerTrait, ValueOrHandler},
-        loro::ExportMode,
-        LoroDoc, MapHandler,
-    };
-
-    fn nested_map(doc: &LoroDoc) -> MapHandler {
-        match doc.get_movable_list("items").get_(0).unwrap() {
-            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
-            ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
-        }
-    }
+/// A doc with a movable list "items" holding a nested map (`value: 0`) plus
+/// unrelated list/text containers, committed as peer 1.
+#[cfg(test)]
+fn movable_list_fixture() -> crate::LoroDoc {
+    use crate::{LoroDoc, MapHandler};
 
     let base = LoroDoc::new_auto_commit();
     base.set_peer_id(1).unwrap();
@@ -2089,7 +2103,48 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
         .insert(0, "a", crate::cursor::PosType::Unicode)
         .unwrap();
     base.commit_then_renew();
+    base
+}
 
+#[cfg(test)]
+fn nested_map(doc: &crate::LoroDoc) -> crate::MapHandler {
+    use crate::handler::ValueOrHandler;
+
+    match doc.get_movable_list("items").get_(0).unwrap() {
+        ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+        ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
+    }
+}
+
+/// Asserts the diff round produced exactly one internal map diff, for
+/// `expected_idx`, whose `key` entry resolves to `expected`.
+#[cfg(test)]
+fn assert_single_map_value_diff(
+    diffs: &[InternalContainerDiff],
+    expected_idx: ContainerIdx,
+    key: &str,
+    expected: LoroValue,
+) {
+    assert_eq!(diffs.len(), 1);
+    let diff = &diffs[0];
+    assert_eq!(diff.idx, expected_idx);
+    let DiffVariant::Internal(InternalDiff::Map(map_diff)) = &diff.diff else {
+        panic!("expected an internal map diff, got {:?}", diff.diff);
+    };
+    let value = map_diff
+        .updated
+        .get(&InternalString::from(key))
+        .unwrap_or_else(|| panic!("map diff has no entry for {key:?}: {map_diff:?}"))
+        .as_ref()
+        .and_then(|map_value| map_value.value.clone());
+    assert_eq!(value, Some(expected));
+}
+
+#[test]
+fn causal_existing_peer_import_uses_current_version_as_replay_base() {
+    use crate::{handler::HandlerTrait, loro::ExportMode};
+
+    let base = movable_list_fixture();
     let target = base.fork();
     let source = base.fork();
     let relay = base.fork();
@@ -2138,37 +2193,14 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
     );
     assert_eq!(calculator.calculators.len(), 1);
     assert!(calculator.get_calc(expected_idx).is_some());
-    assert_eq!(diffs.len(), 1);
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 1.into());
 }
 
 #[test]
 fn conservative_replay_only_builds_calculators_for_changed_containers() {
-    use crate::{
-        handler::{HandlerTrait, ValueOrHandler},
-        loro::ExportMode,
-        LoroDoc, MapHandler,
-    };
+    use crate::{handler::HandlerTrait, loro::ExportMode};
 
-    fn nested_map(doc: &LoroDoc) -> MapHandler {
-        match doc.get_movable_list("items").get_(0).unwrap() {
-            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
-            ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
-        }
-    }
-
-    let base = LoroDoc::new_auto_commit();
-    base.set_peer_id(1).unwrap();
-    let nested = base
-        .get_movable_list("items")
-        .push_container(MapHandler::new_detached())
-        .unwrap();
-    nested.insert("value", 0).unwrap();
-    base.get_list("unrelated-list").push("a").unwrap();
-    base.get_text("unrelated-text")
-        .insert(0, "a", crate::cursor::PosType::Unicode)
-        .unwrap();
-    base.commit_then_renew();
-
+    let base = movable_list_fixture();
     let target = base.fork();
     target.set_peer_id(2).unwrap();
     target.get_map("relay").insert("ready", true).unwrap();
@@ -2211,5 +2243,60 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     );
     assert_eq!(calculator.calculators.len(), 1);
     assert!(calculator.get_calc(expected_idx).is_some());
-    assert_eq!(diffs.len(), 1);
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 1.into());
+}
+
+#[test]
+fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
+    use crate::{handler::HandlerTrait, loro::ExportMode};
+
+    let base = movable_list_fixture();
+    let target = base.fork();
+    target.set_peer_id(2).unwrap();
+    target.get_map("relay").insert("ready", true).unwrap();
+    target.commit_then_renew();
+
+    let source = base.fork();
+    source.set_peer_id(3).unwrap();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+
+    // `after` is the older version; the concurrent nested-map edit exists only
+    // on the `before` side, so the changed set comes from the retreat spans.
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let nested_update = source
+        .export(ExportMode::updates(&base.oplog_vv()))
+        .unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (lca, mode, _) =
+        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(lca, before, "the fixture must exercise conservative replay");
+    assert_eq!(mode, DiffMode::Checkout);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    // Checking out backward removes the concurrent edit again.
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 0.into());
 }

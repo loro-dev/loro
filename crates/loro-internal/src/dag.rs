@@ -624,6 +624,76 @@ where
         })
     }
 
+    /// Whether every tip in `tips` is contained in the ancestors of `frontiers`
+    /// (the tip itself counts). One walk answers all tips: it starts from every
+    /// frontier with a shared visited set and prunes by the lowest lamport among
+    /// the still-unproven tips, so the ancestor region is traversed at most once
+    /// per call instead of once per (tip, frontier) pair.
+    fn all_tips_covered_by_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        frontiers: &Frontiers,
+        tips: &FxHashSet<ID>,
+    ) -> bool {
+        let mut remaining = Vec::with_capacity(tips.len());
+        for id in tips.iter() {
+            let Some(span) = OrdIdSpan::from_dag_node(*id, get) else {
+                return false;
+            };
+            remaining.push(span);
+        }
+
+        if remaining.is_empty() {
+            return true;
+        }
+
+        let mut min_lamport = remaining
+            .iter()
+            .map(|tip| tip.lamport_last())
+            .min()
+            .unwrap();
+        let mut visited = FxHashSet::default();
+        let mut pending = Vec::new();
+        for frontier in frontiers.iter() {
+            if let Some(node) = OrdIdSpan::from_dag_node(frontier, get) {
+                pending.push(node);
+            }
+        }
+
+        while let Some(node) = pending.pop() {
+            let len_before = remaining.len();
+            remaining.retain(|tip| !node.contains_id(tip.id_last()));
+            if remaining.is_empty() {
+                return true;
+            }
+
+            if remaining.len() != len_before {
+                min_lamport = remaining
+                    .iter()
+                    .map(|tip| tip.lamport_last())
+                    .min()
+                    .unwrap();
+            }
+
+            // Ancestors of `node` all have lamport strictly below the node's
+            // start, so nothing below `min_lamport` can contain a remaining tip.
+            if node.lamport_last() < min_lamport {
+                continue;
+            }
+
+            if !visited.insert(node.id_start()) {
+                continue;
+            }
+
+            if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+                for dep in deps {
+                    pending.push(dep);
+                }
+            }
+        }
+
+        false
+    }
+
     fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         get: &'a F,
         frontier: ID,
@@ -685,7 +755,17 @@ where
                 }
 
                 let (_, _, other_branch_tips) = queue.pop().unwrap();
-                branch_tips.extend(other_branch_tips);
+                // Union, not concatenation. On criss-cross histories the same
+                // tips arrive from both parents at every re-merge; concatenating
+                // doubles the vec per sync round, and the per-dep clone below
+                // then makes the walk O(2^rounds). Distinct tips stay few: they
+                // are only minted for multi-head initial frontiers and at each
+                // side's first split.
+                for tip in other_branch_tips {
+                    if !branch_tips.contains(&tip) {
+                        branch_tips.push(tip);
+                    }
+                }
             } else {
                 break;
             }
@@ -745,12 +825,8 @@ where
         } else {
             // The dependency is on trimmed shallow history. The exact ancestor is
             // not representable in the current DAG, so fall back to a conservative
-            // checkout base.
-            if branch_tips.is_empty() {
-                unmatched_branches.insert(node.id_last());
-            } else {
-                unmatched_branches.extend(branch_tips);
-            }
+            // checkout base. No tip needs recording: this flag short-circuits the
+            // coverage check entirely.
             has_unresolved_unmatched_branch = true;
             continue;
         }
@@ -776,14 +852,7 @@ where
     // concurrent branch. Only fall back when an unmatched tip is not causally
     // covered by the common ancestors we found.
     let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
-        || unmatched_branches.iter().any(|id| {
-            let Some(target) = OrdIdSpan::from_dag_node(*id, get) else {
-                return true;
-            };
-
-            !ans.iter()
-                .any(|frontier| contains_in_ancestors(get, frontier, &target))
-        });
+        || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
     if has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
         ans = Default::default();
     }
@@ -1345,6 +1414,73 @@ mod tests {
         let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right);
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_left_frontiers_add_concurrent_branch() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let shared = node(2, 0, 1, 1, root.id.into());
+        let concurrent = node(3, 0, 1, 2, root.id.into());
+        let left = Frontiers::from([shared.id, concurrent.id]);
+        let dag = TestDag::new(vec![root, shared.clone(), concurrent], left.clone());
+
+        // The concurrent left head walks below `shared` without ever meeting the
+        // right side. Only the tip seeded for the multi-element left frontier can
+        // prove it uncovered; the deep node it dies at is itself covered.
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &shared.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_walk_reaches_trimmed_history() {
+        // Peer 9's changes are not present in the DAG, as after shallow trimming.
+        // Both sides die at the missing dependency inside the main walk, which
+        // must force the conservative empty base regardless of tip coverage.
+        let a = node(1, 0, 1, 5, ID::new(9, 5).into());
+        let b = node(2, 0, 1, 6, ID::new(9, 7).into());
+        let dag = TestDag::new(vec![a.clone(), b.clone()], Frontiers::from([a.id, b.id]));
+
+        let (ancestor, mode) = dag.find_common_ancestor(&a.id.into(), &b.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_criss_cross_ladder_stays_linear() {
+        // Two peers that each merge both previous heads every round — the shape
+        // ordinary bidirectional sync produces. Branch tips re-merge at every
+        // rung; without deduplication in the tip union the walk is O(2^rounds)
+        // (~minutes at this depth), with it the walk is linear (~microseconds).
+        const ROUNDS: usize = 26;
+        let root = node(3, 0, 1, 0, Frontiers::default());
+        let mut a_head = node(1, 0, 1, 1, root.id.into());
+        let mut b_head = node(2, 0, 1, 1, root.id.into());
+        let mut nodes = vec![root.clone(), a_head.clone(), b_head.clone()];
+        for k in 1..=ROUNDS {
+            let deps = Frontiers::from([a_head.id_last(), b_head.id_last()]);
+            let lamport = (k as Lamport) * 2;
+            let next_a = node(1, k as Counter, 1, lamport, deps.clone());
+            let next_b = node(2, k as Counter, 1, lamport, deps);
+            nodes.push(next_a.clone());
+            nodes.push(next_b.clone());
+            a_head = next_a;
+            b_head = next_b;
+        }
+        let frontier = Frontiers::from([a_head.id_last(), b_head.id_last()]);
+        let dag = TestDag::new(nodes, frontier.clone());
+
+        let start = std::time::Instant::now();
+        let (ancestor, mode) = dag.find_common_ancestor(&root.id.into(), &frontier);
+        assert_eq!(ancestor, root.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        // Generous 4-orders-of-magnitude margin over the fixed cost; the broken
+        // exponential path needs minutes here even in release mode.
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "criss-cross LCA walk took {:?}; branch-tip growth is no longer linear",
+            start.elapsed()
+        );
     }
 
     #[test]
