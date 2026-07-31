@@ -1,23 +1,47 @@
-# Internal of Diff Calculation
+# Internal Diff Calculation
 
-Diff calculation is the core of the `diff` command. It is responsible for calculating the difference between two versions of a container.
+Diff calculation produces the state patch between two versions. Checkout,
+forking, import, and revert all use this path.
 
-# Three modes of diff calculation
+## Replay base and changed containers
 
-## 1. Checkout Mode
+`OpLog::iter_from_lca_causally` first chooses a replay base. The DAG may return a
+base older than the mathematical LCA when operations from a concurrent branch
+need earlier positional context.
 
-This is the most general mode of diff calculation. It can be used whenever a user want to switch to a different version.
-But it is also the slowest mode. It relies on the `ContainerHistoryCache`, which is expensive to build and maintain in memory.
+An old base is not evidence that every container in the replay range changed.
+`DiffCalculator::calc_diff_internal` derives the changed container set from the
+version-vector difference and routes common history only to those calculators.
+Otherwise each unchanged List/Text/MovableList can trigger its own full-history
+tracker rebuild.
 
-## 2. Import Mode
+The DAG walk follows explicit dependencies plus the implicit previous counter
+of the same peer. An implicit path may be redundant when an explicit relay
+dependency already contains that predecessor. The walk remembers the dependency
+tip where an unmatched path split and performs a targeted ancestor lookup from
+the candidate common frontiers:
 
-This mode is used when the user imports new updates. It is faster than the checkout mode, but it is still slower than the linear mode.
+- a covered tip is another route into already-common history, so `from` remains
+  the replay base;
+- an uncovered tip is a real concurrent branch, so the conservative base is
+  retained.
 
-- The difference between the import mode and the checkout mode: in import mode, target version > current version.
-  So when calculating the `DiffCalculator` doesn't need to rely on `ContainerHistoryCache`, except for the Tree container.
-- The difference between the import mode and the linear mode: in linear mode, all the imported updates are ordered, no concurrent update exists.
-  so there is no need to build CRDTs for the calculation
+This lookup runs only for unmatched branch tips and prunes by visited DAG nodes
+and Lamport time. It does not calculate a causal version for every new peer and
+does not compare each one with the complete `from` version vector.
 
-## 3. Linear Mode
+## Diff modes
 
-This mode is used when we don't need to build CRDTs to calculate the difference. It is the fastest mode.
+- `Checkout` is the general and slowest mode. It can move in either direction
+  and may use `ContainerHistoryCache`.
+- `Import` requires `to > from`, but some imported operations may be concurrent
+  with `from`.
+- `ImportGreaterUpdates` additionally guarantees that every imported operation
+  is causally after `from`, so the replay base is `from`.
+- `Linear` additionally guarantees that imported operations are ordered, so
+  diff calculation does not need to build CRDT trackers.
+
+List, Text, and MovableList still rebuild their trackers from CRDT IDs when
+retreating, when their source context is incomplete, or when shallow history
+requires it. That fallback is a correctness requirement, not a replay-base
+optimization.

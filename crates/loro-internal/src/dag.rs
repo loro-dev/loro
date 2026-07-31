@@ -547,7 +547,8 @@ where
 
     let mut is_linear = left.len() <= 1 && right.len() == 1;
     let mut is_right_greater = true;
-    let mut has_unmatched_branch = false;
+    let mut unmatched_branches = FxHashSet::default();
+    let mut has_unresolved_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
 
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
@@ -657,23 +658,34 @@ where
         false
     }
 
-    let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
+    // The third tuple item carries the dependency tips at which this path first
+    // split from its sibling paths. If the path dies without meeting the other
+    // side, those tips tell us whether it was a real concurrent branch or merely
+    // a redundant route into an ancestor we already found.
+    let mut queue: BinaryHeap<(OrdIdSpan, NodeType, Vec<ID>)> = BinaryHeap::new();
     for span in ids_to_ord_id_spans(left, get).unwrap() {
-        queue.push((span, NodeType::A));
+        let branch_tips = (left.len() > 1)
+            .then(|| vec![span.id_last()])
+            .unwrap_or_default();
+        queue.push((span, NodeType::A, branch_tips));
     }
 
     for span in ids_to_ord_id_spans(right, get).unwrap() {
-        queue.push((span, NodeType::B));
+        let branch_tips = (right.len() > 1)
+            .then(|| vec![span.id_last()])
+            .unwrap_or_default();
+        queue.push((span, NodeType::B, branch_tips));
     }
 
-    while let Some((mut node, mut node_type)) = queue.pop() {
-        while let Some((other_node, other_type)) = queue.peek() {
+    while let Some((mut node, mut node_type, mut branch_tips)) = queue.pop() {
+        while let Some((other_node, other_type, _)) = queue.peek() {
             if node == *other_node || node.id_last() == other_node.id_last() {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
                 }
 
-                queue.pop();
+                let (_, _, other_branch_tips) = queue.pop().unwrap();
+                branch_tips.extend(other_branch_tips);
             } else {
                 break;
             }
@@ -685,8 +697,11 @@ where
         }
 
         if queue.is_empty() {
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            if branch_tips.is_empty() {
+                unmatched_branches.insert(node.id_last());
+            } else {
+                unmatched_branches.extend(branch_tips);
+            }
             break;
         }
 
@@ -698,7 +713,7 @@ where
         if let Some(other) = queue.peek() {
             if node.contains_id(other.0.id_last()) && node_type != other.1 {
                 node.len = (other.0.id_last().counter - node.id.counter + 1) as usize;
-                queue.push((node, node_type));
+                queue.push((node, node_type, branch_tips));
                 continue;
             }
 
@@ -708,15 +723,21 @@ where
                 } else {
                     1
                 };
-                queue.push((node, node_type));
+                queue.push((node, node_type, branch_tips));
                 continue;
             }
         }
 
         if let Some(deps) = deps_to_ord_id_spans(&node, get) {
             if !deps.is_empty() {
+                let starts_new_branches = branch_tips.is_empty() && deps.len() > 1;
                 for dep in deps {
-                    queue.push((dep, node_type));
+                    let child_branch_tips = if starts_new_branches {
+                        vec![dep.id_last()]
+                    } else {
+                        branch_tips.clone()
+                    };
+                    queue.push((dep, node_type, child_branch_tips));
                 }
                 is_linear = false;
                 continue;
@@ -725,8 +746,12 @@ where
             // The dependency is on trimmed shallow history. The exact ancestor is
             // not representable in the current DAG, so fall back to a conservative
             // checkout base.
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            if branch_tips.is_empty() {
+                unmatched_branches.insert(node.id_last());
+            } else {
+                unmatched_branches.extend(branch_tips);
+            }
+            has_unresolved_unmatched_branch = true;
             continue;
         }
 
@@ -735,15 +760,41 @@ where
             // includes every branch whose operation positions may affect the diff.
             // In non-linear checkout mode, an earlier common ancestor is a valid
             // conservative base even when it is not the mathematical LCA.
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            if branch_tips.is_empty() {
+                unmatched_branches.insert(node.id_last());
+            } else {
+                unmatched_branches.extend(branch_tips);
+            }
             continue;
         }
     }
 
     ans = shrink_ancestor_frontiers(&ans, get);
-    if has_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
+    // A branch can look unmatched merely because a shared node was found first
+    // and was therefore not expanded. In that case another queued path may still
+    // walk into one of the shared node's ancestors. That path is redundant, not a
+    // concurrent branch. Only fall back when an unmatched tip is not causally
+    // covered by the common ancestors we found.
+    let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
+        || unmatched_branches.iter().any(|id| {
+            let Some(target) = OrdIdSpan::from_dag_node(*id, get) else {
+                return true;
+            };
+
+            !ans.iter()
+                .any(|frontier| contains_in_ancestors(get, frontier, &target))
+        });
+    if has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
         ans = Default::default();
+    }
+
+    if has_uncovered_unmatched_branch {
+        is_right_greater = false;
+    } else if &ans == left {
+        // An A-only path may also have been a redundant path into `ans`. Once all
+        // such paths are proved covered, equality with `left` is the exact proof
+        // that `right` causally includes `left`.
+        is_right_greater = true;
     }
 
     let mode = if is_right_greater {
@@ -1212,6 +1263,62 @@ mod tests {
     }
 
     #[test]
+    fn common_ancestor_ignores_implicit_predecessor_covered_by_explicit_dependency() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let relay = node(2, 0, 1, 1, peer_one_previous.id.into());
+        // This is peer 1's next change, so it implicitly depends on
+        // `peer_one_previous`. Its explicit dependency on `relay` already covers
+        // that predecessor, though, so the two paths are not concurrent.
+        let peer_one_next = node(1, 1, 1, 2, relay.id.into());
+        let dag = TestDag::new(
+            vec![peer_one_previous, relay.clone(), peer_one_next.clone()],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&relay.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, relay.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_ignores_implicit_predecessor_covered_transitively() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let first_relay = node(2, 0, 1, 1, peer_one_previous.id.into());
+        let current_frontier = node(3, 0, 1, 2, first_relay.id.into());
+        let peer_one_next = node(1, 1, 1, 3, current_frontier.id.into());
+        let dag = TestDag::new(
+            vec![
+                peer_one_previous,
+                first_relay,
+                current_frontier.clone(),
+                peer_one_next.clone(),
+            ],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) =
+            dag.find_common_ancestor(&current_frontier.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, current_frontier.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_keeps_uncovered_implicit_predecessor_conservative() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let concurrent = node(2, 0, 1, 1, Frontiers::default());
+        let peer_one_next = node(1, 1, 1, 2, concurrent.id.into());
+        let dag = TestDag::new(
+            vec![peer_one_previous, concurrent.clone(), peer_one_next.clone()],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) =
+            dag.find_common_ancestor(&concurrent.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
     fn common_ancestor_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let left = node(2, 0, 1, 1, root.id.into());
@@ -1223,6 +1330,19 @@ mod tests {
         );
 
         let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_right_frontiers_add_concurrent_branch() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let left = node(2, 0, 1, 1, root.id.into());
+        let concurrent = node(3, 0, 1, 2, root.id.into());
+        let right = Frontiers::from([left.id, concurrent.id]);
+        let dag = TestDag::new(vec![root, left.clone(), concurrent], right.clone());
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right);
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
     }

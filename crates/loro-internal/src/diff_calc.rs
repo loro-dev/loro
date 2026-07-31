@@ -111,6 +111,19 @@ pub(crate) struct DiffCalcVersionInfo<'a> {
     lca_vv: &'a VersionVector,
 }
 
+fn changed_containers_between(
+    oplog: &OpLog,
+    before: &VersionVector,
+    after: &VersionVector,
+) -> FxHashSet<ContainerIdx> {
+    let (retreat, forward) = before.diff_iter(after);
+    retreat
+        .chain(forward)
+        .flat_map(|span| oplog.iter_ops(span))
+        .map(|op| op.raw_op().container)
+        .collect()
+}
+
 impl DiffCalculator {
     /// Create a new diff calculator.
     ///
@@ -158,6 +171,13 @@ impl DiffCalculator {
         merged.merge(after);
         let (lca, origin_diff_mode, iter) =
             oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
+        // A conservative LCA may be much older than `before`. The causal replay
+        // still needs that common history as position context, but containers
+        // whose ops are present on both sides cannot contribute to the diff.
+        // Without this filter, every such List/Text/MovableList can trigger its
+        // own full-history safety rebuild below.
+        let changed_containers =
+            (&lca != before).then(|| changed_containers_between(oplog, before, after));
         let mut diff_mode = origin_diff_mode;
         match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
@@ -185,6 +205,13 @@ impl DiffCalculator {
                     }
 
                     let idx = op.container;
+                    if changed_containers
+                        .as_ref()
+                        .is_some_and(|containers| !containers.contains(&idx))
+                    {
+                        continue;
+                    }
+
                     if let Some(filter) = container_filter {
                         if !filter(idx) {
                             continue;
@@ -2033,4 +2060,156 @@ fn test_size() {
     let calc = ContainerDiffCalculator::Richtext(text);
     let size = std::mem::size_of_val(&calc);
     assert!(size < 50, "ContainerDiffCalculator size: {}", size);
+}
+
+#[test]
+fn causal_existing_peer_import_uses_current_version_as_replay_base() {
+    use crate::{
+        handler::{HandlerTrait, ValueOrHandler},
+        loro::ExportMode,
+        LoroDoc, MapHandler,
+    };
+
+    fn nested_map(doc: &LoroDoc) -> MapHandler {
+        match doc.get_movable_list("items").get_(0).unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
+        }
+    }
+
+    let base = LoroDoc::new_auto_commit();
+    base.set_peer_id(1).unwrap();
+    let nested = base
+        .get_movable_list("items")
+        .push_container(MapHandler::new_detached())
+        .unwrap();
+    nested.insert("value", 0).unwrap();
+    base.get_list("unrelated-list").push("a").unwrap();
+    base.get_text("unrelated-text")
+        .insert(0, "a", crate::cursor::PosType::Unicode)
+        .unwrap();
+    base.commit_then_renew();
+
+    let target = base.fork();
+    let source = base.fork();
+    let relay = base.fork();
+    // Continue an existing peer after another peer has become the current
+    // frontier. This gives the new change both an explicit dependency on the
+    // relay and an implicit dependency on its own previous counter.
+    source.set_peer_id(1).unwrap();
+    relay.set_peer_id(2).unwrap();
+    relay.get_map("relay").insert("ready", true).unwrap();
+    relay.commit_then_renew();
+    let relay_updates = relay.export(ExportMode::updates(&base.oplog_vv())).unwrap();
+    target.import(&relay_updates).unwrap();
+    source.import(&relay_updates).unwrap();
+
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+    let nested_update = source.export(ExportMode::updates(&before)).unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (lca, mode, _) =
+        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_eq!(lca, before);
+    assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    assert_eq!(diffs.len(), 1);
+}
+
+#[test]
+fn conservative_replay_only_builds_calculators_for_changed_containers() {
+    use crate::{
+        handler::{HandlerTrait, ValueOrHandler},
+        loro::ExportMode,
+        LoroDoc, MapHandler,
+    };
+
+    fn nested_map(doc: &LoroDoc) -> MapHandler {
+        match doc.get_movable_list("items").get_(0).unwrap() {
+            ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+            ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
+        }
+    }
+
+    let base = LoroDoc::new_auto_commit();
+    base.set_peer_id(1).unwrap();
+    let nested = base
+        .get_movable_list("items")
+        .push_container(MapHandler::new_detached())
+        .unwrap();
+    nested.insert("value", 0).unwrap();
+    base.get_list("unrelated-list").push("a").unwrap();
+    base.get_text("unrelated-text")
+        .insert(0, "a", crate::cursor::PosType::Unicode)
+        .unwrap();
+    base.commit_then_renew();
+
+    let target = base.fork();
+    target.set_peer_id(2).unwrap();
+    target.get_map("relay").insert("ready", true).unwrap();
+    target.commit_then_renew();
+
+    let source = base.fork();
+    source.set_peer_id(3).unwrap();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    let nested_update = source.export(ExportMode::updates(&before)).unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (lca, mode, _) =
+        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(lca, before, "the fixture must exercise conservative replay");
+    assert_eq!(mode, DiffMode::Import);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    assert_eq!(diffs.len(), 1);
 }
