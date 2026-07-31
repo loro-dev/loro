@@ -149,15 +149,16 @@ Because the set is only ever conservative, a rollback needs no invalidation —
 stale names just force the general diff path. Decode failures or exceeding the
 name-byte cap permanently disable the optimization for that store.
 
-The general diff path may choose an LCA older than the current state so list-like
-trackers have enough position context. When that happens,
+The general diff path may choose a replay base older than the current state
+(the latest single-head critical version, Eg-walker §3.5) so list-like trackers
+have enough position context. When that happens,
 `DiffCalculator::calc_diff_internal` still walks the common causal history, but
 routes it only to containers that have operations in the version-vector
 difference between `before` and `after`. Do not treat every container seen since
-the conservative LCA as changed: the List/Text/MovableList safety fallback can
+the conservative base as changed: the List/Text/MovableList safety fallback can
 otherwise replay the full history once per unchanged container.
 
-The LCA walk expands both explicit change dependencies and the implicit previous
+The replay-base walk expands both explicit change dependencies and the implicit previous
 counter of the same peer. A change from an existing peer can therefore produce
 two paths: an explicit relay dependency and an implicit same-peer predecessor.
 The relay may already contain that predecessor. In that case the second path can
@@ -172,7 +173,7 @@ concurrent branch and keeps the conservative fallback. This is a targeted DAG
 reachability check with visited-node and Lamport pruning. Do not replace it with
 a complete version-vector containment check for every new peer range: that work
 scales with both the update's peer count and the size of the current version
-vector, and it duplicates the causal decision the LCA walk is already making.
+vector, and it duplicates the causal decision the walk is already making.
 
 For a large snapshot regression check, first build the Node package, then run:
 

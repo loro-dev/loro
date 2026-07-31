@@ -240,22 +240,42 @@ impl TreeDiffCalculator {
             let from_frontiers = info.from_frontiers;
             let (common_ancestors, _mode) =
                 oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
-            let lca_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-            let lca_frontiers = common_ancestors;
+            let base_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
+            let base_frontiers = common_ancestors;
             let to_max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
-            let lca_min_lamport = self.get_min_lamport_by_frontiers(&lca_frontiers, oplog);
+            // CORRECTNESS: the retreat/forward passes below only look at ops
+            // with lamport >= `base_min_lamport` (the minimum change-start
+            // lamport of the base frontiers). Ops outside the window are
+            // silently skipped, which is only sound if no op of the diff
+            // region sits below the window. That holds because of how
+            // `find_common_ancestor` picks the base:
+            // - a region op that reaches the base through causal edges is a
+            //   descendant of some base head, so its lamport is strictly
+            //   greater than that head's change-start lamport, which is >= the
+            //   window minimum;
+            // - a region op CONCURRENT with a base head forces the walk to
+            //   detect an uncovered branch and retreat the base to a critical
+            //   version (latest_single_head_critical_version), below which no
+            //   concurrency crosses — the window then starts at that base.
+            // See docs/critical-version-spec.md (Q7) and the regression tests
+            // `checkout_across_non_critical_meet_stays_canonical` and
+            // `checkout_with_low_lamport_concurrent_branch_stays_canonical`
+            // in crates/loro/tests/issue.rs. Weakening either the critical
+            // version fallback or the ImportGreaterUpdates entry check in
+            // dag.rs breaks this invariant.
+            let base_min_lamport = self.get_min_lamport_by_frontiers(&base_frontiers, oplog);
 
             // retreat for diff
             let mut diffs = vec![];
 
-            if !(tree_cache.current_vv == lca_vv && &lca_vv == info.from_vv) {
+            if !(tree_cache.current_vv == base_vv && &base_vv == info.from_vv) {
                 let mut retreat_ops = vec![];
                 for (_target, ops) in tree_cache.tree.iter() {
                     for op in ops.iter().rev() {
-                        if op.id.lamport < lca_min_lamport {
+                        if op.id.lamport < base_min_lamport {
                             break;
                         }
-                        if !lca_vv.includes_id(op.id.id()) {
+                        if !base_vv.includes_id(op.id.id()) {
                             retreat_ops.push(op.clone());
                         }
                     }
@@ -316,7 +336,7 @@ impl TreeDiffCalculator {
                     }
                 }
             }
-            tree_cache.current_vv = lca_vv;
+            tree_cache.current_vv = base_vv;
             // forward
             let group = h
                 .get_importing_cache(&self.container, mark)
@@ -325,7 +345,7 @@ impl TreeDiffCalculator {
                 .unwrap();
             for (idlp, op) in group.ops().range(
                 IdLp {
-                    lamport: lca_min_lamport,
+                    lamport: base_min_lamport,
                     peer: 0,
                 }..=IdLp {
                     lamport: to_max_lamport,

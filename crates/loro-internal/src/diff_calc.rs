@@ -92,7 +92,7 @@ pub(crate) enum DiffMode {
     ///
     /// It has stricter requirements than `Import`.
     /// - All the updates are greater than the current version. No update is concurrent to the current version.
-    /// - So LCA is always the `from` version
+    /// - So the replay base is always the `from` version
     ImportGreaterUpdates,
     /// This mode is used when we don't need to build CRDTs to calculate the difference. It is the fastest mode.
     ///
@@ -108,7 +108,7 @@ pub(crate) struct DiffCalcVersionInfo<'a> {
     to_vv: &'a VersionVector,
     from_frontiers: &'a Frontiers,
     to_frontiers: &'a Frontiers,
-    lca_vv: &'a VersionVector,
+    replay_base_vv: &'a VersionVector,
 }
 
 fn changed_containers_between(
@@ -192,16 +192,27 @@ impl DiffCalculator {
 
         let mut merged = before.clone();
         merged.merge(after);
-        let (lca, origin_diff_mode, iter) =
-            oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-        // A conservative LCA may be much older than `before`. The causal replay
+        let (replay_base, origin_diff_mode, iter) =
+            oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
+        // A conservative replay base may be much older than `before`. The causal replay
         // still needs that common history as position context, but containers
         // whose ops are present on both sides cannot contribute to the diff.
         // Without this filter, every such List/Text/MovableList can trigger its
         // own full-history safety rebuild below.
         let changed_containers =
-            (&lca != before).then(|| changed_containers_between(oplog, before, after));
-        let mut diff_mode = origin_diff_mode;
+            (&replay_base != before).then(|| changed_containers_between(oplog, before, after));
+        // Two distinct mode values live in this function — do not conflate them:
+        // - `origin_diff_mode` describes the DIRECTION of the transition
+        //   (Checkout can go backwards; the other modes imply `after ⊇ before`).
+        //   It is what this function returns, and its consumer
+        //   (`DocState::apply_diff`) uses it only for direction-sensitive
+        //   policies such as the dead-containers cache.
+        // - `calc_mode` is the mode the calculators actually COMPUTE with. A
+        //   persistent calculator always computes in Checkout mode, and each
+        //   calculator reports its own effective mode in the per-container
+        //   `InternalContainerDiff::diff_mode`, which is what the state layer's
+        //   per-container logic (`need_check` / `need_compare`) consumes.
+        let mut calc_mode = origin_diff_mode;
         match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
@@ -209,12 +220,12 @@ impl DiffCalculator {
                 }
             }
             DiffCalculatorRetainMode::Persist => {
-                diff_mode = DiffMode::Checkout;
+                calc_mode = DiffMode::Checkout;
             }
         }
 
         let affected_set = {
-            loro_common::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
+            loro_common::debug!("replay_base: {:?} mode={:?}", &replay_base, calc_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
                 let iter_start = change
@@ -269,7 +280,7 @@ impl DiffCalculator {
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(container);
-                        calculator.start_tracking(oplog, &lca, diff_mode);
+                        calculator.start_tracking(oplog, &replay_base, calc_mode);
                     }
 
                     if !vv.includes_vv(before) {
@@ -317,7 +328,7 @@ impl DiffCalculator {
             to_vv: after,
             from_frontiers: before_frontiers,
             to_frontiers: after_frontiers,
-            lca_vv: &lca,
+            replay_base_vv: &replay_base,
         };
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
@@ -502,7 +513,7 @@ fn replay_container_ops_from_empty(
     let empty_frontiers = Frontiers::default();
     let target_frontiers = oplog.dag.vv_to_frontiers(vv);
     let (_, _, iter) =
-        oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+        oplog.iter_from_replay_base_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
 
     for (change, (start_counter, end_counter), vv) in iter {
         let iter_start = change
@@ -786,7 +797,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
         let should_rebuild = matches!(idx.get_type(), crate::ContainerType::List)
-            && (has_retreat || info.lca_vv != info.from_vv || self.source_not_in_op_context);
+            && (has_retreat || info.replay_base_vv != info.from_vv || self.source_not_in_op_context);
         let diff_items = if should_rebuild {
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
@@ -1665,12 +1676,13 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
                 let has_retreat = retreat.next().is_some();
                 let should_rebuild = has_retreat
-                    || info.lca_vv != info.from_vv
+                    || info.replay_base_vv != info.from_vv
                     || *source_not_in_op_context
                     || !oplog.shallow_since_vv().is_empty();
                 if should_rebuild {
-                    // Richtext diffs can start from a tracker that only knows the LCA state as
-                    // unknown spans. Expressing a rollback or an import from `lca != from` as local
+                    // Richtext diffs can start from a tracker that only knows the replay-base
+                    // state as unknown spans. Expressing a rollback or an import from a base
+                    // older than `from` as local
                     // edits can target the wrong visible text when the source state contains
                     // concurrent inserts or sliced ops. The same risk exists when an op is replayed
                     // from a dependency version that does not include the visible source state.
@@ -1856,7 +1868,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
-        if has_retreat || info.lca_vv != info.from_vv || self.list.source_not_in_op_context {
+        if has_retreat || info.replay_base_vv != info.from_vv || self.list.source_not_in_op_context {
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             self.rebuild_full_tracker(idx, oplog, &merged);
@@ -2173,9 +2185,9 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (lca, mode, _) =
-        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_eq!(lca, before);
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_eq!(replay_base, before);
     assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
@@ -2223,9 +2235,9 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (lca, mode, _) =
-        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_ne!(lca, before, "the fixture must exercise conservative replay");
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
     assert_eq!(mode, DiffMode::Import);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
@@ -2277,9 +2289,9 @@ fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (lca, mode, _) =
-        oplog.iter_from_lca_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_ne!(lca, before, "the fixture must exercise conservative replay");
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
     assert_eq!(mode, DiffMode::Checkout);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),

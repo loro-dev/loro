@@ -5,9 +5,11 @@ forking, import, and revert all use this path.
 
 ## Replay base and changed containers
 
-`OpLog::iter_from_lca_causally` first chooses a replay base. The DAG may return a
-base older than the mathematical LCA when operations from a concurrent branch
-need earlier positional context.
+`OpLog::iter_from_replay_base_causally` first chooses a replay base. The safe
+base is a **critical version** in the Eg-walker sense (arXiv:2409.14252 §3.5):
+a version that no concurrency crosses. When a concurrent branch invalidates
+the candidate, the DAG retreats the base to the latest single-head critical
+version, which can be older than the meet of the two versions.
 
 An old base is not evidence that every container in the replay range changed.
 `DiffCalculator::calc_diff_internal` derives the changed container set from the

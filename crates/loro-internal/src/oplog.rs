@@ -40,7 +40,7 @@ pub use change_store::{BlockChangeRef, ChangeStore};
 /// So you can derive different versions of the state from the [OpLog].
 /// It allows us to build a version control system.
 ///
-/// The causal graph should always be a DAG and complete. So we can always find the LCA.
+/// The causal graph should always be a DAG and complete. So we can always find a common ancestor version.
 /// If deps are missing, we can't import the change. It will be put into the `pending_changes`.
 pub struct OpLog {
     pub(crate) dag: AppDag,
@@ -577,7 +577,10 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
-    /// iterates over all changes between LCA(common ancestors) to the merged version of (`from` and `to`) causally
+    /// Iterates causally over all changes between the replay base (a common
+    /// ancestor version chosen by `find_common_ancestor`; ideally the latest
+    /// critical version in the Eg-walker sense, see
+    /// `docs/critical-version-spec.md`) and the merged version of `from`/`to`.
     ///
     /// Tht iterator will include a version vector when the change is applied
     ///
@@ -588,7 +591,7 @@ impl OpLog {
     ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
     #[allow(clippy::type_complexity)]
-    pub(crate) fn iter_from_lca_causally(
+    pub(crate) fn iter_from_replay_base_causally(
         &self,
         from: &VersionVector,
         from_frontiers: &Frontiers,
@@ -608,31 +611,31 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (mut common_ancestors, mut diff_mode) =
+        let (mut replay_base_frontiers, mut diff_mode) =
             self.dag.find_common_ancestor(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
 
-        let mut common_ancestors_vv = self.dag.frontiers_to_vv(&common_ancestors).unwrap();
+        let mut replay_base_vv = self.dag.frontiers_to_vv(&replay_base_frontiers).unwrap();
         let shallow_since_vv = self.dag.shallow_since_vv().to_vv();
-        if !common_ancestors_vv.includes_vv(&shallow_since_vv) {
+        if !replay_base_vv.includes_vv(&shallow_since_vv) {
             // The replay base cannot point before shallow history because those
             // ops are no longer available to the causal iterator.
-            common_ancestors = self.dag.shallow_since_frontiers().clone();
-            common_ancestors_vv = self
+            replay_base_frontiers = self.dag.shallow_since_frontiers().clone();
+            replay_base_vv = self
                 .dag
-                .frontiers_to_vv(&common_ancestors)
+                .frontiers_to_vv(&replay_base_frontiers)
                 .unwrap_or(shallow_since_vv);
         }
-        // go from lca to merged_vv
-        let diff = common_ancestors_vv.diff(&merged_vv).forward;
-        let mut iter = self.dag.iter_causal(common_ancestors, diff);
+        // go from the replay base to merged_vv
+        let diff = replay_base_vv.diff(&merged_vv).forward;
+        let mut iter = self.dag.iter_causal(replay_base_frontiers, diff);
         let mut node = iter.next();
         let mut cur_cnt = 0;
         let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
-            common_ancestors_vv.clone(),
+            replay_base_vv.clone(),
             diff_mode,
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
@@ -646,7 +649,7 @@ impl OpLog {
                         .data
                         .cnt
                         .max(cur_cnt)
-                        .max(common_ancestors_vv.get(&peer).copied().unwrap_or(0));
+                        .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
                     let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                         .min(merged_vv.get(&peer).copied().unwrap_or(0));
                     let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();

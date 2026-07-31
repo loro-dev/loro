@@ -484,6 +484,24 @@ where
     ans
 }
 
+/// Finds the replay base and diff mode for the transition `left -> right`.
+///
+/// Contract (see `docs/critical-version-spec.md` for definitions and proofs):
+/// - S1: every id in the returned frontier is a common ancestor of both sides;
+/// - S2: the returned frontier is an antichain;
+/// - S3: a non-`Checkout` mode additionally guarantees that the base equals
+///   `left` and that EVERY newly imported event is causally after every head
+///   of `left` (i.e. `left` is a critical version of the union graph in the
+///   Eg-walker sense, arXiv:2409.14252 §3.5) — enforced for multi-head `left`
+///   by `new_region_after_all_left_heads`;
+/// - when a genuinely concurrent branch invalidates the candidate base, the
+///   base retreats to the latest single-head critical version
+///   (`latest_single_head_critical_version`), or to the empty version when no
+///   such cut exists.
+///
+/// Downstream consumers rely on these guarantees to skip CRDT adjudication
+/// (tree/map fast paths) and to bound their replay windows (tree checkout);
+/// see the comment in `diff_calc/tree.rs::checkout_diff`.
 fn _find_common_ancestor_new<'a, F, D>(
     get: &'a F,
     left: &Frontiers,
@@ -709,7 +727,7 @@ where
     /// endpoint is concurrent with everything below the current level, so no
     /// later singleton can be valid — bail out to the empty version, which is
     /// the old behaviour.
-    fn latest_singleton_common_cut<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         get: &'a F,
         left: &Frontiers,
         right: &Frontiers,
@@ -775,7 +793,7 @@ where
     /// weaker: a new branch can enter old history through one left head while
     /// staying concurrent with another, and the tree calculator's fast path
     /// applies such updates without adjudication (see
-    /// `docs/lca_spec_draft.md` §4.1).
+    /// `docs/critical-version-spec.md` §4.1).
     ///
     /// Method: descend from `right` over new changes only. A change whose
     /// causal parents (explicit deps plus the implicit same-peer predecessor)
@@ -949,6 +967,10 @@ where
             }
 
             if node.len > 1 {
+                // The `min(..., len - 1)` cap guarantees strict progress when
+                // lamports tie: aligning to the other's lamport alone would
+                // re-push the span unchanged and loop forever. It is also what
+                // makes the termination measure decrease on this branch.
                 node.len = if other.0.lamport_last() >= node.lamport {
                     (other.0.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
                 } else {
@@ -986,7 +1008,7 @@ where
             // Some checkout calculators still require replaying from a base that
             // includes every branch whose operation positions may affect the diff.
             // In non-linear checkout mode, an earlier common ancestor is a valid
-            // conservative base even when it is not the mathematical LCA.
+            // conservative base even when it is not the meet of the two versions.
             if branch_tips.is_empty() {
                 unmatched_branches.insert(node.id_last());
             } else {
@@ -1009,7 +1031,7 @@ where
         // Instead of always retreating to the beginning of history, retreat to
         // the latest single-head critical version below both sides (empty when
         // no such cut exists, which matches the old behaviour).
-        ans = latest_singleton_common_cut(get, left, right);
+        ans = latest_single_head_critical_version(get, left, right);
     }
 
     if has_uncovered_unmatched_branch {
@@ -1032,7 +1054,7 @@ where
         // conservative mode and retreat the base to a safe cut so the
         // competing branches are replayed together.
         is_right_greater = false;
-        ans = latest_singleton_common_cut(get, left, right);
+        ans = latest_single_head_critical_version(get, left, right);
     }
 
     let mode = if is_right_greater {
@@ -1264,7 +1286,7 @@ mod tests {
         for id in actual.iter() {
             assert!(
                 left_ancestors.contains(&id) && right_ancestors.contains(&id),
-                "actual LCA id {id} must be common: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+                "every replay-base id {id} must be common: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
             );
         }
 
@@ -1273,7 +1295,7 @@ mod tests {
                 if a != b {
                     assert!(
                         !is_ancestor(dag, a, b),
-                        "actual LCA must be a minimal frontier set: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+                        "the replay base must be a minimal frontier set: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
                     );
                 }
             }
@@ -1286,7 +1308,7 @@ mod tests {
             );
             assert_eq!(
                 &actual, left,
-                "non-checkout mode must use left as LCA: left={left:?} right={right:?} mode={mode:?}"
+                "non-checkout mode must use left as the replay base: left={left:?} right={right:?} mode={mode:?}"
             );
             for id in left.iter() {
                 assert!(
@@ -1702,7 +1724,7 @@ mod tests {
         // exponential path needs minutes here even in release mode.
         assert!(
             start.elapsed() < std::time::Duration::from_secs(10),
-            "criss-cross LCA walk took {:?}; branch-tip growth is no longer linear",
+            "criss-cross walk took {:?}; branch-tip growth is no longer linear",
             start.elapsed()
         );
     }

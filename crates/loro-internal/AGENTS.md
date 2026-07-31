@@ -28,8 +28,9 @@ over graceful degradation.
   `MapHandler::ensure_mergeable_*`.
 - `src/diff_calc/`: diff calculation when moving between versions.
 - `docs/diff_calc.md`: design notes for diff calculation.
-- `docs/lca_spec_draft.md`: specification and proof skeleton for the LCA
-  walk / replay-base selection (draft, aligned with Eg-walker terminology).
+- `docs/critical-version-spec.md`: specification and proof skeleton for
+  replay-base selection (Eg-walker-aligned terminology; defines critical
+  version, the entry check, and the fallback sweep).
 - `docs/mergeable-container-id.md`: current mergeable container id encoding.
 - `tests/mergeable_container/` and `tests/mergeable_cid_encoding.rs`: focused
   mergeable container regression tests.
@@ -52,6 +53,16 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
 
 ## Working Rules
 
+- Replay-base selection uses Eg-walker terminology (arXiv:2409.14252 §3.5):
+  a version V is **critical** when every event outside `Events(V)` happened
+  after all of `Events(V)` — no concurrency crosses the cut. Non-`Checkout`
+  diff modes and the tree calculator's lamport windows are only sound when
+  the base satisfies this; `dag.rs` enforces it via the
+  `ImportGreaterUpdates` entry check and the
+  `latest_single_head_critical_version` fallback. Do not use "LCA" in new
+  code or docs: the meet of two versions is generally NOT a safe replay
+  base. Read `docs/critical-version-spec.md` before touching
+  `find_common_ancestor`, diff modes, or `diff_calc/tree.rs` windows.
 - Internal invariant violation should fail fast. Invalid external bytes or JSON
   should return `Err`.
 - Do not silently skip ops, containers, state entries, diffs, or pending changes.

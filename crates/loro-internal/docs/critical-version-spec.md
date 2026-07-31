@@ -198,10 +198,14 @@ Version(G′) = { e₁ ∈ G′ ∣ ∄e₂ ∈ G′: e₁ → e₂ }（没有�
 即 C 中的极大元全体——版本格（因果闭集按 ⊆ 构成的格）中两版本最大下界
 的前沿，这是一个反链。测试里的"oracle"（暴力对照实现）算的就是这个对象。
 
-命名说明：本文档旧版（以及代码里的函数名 `find_common_ancestor`）把它
-借称为 "LCA"。这个借名不严格：经典 LCA 是图上两个**节点**的最深公共祖先
-（单点），而这里的对象是两个**版本**在格上的最大下界；更重要的是，
+命名说明：本文档与代码曾把它借称为 "LCA"，2026-08-01 起已全面弃用：
+代码中 `iter_from_lca_causally` 改名 `iter_from_replay_base_causally`、
+`lca_vv` 改名 `replay_base_vv`、回退函数命名为
+`latest_single_head_critical_version`，文档改名
+`critical-version-spec.md`。理由：经典 LCA 是图上两个**节点**的最深公共
+祖先（单点），而这里的对象是两个**版本**在格上的最大下界；更重要的是，
 meet 只是算法的**候选**，不是算法真正要交付的东西（见 D8b 与 4.1 节）。
+`find_common_ancestor` 这个名字保留——它返回的确实是公共祖先版本。
 
 1.1 节例子中：L = {A2}，R = {B0}，C = {A0, A1}，meet = {A1}。
 
@@ -540,9 +544,29 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   Tree 不成立，故不再把守卫当作 IGU 正确性的依据：入场检查（L12）使
   S3/S4 直接成立。守卫仍是 text/list 在 Checkout 模式下的兜底，其公理
   化留给 Q7。
-- **Q7**（新）Checkout 模式下 ans = meet 而 meet 非 critical（双根菱形
-  构造）时，Tree 的 checkout_diff 是否与增量状态一致？text/list 有守卫，
-  Tree 需要单独查证；若暴露，同样用 L11 扫描回退可修。
+- **Q7**（已核查，2026-08-01：安全）Checkout 模式下 meet 非 critical 时
+  Tree 的 checkout_diff 是否一致？机制审计发现 Tree 的 Checkout 路径是
+  **相对**计算（retreat/forward 都按 lca 前沿的 change 起点 lamport 开窗，
+  窗外 op 静默跳过）——窗口隐含 critical 假设。但可证明修复后恒安全：
+  区域内经会合进入公共历史的 op 必 ≥ 某 meet 头（在窗口内）；与 meet 头
+  并发的 op 必产生 uncovered 死路 → L11 扫描 → critical 基准 → 窗口从
+  基准起点覆盖全区域。实证：非 critical meet 菱形（tree/movable list/
+  text）与低 lamport 并发分支两组 checkout 探针全部 canonical，已钉为
+  回归测试 `checkout_across_non_critical_meet_stays_canonical` 与
+  `checkout_with_low_lamport_concurrent_branch_stays_canonical`
+  （后者显式保护"扫描 ↔ Tree 窗口"的耦合：削弱扫描会静默破坏它）。
+- **Q8**（已解决，2026-08-01：澄清而非改行为）深入推演后确认这是
+  **刻意的双模式设计**：顶层返回值是**方向模式**（origin），其唯一消费者
+  `DocState::apply_diff` 只用它做方向敏感的死容器缓存策略（Checkout 可能
+  倒退 → 全清；其余模式必为前进 → 只清 alive 标记），语义正确；逐容器的
+  `InternalContainerDiff::diff_mode` 才是**计算模式**（各计算器如实上报，
+  Persist 降级后亦然），`need_check`/`need_compare` 消费的是它，配套一致。
+  风险只在"易混淆"，已修：`calc_diff_internal` 内部局部量改名
+  `calc_mode`，两处消费点各加不变式注释。
+- **Q9**（新，维护性）`find_path` 使用独立的旧版 `_find_common_ancestor`
+  实现（仅服务诊断 API `find_id_spans_between`，不参与状态变更；
+  relay 形状实证输出精确）。双实现存在漂移风险，建议择机合并或改为
+  vv 差集直接计算。
 - **Q4** trimmed 情形：uncovered 但 ans 触及裁剪边界时保留非空 ans，
   其安全性依赖 oplog 层把重放起点钳制到浅历史根部。
   规格按"走查 + 钳制成对成立"写，还是要求走查单独成立？
