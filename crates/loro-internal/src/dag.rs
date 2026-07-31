@@ -768,6 +768,83 @@ where
         Default::default()
     }
 
+    /// Verifies the `ImportGreaterUpdates` contract for a multi-head `left`:
+    /// every event in `Events(right) − Events(left)` must be causally after
+    /// every member of `left` (i.e. `left` must be a critical version of the
+    /// union graph). The main walk only proves version inclusion, which is
+    /// weaker: a new branch can enter old history through one left head while
+    /// staying concurrent with another, and the tree calculator's fast path
+    /// applies such updates without adjudication (see
+    /// `docs/lca_spec_draft.md` §4.1).
+    ///
+    /// Method: descend from `right` over new changes only. A change whose
+    /// causal parents (explicit deps plus the implicit same-peer predecessor)
+    /// are all old is an entry point of the new region; its parents must
+    /// causally cover every left head. Non-entry changes inherit coverage
+    /// through their new parents. The common healthy shape — a change whose
+    /// deps equal the left frontier — passes with a set comparison and no
+    /// graph walk. Trimmed history fails conservatively.
+    fn new_region_after_all_left_heads<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) -> bool {
+        let left_ids: FxHashSet<ID> = left.iter().collect();
+        let is_old = |id: ID| -> bool {
+            if left_ids.contains(&id) {
+                return true;
+            }
+            let mut single = FxHashSet::default();
+            single.insert(id);
+            all_tips_covered_by_ancestors(get, left, &single)
+        };
+
+        let mut visited: FxHashSet<ID> = FxHashSet::default();
+        let mut stack: Vec<OrdIdSpan> = Vec::new();
+        for id in right.iter() {
+            if is_old(id) {
+                continue;
+            }
+            let Some(span) = OrdIdSpan::from_dag_node(id, get) else {
+                return false;
+            };
+            stack.push(span);
+        }
+
+        while let Some(span) = stack.pop() {
+            if !visited.insert(span.id_start()) {
+                continue;
+            }
+
+            let Some(parents) = deps_to_ord_id_spans(&span, get) else {
+                return false;
+            };
+            let mut entry_point = true;
+            let mut old_parents = Frontiers::default();
+            for parent in parents {
+                let pid = parent.id_last();
+                if is_old(pid) {
+                    old_parents.push(pid);
+                } else {
+                    entry_point = false;
+                    stack.push(parent);
+                }
+            }
+
+            if entry_point {
+                if &old_parents == left {
+                    continue;
+                }
+
+                if !all_tips_covered_by_ancestors(get, &old_parents, &left_ids) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         get: &'a F,
         frontier: ID,
@@ -942,6 +1019,20 @@ where
         // such paths are proved covered, equality with `left` is the exact proof
         // that `right` causally includes `left`.
         is_right_greater = true;
+    }
+
+    if is_right_greater && left.len() > 1 && !new_region_after_all_left_heads(get, left, right) {
+        // Version inclusion holds, but part of the new region entered old
+        // history through a strict subset of the left heads and is therefore
+        // concurrent with the others. `ImportGreaterUpdates` promises "no
+        // update is concurrent to the current version", so claiming it here
+        // lets fast paths (notably the tree calculator's) apply the new ops
+        // without adjudicating against the concurrent existing branch, and the
+        // materialized state diverges from a full replay. Demote to the
+        // conservative mode and retreat the base to a safe cut so the
+        // competing branches are replayed together.
+        is_right_greater = false;
+        ans = latest_singleton_common_cut(get, left, right);
     }
 
     let mode = if is_right_greater {
@@ -1530,6 +1621,53 @@ mod tests {
         let (ancestor, mode) = dag.find_common_ancestor(&a.id.into(), &b.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn import_greater_updates_requires_new_ops_after_all_left_heads() {
+        // Movable-tree staleness issue shape: B3 → B4..B6 and B3 → A0 → A1..A3.
+        // from = {A0, B6}, to = {A3, B6}. Version inclusion holds
+        // (vv(to) ⊇ vv(from)), yet A1..A3 are concurrent with the left head B6,
+        // so ImportGreaterUpdates must not be claimed: the tree calculator's
+        // fast path would apply A1..A3 without adjudicating against B4..B6.
+        // The base must retreat to the latest critical version {B3}.
+        let b_creates = node(2, 0, 4, 0, Frontiers::default());
+        let b_moves = node(2, 4, 3, 4, ID::new(2, 3).into());
+        let a0 = node(1, 0, 1, 4, ID::new(2, 3).into());
+        let a_moves = node(1, 1, 3, 5, ID::new(1, 0).into());
+        let dag = TestDag::new(
+            vec![b_creates, b_moves, a0, a_moves],
+            Frontiers::from([ID::new(1, 3), ID::new(2, 6)]),
+        );
+
+        let left = Frontiers::from([ID::new(1, 0), ID::new(2, 6)]);
+        let right = Frontiers::from([ID::new(1, 3), ID::new(2, 6)]);
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &right);
+        assert_eq!(ancestor, ID::new(2, 3).into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn import_greater_updates_kept_when_new_ops_depend_on_all_left_heads() {
+        // Healthy multi-head import: the new change's deps equal the whole
+        // left frontier, so every new op is causally after all of it and the
+        // fast path must be preserved (entry check passes by set equality).
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let x = node(2, 0, 1, 1, ID::new(1, 0).into());
+        let y = node(3, 0, 1, 1, ID::new(1, 0).into());
+        let merge = node(
+            4,
+            0,
+            1,
+            2,
+            Frontiers::from([ID::new(2, 0), ID::new(3, 0)]),
+        );
+        let dag = TestDag::new(vec![root, x, y, merge], ID::new(4, 0).into());
+
+        let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &ID::new(4, 0).into());
+        assert_eq!(ancestor, left);
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     }
 
     #[test]

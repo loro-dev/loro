@@ -499,3 +499,87 @@ fn get_unknown_cursor_position_but_its_in_pending() {
     assert!(!doc_1.has_container(&text.id()));
     assert_eq!(doc_1.get_path_to_container(&text.id()), None);
 }
+
+/// Concurrent movable-tree moves must keep the incrementally maintained
+/// `DocState` identical to a fresh replay of the full oplog.
+///
+/// History shape: B creates four roots (B0..B3), then B reorders them
+/// (B4..B6) while A — knowing only B0..B3 — creates one root (A0) and
+/// reorders everything (A1..A3). A1..A3 are concurrent with B4..B6, but the
+/// receiving peer's frontier {B6, A0} is version-included in the merged
+/// version, which used to be misclassified as ImportGreaterUpdates: the tree
+/// fast path applied A1..A3 without adjudicating against B4..B6 and the
+/// materialized state diverged from replay. Run both import orders so either
+/// peer can be the one receiving the concurrent branch incrementally.
+#[test]
+fn tree_concurrent_moves_incremental_state_matches_replay() {
+    fn canonical(doc: &LoroDoc) -> LoroDoc {
+        let replay = LoroDoc::new();
+        replay.get_tree("tree").enable_fractional_index(0);
+        replay
+            .import(&doc.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        replay.checkout_to_latest();
+        replay
+    }
+
+    fn run(first_into_b: bool) {
+        let a = LoroDoc::new();
+        a.set_peer_id(1).unwrap();
+        let b = LoroDoc::new();
+        b.set_peer_id(2).unwrap();
+        a.get_tree("tree").enable_fractional_index(0);
+        b.get_tree("tree").enable_fractional_index(0);
+        let ta = a.get_tree("tree");
+        let tb = b.get_tree("tree");
+
+        let n0 = tb.create(None).unwrap();
+        let n1 = tb.create(None).unwrap();
+        let n2 = tb.create(None).unwrap();
+        let n3 = tb.create(None).unwrap();
+        b.commit();
+        a.import(&b.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+            .unwrap();
+
+        tb.mov_to(n1, None, 0).unwrap();
+        tb.mov_to(n2, None, 1).unwrap();
+        tb.mov_to(n3, None, 2).unwrap();
+        tb.mov_to(n0, None, 3).unwrap();
+        b.commit();
+
+        let na = ta.create(None).unwrap();
+        a.commit();
+        b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+            .unwrap();
+
+        ta.mov_to(n3, None, 0).unwrap();
+        ta.mov_to(n1, None, 1).unwrap();
+        ta.mov_to(n0, None, 2).unwrap();
+        ta.mov_to(na, None, 3).unwrap();
+        ta.mov_to(n2, None, 4).unwrap();
+        a.commit();
+
+        let a_updates = a.export(ExportMode::all_updates()).unwrap();
+        let b_updates = b.export(ExportMode::all_updates()).unwrap();
+        if first_into_b {
+            b.import(&a_updates).unwrap();
+            a.import(&b_updates).unwrap();
+        } else {
+            a.import(&b_updates).unwrap();
+            b.import(&a_updates).unwrap();
+        }
+        a.checkout_to_latest();
+        b.checkout_to_latest();
+
+        let replay_a = canonical(&a);
+        let replay_b = canonical(&b);
+        assert_eq!(a.oplog_vv(), b.oplog_vv());
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+        assert_eq!(replay_a.get_deep_value(), replay_b.get_deep_value());
+        assert_eq!(a.get_deep_value(), replay_a.get_deep_value());
+        assert_eq!(b.get_deep_value(), replay_b.get_deep_value());
+    }
+
+    run(true);
+    run(false);
+}
