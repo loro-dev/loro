@@ -1,5 +1,30 @@
 # loro-crdt-map
 
+## 1.13.9
+
+### Patch Changes
+
+- ddc47ec: Retreat the conservative replay base to the latest single-head critical
+  version of the two versions' combined history instead of the beginning of
+  history. When an import or checkout involves a genuinely concurrent branch,
+  the causal replay now starts at the most recent point that no concurrency
+  crosses (in the sense of Eg-walker's critical versions), skipping the
+  fully-synced common prefix that the old empty-version fallback replayed.
+- ddc47ec: Fix a convergence bug where a movable tree's incrementally maintained state
+  could diverge from a full replay of its own oplog. When newly imported
+  operations were concurrent with part of the receiving peer's multi-head
+  frontier, the diff mode was misclassified as concurrency-free and the tree
+  fast path applied the new moves without adjudicating them against the
+  existing concurrent branch. The classifier now verifies that every entry
+  point of the imported region causally covers the whole current frontier,
+  and otherwise retreats the replay base to the latest critical version so
+  the competing branches are replayed together.
+- ddc47ec: Correct LCA unmatched-branch detection when an explicit dependency already
+  covers the same peer's implicit predecessor. Keep those causally newer imports
+  on the current replay base, and avoid rebuilding unchanged list-like containers
+  when a genuinely concurrent update needs a conservative base containing a large
+  common history.
+
 ## 1.13.8
 
 ### Patch Changes
