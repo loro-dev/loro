@@ -313,10 +313,10 @@ fn restore_export_doc_state(
 
 /// Calculates optimal starting version for the shallow doc
 ///
-/// It should be the LCA of the user given version and the latest version.
+/// It should be a common ancestor version of the user-given version and the latest version.
 /// Otherwise, users cannot replay the history from the initial version till the latest version.
 fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    // Find the LCA of the given frontiers by iteratively pairwise GCA.
+    // Find a common ancestor version of the given frontiers by iterative pairwise reduction.
     // This converges to a single frontier or empty if there is no common ancestor.
     let mut current = frontiers.clone();
     while current.len() > 1 {

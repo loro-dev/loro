@@ -653,6 +653,12 @@ impl DocState {
                 return Err(LoroError::internal("state apply failpoint"));
             }
         }
+        // `diff_mode` here is the DIRECTION mode (`origin_diff_mode` from
+        // `calc_diff_internal`), not the mode the calculators computed with:
+        // Checkout means the transition may go backwards, so any cached
+        // dead/alive knowledge can be invalidated; every other mode implies a
+        // forward transition, where alive-markers may change but dead
+        // containers stay dead unless a diff revives them.
         match diff_mode {
             DiffMode::Checkout => {
                 self.dead_containers_cache.clear();

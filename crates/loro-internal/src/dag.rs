@@ -484,6 +484,24 @@ where
     ans
 }
 
+/// Finds the replay base and diff mode for the transition `left -> right`.
+///
+/// Contract (see `docs/critical-version-spec.md` for definitions and proofs):
+/// - S1: every id in the returned frontier is a common ancestor of both sides;
+/// - S2: the returned frontier is an antichain;
+/// - S3: a non-`Checkout` mode additionally guarantees that the base equals
+///   `left` and that EVERY newly imported event is causally after every head
+///   of `left` (i.e. `left` is a critical version of the union graph in the
+///   Eg-walker sense, arXiv:2409.14252 §3.5) — enforced for multi-head `left`
+///   by `new_region_after_all_left_heads`;
+/// - when a genuinely concurrent branch invalidates the candidate base, the
+///   base retreats to the latest single-head critical version
+///   (`latest_single_head_critical_version`), or to the empty version when no
+///   such cut exists.
+///
+/// Downstream consumers rely on these guarantees to skip CRDT adjudication
+/// (tree/map fast paths) and to bound their replay windows (tree checkout);
+/// see the comment in `diff_calc/tree.rs::checkout_diff`.
 fn _find_common_ancestor_new<'a, F, D>(
     get: &'a F,
     left: &Frontiers,
@@ -547,7 +565,8 @@ where
 
     let mut is_linear = left.len() <= 1 && right.len() == 1;
     let mut is_right_greater = true;
-    let mut has_unmatched_branch = false;
+    let mut unmatched_branches = FxHashSet::default();
+    let mut has_unresolved_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
 
     fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
@@ -623,6 +642,227 @@ where
         })
     }
 
+    /// Whether every tip in `tips` is contained in the ancestors of `frontiers`
+    /// (the tip itself counts). One walk answers all tips: it starts from every
+    /// frontier with a shared visited set and prunes by the lowest lamport among
+    /// the still-unproven tips, so the ancestor region is traversed at most once
+    /// per call instead of once per (tip, frontier) pair.
+    fn all_tips_covered_by_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        frontiers: &Frontiers,
+        tips: &FxHashSet<ID>,
+    ) -> bool {
+        let mut remaining = Vec::with_capacity(tips.len());
+        for id in tips.iter() {
+            let Some(span) = OrdIdSpan::from_dag_node(*id, get) else {
+                return false;
+            };
+            remaining.push(span);
+        }
+
+        if remaining.is_empty() {
+            return true;
+        }
+
+        let mut min_lamport = remaining
+            .iter()
+            .map(|tip| tip.lamport_last())
+            .min()
+            .unwrap();
+        let mut visited = FxHashSet::default();
+        let mut pending = Vec::new();
+        for frontier in frontiers.iter() {
+            if let Some(node) = OrdIdSpan::from_dag_node(frontier, get) {
+                pending.push(node);
+            }
+        }
+
+        while let Some(node) = pending.pop() {
+            let len_before = remaining.len();
+            remaining.retain(|tip| !node.contains_id(tip.id_last()));
+            if remaining.is_empty() {
+                return true;
+            }
+
+            if remaining.len() != len_before {
+                min_lamport = remaining
+                    .iter()
+                    .map(|tip| tip.lamport_last())
+                    .min()
+                    .unwrap();
+            }
+
+            // Ancestors of `node` all have lamport strictly below the node's
+            // start, so nothing below `min_lamport` can contain a remaining tip.
+            if node.lamport_last() < min_lamport {
+                continue;
+            }
+
+            if !visited.insert(node.id_start()) {
+                continue;
+            }
+
+            if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+                for dep in deps {
+                    pending.push(dep);
+                }
+            }
+        }
+
+        false
+    }
+
+    /// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
+    /// union graph `ancestry(left) ∪ ancestry(right)`: the newest event `v`
+    /// such that every other event in the union is an ancestor of `v` or
+    /// causally after `v`. Replaying from `{v}` is safe because no concurrency
+    /// crosses it, and it skips the fully-synced prefix of common history that
+    /// the old `∅` fallback would replay.
+    ///
+    /// Method: a one-colour descent from both frontiers using the same
+    /// coalesce/align machinery as the main walk. The pending heap is always a
+    /// cut of the unexplored region, so the first moment it narrows to a
+    /// single span, that span's `id_last` is the latest such `v`. If a chain
+    /// dies at a root or at trimmed history while other chains remain, its
+    /// endpoint is concurrent with everything below the current level, so no
+    /// later singleton can be valid — bail out to the empty version, which is
+    /// the old behaviour.
+    fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) -> Frontiers {
+        let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
+        let Some(spans) = ids_to_ord_id_spans(left, get) else {
+            return Default::default();
+        };
+        queue.extend(spans);
+        let Some(spans) = ids_to_ord_id_spans(right, get) else {
+            return Default::default();
+        };
+        queue.extend(spans);
+
+        while let Some(mut node) = queue.pop() {
+            while let Some(other) = queue.peek() {
+                if node == *other || node.id_last() == other.id_last() {
+                    queue.pop();
+                } else {
+                    break;
+                }
+            }
+
+            if queue.is_empty() {
+                return node.id_last().into();
+            }
+
+            if let Some(other) = queue.peek() {
+                if node.contains_id(other.id_last()) {
+                    node.len = (other.id_last().counter - node.id.counter + 1) as usize;
+                    queue.push(node);
+                    continue;
+                }
+
+                if node.len > 1 {
+                    node.len = if other.lamport_last() >= node.lamport {
+                        (other.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
+                    } else {
+                        1
+                    };
+                    queue.push(node);
+                    continue;
+                }
+            }
+
+            match deps_to_ord_id_spans(&node, get) {
+                Some(deps) if !deps.is_empty() => {
+                    for dep in deps {
+                        queue.push(dep);
+                    }
+                }
+                _ => return Default::default(),
+            }
+        }
+
+        Default::default()
+    }
+
+    /// Verifies the `ImportGreaterUpdates` contract for a multi-head `left`:
+    /// every event in `Events(right) − Events(left)` must be causally after
+    /// every member of `left` (i.e. `left` must be a critical version of the
+    /// union graph). The main walk only proves version inclusion, which is
+    /// weaker: a new branch can enter old history through one left head while
+    /// staying concurrent with another, and the tree calculator's fast path
+    /// applies such updates without adjudication (see
+    /// `docs/critical-version-spec.md` §4.1).
+    ///
+    /// Method: descend from `right` over new changes only. A change whose
+    /// causal parents (explicit deps plus the implicit same-peer predecessor)
+    /// are all old is an entry point of the new region; its parents must
+    /// causally cover every left head. Non-entry changes inherit coverage
+    /// through their new parents. The common healthy shape — a change whose
+    /// deps equal the left frontier — passes with a set comparison and no
+    /// graph walk. Trimmed history fails conservatively.
+    fn new_region_after_all_left_heads<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+        get: &'a F,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) -> bool {
+        let left_ids: FxHashSet<ID> = left.iter().collect();
+        let is_old = |id: ID| -> bool {
+            if left_ids.contains(&id) {
+                return true;
+            }
+            let mut single = FxHashSet::default();
+            single.insert(id);
+            all_tips_covered_by_ancestors(get, left, &single)
+        };
+
+        let mut visited: FxHashSet<ID> = FxHashSet::default();
+        let mut stack: Vec<OrdIdSpan> = Vec::new();
+        for id in right.iter() {
+            if is_old(id) {
+                continue;
+            }
+            let Some(span) = OrdIdSpan::from_dag_node(id, get) else {
+                return false;
+            };
+            stack.push(span);
+        }
+
+        while let Some(span) = stack.pop() {
+            if !visited.insert(span.id_start()) {
+                continue;
+            }
+
+            let Some(parents) = deps_to_ord_id_spans(&span, get) else {
+                return false;
+            };
+            let mut entry_point = true;
+            let mut old_parents = Frontiers::default();
+            for parent in parents {
+                let pid = parent.id_last();
+                if is_old(pid) {
+                    old_parents.push(pid);
+                } else {
+                    entry_point = false;
+                    stack.push(parent);
+                }
+            }
+
+            if entry_point {
+                if &old_parents == left {
+                    continue;
+                }
+
+                if !all_tips_covered_by_ancestors(get, &old_parents, &left_ids) {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
     fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         get: &'a F,
         frontier: ID,
@@ -657,23 +897,44 @@ where
         false
     }
 
-    let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
+    // The third tuple item carries the dependency tips at which this path first
+    // split from its sibling paths. If the path dies without meeting the other
+    // side, those tips tell us whether it was a real concurrent branch or merely
+    // a redundant route into an ancestor we already found.
+    let mut queue: BinaryHeap<(OrdIdSpan, NodeType, Vec<ID>)> = BinaryHeap::new();
     for span in ids_to_ord_id_spans(left, get).unwrap() {
-        queue.push((span, NodeType::A));
+        let branch_tips = (left.len() > 1)
+            .then(|| vec![span.id_last()])
+            .unwrap_or_default();
+        queue.push((span, NodeType::A, branch_tips));
     }
 
     for span in ids_to_ord_id_spans(right, get).unwrap() {
-        queue.push((span, NodeType::B));
+        let branch_tips = (right.len() > 1)
+            .then(|| vec![span.id_last()])
+            .unwrap_or_default();
+        queue.push((span, NodeType::B, branch_tips));
     }
 
-    while let Some((mut node, mut node_type)) = queue.pop() {
-        while let Some((other_node, other_type)) = queue.peek() {
+    while let Some((mut node, mut node_type, mut branch_tips)) = queue.pop() {
+        while let Some((other_node, other_type, _)) = queue.peek() {
             if node == *other_node || node.id_last() == other_node.id_last() {
                 if node_type != *other_type {
                     node_type = NodeType::Shared;
                 }
 
-                queue.pop();
+                let (_, _, other_branch_tips) = queue.pop().unwrap();
+                // Union, not concatenation. On criss-cross histories the same
+                // tips arrive from both parents at every re-merge; concatenating
+                // doubles the vec per sync round, and the per-dep clone below
+                // then makes the walk O(2^rounds). Distinct tips stay few: they
+                // are only minted for multi-head initial frontiers and at each
+                // side's first split.
+                for tip in other_branch_tips {
+                    if !branch_tips.contains(&tip) {
+                        branch_tips.push(tip);
+                    }
+                }
             } else {
                 break;
             }
@@ -685,8 +946,11 @@ where
         }
 
         if queue.is_empty() {
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            if branch_tips.is_empty() {
+                unmatched_branches.insert(node.id_last());
+            } else {
+                unmatched_branches.extend(branch_tips);
+            }
             break;
         }
 
@@ -698,25 +962,35 @@ where
         if let Some(other) = queue.peek() {
             if node.contains_id(other.0.id_last()) && node_type != other.1 {
                 node.len = (other.0.id_last().counter - node.id.counter + 1) as usize;
-                queue.push((node, node_type));
+                queue.push((node, node_type, branch_tips));
                 continue;
             }
 
             if node.len > 1 {
+                // The `min(..., len - 1)` cap guarantees strict progress when
+                // lamports tie: aligning to the other's lamport alone would
+                // re-push the span unchanged and loop forever. It is also what
+                // makes the termination measure decrease on this branch.
                 node.len = if other.0.lamport_last() >= node.lamport {
                     (other.0.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
                 } else {
                     1
                 };
-                queue.push((node, node_type));
+                queue.push((node, node_type, branch_tips));
                 continue;
             }
         }
 
         if let Some(deps) = deps_to_ord_id_spans(&node, get) {
             if !deps.is_empty() {
+                let starts_new_branches = branch_tips.is_empty() && deps.len() > 1;
                 for dep in deps {
-                    queue.push((dep, node_type));
+                    let child_branch_tips = if starts_new_branches {
+                        vec![dep.id_last()]
+                    } else {
+                        branch_tips.clone()
+                    };
+                    queue.push((dep, node_type, child_branch_tips));
                 }
                 is_linear = false;
                 continue;
@@ -724,9 +998,9 @@ where
         } else {
             // The dependency is on trimmed shallow history. The exact ancestor is
             // not representable in the current DAG, so fall back to a conservative
-            // checkout base.
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            // checkout base. No tip needs recording: this flag short-circuits the
+            // coverage check entirely.
+            has_unresolved_unmatched_branch = true;
             continue;
         }
 
@@ -734,16 +1008,53 @@ where
             // Some checkout calculators still require replaying from a base that
             // includes every branch whose operation positions may affect the diff.
             // In non-linear checkout mode, an earlier common ancestor is a valid
-            // conservative base even when it is not the mathematical LCA.
-            has_unmatched_branch = true;
-            is_right_greater = false;
+            // conservative base even when it is not the meet of the two versions.
+            if branch_tips.is_empty() {
+                unmatched_branches.insert(node.id_last());
+            } else {
+                unmatched_branches.extend(branch_tips);
+            }
             continue;
         }
     }
 
     ans = shrink_ancestor_frontiers(&ans, get);
-    if has_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
-        ans = Default::default();
+    // A branch can look unmatched merely because a shared node was found first
+    // and was therefore not expanded. In that case another queued path may still
+    // walk into one of the shared node's ancestors. That path is redundant, not a
+    // concurrent branch. Only fall back when an unmatched tip is not causally
+    // covered by the common ancestors we found.
+    let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
+        || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
+    if has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
+        // A genuine concurrent branch invalidates the meet as a replay base.
+        // Instead of always retreating to the beginning of history, retreat to
+        // the latest single-head critical version below both sides (empty when
+        // no such cut exists, which matches the old behaviour).
+        ans = latest_single_head_critical_version(get, left, right);
+    }
+
+    if has_uncovered_unmatched_branch {
+        is_right_greater = false;
+    } else if &ans == left {
+        // An A-only path may also have been a redundant path into `ans`. Once all
+        // such paths are proved covered, equality with `left` is the exact proof
+        // that `right` causally includes `left`.
+        is_right_greater = true;
+    }
+
+    if is_right_greater && left.len() > 1 && !new_region_after_all_left_heads(get, left, right) {
+        // Version inclusion holds, but part of the new region entered old
+        // history through a strict subset of the left heads and is therefore
+        // concurrent with the others. `ImportGreaterUpdates` promises "no
+        // update is concurrent to the current version", so claiming it here
+        // lets fast paths (notably the tree calculator's) apply the new ops
+        // without adjudicating against the concurrent existing branch, and the
+        // materialized state diverges from a full replay. Demote to the
+        // conservative mode and retreat the base to a safe cut so the
+        // competing branches are replayed together.
+        is_right_greater = false;
+        ans = latest_single_head_critical_version(get, left, right);
     }
 
     let mode = if is_right_greater {
@@ -975,7 +1286,7 @@ mod tests {
         for id in actual.iter() {
             assert!(
                 left_ancestors.contains(&id) && right_ancestors.contains(&id),
-                "actual LCA id {id} must be common: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+                "every replay-base id {id} must be common: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
             );
         }
 
@@ -984,7 +1295,7 @@ mod tests {
                 if a != b {
                     assert!(
                         !is_ancestor(dag, a, b),
-                        "actual LCA must be a minimal frontier set: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
+                        "the replay base must be a minimal frontier set: left={left:?} right={right:?} actual={actual:?} expected={expected:?} mode={mode:?}\ndag={dag:?}",
                     );
                 }
             }
@@ -997,7 +1308,7 @@ mod tests {
             );
             assert_eq!(
                 &actual, left,
-                "non-checkout mode must use left as LCA: left={left:?} right={right:?} mode={mode:?}"
+                "non-checkout mode must use left as the replay base: left={left:?} right={right:?} mode={mode:?}"
             );
             for id in left.iter() {
                 assert!(
@@ -1212,8 +1523,65 @@ mod tests {
     }
 
     #[test]
+    fn common_ancestor_ignores_implicit_predecessor_covered_by_explicit_dependency() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let relay = node(2, 0, 1, 1, peer_one_previous.id.into());
+        // This is peer 1's next change, so it implicitly depends on
+        // `peer_one_previous`. Its explicit dependency on `relay` already covers
+        // that predecessor, though, so the two paths are not concurrent.
+        let peer_one_next = node(1, 1, 1, 2, relay.id.into());
+        let dag = TestDag::new(
+            vec![peer_one_previous, relay.clone(), peer_one_next.clone()],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) = dag.find_common_ancestor(&relay.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, relay.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_ignores_implicit_predecessor_covered_transitively() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let first_relay = node(2, 0, 1, 1, peer_one_previous.id.into());
+        let current_frontier = node(3, 0, 1, 2, first_relay.id.into());
+        let peer_one_next = node(1, 1, 1, 3, current_frontier.id.into());
+        let dag = TestDag::new(
+            vec![
+                peer_one_previous,
+                first_relay,
+                current_frontier.clone(),
+                peer_one_next.clone(),
+            ],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) =
+            dag.find_common_ancestor(&current_frontier.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, current_frontier.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_keeps_uncovered_implicit_predecessor_conservative() {
+        let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
+        let concurrent = node(2, 0, 1, 1, Frontiers::default());
+        let peer_one_next = node(1, 1, 1, 2, concurrent.id.into());
+        let dag = TestDag::new(
+            vec![peer_one_previous, concurrent.clone(), peer_one_next.clone()],
+            peer_one_next.id.into(),
+        );
+
+        let (ancestor, mode) =
+            dag.find_common_ancestor(&concurrent.id.into(), &peer_one_next.id.into());
+        assert_eq!(ancestor, Frontiers::default());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
     fn common_ancestor_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
         let root = node(1, 0, 1, 0, Frontiers::default());
+        let root_id = root.id;
         let left = node(2, 0, 1, 1, root.id.into());
         let concurrent = node(3, 0, 1, 2, root.id.into());
         let merge = node(4, 0, 1, 3, Frontiers::from([left.id, concurrent.id]));
@@ -1223,8 +1591,142 @@ mod tests {
         );
 
         let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        // The conservative base retreats to the latest single-head critical
+        // version below both sides — here the shared root — instead of the
+        // beginning of history.
+        assert_eq!(ancestor, root_id.into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_right_frontiers_add_concurrent_branch() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let left = node(2, 0, 1, 1, root.id.into());
+        let concurrent = node(3, 0, 1, 2, root.id.into());
+        let right = Frontiers::from([left.id, concurrent.id]);
+        let dag = TestDag::new(vec![root, left.clone(), concurrent], right.clone());
+
+        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right);
+        // Conservative base = the shared root (latest single-head critical
+        // version), not the beginning of history.
+        assert_eq!(ancestor, ID::new(1, 0).into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_left_frontiers_add_concurrent_branch() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let shared = node(2, 0, 1, 1, root.id.into());
+        let concurrent = node(3, 0, 1, 2, root.id.into());
+        let left = Frontiers::from([shared.id, concurrent.id]);
+        let dag = TestDag::new(vec![root, shared.clone(), concurrent], left.clone());
+
+        // The concurrent left head walks below `shared` without ever meeting the
+        // right side. Only the tip seeded for the multi-element left frontier can
+        // prove it uncovered; the deep node it dies at is itself covered.
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &shared.id.into());
+        // Conservative base = the shared root (latest single-head critical
+        // version), not the beginning of history.
+        assert_eq!(ancestor, ID::new(1, 0).into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn common_ancestor_falls_back_when_walk_reaches_trimmed_history() {
+        // Peer 9's changes are not present in the DAG, as after shallow trimming.
+        // Both sides die at the missing dependency inside the main walk, which
+        // must force the conservative empty base regardless of tip coverage.
+        let a = node(1, 0, 1, 5, ID::new(9, 5).into());
+        let b = node(2, 0, 1, 6, ID::new(9, 7).into());
+        let dag = TestDag::new(vec![a.clone(), b.clone()], Frontiers::from([a.id, b.id]));
+
+        let (ancestor, mode) = dag.find_common_ancestor(&a.id.into(), &b.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn import_greater_updates_requires_new_ops_after_all_left_heads() {
+        // Movable-tree staleness issue shape: B3 → B4..B6 and B3 → A0 → A1..A3.
+        // from = {A0, B6}, to = {A3, B6}. Version inclusion holds
+        // (vv(to) ⊇ vv(from)), yet A1..A3 are concurrent with the left head B6,
+        // so ImportGreaterUpdates must not be claimed: the tree calculator's
+        // fast path would apply A1..A3 without adjudicating against B4..B6.
+        // The base must retreat to the latest critical version {B3}.
+        let b_creates = node(2, 0, 4, 0, Frontiers::default());
+        let b_moves = node(2, 4, 3, 4, ID::new(2, 3).into());
+        let a0 = node(1, 0, 1, 4, ID::new(2, 3).into());
+        let a_moves = node(1, 1, 3, 5, ID::new(1, 0).into());
+        let dag = TestDag::new(
+            vec![b_creates, b_moves, a0, a_moves],
+            Frontiers::from([ID::new(1, 3), ID::new(2, 6)]),
+        );
+
+        let left = Frontiers::from([ID::new(1, 0), ID::new(2, 6)]);
+        let right = Frontiers::from([ID::new(1, 3), ID::new(2, 6)]);
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &right);
+        assert_eq!(ancestor, ID::new(2, 3).into());
+        assert_eq!(mode, DiffMode::Checkout);
+    }
+
+    #[test]
+    fn import_greater_updates_kept_when_new_ops_depend_on_all_left_heads() {
+        // Healthy multi-head import: the new change's deps equal the whole
+        // left frontier, so every new op is causally after all of it and the
+        // fast path must be preserved (entry check passes by set equality).
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let x = node(2, 0, 1, 1, ID::new(1, 0).into());
+        let y = node(3, 0, 1, 1, ID::new(1, 0).into());
+        let merge = node(
+            4,
+            0,
+            1,
+            2,
+            Frontiers::from([ID::new(2, 0), ID::new(3, 0)]),
+        );
+        let dag = TestDag::new(vec![root, x, y, merge], ID::new(4, 0).into());
+
+        let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
+        let (ancestor, mode) = dag.find_common_ancestor(&left, &ID::new(4, 0).into());
+        assert_eq!(ancestor, left);
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    }
+
+    #[test]
+    fn common_ancestor_criss_cross_ladder_stays_linear() {
+        // Two peers that each merge both previous heads every round — the shape
+        // ordinary bidirectional sync produces. Branch tips re-merge at every
+        // rung; without deduplication in the tip union the walk is O(2^rounds)
+        // (~minutes at this depth), with it the walk is linear (~microseconds).
+        const ROUNDS: usize = 26;
+        let root = node(3, 0, 1, 0, Frontiers::default());
+        let mut a_head = node(1, 0, 1, 1, root.id.into());
+        let mut b_head = node(2, 0, 1, 1, root.id.into());
+        let mut nodes = vec![root.clone(), a_head.clone(), b_head.clone()];
+        for k in 1..=ROUNDS {
+            let deps = Frontiers::from([a_head.id_last(), b_head.id_last()]);
+            let lamport = (k as Lamport) * 2;
+            let next_a = node(1, k as Counter, 1, lamport, deps.clone());
+            let next_b = node(2, k as Counter, 1, lamport, deps);
+            nodes.push(next_a.clone());
+            nodes.push(next_b.clone());
+            a_head = next_a;
+            b_head = next_b;
+        }
+        let frontier = Frontiers::from([a_head.id_last(), b_head.id_last()]);
+        let dag = TestDag::new(nodes, frontier.clone());
+
+        let start = std::time::Instant::now();
+        let (ancestor, mode) = dag.find_common_ancestor(&root.id.into(), &frontier);
+        assert_eq!(ancestor, root.id.into());
+        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        // Generous 4-orders-of-magnitude margin over the fixed cost; the broken
+        // exponential path needs minutes here even in release mode.
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "criss-cross walk took {:?}; branch-tip growth is no longer linear",
+            start.elapsed()
+        );
     }
 
     #[test]

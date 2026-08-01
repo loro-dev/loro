@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-07-21.
+Verified against code 2026-07-31.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -148,6 +148,32 @@ parsed-change cache fill) and updated incrementally on each inserted change.
 Because the set is only ever conservative, a rollback needs no invalidation —
 stale names just force the general diff path. Decode failures or exceeding the
 name-byte cap permanently disable the optimization for that store.
+
+The general diff path may choose a replay base older than the current state
+(the latest single-head critical version, Eg-walker §3.5) so list-like trackers
+have enough position context. When that happens,
+`DiffCalculator::calc_diff_internal` still walks the common causal history, but
+routes it only to containers that have operations in the version-vector
+difference between `before` and `after`. Do not treat every container seen since
+the conservative base as changed: the List/Text/MovableList safety fallback can
+otherwise replay the full history once per unchanged container.
+
+The replay-base walk expands both explicit change dependencies and the implicit previous
+counter of the same peer. A change from an existing peer can therefore produce
+two paths: an explicit relay dependency and an implicit same-peer predecessor.
+The relay may already contain that predecessor. In that case the second path can
+reach the end of the queue without meeting the other side even though it is not
+concurrent.
+
+To distinguish those cases, `_find_common_ancestor_new` carries the dependency
+tip where each path split. When a path remains unmatched, it checks only that tip
+against the ancestors of the candidate common frontiers. A covered tip is a
+redundant route and does not lower the replay base; an uncovered tip is a real
+concurrent branch and keeps the conservative fallback. This is a targeted DAG
+reachability check with visited-node and Lamport pruning. Do not replace it with
+a complete version-vector containment check for every new peer range: that work
+scales with both the update's peer count and the size of the current version
+vector, and it duplicates the causal decision the walk is already making.
 
 For a large snapshot regression check, first build the Node package, then run:
 

@@ -92,7 +92,7 @@ pub(crate) enum DiffMode {
     ///
     /// It has stricter requirements than `Import`.
     /// - All the updates are greater than the current version. No update is concurrent to the current version.
-    /// - So LCA is always the `from` version
+    /// - So the replay base is always the `from` version
     ImportGreaterUpdates,
     /// This mode is used when we don't need to build CRDTs to calculate the difference. It is the fastest mode.
     ///
@@ -108,7 +108,43 @@ pub(crate) struct DiffCalcVersionInfo<'a> {
     to_vv: &'a VersionVector,
     from_frontiers: &'a Frontiers,
     to_frontiers: &'a Frontiers,
-    lca_vv: &'a VersionVector,
+    replay_base_vv: &'a VersionVector,
+}
+
+fn changed_containers_between(
+    oplog: &OpLog,
+    before: &VersionVector,
+    after: &VersionVector,
+) -> FxHashSet<ContainerIdx> {
+    let (retreat, forward) = before.diff_iter(after);
+    let mut containers = FxHashSet::default();
+    // Only `op.container` is needed, so scan the borrowed changes directly
+    // instead of materializing a cloned RichOp per op via `oplog.iter_ops`.
+    let mut last_container = None;
+    for span in retreat.chain(forward) {
+        for change in oplog.change_store().iter_changes(span) {
+            let start_counter = span.counter.min().max(change.id.counter);
+            let end_counter = span.counter.norm_end();
+            let start = change
+                .ops
+                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                .unwrap_or_else(|e| e);
+            for op in &change.ops.vec()[start..] {
+                if op.counter >= end_counter {
+                    break;
+                }
+
+                // Consecutive ops overwhelmingly share a container; skip the
+                // hash probe when it hasn't changed.
+                if last_container != Some(op.container) {
+                    containers.insert(op.container);
+                    last_container = Some(op.container);
+                }
+            }
+        }
+    }
+
+    containers
 }
 
 impl DiffCalculator {
@@ -156,9 +192,27 @@ impl DiffCalculator {
 
         let mut merged = before.clone();
         merged.merge(after);
-        let (lca, origin_diff_mode, iter) =
-            oplog.iter_from_lca_causally(before, before_frontiers, after, after_frontiers);
-        let mut diff_mode = origin_diff_mode;
+        let (replay_base, origin_diff_mode, iter) =
+            oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
+        // A conservative replay base may be much older than `before`. The causal replay
+        // still needs that common history as position context, but containers
+        // whose ops are present on both sides cannot contribute to the diff.
+        // Without this filter, every such List/Text/MovableList can trigger its
+        // own full-history safety rebuild below.
+        let changed_containers =
+            (&replay_base != before).then(|| changed_containers_between(oplog, before, after));
+        // Two distinct mode values live in this function — do not conflate them:
+        // - `origin_diff_mode` describes the DIRECTION of the transition
+        //   (Checkout can go backwards; the other modes imply `after ⊇ before`).
+        //   It is what this function returns, and its consumer
+        //   (`DocState::apply_diff`) uses it only for direction-sensitive
+        //   policies such as the dead-containers cache.
+        // - `calc_mode` is the mode the calculators actually COMPUTE with. A
+        //   persistent calculator always computes in Checkout mode, and each
+        //   calculator reports its own effective mode in the per-container
+        //   `InternalContainerDiff::diff_mode`, which is what the state layer's
+        //   per-container logic (`need_check` / `need_compare`) consumes.
+        let mut calc_mode = origin_diff_mode;
         match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
@@ -166,12 +220,12 @@ impl DiffCalculator {
                 }
             }
             DiffCalculatorRetainMode::Persist => {
-                diff_mode = DiffMode::Checkout;
+                calc_mode = DiffMode::Checkout;
             }
         }
 
         let affected_set = {
-            loro_common::debug!("LCA: {:?} mode={:?}", &lca, diff_mode);
+            loro_common::debug!("replay_base: {:?} mode={:?}", &replay_base, calc_mode);
             let mut started_set = FxHashSet::default();
             for (change, (start_counter, end_counter), vv) in iter {
                 let iter_start = change
@@ -185,6 +239,13 @@ impl DiffCalculator {
                     }
 
                     let idx = op.container;
+                    if changed_containers
+                        .as_ref()
+                        .is_some_and(|containers| !containers.contains(&idx))
+                    {
+                        continue;
+                    }
+
                     if let Some(filter) = container_filter {
                         if !filter(idx) {
                             continue;
@@ -219,7 +280,7 @@ impl DiffCalculator {
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(container);
-                        calculator.start_tracking(oplog, &lca, diff_mode);
+                        calculator.start_tracking(oplog, &replay_base, calc_mode);
                     }
 
                     if !vv.includes_vv(before) {
@@ -267,7 +328,7 @@ impl DiffCalculator {
             to_vv: after,
             from_frontiers: before_frontiers,
             to_frontiers: after_frontiers,
-            lca_vv: &lca,
+            replay_base_vv: &replay_base,
         };
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
@@ -452,7 +513,7 @@ fn replay_container_ops_from_empty(
     let empty_frontiers = Frontiers::default();
     let target_frontiers = oplog.dag.vv_to_frontiers(vv);
     let (_, _, iter) =
-        oplog.iter_from_lca_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+        oplog.iter_from_replay_base_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
 
     for (change, (start_counter, end_counter), vv) in iter {
         let iter_start = change
@@ -736,7 +797,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
         let should_rebuild = matches!(idx.get_type(), crate::ContainerType::List)
-            && (has_retreat || info.lca_vv != info.from_vv || self.source_not_in_op_context);
+            && (has_retreat || info.replay_base_vv != info.from_vv || self.source_not_in_op_context);
         let diff_items = if should_rebuild {
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
@@ -1615,12 +1676,13 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
                 let has_retreat = retreat.next().is_some();
                 let should_rebuild = has_retreat
-                    || info.lca_vv != info.from_vv
+                    || info.replay_base_vv != info.from_vv
                     || *source_not_in_op_context
                     || !oplog.shallow_since_vv().is_empty();
                 if should_rebuild {
-                    // Richtext diffs can start from a tracker that only knows the LCA state as
-                    // unknown spans. Expressing a rollback or an import from `lca != from` as local
+                    // Richtext diffs can start from a tracker that only knows the replay-base
+                    // state as unknown spans. Expressing a rollback or an import from a base
+                    // older than `from` as local
                     // edits can target the wrong visible text when the source state contains
                     // concurrent inserts or sliced ops. The same risk exists when an op is replayed
                     // from a dependency version that does not include the visible source state.
@@ -1806,7 +1868,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
-        if has_retreat || info.lca_vv != info.from_vv || self.list.source_not_in_op_context {
+        if has_retreat || info.replay_base_vv != info.from_vv || self.list.source_not_in_op_context {
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             self.rebuild_full_tracker(idx, oplog, &merged);
@@ -2033,4 +2095,220 @@ fn test_size() {
     let calc = ContainerDiffCalculator::Richtext(text);
     let size = std::mem::size_of_val(&calc);
     assert!(size < 50, "ContainerDiffCalculator size: {}", size);
+}
+
+/// A doc with a movable list "items" holding a nested map (`value: 0`) plus
+/// unrelated list/text containers, committed as peer 1.
+#[cfg(test)]
+fn movable_list_fixture() -> crate::LoroDoc {
+    use crate::{LoroDoc, MapHandler};
+
+    let base = LoroDoc::new_auto_commit();
+    base.set_peer_id(1).unwrap();
+    let nested = base
+        .get_movable_list("items")
+        .push_container(MapHandler::new_detached())
+        .unwrap();
+    nested.insert("value", 0).unwrap();
+    base.get_list("unrelated-list").push("a").unwrap();
+    base.get_text("unrelated-text")
+        .insert(0, "a", crate::cursor::PosType::Unicode)
+        .unwrap();
+    base.commit_then_renew();
+    base
+}
+
+#[cfg(test)]
+fn nested_map(doc: &crate::LoroDoc) -> crate::MapHandler {
+    use crate::handler::ValueOrHandler;
+
+    match doc.get_movable_list("items").get_(0).unwrap() {
+        ValueOrHandler::Handler(handler) => handler.into_map().unwrap(),
+        ValueOrHandler::Value(value) => panic!("expected nested map, got {value:?}"),
+    }
+}
+
+/// Asserts the diff round produced exactly one internal map diff, for
+/// `expected_idx`, whose `key` entry resolves to `expected`.
+#[cfg(test)]
+fn assert_single_map_value_diff(
+    diffs: &[InternalContainerDiff],
+    expected_idx: ContainerIdx,
+    key: &str,
+    expected: LoroValue,
+) {
+    assert_eq!(diffs.len(), 1);
+    let diff = &diffs[0];
+    assert_eq!(diff.idx, expected_idx);
+    let DiffVariant::Internal(InternalDiff::Map(map_diff)) = &diff.diff else {
+        panic!("expected an internal map diff, got {:?}", diff.diff);
+    };
+    let value = map_diff
+        .updated
+        .get(&InternalString::from(key))
+        .unwrap_or_else(|| panic!("map diff has no entry for {key:?}: {map_diff:?}"))
+        .as_ref()
+        .and_then(|map_value| map_value.value.clone());
+    assert_eq!(value, Some(expected));
+}
+
+#[test]
+fn causal_existing_peer_import_uses_current_version_as_replay_base() {
+    use crate::{handler::HandlerTrait, loro::ExportMode};
+
+    let base = movable_list_fixture();
+    let target = base.fork();
+    let source = base.fork();
+    let relay = base.fork();
+    // Continue an existing peer after another peer has become the current
+    // frontier. This gives the new change both an explicit dependency on the
+    // relay and an implicit dependency on its own previous counter.
+    source.set_peer_id(1).unwrap();
+    relay.set_peer_id(2).unwrap();
+    relay.get_map("relay").insert("ready", true).unwrap();
+    relay.commit_then_renew();
+    let relay_updates = relay.export(ExportMode::updates(&base.oplog_vv())).unwrap();
+    target.import(&relay_updates).unwrap();
+    source.import(&relay_updates).unwrap();
+
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+    let nested_update = source.export(ExportMode::updates(&before)).unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_eq!(replay_base, before);
+    assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 1.into());
+}
+
+#[test]
+fn conservative_replay_only_builds_calculators_for_changed_containers() {
+    use crate::{handler::HandlerTrait, loro::ExportMode};
+
+    let base = movable_list_fixture();
+    let target = base.fork();
+    target.set_peer_id(2).unwrap();
+    target.get_map("relay").insert("ready", true).unwrap();
+    target.commit_then_renew();
+
+    let source = base.fork();
+    source.set_peer_id(3).unwrap();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    let nested_update = source.export(ExportMode::updates(&before)).unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
+    assert_eq!(mode, DiffMode::Import);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 1.into());
+}
+
+#[test]
+fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
+    use crate::{handler::HandlerTrait, loro::ExportMode};
+
+    let base = movable_list_fixture();
+    let target = base.fork();
+    target.set_peer_id(2).unwrap();
+    target.get_map("relay").insert("ready", true).unwrap();
+    target.commit_then_renew();
+
+    let source = base.fork();
+    source.set_peer_id(3).unwrap();
+    nested_map(&source).insert("value", 1).unwrap();
+    source.commit_then_renew();
+
+    // `after` is the older version; the concurrent nested-map edit exists only
+    // on the `before` side, so the changed set comes from the retreat spans.
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+    let nested_update = source
+        .export(ExportMode::updates(&base.oplog_vv()))
+        .unwrap();
+
+    // Import only into the oplog so this test can inspect the exact diff round.
+    target.detach();
+    target.import(&nested_update).unwrap();
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    let expected_idx = nested_map(&target).idx();
+
+    let oplog = target.oplog().lock();
+    let (replay_base, mode, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
+    assert_eq!(mode, DiffMode::Checkout);
+    assert_eq!(
+        changed_containers_between(&oplog, &before, &after),
+        [expected_idx].into_iter().collect()
+    );
+
+    let mut calculator = DiffCalculator::new(false);
+    let (diffs, _) = calculator.calc_diff_internal(
+        &oplog,
+        &before,
+        &before_frontiers,
+        &after,
+        &after_frontiers,
+        None,
+    );
+    assert_eq!(calculator.calculators.len(), 1);
+    assert!(calculator.get_calc(expected_idx).is_some());
+    // Checking out backward removes the concurrent edit again.
+    assert_single_map_value_diff(&diffs, expected_idx, "value", 0.into());
 }

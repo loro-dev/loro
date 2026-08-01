@@ -21,7 +21,7 @@ use super::change_store::BatchDecodeInfo;
 use super::ChangeStore;
 
 /// [AppDag] maintains the causal graph of the app.
-/// It's faster to answer the question like what's the LCA version
+/// It's faster to answer questions like what the common ancestor version is
 #[derive(Debug)]
 pub struct AppDag {
     change_store: ChangeStore,
