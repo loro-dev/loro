@@ -274,15 +274,13 @@ pub(crate) fn apply_decoded_changes_to_oplog(
         changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
 
-    let mut pending = VersionRange::default();
-    pending_changes.iter().for_each(|c| {
-        pending.extends_to_include_id_span(c.id_span());
-    });
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids, Some(&mut imported));
-    oplog
-        .import_unknown_lamport_pending_changes(pending_changes)
-        .expect("importing unknown-lamport pending changes is infallible");
+    // Applying previously parked pending ops can unlock deps of `pending_changes`.
+    // Those are applied here (and counted in `imported`); only still-blocked ones
+    // remain in the returned pending range.
+    let pending =
+        oplog.import_unknown_lamport_pending_changes(pending_changes, Some(&mut imported));
     ApplyDecodedChangesResult {
         status: ImportStatus {
             success: imported,
