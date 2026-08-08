@@ -15,7 +15,7 @@ use crate::change::Change;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
+use loro_common::{IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::borrow::Cow;
 
@@ -274,15 +274,11 @@ pub(crate) fn apply_decoded_changes_to_oplog(
         changes_that_have_deps_before_shallow_root,
     } = import_changes_to_oplog(changes, oplog);
 
-    let mut pending = VersionRange::default();
-    pending_changes.iter().for_each(|c| {
-        pending.extends_to_include_id_span(c.id_span());
-    });
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids, Some(&mut imported));
-    oplog
-        .import_unknown_lamport_pending_changes(pending_changes)
-        .expect("importing unknown-lamport pending changes is infallible");
+    // `try_apply_pending` can advance the oplog version, so `pending_changes` is
+    // re-classified inside; only what stays un-appliable is reported as pending.
+    let pending = oplog.import_unknown_lamport_pending_changes(pending_changes, &mut imported);
     ApplyDecodedChangesResult {
         status: ImportStatus {
             success: imported,

@@ -5,9 +5,7 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use loro_common::{
-    ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID,
-};
+use loro_common::{ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, PeerID, ID};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
@@ -133,22 +131,60 @@ impl OpLog {
             .push(change);
     }
 
+    /// Files the changes that [`import_changes_to_oplog`] could not apply into the
+    /// long-lived pending store, keyed by the dependency they are still missing.
+    ///
+    /// `remote_changes` was classified while the oplog still held the pre-import
+    /// version, but [`OpLog::try_apply_pending`] runs in between and applies changes
+    /// that were already parked in the store. That advances the oplog version, so a
+    /// change that was un-appliable at classification time can legitimately be
+    /// applicable — or already applied — by the time it reaches this function. Both
+    /// re-classifications are normal import outcomes, not invariant violations.
+    ///
+    /// Returns the ID range of the changes that are genuinely still pending, and
+    /// extends `imported` with anything applied here.
+    ///
+    /// [`import_changes_to_oplog`]: crate::encoding::outdated_encode_reordered::import_changes_to_oplog
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
-    ) -> LoroResult<()> {
+        imported: &mut VersionRange,
+    ) -> VersionRange {
+        let mut filed = Vec::new();
+        let mut newly_applied = Vec::new();
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
-                    self.push_pending_change(miss_dep, local_change)
+                    filed.push(local_change.id_span());
+                    self.push_pending_change(miss_dep, local_change);
                 }
-                ChangeState::Applied => unreachable!("already applied"),
-                ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
+                // `try_apply_pending` already brought this change in.
+                ChangeState::Applied => {}
+                // `try_apply_pending` supplied the dependency this change was waiting
+                // on, so it can be applied right away instead of being parked.
+                ChangeState::CanApplyDirectly => {
+                    newly_applied.push(local_change.id_last());
+                    self.apply_change_from_remote(local_change, Some(imported));
+                }
             }
         }
 
-        Ok(())
+        // Applying the changes above can in turn unlock changes parked in the store,
+        // including ones filed earlier in this very loop.
+        if !newly_applied.is_empty() {
+            self.try_apply_pending(newly_applied, Some(imported));
+        }
+
+        let mut still_pending = VersionRange::default();
+        for span in filed {
+            let applied_ctr = self.vv().get(&span.peer).copied().unwrap_or(0);
+            if applied_ctr < span.ctr_end() {
+                still_pending.extends_to_include_id_span(span);
+            }
+        }
+
+        still_pending
     }
 }
 
@@ -425,4 +461,101 @@ mod test {
     //     c.import(&updates_a123).unwrap();
     //     assert_eq!(c.get_deep_value(), a.get_deep_value());
     // }
+
+    /// Builds the D <- X <- Y dependency chain and returns
+    /// `(x_update, dy_update, converged)` where `dy_update` carries D and Y but
+    /// not X, and `converged` is the deep value once all three are applied.
+    fn dep_chain_updates() -> (Vec<u8>, Vec<u8>, loro_common::LoroValue) {
+        const D_PEER: u64 = 1;
+        const X_PEER: u64 = 2;
+        const Y_PEER: u64 = 3;
+
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(D_PEER).unwrap();
+        d.get_map("m").insert("d", 1).unwrap();
+        let d_update = d
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
+
+        let x = LoroDoc::new_auto_commit();
+        x.set_peer_id(X_PEER).unwrap();
+        x.import(&d_update).unwrap();
+        let before_x = x.oplog_vv();
+        x.get_map("m").insert("x", 1).unwrap();
+        let x_update = x.export(ExportMode::updates(&before_x)).unwrap();
+
+        let y = LoroDoc::new_auto_commit();
+        y.set_peer_id(Y_PEER).unwrap();
+        y.import(&d_update).unwrap();
+        y.import(&x_update).unwrap();
+        y.get_map("m").insert("y", 1).unwrap();
+
+        // Everything `y` knows except X's ops, so the blob holds D and Y only.
+        let without_x = VersionVector::from_iter([(X_PEER, 1)]);
+        let dy_update = y.export(ExportMode::updates(&without_x)).unwrap();
+
+        (x_update, dy_update, y.get_deep_value())
+    }
+
+    /// `try_apply_pending` runs between the classification in
+    /// `import_changes_to_oplog` and `extend_pending_changes_with_unknown_lamport`,
+    /// so it can supply the dependency a still-unfiled change is waiting for. That
+    /// change must then be applied instead of tripping an "impossible state" panic.
+    #[test]
+    fn pending_change_unlocked_by_try_apply_pending() {
+        let (x_update, dy_update, converged) = dep_chain_updates();
+
+        let t = LoroDoc::new_auto_commit();
+        t.set_peer_id(9).unwrap();
+
+        // X parks in the pending store: it depends on D, which has not arrived.
+        let status = t.import(&x_update).unwrap();
+        assert!(status.pending.is_some(), "X should be pending");
+
+        // D unblocks X via `try_apply_pending`, which in turn unblocks Y.
+        let status = t.import(&dy_update).unwrap();
+        assert_eq!(status.pending, None, "nothing should be left pending");
+        assert_eq!(
+            t.get_deep_value(),
+            converged,
+            "all three changes must be applied"
+        );
+        assert_eq!(t.oplog().lock().pending_changes.len(), 0);
+    }
+
+    /// The same import through `import_batch`, which force-detaches the document
+    /// for the duration of the batch and only reattaches after the loop. A panic in
+    /// the loop used to skip the reattach and strand the document detached forever.
+    #[test]
+    fn pending_change_unlocked_during_batch_import_keeps_doc_attached() {
+        let (x_update, dy_update, _) = dep_chain_updates();
+
+        let t = LoroDoc::new_auto_commit();
+        t.set_peer_id(9).unwrap();
+        t.import(&x_update).unwrap();
+
+        let unrelated = LoroDoc::new_auto_commit();
+        unrelated.set_peer_id(77).unwrap();
+        unrelated.get_map("m").insert("z", 1).unwrap();
+        let z_update = unrelated
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
+
+        // More than one blob, so this takes the real `import_batch` path.
+        t.import_batch(&[dy_update, z_update]).unwrap();
+
+        assert!(
+            !t.is_detached(),
+            "doc must stay attached after import_batch"
+        );
+        let loro_common::LoroValue::Map(root) = t.get_deep_value() else {
+            panic!("root should be a map");
+        };
+        let Some(loro_common::LoroValue::Map(m)) = root.get("m").cloned() else {
+            panic!("`m` should be a map");
+        };
+        let mut keys: Vec<&str> = m.keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["d", "x", "y", "z"]);
+    }
 }

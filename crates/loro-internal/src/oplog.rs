@@ -25,7 +25,7 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
-use crate::version::{Frontiers, ImVersionVector, VersionVector};
+use crate::version::{Frontiers, ImVersionVector, VersionRange, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
 use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
@@ -522,11 +522,13 @@ impl OpLog {
         Some(convert_change_to_remote(&self.arena, &change))
     }
 
+    /// Returns the ID range that is still pending after filing `remote_changes`.
     pub(crate) fn import_unknown_lamport_pending_changes(
         &mut self,
         remote_changes: Vec<Change>,
-    ) -> Result<(), LoroError> {
-        self.extend_pending_changes_with_unknown_lamport(remote_changes)
+        imported: &mut VersionRange,
+    ) -> VersionRange {
+        self.extend_pending_changes_with_unknown_lamport(remote_changes, imported)
     }
 
     /// lookup change by id.
