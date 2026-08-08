@@ -1,5 +1,37 @@
 # loro-crdt-map
 
+## 1.14.0
+
+### Minor Changes
+
+- bbf21c3: fix: avoid unreadable WASM traps (`RuntimeError: unreachable executed`) on invalid arguments. `getCursor` with an invalid `side`, `getEditorOf` at an out-of-range position, and accessing an unknown container (created by a newer version of loro-crdt) now throw catchable JS errors with readable messages or return `undefined` instead of trapping the WASM instance.
+
+  feat: on a Rust panic, the full panic info (message, `file:line`, and the complete stack including the Rust call path) is now stored as a JS `Error` on `globalThis.__LORO_WASM_LAST_PANIC__` before the instance traps, so applications can recover readable diagnostics from a caught `RuntimeError`.
+
+  fix: the WASM start hook was never invoked in the `bundler`/`browser`/`base64` builds (the glue checked the JS namespace instead of the wasm exports for `__wbindgen_start`), so no panic hook was installed there at all. The start hook now runs in every build target.
+
+  feat: out-of-memory failures are now reported too. Allocation failure in WASM bypasses the panic hook and traps silently; the package now wraps the global allocator so OOM stores `loro-crdt: out of WASM memory: allocation of N bytes failed` on `globalThis.__LORO_WASM_LAST_PANIC__` and prints it to `console.error` before trapping.
+
+### Patch Changes
+
+- bbcaef6: Fix a panic on import that could permanently break a document's sync.
+
+  `import_changes_to_oplog` defers the changes whose deps are not yet in the DAG
+  and hands them to `extend_pending_changes_with_unknown_lamport` to be parked.
+  `try_apply_pending` runs in between and applies changes parked by earlier
+  imports, which advances the oplog version, so a deferred change can become
+  applicable — or already applied — by the time it is parked. Both outcomes used
+  to hit `unreachable!`, compiling to `RuntimeError: unreachable` in WASM.
+
+  The re-classification is now handled instead of asserted: a change that became
+  applicable is applied and cascaded into whatever it unblocks, an already-applied
+  one is skipped, and `ImportStatus` reports only what genuinely stayed pending.
+
+  This mattered most through `import_batch`, which force-detaches the document for
+  the duration of the batch and reattaches after the loop. The panic unwound past
+  the reattach and left the document detached, so every later import and export
+  failed and the document stopped syncing until the process restarted.
+
 ## 1.13.9
 
 ### Patch Changes
