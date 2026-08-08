@@ -773,7 +773,7 @@ impl ContainerType {
             ContainerType::MovableList => LoroValue::List(Default::default()),
             #[cfg(feature = "counter")]
             ContainerType::Counter => LoroValue::Double(0.),
-            ContainerType::Unknown(_) => unreachable!(),
+            ContainerType::Unknown(_) => LoroValue::Null,
         }
     }
 

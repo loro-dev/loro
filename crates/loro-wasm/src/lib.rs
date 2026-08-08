@@ -35,12 +35,16 @@ use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use std::{
+    alloc::{GlobalAlloc, Layout, System},
     cell::{Cell, RefCell},
     cmp::Ordering,
     collections::VecDeque,
     ops::ControlFlow,
     rc::Rc,
-    sync::{atomic::AtomicBool, Arc, Mutex},
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc, Mutex,
+    },
 };
 use wasm_bindgen::{prelude::*, throw_val};
 use wasm_bindgen_derive::TryFromJsValue;
@@ -61,9 +65,186 @@ pub fn LORO_VERSION() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// The key of the global variable that stores the last Rust panic as a JS
+/// `Error` object: `.message` carries the panic message and `file:line:col`,
+/// and `.stack` carries the stack captured at panic time, including the Rust
+/// frames that led to the panic.
+///
+/// A Rust panic traps the whole WASM instance, so JS only catches an
+/// uninformative `RuntimeError: unreachable executed`. When you catch one,
+/// read this global to recover the real panic:
+///
+/// ```ts
+/// try {
+///   // ...
+/// } catch (e) {
+///   if (e instanceof RuntimeError) {
+///     console.error((globalThis as any).__LORO_WASM_LAST_PANIC__?.stack);
+///   }
+/// }
+/// ```
+const LAST_PANIC_ERROR_GLOBAL_KEY: &str = "__LORO_WASM_LAST_PANIC__";
+
 #[wasm_bindgen(start)]
 fn run() {
-    console_error_panic_hook::set_once();
+    init_panic_hook();
+}
+
+fn init_panic_hook() {
+    // Clear the slot only when it is absent: if another loro-crdt instance in
+    // this realm already trapped and recorded a panic, keep that first record.
+    let global = js_sys::global();
+    let key = JsValue::from_str(LAST_PANIC_ERROR_GLOBAL_KEY);
+    if js_sys::Reflect::get(&global, &key)
+        .unwrap_or_default()
+        .is_undefined()
+    {
+        let _ = js_sys::Reflect::set(&global, &key, &JsValue::NULL);
+    }
+
+    std::panic::set_hook(Box::new(|info| {
+        report_trap_to_js(info.to_string());
+    }));
+}
+
+/// Report a fatal error (panic or OOM) to JS right before the instance traps:
+/// store a JS `Error` carrying the full message and the stack on
+/// `globalThis.__LORO_WASM_LAST_PANIC__`, and print it via `console.error`.
+///
+/// This function must never panic or recurse into a failing allocation:
+/// avoid unwrap/expect and ignore all fallible JS reflection results.
+fn report_trap_to_js(message: String) {
+    let global = js_sys::global();
+
+    // V8 keeps only 10 stack frames by default, which truncates the Rust
+    // call path below the panic-hook machinery. Raise the limit while
+    // capturing the stack, then restore it. Non-V8 engines ignore this.
+    let error_ctor = js_sys::Reflect::get(&global, &JsValue::from_str("Error")).ok();
+    let prev_limit = error_ctor
+        .as_ref()
+        .and_then(|c| js_sys::Reflect::get(c, &JsValue::from_str("stackTraceLimit")).ok());
+    if let Some(c) = &error_ctor {
+        let _ = js_sys::Reflect::set(
+            c,
+            &JsValue::from_str("stackTraceLimit"),
+            &JsValue::from_f64(100.0),
+        );
+    }
+
+    let error = js_sys::Error::new(&message);
+    // js-sys 0.3.77 has no `Error.stack` accessor; read it via reflection.
+    let stack = js_sys::Reflect::get(&error, &JsValue::from_str("stack"))
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_default();
+
+    if let (Some(c), Some(prev)) = (&error_ctor, prev_limit) {
+        let _ = js_sys::Reflect::set(c, &JsValue::from_str("stackTraceLimit"), &prev);
+    }
+
+    let _ = js_sys::Reflect::set(
+        &global,
+        &JsValue::from_str(LAST_PANIC_ERROR_GLOBAL_KEY),
+        &error,
+    );
+
+    // Keep the console output that `console_error_panic_hook` provided.
+    crate::log::error(&format!("{message}\n\nStack:\n\n{stack}"));
+}
+
+/// Report out-of-memory failures through the same channel as panics.
+///
+/// On `wasm32-unknown-unknown`, Rust's default allocation-error path aborts
+/// immediately: no message, no panic hook, and JS only sees an uninformative
+/// `RuntimeError: unreachable executed` that is indistinguishable from other
+/// traps. Overriding the rustc-internal `__rust_alloc_error_handler*` weak
+/// symbols would be the obvious hook, but the compiler resolves them inside
+/// the precompiled std, so downstream overrides are silently ignored.
+/// Wrapping the global allocator is the stable interception point: when the
+/// inner allocator returns null, report the failure to JS, then trap.
+struct ReportingAlloc;
+
+unsafe impl GlobalAlloc for ReportingAlloc {
+    // `#[inline(always)]` lets the wrapper collapse into the rustc-generated
+    // `__rust_alloc`/`__rust_dealloc` shims, leaving only the null check.
+    #[inline(always)]
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc(layout) };
+        if ptr.is_null() {
+            report_oom_and_trap(layout.size());
+        }
+        ptr
+    }
+
+    #[inline(always)]
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    // Forward these too: the trait defaults would turn dlmalloc's in-place
+    // `realloc`/`calloc` into alloc+copy+dealloc / alloc+memset, regressing
+    // both speed and peak memory on buffer growth.
+    #[inline(always)]
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
+        if new_ptr.is_null() {
+            report_oom_and_trap(new_size);
+        }
+        new_ptr
+    }
+
+    #[inline(always)]
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { System.alloc_zeroed(layout) };
+        if ptr.is_null() {
+            report_oom_and_trap(layout.size());
+        }
+        ptr
+    }
+}
+
+/// Reporting allocates (formatting + JS interop), which can fail again when
+/// the heap is exhausted; the guard turns that infinite recursion into an
+/// immediate trap.
+#[cold]
+#[inline(never)]
+fn report_oom_and_trap(size: usize) -> ! {
+    static REPORTING: AtomicBool = AtomicBool::new(false);
+    if !REPORTING.swap(true, atomic::Ordering::SeqCst) {
+        report_trap_to_js(format!(
+            "loro-crdt: out of WASM memory: allocation of {size} bytes failed"
+        ));
+    }
+    std::process::abort();
+}
+
+#[global_allocator]
+static ALLOC: ReportingAlloc = ReportingAlloc;
+
+/// Parse the optional `side` argument of `getCursor` methods.
+///
+/// Only `undefined` selects the default (`Middle`); a provided value must be
+/// exactly -1, 0, or 1 — anything else (including `null`, `false`, `NaN`, and
+/// non-integers like 0.5) is a readable error rather than a silent coercion.
+fn parse_side(side: JsSide) -> JsResult<Side> {
+    let side: JsValue = side.into();
+    if side.is_undefined() {
+        return Ok(Side::Middle);
+    }
+    let err = || JsValue::from_str("Side must be -1 | 0 | 1");
+    let Some(num) = side.as_f64() else {
+        return Err(err());
+    };
+    if num == -1.0 {
+        return Ok(Side::Left);
+    }
+    if num == 0.0 {
+        return Ok(Side::Middle);
+    }
+    if num == 1.0 {
+        return Ok(Side::Right);
+    }
+    Err(err())
 }
 
 #[wasm_bindgen]
@@ -1303,7 +1484,7 @@ impl LoroDoc {
             .into_iter()
         {
             ans.push(&match v {
-                ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, false)?,
                 ValueOrHandler::Value(v) => v.into(),
             });
         }
@@ -1996,14 +2177,14 @@ impl LoroDoc {
     /// console.log(doc.getByPath("map"));     // LoroMap
     /// ```
     #[wasm_bindgen(js_name = "getByPath")]
-    pub fn get_by_path(&self, path: &str) -> JsValueOrContainerOrUndefined {
+    pub fn get_by_path(&self, path: &str) -> JsResult<JsValueOrContainerOrUndefined> {
         let ans = self.doc.get_by_str_path(path);
         let v: JsValue = match ans {
-            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, false),
+            Some(ValueOrHandler::Handler(h)) => handler_to_js_value(h, false)?,
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         };
-        v.into()
+        Ok(v.into())
     }
 
     /// Get the absolute position of the given Cursor
@@ -2969,11 +3150,11 @@ impl LoroText {
     /// - The parent of the root is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -2989,16 +3170,16 @@ impl LoroText {
     ///
     /// Returns an attached `Container` that is equal to this or created by this; otherwise, it returns `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroTextOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroTextOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Text(h), false).into()
+            Ok(handler_to_js_value(Handler::Text(h), false)?.into())
         } else {
-            JsValue::UNDEFINED.into()
+            Ok(JsValue::UNDEFINED.into())
         }
     }
 
@@ -3007,15 +3188,11 @@ impl LoroText {
     /// - The first argument is the position (utf16-index).
     /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
-    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
-        self.handler
-            .get_cursor(pos, side_value)
-            .map(|pos| Cursor { pos })
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> JsResult<Option<Cursor>> {
+        Ok(self
+            .handler
+            .get_cursor(pos, parse_side(side)?)
+            .map(|pos| Cursor { pos }))
     }
 
     /// Push a string to the end of the text.
@@ -3025,10 +3202,12 @@ impl LoroText {
     }
 
     /// Get the editor of the text at the given position.
+    ///
+    /// Returns `undefined` if the position is out of range.
     pub fn getEditorOf(&self, pos: usize) -> Option<JsStrPeerID> {
         self.handler
             .get_cursor(pos, Side::Middle)
-            .map(|x| peer_id_to_js(x.id.unwrap().peer))
+            .and_then(|x| x.id.map(|id| peer_id_to_js(id.peer)))
     }
 
     /// Check if the container is deleted
@@ -3155,14 +3334,14 @@ impl LoroMap {
     /// const bar = map.get("foo");
     /// ```
     #[wasm_bindgen(skip_typescript)]
-    pub fn get(&self, key: &str) -> JsValueOrContainerOrUndefined {
+    pub fn get(&self, key: &str) -> JsResult<JsValueOrContainerOrUndefined> {
         let v = self.handler.get_(key);
-        (match v {
-            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, false),
+        Ok((match v {
+            Some(ValueOrHandler::Handler(c)) => handler_to_js_value(c, false)?,
             Some(ValueOrHandler::Value(v)) => v.into(),
             None => JsValue::UNDEFINED,
         })
-        .into()
+        .into())
     }
 
     /// Get or create a regular child container at the given key.
@@ -3193,7 +3372,7 @@ impl LoroMap {
         let handler = self
             .handler
             .get_or_create_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(handler, false).into())
+        Ok(handler_to_js_value(handler, false)?.into())
     }
 
     /// Get the keys of the map.
@@ -3229,12 +3408,22 @@ impl LoroMap {
     /// map.set("baz", "bar");
     /// const values = map.values(); // ["bar", "bar"]
     /// ```
-    pub fn values(&self) -> Vec<JsValue> {
+    pub fn values(&self) -> JsResult<Vec<JsValue>> {
         let mut ans: Vec<JsValue> = Vec::with_capacity(self.handler.len());
+        let mut err = None;
         self.handler.for_each(|_, v| {
-            ans.push(loro_value_to_js_value_or_container(v, false));
+            if err.is_some() {
+                return;
+            }
+            match loro_value_to_js_value_or_container(v, false) {
+                Ok(v) => ans.push(v),
+                Err(e) => err = Some(e),
+            }
         });
-        ans
+        if let Some(err) = err {
+            return Err(err);
+        }
+        Ok(ans)
     }
 
     /// Get the entries of the map. If the value is a child container, the corresponding
@@ -3250,16 +3439,28 @@ impl LoroMap {
     /// map.set("baz", "bar");
     /// const entries = map.entries(); // [["foo", "bar"], ["baz", "bar"]]
     /// ```
-    pub fn entries(&self) -> Vec<MapEntry> {
+    pub fn entries(&self) -> JsResult<Vec<MapEntry>> {
         let mut ans: Vec<MapEntry> = Vec::with_capacity(self.handler.len());
+        let mut err = None;
         self.handler.for_each(|k, v| {
-            let array = Array::new();
-            array.push(&k.to_string().into());
-            array.push(&loro_value_to_js_value_or_container(v, false));
-            let v: JsValue = array.into();
-            ans.push(v.into());
+            if err.is_some() {
+                return;
+            }
+            match loro_value_to_js_value_or_container(v, false) {
+                Ok(v) => {
+                    let array = Array::new();
+                    array.push(&k.to_string().into());
+                    array.push(&v);
+                    let v: JsValue = array.into();
+                    ans.push(v.into());
+                }
+                Err(e) => err = Some(e),
+            }
         });
-        ans
+        if let Some(err) = err {
+            return Err(err);
+        }
+        Ok(ans)
     }
 
     /// The container id of this handler.
@@ -3309,7 +3510,7 @@ impl LoroMap {
     pub fn insert_container(&mut self, key: &str, child: JsContainer) -> JsResult<JsContainer> {
         let child = convert::js_to_container(child)?;
         let c = self.handler.insert_container(key, child.to_handler())?;
-        Ok(handler_to_js_value(c, false).into())
+        Ok(handler_to_js_value(c, false)?.into())
     }
 
     /// Ensure a mergeable Counter exists under the given key and return it.
@@ -3448,11 +3649,11 @@ impl LoroMap {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -3468,16 +3669,16 @@ impl LoroMap {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroMapOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroMapOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         let Some(h) = self.handler.get_attached() else {
-            return JsValue::UNDEFINED.into();
+            return Ok(JsValue::UNDEFINED.into());
         };
-        handler_to_js_value(Handler::Map(h), false).into()
+        Ok(handler_to_js_value(Handler::Map(h), false)?.into())
     }
 
     /// Delete all key-value pairs in the map.
@@ -3614,16 +3815,16 @@ impl LoroList {
     /// console.log(list.get(1));  // undefined
     /// ```
     #[wasm_bindgen(skip_typescript)]
-    pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
+    pub fn get(&self, index: usize) -> JsResult<JsValueOrContainerOrUndefined> {
         let Some(v) = self.handler.get_(index) else {
-            return JsValue::UNDEFINED.into();
+            return Ok(JsValue::UNDEFINED.into());
         };
 
-        (match v {
+        Ok((match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, false)?,
         })
-        .into()
+        .into())
     }
 
     /// Get the id of this container.
@@ -3649,21 +3850,28 @@ impl LoroList {
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
-    pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
+    pub fn to_array(&mut self) -> JsResult<Vec<JsValueOrContainer>> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        let mut err = None;
         self.handler.for_each(|x| {
-            arr.push(match x {
+            if err.is_some() {
+                return;
+            }
+            match x {
                 ValueOrHandler::Value(v) => {
                     let v: JsValue = v.into();
-                    v.into()
+                    arr.push(v.into());
                 }
-                ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h, false);
-                    v.into()
-                }
-            });
+                ValueOrHandler::Handler(h) => match handler_to_js_value(h, false) {
+                    Ok(v) => arr.push(v.into()),
+                    Err(e) => err = Some(e),
+                },
+            }
         });
-        arr
+        if let Some(err) = err {
+            return Err(err);
+        }
+        Ok(arr)
     }
 
     /// Get elements of the list. If the type of a element is a container, it will be
@@ -3703,7 +3911,7 @@ impl LoroList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c, false).into())
+        Ok(handler_to_js_value(c, false)?.into())
     }
 
     #[wasm_bindgen(js_name = "pushContainer", skip_typescript)]
@@ -3773,11 +3981,11 @@ impl LoroList {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -3793,16 +4001,16 @@ impl LoroList {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroListOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroListOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::List(h), false).into()
+            Ok(handler_to_js_value(Handler::List(h), false)?.into())
         } else {
-            JsValue::UNDEFINED.into()
+            Ok(JsValue::UNDEFINED.into())
         }
     }
 
@@ -3811,15 +4019,11 @@ impl LoroList {
     /// - The first argument is the position .
     /// - The second argument is the side: `-1` for left, `0` for middle, `1` for right.
     #[wasm_bindgen(skip_typescript)]
-    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
-        self.handler
-            .get_cursor(pos, side_value)
-            .map(|pos| Cursor { pos })
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> JsResult<Option<Cursor>> {
+        Ok(self
+            .handler
+            .get_cursor(pos, parse_side(side)?)
+            .map(|pos| Cursor { pos }))
     }
 
     /// Push a value to the end of the list.
@@ -3974,16 +4178,16 @@ impl LoroMovableList {
     /// console.log(list.get(1));  // undefined
     /// ```
     #[wasm_bindgen(skip_typescript)]
-    pub fn get(&self, index: usize) -> JsValueOrContainerOrUndefined {
+    pub fn get(&self, index: usize) -> JsResult<JsValueOrContainerOrUndefined> {
         let Some(v) = self.handler.get_(index) else {
-            return JsValue::UNDEFINED.into();
+            return Ok(JsValue::UNDEFINED.into());
         };
 
-        (match v {
+        Ok((match v {
             ValueOrHandler::Value(v) => v.into(),
-            ValueOrHandler::Handler(h) => handler_to_js_value(h, false),
+            ValueOrHandler::Handler(h) => handler_to_js_value(h, false)?,
         })
-        .into()
+        .into())
     }
 
     /// Get the id of this container.
@@ -4009,21 +4213,28 @@ impl LoroMovableList {
     /// console.log(list.value);  // [100, "foo", true, LoroText];
     /// ```
     #[wasm_bindgen(js_name = "toArray", skip_typescript)]
-    pub fn to_array(&mut self) -> Vec<JsValueOrContainer> {
+    pub fn to_array(&mut self) -> JsResult<Vec<JsValueOrContainer>> {
         let mut arr: Vec<JsValueOrContainer> = Vec::with_capacity(self.length());
+        let mut err = None;
         self.handler.for_each(|x| {
-            arr.push(match x {
+            if err.is_some() {
+                return;
+            }
+            match x {
                 ValueOrHandler::Value(v) => {
                     let v: JsValue = v.into();
-                    v.into()
+                    arr.push(v.into());
                 }
-                ValueOrHandler::Handler(h) => {
-                    let v: JsValue = handler_to_js_value(h, false);
-                    v.into()
-                }
-            });
+                ValueOrHandler::Handler(h) => match handler_to_js_value(h, false) {
+                    Ok(v) => arr.push(v.into()),
+                    Err(e) => err = Some(e),
+                },
+            }
         });
-        arr
+        if let Some(err) = err {
+            return Err(err);
+        }
+        Ok(arr)
     }
 
     /// Get elements of the list. If the type of a element is a container, it will be
@@ -4063,7 +4274,7 @@ impl LoroMovableList {
     pub fn insert_container(&mut self, index: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.insert_container(index, child.to_handler())?;
-        Ok(handler_to_js_value(c, false).into())
+        Ok(handler_to_js_value(c, false)?.into())
     }
 
     /// Push a container to the end of the list.
@@ -4134,11 +4345,11 @@ impl LoroMovableList {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = self.handler.parent() {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -4154,30 +4365,26 @@ impl LoroMovableList {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroListOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroListOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::MovableList(h), false).into()
+            Ok(handler_to_js_value(Handler::MovableList(h), false)?.into())
         } else {
-            JsValue::UNDEFINED.into()
+            Ok(JsValue::UNDEFINED.into())
         }
     }
 
     /// Get the cursor of the container.
     #[wasm_bindgen(skip_typescript)]
-    pub fn getCursor(&self, pos: usize, side: JsSide) -> Option<Cursor> {
-        let mut side_value = Side::Middle;
-        if side.is_truthy() {
-            let num = side.as_f64().expect("Side must be -1 | 0 | 1");
-            side_value = Side::from_i32(num as i32).expect("Side must be -1 | 0 | 1");
-        }
-        self.handler
-            .get_cursor(pos, side_value)
-            .map(|pos| Cursor { pos })
+    pub fn getCursor(&self, pos: usize, side: JsSide) -> JsResult<Option<Cursor>> {
+        Ok(self
+            .handler
+            .get_cursor(pos, parse_side(side)?)
+            .map(|pos| Cursor { pos }))
     }
 
     /// Move the element from `from` to `to`.
@@ -4218,7 +4425,7 @@ impl LoroMovableList {
     pub fn setContainer(&self, pos: usize, child: JsContainer) -> JsResult<JsContainer> {
         let child = js_to_container(child)?;
         let c = self.handler.set_container(pos, child.to_handler())?;
-        Ok(handler_to_js_value(c, false).into())
+        Ok(handler_to_js_value(c, false)?.into())
     }
 
     /// Push a value to the end of the list.
@@ -4883,11 +5090,11 @@ impl LoroTree {
     /// - The parent container of the root tree is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -4903,16 +5110,16 @@ impl LoroTree {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroTreeOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Tree(h), false).into()
+            Ok(handler_to_js_value(Handler::Tree(h), false)?.into())
         } else {
-            JsValue::UNDEFINED.into()
+            Ok(JsValue::UNDEFINED.into())
         }
     }
 
@@ -5087,16 +5294,13 @@ impl Cursor {
     }
 }
 
-fn loro_value_to_js_value_or_container(value: ValueOrHandler, for_json: bool) -> JsValue {
+fn loro_value_to_js_value_or_container(value: ValueOrHandler, for_json: bool) -> JsResult<JsValue> {
     match value {
         ValueOrHandler::Value(v) => {
             let value: JsValue = v.into();
-            value
+            Ok(value)
         }
-        ValueOrHandler::Handler(c) => {
-            let handler: JsValue = handler_to_js_value(c, for_json);
-            handler
-        }
+        ValueOrHandler::Handler(c) => handler_to_js_value(c, for_json),
     }
 }
 

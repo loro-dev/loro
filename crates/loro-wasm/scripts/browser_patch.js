@@ -12,12 +12,14 @@ const WASM_IMPORTS = {
 
 const finalize = (exports) => {
   imports.__wbg_set_wasm(exports);
-  tryStart(imports);
+  tryStart(exports);
 };
 
-function tryStart(imports) {
-  if (typeof imports.__wbindgen_start === "function") {
-    imports.__wbindgen_start();
+function tryStart(exports) {
+  // `__wbindgen_start` is an export of the wasm module, not of the JS glue
+  // namespace; checking the JS namespace would silently skip the start hook.
+  if (typeof exports.__wbindgen_start === "function") {
+    exports.__wbindgen_start();
   }
 }
 

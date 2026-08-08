@@ -88,11 +88,11 @@ impl LoroCounter {
     /// - The parent container of the root counter is `undefined`.
     /// - The object returned is a new js object each time because it need to cross
     ///   the WASM boundary.
-    pub fn parent(&self) -> JsContainerOrUndefined {
+    pub fn parent(&self) -> JsResult<JsContainerOrUndefined> {
         if let Some(p) = HandlerTrait::parent(&self.handler) {
-            handler_to_js_value(p, false).into()
+            Ok(handler_to_js_value(p, false)?.into())
         } else {
-            JsContainerOrUndefined::from(JsValue::UNDEFINED)
+            Ok(JsContainerOrUndefined::from(JsValue::UNDEFINED))
         }
     }
 
@@ -108,16 +108,16 @@ impl LoroCounter {
     ///
     /// Returns an attached `Container` that equals to this or created by this, otherwise `undefined`.
     #[wasm_bindgen(js_name = "getAttached")]
-    pub fn get_attached(&self) -> JsLoroTreeOrUndefined {
+    pub fn get_attached(&self) -> JsResult<JsLoroTreeOrUndefined> {
         if self.is_attached() {
             let value: JsValue = self.clone().into();
-            return value.into();
+            return Ok(value.into());
         }
 
         if let Some(h) = self.handler.get_attached() {
-            handler_to_js_value(Handler::Counter(h), false).into()
+            Ok(handler_to_js_value(Handler::Counter(h), false)?.into())
         } else {
-            JsValue::UNDEFINED.into()
+            Ok(JsValue::UNDEFINED.into())
         }
     }
 

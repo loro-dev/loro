@@ -17,13 +17,15 @@ const wasmModuleOrExports = toModuleOrExports(rawWasm);
 // Helper: ensure we end up with exports and run the start hook when needed.
 const finalize = (exports) => {
   imports.__wbg_set_wasm(exports);
-  tryStart(imports);
+  tryStart(exports);
 };
 
-function tryStart(imports) {
-  if (typeof imports.__wbindgen_start === "function") {
+function tryStart(exports) {
+  // `__wbindgen_start` is an export of the wasm module, not of the JS glue
+  // namespace; checking the JS namespace would silently skip the start hook.
+  if (typeof exports.__wbindgen_start === "function") {
     // Some bundlers require explicit start invocation.
-    imports.__wbindgen_start();
+    exports.__wbindgen_start();
   }
 }
 

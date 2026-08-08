@@ -921,11 +921,14 @@ impl HandlerTrait for UnknownHandler {
     }
 
     fn get_value(&self) -> LoroValue {
-        todo!()
+        // The payload of an unknown container is opaque to this version of
+        // Loro; expose it as `Null`, matching the public API convention in
+        // `ValueOrContainer::get_deep_value` (crates/loro/src/lib.rs).
+        LoroValue::Null
     }
 
     fn get_deep_value(&self) -> LoroValue {
-        todo!()
+        LoroValue::Null
     }
 
     fn kind(&self) -> ContainerType {

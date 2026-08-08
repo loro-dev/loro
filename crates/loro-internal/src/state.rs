@@ -2168,7 +2168,9 @@ impl DocState {
                         }
                         #[cfg(feature = "counter")]
                         State::CounterState(_) => return None,
-                        State::UnknownState(_) => unreachable!(),
+                        // Unknown containers are opaque to this version; the
+                        // path simply has no match below them.
+                        State::UnknownState(_) => return None,
                     }
                 }
                 CurContainer::TreeNode { tree, node } => match index {
@@ -2282,8 +2284,9 @@ impl DocState {
                 cid.into()
             }
             #[cfg(feature = "counter")]
-            State::CounterState(_) => unreachable!(),
-            State::UnknownState(_) => unreachable!(),
+            // Leaf containers have no addressable children; the path has no match.
+            State::CounterState(_) => return None,
+            State::UnknownState(_) => return None,
         };
 
         Some(value)

@@ -50,7 +50,11 @@ impl ContainerState for UnknownState {
     }
 
     fn get_value(&mut self) -> LoroValue {
-        unreachable!()
+        // The payload of an unknown container is opaque to this version of
+        // Loro; expose it as `Null`, matching the public API convention in
+        // `ValueOrContainer::get_deep_value` (crates/loro/src/lib.rs) and
+        // `decode_value` below.
+        LoroValue::Null
     }
 
     #[doc = r" Get the index of the child container"]
