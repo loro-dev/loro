@@ -223,7 +223,14 @@ pub(crate) fn resolved_diff_to_js(value: &Diff, for_json: bool) -> JsResult<JsVa
                 &JsValue::from_f64(*v),
             )?;
         }
-        _ => unreachable!(),
+        // Unknown diffs come from containers written by a newer version of
+        // Loro; surface a readable error instead of trapping the instance.
+        // (`Diff` is `#[non_exhaustive]`, so future variants land here too.)
+        Diff::Unknown | _ => {
+            return Err(JsValue::from_str(
+                "Unknown diff: it may be produced by a newer version of loro-crdt",
+            ));
+        }
     };
 
     // convert object to js value
@@ -289,7 +296,7 @@ fn delta_item_to_js(item: ListDiffItem, for_json: bool) -> JsResult<(JsValue, Op
                 for (i, v) in value.into_iter().enumerate() {
                     let value = match v {
                         ValueOrHandler::Value(v) => convert(v)?,
-                        ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
+                        ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json)?,
                     };
                     arr.set(i as u32, value);
                 }
@@ -427,7 +434,7 @@ fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsResult<JsValue
         let value = if let Some(value) = value.value.clone() {
             match value {
                 ValueOrHandler::Value(v) => convert(v)?,
-                ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json),
+                ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json)?,
             }
         } else {
             JsValue::undefined()
@@ -439,21 +446,25 @@ fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsResult<JsValue
     obj.into_js_result()
 }
 
-pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsValue {
+pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsResult<JsValue> {
     if for_json {
         let cid = handler.id();
-        return JsValue::from_str(&cid.to_loro_value_string());
+        return Ok(JsValue::from_str(&cid.to_loro_value_string()));
     }
 
-    match handler {
+    Ok(match handler {
         Handler::Text(t) => LoroText { handler: t }.into(),
         Handler::Map(m) => LoroMap { handler: m }.into(),
         Handler::List(l) => LoroList { handler: l }.into(),
         Handler::Tree(t) => LoroTree { handler: t }.into(),
         Handler::MovableList(m) => LoroMovableList { handler: m }.into(),
         Handler::Counter(c) => LoroCounter { handler: c }.into(),
-        Handler::Unknown(_) => unreachable!(),
-    }
+        Handler::Unknown(_) => {
+            return Err(JsValue::from_str(
+                "You are attempting to access an unknown container, which may be created by a newer version of loro-crdt",
+            ));
+        }
+    })
 }
 
 pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsResult<JsValue> {

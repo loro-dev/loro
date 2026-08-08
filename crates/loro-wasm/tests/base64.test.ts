@@ -6,6 +6,10 @@ const loadBase64Module = async () => {
 };
 
 describe("base64 build", () => {
+  // Loading the embedded wasm takes longer than the default 5s timeout in
+  // dev builds (the wasm is ~100MB unoptimized).
+  const LOAD_TIMEOUT = 60_000;
+
   it("can mutate text", async () => {
     const { LoroDoc } = await loadBase64Module();
     const doc = new LoroDoc();
@@ -14,7 +18,7 @@ describe("base64 build", () => {
     text.insert(0, "Hello, base64!");
 
     expect(text.toString()).toBe("Hello, base64!");
-  });
+  }, LOAD_TIMEOUT);
 
   it("exposes version string", async () => {
     const { LORO_VERSION } = await loadBase64Module();
@@ -24,5 +28,5 @@ describe("base64 build", () => {
 
     expect(typeof version).toBe("string");
     expect(version.length).toBeGreaterThan(0);
-  });
+  }, LOAD_TIMEOUT);
 });

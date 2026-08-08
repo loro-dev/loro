@@ -56,6 +56,21 @@ A quick behavioral check is to run with an active `doc.subscribe(...)` or
 container `subscribe(...)` and confirm the mutation does not produce the internal
 error above. Keep or add a regression test when the issue is observable from JS.
 
+## Error Handling
+
+Never let Rust panics escape to JS: on `wasm32-unknown-unknown` a panic traps as
+an unreadable `RuntimeError: unreachable executed` and leaves the instance corrupt.
+Validate arguments and return `JsResult` errors instead of `unwrap`/`expect`/
+`unreachable!()` on any path reachable from JS input. `handler_to_js_value`
+returns `JsResult` for this reason: unknown containers (written by newer Loro
+versions) must surface a readable error, matching `getContainerById`.
+
+When a panic or OOM does trap, the full message and stack are stored on
+`globalThis.__LORO_WASM_LAST_PANIC__` and printed to `console.error`. Mechanism
+and pitfalls (the `__wbindgen_start` glue invariant, why OOM uses a global
+allocator wrapper, stack-frame limits): see
+[context/wasm-error-reporting.md](../../context/wasm-error-reporting.md).
+
 ## Packaging Rules
 
 - Preserve the public `loro-crdt` API names and package export paths used by

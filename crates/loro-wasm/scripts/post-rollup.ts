@@ -216,9 +216,12 @@ const wasmInstance =
     : new WebAssembly.Instance(wasmModuleOrInstance, {
       "./loro_wasm_bg.js": imports,
     });
-__wbg_set_wasm(wasmInstance.exports ?? wasmInstance);
-if (typeof imports.__wbindgen_start === "function") {
-  imports.__wbindgen_start();
+const wasmExports = wasmInstance.exports ?? wasmInstance;
+__wbg_set_wasm(wasmExports);
+// __wbindgen_start is an export of the wasm module, not of the JS glue
+// namespace; checking the JS namespace would silently skip the start hook.
+if (typeof wasmExports.__wbindgen_start === "function") {
+  wasmExports.__wbindgen_start();
 }`;
 
   return content.slice(0, start) + replacement + content.slice(end);
