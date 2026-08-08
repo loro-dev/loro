@@ -147,14 +147,14 @@ impl OpLog {
         remote_changes: Vec<Change>,
         mut would_affect: Option<&mut VersionRange>,
     ) -> VersionRange {
-        let mut still_pending = VersionRange::default();
+        let mut parked = Vec::new();
         let mut newly_applied_ids = Vec::new();
 
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
-                    still_pending.extends_to_include_id_span(local_change.id_span());
+                    parked.push(local_change.id_span());
                     self.push_pending_change(miss_dep, local_change);
                 }
                 ChangeState::Applied => {}
@@ -169,19 +169,26 @@ impl OpLog {
             self.try_apply_pending(newly_applied_ids, would_affect);
         }
 
-        // `try_apply_pending` may have applied some of the changes we just parked.
-        // Report only spans that are still not fully covered by the oplog VV.
-        if !still_pending.is_empty() {
-            let vv = self.vv();
-            let mut remaining = VersionRange::default();
-            for (peer, (start, end)) in still_pending.iter() {
-                let vv_end = vv.get(peer).copied().unwrap_or(0);
-                if vv_end < *end {
-                    let pending_start = (*start).max(vv_end);
-                    remaining.extends_to_include_id_span(IdSpan::new(*peer, pending_start, *end));
-                }
+        // A parked change can already be partially covered by the oplog VV: a change whose
+        // span straddles the VV head is not `Applied`, and it still gets parked when one of
+        // its cross-peer deps is missing. Only the uncovered tail of such a span is pending.
+        //
+        // Trim each span on its own rather than merging first. `VersionRange` keeps a single
+        // (start, end) per peer, so trimming a merged range would attribute the gap between
+        // two disjoint parked spans to the covered one. That is defensive here — the input
+        // is lamport-ordered, so a parked change is unlikely to be unblocked by the
+        // `try_apply_pending` above — but it keeps the reported range honest regardless.
+        let mut still_pending = VersionRange::default();
+        for span in parked {
+            let vv_end = self.vv().get(&span.peer).copied().unwrap_or(0);
+            if vv_end < span.ctr_end() {
+                let start = span.counter.start.max(vv_end);
+                still_pending.extends_to_include_id_span(IdSpan::new(
+                    span.peer,
+                    start,
+                    span.ctr_end(),
+                ));
             }
-            still_pending = remaining;
         }
 
         still_pending
@@ -469,6 +476,10 @@ mod test {
         d.import(&u_a0).unwrap();
         d.import(&u_a1_only).unwrap();
         d.import_batch(std::slice::from_ref(&u_b0_b1)).unwrap();
+        // `import_batch` force-detaches for the duration of the batch and reattaches
+        // after the loop; a panic inside used to unwind past the reattach and strand
+        // the doc detached, failing every later import and export.
+        assert!(!d.is_detached(), "import_batch must leave the doc attached");
         assert_eq!(d.get_deep_value(), expected.get_deep_value());
         assert_eq!(d.oplog_vv(), expected.oplog_vv());
     }
@@ -485,6 +496,7 @@ mod test {
         d.import(&u_a0).unwrap();
         // Sorted by change_num inside import_batch; either order must work.
         d.import_batch(&[u_a1_only, u_b0_b1]).unwrap();
+        assert!(!d.is_detached(), "import_batch must leave the doc attached");
         assert_eq!(d.get_deep_value(), expected.get_deep_value());
         assert_eq!(d.oplog_vv(), expected.oplog_vv());
     }
