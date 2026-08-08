@@ -6,7 +6,7 @@ use crate::{
     OpLog, VersionVector,
 };
 use loro_common::{
-    ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, LoroResult, PeerID, ID,
+    ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, PeerID, ID,
 };
 use rustc_hash::FxHashMap;
 
@@ -133,22 +133,58 @@ impl OpLog {
             .push(change);
     }
 
+    /// Store or apply changes that could not get a lamport during the main import pass.
+    ///
+    /// These changes were deferred because some deps were missing from the DAG when
+    /// first seen. By the time this runs, `try_apply_pending` may already have unlocked
+    /// those deps (e.g. applying peer B unlocked previously pending peer A ops that a
+    /// later B change depended on). Treat that as normal: apply when possible, skip if
+    /// already present, and only park changes that are still waiting on a missing dep.
+    ///
+    /// Returns the version range of changes from `remote_changes` that remain pending.
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
-    ) -> LoroResult<()> {
+        mut would_affect: Option<&mut VersionRange>,
+    ) -> VersionRange {
+        let mut still_pending = VersionRange::default();
+        let mut newly_applied_ids = Vec::new();
+
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
-                    self.push_pending_change(miss_dep, local_change)
+                    still_pending.extends_to_include_id_span(local_change.id_span());
+                    self.push_pending_change(miss_dep, local_change);
                 }
-                ChangeState::Applied => unreachable!("already applied"),
-                ChangeState::CanApplyDirectly => unreachable!("can apply directly"),
+                ChangeState::Applied => {}
+                ChangeState::CanApplyDirectly => {
+                    newly_applied_ids.push(local_change.id_last());
+                    self.apply_change_from_remote(local_change, would_affect.as_deref_mut());
+                }
             }
         }
 
-        Ok(())
+        if !newly_applied_ids.is_empty() {
+            self.try_apply_pending(newly_applied_ids, would_affect);
+        }
+
+        // `try_apply_pending` may have applied some of the changes we just parked.
+        // Report only spans that are still not fully covered by the oplog VV.
+        if !still_pending.is_empty() {
+            let vv = self.vv();
+            let mut remaining = VersionRange::default();
+            for (peer, (start, end)) in still_pending.iter() {
+                let vv_end = vv.get(peer).copied().unwrap_or(0);
+                if vv_end < *end {
+                    let pending_start = (*start).max(vv_end);
+                    remaining.extends_to_include_id_span(IdSpan::new(*peer, pending_start, *end));
+                }
+            }
+            still_pending = remaining;
+        }
+
+        still_pending
     }
 }
 
@@ -389,6 +425,111 @@ mod test {
         c.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
         a.import(&b_change).unwrap();
         assert_eq!(c.get_deep_value(), a.get_deep_value());
+    }
+
+    /// Regression: importing a blob can both apply ops that unlock previously pending
+    /// changes *and* contain later ops that depended on those pending changes.
+    ///
+    /// Sequence:
+    /// 1. D has A0.
+    /// 2. Import A1 (deps B0) → A1 parked as pending.
+    /// 3. Import a single blob with B0 (deps A0) + B1 (deps A1):
+    ///    - B0 applies; B1 is deferred (A1 not yet in the DAG).
+    ///    - `try_apply_pending` then applies A1 (unlocked by B0).
+    ///    - B1 must now apply instead of hitting `unreachable!("can apply directly")`.
+    #[test]
+    fn pending_change_becomes_applicable_after_try_apply_pending() {
+        let (u_a0, u_a1_only, u_b0_b1, expected) = concurrent_pending_unlock_fixture();
+
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(3).unwrap();
+        d.import(&u_a0).unwrap();
+        let status_a1 = d.import(&u_a1_only).unwrap();
+        assert!(
+            status_a1.pending.is_some(),
+            "A1 should be pending without B0: {status_a1:?}"
+        );
+        assert!(status_a1.success.is_empty(), "{status_a1:?}");
+
+        // This used to panic with unreachable!("can apply directly").
+        let status_b = d.import(&u_b0_b1).unwrap();
+        assert!(status_b.pending.is_none(), "{status_b:?}");
+        assert_eq!(d.get_deep_value(), expected.get_deep_value());
+        assert_eq!(d.oplog_vv(), expected.oplog_vv());
+    }
+
+    /// Same causal pattern via `import_batch` (path that hit WASM `unreachable`
+    /// with the lody snapshot+updates fixture).
+    #[test]
+    fn import_batch_applies_pending_unlocked_within_blob() {
+        let (u_a0, u_a1_only, u_b0_b1, expected) = concurrent_pending_unlock_fixture();
+
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(3).unwrap();
+        d.import(&u_a0).unwrap();
+        d.import(&u_a1_only).unwrap();
+        d.import_batch(std::slice::from_ref(&u_b0_b1)).unwrap();
+        assert_eq!(d.get_deep_value(), expected.get_deep_value());
+        assert_eq!(d.oplog_vv(), expected.oplog_vv());
+    }
+
+    /// Multi-blob `import_batch` (like lody drain): a large peer-A blob that
+    /// leaves pending ops, then a peer-B blob that both unlocks them and depends
+    /// on the previously pending range.
+    #[test]
+    fn import_batch_multi_blob_unlocks_and_applies_chained_pending() {
+        let (u_a0, u_a1_only, u_b0_b1, expected) = concurrent_pending_unlock_fixture();
+
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(3).unwrap();
+        d.import(&u_a0).unwrap();
+        // Sorted by change_num inside import_batch; either order must work.
+        d.import_batch(&[u_a1_only, u_b0_b1]).unwrap();
+        assert_eq!(d.get_deep_value(), expected.get_deep_value());
+        assert_eq!(d.oplog_vv(), expected.oplog_vv());
+    }
+
+    fn concurrent_pending_unlock_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>, LoroDoc) {
+        use loro_common::IdSpan;
+
+        let a = LoroDoc::new_auto_commit();
+        a.set_peer_id(1).unwrap();
+        let text_a = a.get_text("text");
+        text_a.insert(0, "A0", PosType::Unicode).unwrap();
+        let u_a0 = a
+            .export(ExportMode::updates(&VersionVector::default()))
+            .unwrap();
+        let vv_a0 = a.oplog_vv();
+        let a_counter_after_a0 = *vv_a0.get(&1).unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.set_peer_id(2).unwrap();
+        b.import(&u_a0).unwrap();
+        b.get_text("text")
+            .insert(2, "B0", PosType::Unicode)
+            .unwrap();
+        let u_b0 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+        a.import(&u_b0).unwrap();
+        text_a.insert(4, "A1", PosType::Unicode).unwrap();
+        let a_counter_after_a1 = *a.oplog_vv().get(&1).unwrap();
+        // Peer-A ops only (A1), not B0 — so this stays pending on a doc that only has A0.
+        let u_a1_only = a
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(
+                1,
+                a_counter_after_a0,
+                a_counter_after_a1,
+            )]))
+            .unwrap();
+
+        b.import(&u_a1_only).unwrap();
+        b.get_text("text")
+            .insert(6, "B1", PosType::Unicode)
+            .unwrap();
+        // Single blob containing B0 and B1. B1 depends on A1.
+        let u_b0_b1 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+        (u_a0, u_a1_only, u_b0_b1, b)
     }
 
     // Change cannot be merged now

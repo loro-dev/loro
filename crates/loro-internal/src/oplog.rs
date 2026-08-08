@@ -525,8 +525,9 @@ impl OpLog {
     pub(crate) fn import_unknown_lamport_pending_changes(
         &mut self,
         remote_changes: Vec<Change>,
-    ) -> Result<(), LoroError> {
-        self.extend_pending_changes_with_unknown_lamport(remote_changes)
+        would_affect: Option<&mut crate::version::VersionRange>,
+    ) -> crate::version::VersionRange {
+        self.extend_pending_changes_with_unknown_lamport(remote_changes, would_affect)
     }
 
     /// lookup change by id.
