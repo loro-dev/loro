@@ -251,6 +251,21 @@ impl OpLog {
         self.import_rollback = None;
     }
 
+    /// Close an import rollback scope this caller owns: commit it when `keep`,
+    /// roll everything back otherwise. No-op when `owns` is false — the scope
+    /// then belongs to an outer owner such as `import_batch`.
+    pub(crate) fn end_import_rollback(&mut self, owns: bool, keep: bool) {
+        if !owns {
+            return;
+        }
+
+        if keep {
+            self.commit_import_rollback();
+        } else {
+            self.rollback_import();
+        }
+    }
+
     pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
         let mut ans = ImportChangesPreflight::default();
         let pending_needs_state_apply_rollback =

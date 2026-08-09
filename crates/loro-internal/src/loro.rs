@@ -712,17 +712,13 @@ impl LoroDoc {
                     },
                     diff_mode,
                 ) {
-                    if owns_rollback {
-                        oplog.rollback_import();
-                    }
+                    oplog.end_import_rollback(owns_rollback, false);
                     return Err(e);
                 }
             }
             match result {
                 Ok(result) => {
-                    if owns_rollback {
-                        oplog.commit_import_rollback();
-                    }
+                    oplog.end_import_rollback(owns_rollback, true);
                     Ok(result)
                 }
                 Err(e) => {
@@ -730,28 +726,19 @@ impl LoroDoc {
                     // been inserted into the oplog. Keep that prefix if it was
                     // also applied to state; rollback is for failed state apply
                     // or decode errors that made no visible oplog progress.
-                    if owns_rollback {
-                        if &old_vv == oplog.vv() {
-                            oplog.rollback_import();
-                        } else {
-                            oplog.commit_import_rollback();
-                        }
-                    }
+                    let keep_prefix = &old_vv != oplog.vv();
+                    oplog.end_import_rollback(owns_rollback, keep_prefix);
                     Err(e)
                 }
             }
         } else {
             match f(&mut oplog) {
                 Ok(result) => {
-                    if owns_rollback {
-                        oplog.commit_import_rollback();
-                    }
+                    oplog.end_import_rollback(owns_rollback, true);
                     Ok(result)
                 }
                 Err(e) => {
-                    if owns_rollback {
-                        oplog.rollback_import();
-                    }
+                    oplog.end_import_rollback(owns_rollback, false);
                     Err(e)
                 }
             }
@@ -1542,6 +1529,7 @@ impl LoroDoc {
             was_attached,
             txn: Some(txn),
             options,
+            #[cfg(debug_assertions)]
             finished: false,
         };
 
@@ -2548,9 +2536,11 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
 /// then reattaches once at the end. Leaving that section without reattaching strands
 /// the document in detached mode: further imports stop being reflected in `DocState`,
 /// local edits branch off a stale version, and every later `attach()` re-runs the same
-/// failing checkout. This guard owns the reattach so it runs on every exit path; the
-/// panicking one goes through `import_batch`'s `catch_unwind`, because cleanup cannot
-/// safely run while a panic is still in flight (see [`Drop`] below).
+/// failing checkout. `finish` owns that reattach, and `import_batch` must call it
+/// explicitly on every exit path — including after catching a panic, because cleanup
+/// cannot run *while* unwinding (`MutexGuard::drop` poisons its mutex when a panic is
+/// in flight, and a second panic during unwind aborts the process). A `Drop` impl
+/// therefore cannot help; the debug-only one below only asserts the contract.
 struct BatchImportGuard<'a> {
     doc: &'a LoroDoc,
     /// Whether the doc was attached before the batch and therefore owes a reattach.
@@ -2560,6 +2550,7 @@ struct BatchImportGuard<'a> {
     /// we are detached. `_checkout_to_latest_without_commit` requires it to be held.
     txn: Option<LoroMutexGuard<'a, Option<Transaction>>>,
     options: Option<CommitOptions>,
+    #[cfg(debug_assertions)]
     finished: bool,
 }
 
@@ -2572,11 +2563,13 @@ impl BatchImportGuard<'_> {
     /// rolled back out of the `OpLog` so the document stays attached and unchanged,
     /// and the state-apply error is returned.
     fn finish(&mut self) -> LoroResult<VersionRange> {
-        if self.finished {
-            return Ok(VersionRange::default());
+        #[cfg(debug_assertions)]
+        {
+            self.finished = true;
         }
-        self.finished = true;
         let doc = self.doc;
+        let txn = self.txn.take().expect("finish called twice");
+        let options = self.options.take();
 
         let pending = {
             let mut oplog = doc.oplog.lock();
@@ -2584,50 +2577,44 @@ impl BatchImportGuard<'_> {
             oplog.pending_changes.version_range()
         };
 
-        let options = self.options.take();
-        if !self.was_attached {
-            // Renew under the guard we already hold: dropping it first and re-locking
-            // would panic while unwinding, because releasing a `Mutex` guard during a
-            // panic poisons the mutex.
-            let txn = self.txn.take().expect("txn guard taken twice");
-            doc._renew_txn_if_auto_commit_with_guard(options, txn);
-            return Ok(pending);
+        // The txn guard must stay held across the checkout, and the renew below must
+        // reuse it: dropping it first and re-locking would panic when this runs after
+        // a caught panic, because releasing a `Mutex` guard while a panic is in
+        // flight poisons the mutex.
+        let mut checkout = Ok(());
+        if self.was_attached {
+            checkout = doc._checkout_to_latest_without_commit(true);
+            if let Err(e) = &checkout {
+                // `DocState::apply_diff` validates before mutating, so the state is
+                // still at its pre-batch version; undoing the batch in the `OpLog`
+                // makes the two agree again, which is what lets the doc stay attached.
+                tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
+                doc.oplog.lock().rollback_import();
+                // The shared diff calculator cached ranges against the rolled-back
+                // history; drop that cache instead of reusing stale entries.
+                *doc.diff_calculator.lock() = DiffCalculator::new(true);
+                doc.set_detached(false);
+            } else {
+                doc.oplog.lock().commit_import_rollback();
+            }
         }
 
-        // The txn guard must stay held across the checkout.
-        let checkout = doc._checkout_to_latest_without_commit(true);
-        if let Err(e) = &checkout {
-            // `DocState::apply_diff` validates before mutating, so the state is still
-            // at its pre-batch version; undoing the batch in the `OpLog` makes the two
-            // agree again, which is what lets the doc stay attached.
-            tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
-            doc.oplog.lock().rollback_import();
-            // The shared diff calculator cached ranges against the rolled-back history;
-            // drop that cache instead of reusing stale entries.
-            *doc.diff_calculator.lock() = DiffCalculator::new(true);
-            doc.set_detached(false);
-        } else {
-            doc.oplog.lock().commit_import_rollback();
-        }
-
-        let txn = self.txn.take().expect("txn guard taken twice");
         doc._renew_txn_if_auto_commit_with_guard(options, txn);
         checkout.map(|()| pending)
     }
 }
 
+/// Debug-only tripwire: `finish` must be called explicitly (see the struct docs for
+/// why `Drop` cannot do the cleanup itself). Release builds compile this out.
+#[cfg(debug_assertions)]
 impl Drop for BatchImportGuard<'_> {
     fn drop(&mut self) {
-        if self.finished || std::thread::panicking() {
-            // Cleaning up *while* unwinding is not an option: `MutexGuard::drop`
-            // poisons its mutex when a panic is in flight, so `finish` would poison
-            // every doc lock it touches and then panic on the next one — a second
-            // panic during unwind aborts the process. `import_batch` instead catches
-            // the panic and calls `finish` once unwinding has stopped.
-            return;
+        if !std::thread::panicking() {
+            assert!(
+                self.finished,
+                "BatchImportGuard dropped without calling finish()"
+            );
         }
-
-        let _ = self.finish();
     }
 }
 
