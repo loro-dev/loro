@@ -236,6 +236,16 @@ impl OpLog {
         });
     }
 
+    /// Whether an import rollback scope is currently open.
+    ///
+    /// Scopes cannot nest: [`Self::begin_import_rollback_with_arena`] overwrites the
+    /// journal, and the matching commit/rollback clears it. Callers that may run
+    /// inside another scope (e.g. a blob imported by `LoroDoc::import_batch`) must
+    /// check this first and leave the scope to its owner.
+    pub(crate) fn has_import_rollback(&self) -> bool {
+        self.import_rollback.is_some()
+    }
+
     pub(crate) fn commit_import_rollback(&mut self) {
         self.dag.commit_import_rollback();
         self.import_rollback = None;

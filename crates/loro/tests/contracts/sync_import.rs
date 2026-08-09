@@ -1,6 +1,6 @@
 use loro::{
-    ContainerTrait, ExportMode, LoroDoc, LoroList, LoroMovableList, LoroResult, LoroText, ToJson,
-    TreeParentId,
+    ContainerTrait, ExportMode, JsonListOp, JsonOpContent, LoroDoc, LoroList, LoroMovableList,
+    LoroResult, LoroText, ToJson, TreeParentId,
 };
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -174,4 +174,99 @@ fn concurrent_peers_converge_via_incremental_sync_and_snapshot_roundtrip() -> Lo
     assert_eq!(deep_json(&replay), deep_json(&seed));
 
     Ok(())
+}
+
+/// `import_batch` force-detaches the doc while it feeds blobs into the OpLog and
+/// reattaches once at the end. A blob whose ops are only rejected when they reach
+/// `DocState` used to make that reattach panic, leaving the document detached: every
+/// later import stopped showing up and local edits branched off a stale version.
+/// The batch must fail as a unit instead, leaving an attached, unchanged document.
+#[test]
+fn import_batch_failure_leaves_doc_attached_and_unchanged() -> LoroResult<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    source.get_text("text").insert(0, "hello")?;
+    source.get_list("list").push("seed")?;
+    source.commit();
+    let snapshot = source.export(ExportMode::Snapshot)?;
+    let base_vv = source.oplog_vv();
+
+    // A chain of updates from a second peer. Sorted newest-first, everything but the
+    // oldest blob sits in `pending_changes` until its deps land.
+    let peer2 = LoroDoc::new();
+    peer2.set_peer_id(2)?;
+    peer2.import(&snapshot)?;
+    let mut blobs = Vec::new();
+    let mut from = base_vv;
+    for i in 0..4 {
+        peer2.get_map("map").insert(&format!("k{i}"), i)?;
+        peer2.commit();
+        blobs.push(peer2.export(ExportMode::updates(&from))?);
+        from = peer2.oplog_vv();
+    }
+    blobs.reverse();
+    blobs.insert(0, update_with_out_of_bounds_list_insert(9)?);
+
+    let target = LoroDoc::new();
+    target.set_peer_id(3)?;
+    target.import(&snapshot)?;
+    let vv_before = target.oplog_vv();
+    let value_before = deep_json(&target);
+
+    let err = target
+        .import_batch(&blobs)
+        .expect_err("an op the state rejects must fail the batch");
+    assert!(
+        err.to_string().contains("list diff"),
+        "unexpected error: {err:?}"
+    );
+
+    assert!(
+        !target.is_detached(),
+        "import_batch must never exit in detached mode"
+    );
+    assert_eq!(target.oplog_vv(), vv_before);
+    assert_eq!(deep_json(&target), value_before);
+
+    // The doc is still usable, and a batch without the bad blob still applies.
+    target.get_text("text").insert(0, "ok: ")?;
+    target.commit();
+    target.import_batch(&blobs[1..])?;
+    assert!(!target.is_detached());
+    assert_eq!(
+        target.get_map("map").get("k3").is_some(),
+        true,
+        "the good blobs should have been applied"
+    );
+
+    Ok(())
+}
+
+/// Binary updates carrying a list insert far past the end of the list. It decodes into
+/// the OpLog fine and is only rejected by `DocState` validation.
+fn update_with_out_of_bounds_list_insert(peer: u64) -> LoroResult<Vec<u8>> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(peer)?;
+    doc.get_list("list").insert(0, "seed")?;
+    doc.get_list("list").insert(1, "tail")?;
+    doc.commit();
+
+    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let last_op = json
+        .changes
+        .last_mut()
+        .expect("one change")
+        .ops
+        .last_mut()
+        .expect("one op");
+    match &mut last_op.content {
+        JsonOpContent::List(JsonListOp::Insert { pos, .. }) => *pos = 1_000,
+        other => panic!("expected a list insert op, got {other:?}"),
+    }
+
+    // Detached, the change only enters the OpLog, so the malformed op survives export.
+    let carrier = LoroDoc::new();
+    carrier.detach();
+    carrier.import_json_updates(serde_json::to_string(&json).unwrap())?;
+    Ok(carrier.export(ExportMode::all_updates()).unwrap())
 }
