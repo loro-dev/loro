@@ -36,6 +36,9 @@ over graceful degradation.
   mergeable container regression tests.
 - `src/tests/import_atomicity.rs`: import rollback and malformed-input
   regressions.
+- `import_batch` force-detach, its batch-wide rollback scope, and the
+  never-exit-detached invariant:
+  [../../context/import-batch-atomicity.md](../../context/import-batch-atomicity.md).
 
 ## Commands
 

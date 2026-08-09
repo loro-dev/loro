@@ -67,6 +67,30 @@ impl Default for LoroDoc {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Countdown of blobs `LoroDoc::import_batch` may import before panicking, standing
+    /// in for the decode/apply panics that malformed remote data can trigger.
+    static PANIC_AT_BATCH_IMPORT_BLOB: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn panic_at_batch_import_blob_for_test(blobs_to_import_first: usize) {
+    PANIC_AT_BATCH_IMPORT_BLOB.with(|f| f.set(Some(blobs_to_import_first)));
+}
+
+#[cfg(test)]
+fn take_panic_at_batch_import_blob_for_test() {
+    PANIC_AT_BATCH_IMPORT_BLOB.with(|f| match f.get() {
+        Some(0) => {
+            f.set(None);
+            panic!("batch import failpoint");
+        }
+        Some(n) => f.set(Some(n - 1)),
+        None => {}
+    });
+}
+
 impl std::fmt::Debug for LoroDocInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LoroDoc")
@@ -655,7 +679,15 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
-        oplog.begin_import_rollback();
+        // `import_batch` opens a rollback scope that spans the whole batch. Rollback
+        // scopes cannot nest (the inner `begin` would clobber the outer journal), so
+        // when one is already open we let the owner decide what to keep: the batch
+        // scope rolls the whole batch back if its final reattach fails, and commits
+        // everything otherwise.
+        let owns_rollback = !oplog.has_import_rollback();
+        if owns_rollback {
+            oplog.begin_import_rollback();
+        }
         if !self.is_detached() {
             let old_vv = oplog.vv().clone();
             let old_frontiers = oplog.frontiers().clone();
@@ -680,13 +712,13 @@ impl LoroDoc {
                     },
                     diff_mode,
                 ) {
-                    oplog.rollback_import();
+                    oplog.end_import_rollback(owns_rollback, false);
                     return Err(e);
                 }
             }
             match result {
                 Ok(result) => {
-                    oplog.commit_import_rollback();
+                    oplog.end_import_rollback(owns_rollback, true);
                     Ok(result)
                 }
                 Err(e) => {
@@ -694,22 +726,19 @@ impl LoroDoc {
                     // been inserted into the oplog. Keep that prefix if it was
                     // also applied to state; rollback is for failed state apply
                     // or decode errors that made no visible oplog progress.
-                    if &old_vv == oplog.vv() {
-                        oplog.rollback_import();
-                    } else {
-                        oplog.commit_import_rollback();
-                    }
+                    let keep_prefix = &old_vv != oplog.vv();
+                    oplog.end_import_rollback(owns_rollback, keep_prefix);
                     Err(e)
                 }
             }
         } else {
             match f(&mut oplog) {
                 Ok(result) => {
-                    oplog.commit_import_rollback();
+                    oplog.end_import_rollback(owns_rollback, true);
                     Ok(result)
                 }
                 Err(e) => {
-                    oplog.rollback_import();
+                    oplog.end_import_rollback(owns_rollback, false);
                     Err(e)
                 }
             }
@@ -1466,48 +1495,88 @@ impl LoroDoc {
         // - Force-detach with `set_detached(true)` (avoids `detach()` side effects),
         //   then run each `_import_with(...)` while detached so imports only touch
         //   the `OpLog`.
-        // - After importing, reattach by checking out to latest and renew the txn
-        //   using `_checkout_to_latest_with_guard`, which keeps the mutex held while
-        //   (re)starting the auto-commit txn.
+        // - After importing, reattach by checking out to latest and renew the txn in
+        //   `BatchImportGuard::finish`, which keeps the mutex held while (re)starting
+        //   the auto-commit txn.
         //
         // Holding the lock ensures no concurrent thread can create/renew a txn and
         // do local edits in the middle of the batch import, making the whole
         // operation atomic with respect to local edits.
-        let is_detached = self.is_detached();
+        //
+        // The force-detach must be undone on *every* exit path. A blob that returns
+        // `Err`, and just as importantly a panic out of decode/apply, used to skip the
+        // reattach below and strand the document in detached mode, where it silently
+        // stops reflecting later imports and local edits. `BatchImportGuard::finish`
+        // owns that cleanup and the blob loop runs inside `catch_unwind` so it also
+        // runs before a panic is re-raised.
+        let was_attached = !self.is_detached();
         self.set_detached(true);
-        self.oplog.lock().batch_importing = true;
-        let mut err = None;
-        for (_meta, data) in meta_arr {
-            match self._import_with(data, Default::default()) {
-                Ok(s) => {
-                    for (peer, (start, end)) in s.success.iter() {
-                        match success.0.entry(*peer) {
-                            Entry::Occupied(mut e) => {
-                                e.get_mut().1 = *end.max(&e.get().1);
-                            }
-                            Entry::Vacant(e) => {
-                                e.insert((*start, *end));
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    err = Some(e);
-                }
+        {
+            let mut oplog = self.oplog.lock();
+            oplog.batch_importing = true;
+            // The batch only touches the `OpLog` (we are detached), so a rollback
+            // scope spanning the whole batch lets `BatchImportGuard::finish` restore
+            // the pre-batch version if the closing reattach cannot apply the imported
+            // changes to `DocState`. Without it the doc would be left detached at a
+            // version it can never check out.
+            if was_attached {
+                oplog.begin_import_rollback();
             }
         }
 
-        let mut oplog = self.oplog.lock();
-        oplog.batch_importing = false;
-        let pending = oplog.pending_changes.version_range();
-        drop(oplog);
-        if !is_detached {
-            self._checkout_to_latest_with_guard(txn);
-        } else {
-            drop(txn);
-        }
+        let mut guard = BatchImportGuard {
+            doc: self,
+            was_attached,
+            txn: Some(txn),
+            options,
+            #[cfg(debug_assertions)]
+            finished: false,
+        };
 
-        self.renew_txn_if_auto_commit(options);
+        // Catch here rather than in a `Drop`: releasing a mutex guard while a panic is
+        // in flight poisons that mutex, so the reattach has to happen after unwinding
+        // has stopped. Under `panic = "abort"` (e.g. wasm) nothing is caught and the
+        // process dies with the document untouched.
+        let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut err = None;
+            for (_meta, data) in meta_arr {
+                #[cfg(test)]
+                take_panic_at_batch_import_blob_for_test();
+                match guard.doc._import_with(data, Default::default()) {
+                    Ok(s) => {
+                        for (peer, (start, end)) in s.success.iter() {
+                            match success.0.entry(*peer) {
+                                Entry::Occupied(mut e) => {
+                                    e.get_mut().1 = *end.max(&e.get().1);
+                                }
+                                Entry::Vacant(e) => {
+                                    e.insert((*start, *end));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        err = Some(e);
+                    }
+                }
+            }
+            err
+        }));
+
+        let err = match loop_result {
+            Ok(err) => err,
+            Err(payload) => {
+                // Reattach first, then re-raise the original panic. `finish` can panic
+                // itself when the interrupted blob poisoned a doc lock; that document
+                // is unusable either way, so keep the original payload.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let _ = guard.finish();
+                }));
+                std::panic::resume_unwind(payload);
+            }
+        };
+
+        let pending = guard.finish()?;
         if let Some(err) = err {
             return Err(err);
         }
@@ -1553,17 +1622,6 @@ impl LoroDoc {
         self.emit_events();
         drop(_guard);
         self.renew_txn_if_auto_commit(options);
-    }
-
-    fn _checkout_to_latest_with_guard(&self, guard: LoroMutexGuard<Option<Transaction>>) {
-        if !self.is_detached() {
-            self._renew_txn_if_auto_commit_with_guard(None, guard);
-            return;
-        }
-
-        self._checkout_to_latest_without_commit(true)
-            .expect("checkout to oplog frontiers should succeed");
-        self._renew_txn_if_auto_commit_with_guard(None, guard);
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None
@@ -2470,6 +2528,94 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     }
 
     best.map(|(_, op_id)| op_id)
+}
+
+/// Cleanup for the critical section of [`LoroDoc::import_batch`].
+///
+/// `import_batch` force-detaches the document so each blob only touches the `OpLog`,
+/// then reattaches once at the end. Leaving that section without reattaching strands
+/// the document in detached mode: further imports stop being reflected in `DocState`,
+/// local edits branch off a stale version, and every later `attach()` re-runs the same
+/// failing checkout. `finish` owns that reattach, and `import_batch` must call it
+/// explicitly on every exit path — including after catching a panic, because cleanup
+/// cannot run *while* unwinding (`MutexGuard::drop` poisons its mutex when a panic is
+/// in flight, and a second panic during unwind aborts the process). A `Drop` impl
+/// therefore cannot help; the debug-only one below only asserts the contract.
+struct BatchImportGuard<'a> {
+    doc: &'a LoroDoc,
+    /// Whether the doc was attached before the batch and therefore owes a reattach.
+    /// It also decides whether we own the batch-wide import rollback scope.
+    was_attached: bool,
+    /// Held for the whole batch so no other thread can renew the txn and edit while
+    /// we are detached. `_checkout_to_latest_without_commit` requires it to be held.
+    txn: Option<LoroMutexGuard<'a, Option<Transaction>>>,
+    options: Option<CommitOptions>,
+    #[cfg(debug_assertions)]
+    finished: bool,
+}
+
+impl BatchImportGuard<'_> {
+    /// Leave batch-import mode, reattach if the doc was attached, and renew the txn.
+    ///
+    /// Returns the still-pending version range on success. If the accumulated changes
+    /// cannot be applied to `DocState` (malformed remote ops reach state validation
+    /// only here, because the blobs were imported while detached), the whole batch is
+    /// rolled back out of the `OpLog` so the document stays attached and unchanged,
+    /// and the state-apply error is returned.
+    fn finish(&mut self) -> LoroResult<VersionRange> {
+        #[cfg(debug_assertions)]
+        {
+            self.finished = true;
+        }
+        let doc = self.doc;
+        let txn = self.txn.take().expect("finish called twice");
+        let options = self.options.take();
+
+        let pending = {
+            let mut oplog = doc.oplog.lock();
+            oplog.batch_importing = false;
+            oplog.pending_changes.version_range()
+        };
+
+        // The txn guard must stay held across the checkout, and the renew below must
+        // reuse it: dropping it first and re-locking would panic when this runs after
+        // a caught panic, because releasing a `Mutex` guard while a panic is in
+        // flight poisons the mutex.
+        let mut checkout = Ok(());
+        if self.was_attached {
+            checkout = doc._checkout_to_latest_without_commit(true);
+            if let Err(e) = &checkout {
+                // `DocState::apply_diff` validates before mutating, so the state is
+                // still at its pre-batch version; undoing the batch in the `OpLog`
+                // makes the two agree again, which is what lets the doc stay attached.
+                tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
+                doc.oplog.lock().rollback_import();
+                // The shared diff calculator cached ranges against the rolled-back
+                // history; drop that cache instead of reusing stale entries.
+                *doc.diff_calculator.lock() = DiffCalculator::new(true);
+                doc.set_detached(false);
+            } else {
+                doc.oplog.lock().commit_import_rollback();
+            }
+        }
+
+        doc._renew_txn_if_auto_commit_with_guard(options, txn);
+        checkout.map(|()| pending)
+    }
+}
+
+/// Debug-only tripwire: `finish` must be called explicitly (see the struct docs for
+/// why `Drop` cannot do the cleanup itself). Release builds compile this out.
+#[cfg(debug_assertions)]
+impl Drop for BatchImportGuard<'_> {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            assert!(
+                self.finished,
+                "BatchImportGuard dropped without calling finish()"
+            );
+        }
+    }
 }
 
 #[derive(Debug)]

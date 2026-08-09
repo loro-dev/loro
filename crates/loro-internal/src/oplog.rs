@@ -236,15 +236,38 @@ impl OpLog {
         });
     }
 
+    /// Whether an import rollback scope is currently open.
+    ///
+    /// Scopes cannot nest: [`Self::begin_import_rollback_with_arena`] overwrites the
+    /// journal, and the matching commit/rollback clears it. Callers that may run
+    /// inside another scope (e.g. a blob imported by `LoroDoc::import_batch`) must
+    /// check this first and leave the scope to its owner.
+    pub(crate) fn has_import_rollback(&self) -> bool {
+        self.import_rollback.is_some()
+    }
+
     pub(crate) fn commit_import_rollback(&mut self) {
         self.dag.commit_import_rollback();
         self.import_rollback = None;
     }
 
+    /// Close an import rollback scope this caller owns: commit it when `keep`,
+    /// roll everything back otherwise. No-op when `owns` is false — the scope
+    /// then belongs to an outer owner such as `import_batch`.
+    pub(crate) fn end_import_rollback(&mut self, owns: bool, keep: bool) {
+        if !owns {
+            return;
+        }
+
+        if keep {
+            self.commit_import_rollback();
+        } else {
+            self.rollback_import();
+        }
+    }
+
     pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
         let mut ans = ImportChangesPreflight::default();
-        let pending_needs_state_apply_rollback =
-            self.pending_changes.has_state_apply_rollback_ops();
         for change in changes {
             if change.ctr_end() <= self.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 continue;
@@ -279,7 +302,17 @@ impl OpLog {
         // Keep this narrow: text/map-only pending changes cannot return a
         // state-apply error, and forcing rollback there adds lock traffic to
         // small sync/import workloads.
-        if ans.applies_to_dag && pending_needs_state_apply_rollback {
+        //
+        // Scan pending last, and only when it can still change the answer:
+        // `has_state_apply_rollback_ops` walks every parked change and every op in
+        // it, while a blob that only parks (deps not here yet) leaves
+        // `applies_to_dag` false. Evaluating it eagerly made a batch of N
+        // out-of-order blobs quadratic, since each blob re-scanned the pending set
+        // the earlier blobs had grown.
+        if ans.applies_to_dag
+            && !ans.needs_state_apply_rollback
+            && self.pending_changes.has_state_apply_rollback_ops()
+        {
             ans.needs_state_apply_rollback = true;
         }
 

@@ -307,6 +307,309 @@ fn failed_import_does_not_emit_events() {
     assert!(hit.load(Ordering::SeqCst) > 0);
 }
 
+/// Build a binary update blob that decodes into the `OpLog` fine but whose ops are
+/// rejected by `DocState` validation (list insert far out of bounds).
+fn malformed_binary_update(peer: u64) -> Vec<u8> {
+    let (_, mut bad_json) = make_json_list_update_with_four_ops(peer);
+    move_last_list_insert_far_out_of_bounds(&mut bad_json);
+
+    // A detached doc records changes into the OpLog without applying them to state,
+    // so the malformed op survives into the exported binary updates.
+    let carrier = LoroDoc::new();
+    carrier.detach();
+    carrier
+        .import_json_updates(serde_json::to_string(&bad_json).unwrap())
+        .unwrap();
+    carrier.export(ExportMode::all_updates()).unwrap()
+}
+
+fn doc_with_snapshot_and_pending_updates() -> (LoroDoc, Vec<Vec<u8>>, LoroDoc) {
+    let base = LoroDoc::new_auto_commit();
+    base.set_peer_id(1).unwrap();
+    base.get_text("text").insert_unicode(0, "base").unwrap();
+    base.get_list("list").push("base").unwrap();
+    base.commit_then_renew();
+    let snapshot = base.export(ExportMode::Snapshot).unwrap();
+    let base_vv = base.oplog_vv();
+
+    // A chain of updates from a second peer. Imported out of order, all but the
+    // first land in `pending_changes` until their deps arrive.
+    let peer2 = base.fork();
+    peer2.set_peer_id(2).unwrap();
+    let mut chain = Vec::new();
+    let mut from = base_vv.clone();
+    for i in 0..5 {
+        peer2.get_map("map").insert(&format!("k{i}"), i).unwrap();
+        peer2.commit_then_renew();
+        chain.push(peer2.export(ExportMode::updates(&from)).unwrap());
+        from = peer2.oplog_vv();
+    }
+    // Latest first: everything but the last blob stays pending while the batch runs.
+    chain.reverse();
+
+    let dst = LoroDoc::new_auto_commit();
+    dst.set_peer_id(3).unwrap();
+    dst.import(&snapshot).unwrap();
+    (dst, chain, peer2)
+}
+
+/// A blob whose ops only fail when they reach `DocState` used to panic inside the
+/// batch reattach (`checkout to oplog frontiers should succeed`), unwinding past the
+/// reattach and leaving the document detached — and every later import/export broken.
+#[test]
+fn import_batch_with_unappliable_update_stays_attached_and_rolls_back() {
+    let (dst, mut blobs, _) = doc_with_snapshot_and_pending_updates();
+    blobs.insert(0, malformed_binary_update(21));
+
+    let vv_before = dst.oplog_vv();
+    let frontiers_before = dst.oplog_frontiers();
+    let state_before = dst.get_deep_value();
+
+    let err = dst
+        .import_batch(&blobs)
+        .expect_err("a state-rejected op must fail the batch");
+    assert!(
+        err.to_string().contains("list diff"),
+        "expected state list bounds validation, got {err:?}"
+    );
+
+    assert!(
+        !dst.is_detached(),
+        "import_batch must leave the doc attached"
+    );
+    assert!(!dst.oplog().lock().batch_importing);
+    assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+    // The chain blobs were parked and then unlocked *within* the batch; its rollback
+    // must not resurrect them. A resurrected entry would carry `ContainerIdx`
+    // registrations the arena rollback just truncated.
+    assert_eq!(
+        pending_len(&dst),
+        0,
+        "changes the batch itself parked must not survive its rollback"
+    );
+
+    // Still fully usable afterwards.
+    dst.get_text("text").insert_unicode(0, "after").unwrap();
+    dst.commit_then_renew();
+    assert_eq!(dst.state_frontiers(), dst.oplog_frontiers());
+}
+
+/// A batch can unlock changes that were parked *before* it started. If the batch is
+/// rolled back, those changes must be re-parked, or the document would silently drop
+/// them and diverge once their deps finally arrive.
+#[test]
+fn failed_import_batch_reparks_prebatch_pending_changes() {
+    let src = LoroDoc::new_auto_commit();
+    src.set_peer_id(1).unwrap();
+    src.get_map("map").insert("seed", "base").unwrap();
+    let update_base = src
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let version_base = src.oplog_vv();
+    src.get_map("map").insert("later", "value").unwrap();
+    let update_later = src.export(ExportMode::updates(&version_base)).unwrap();
+
+    let dst = LoroDoc::new();
+    dst.import(&update_later).unwrap();
+    assert_eq!(pending_len(&dst), 1);
+    let vv_before = dst.oplog_vv();
+    let frontiers_before = dst.oplog_frontiers();
+    let state_before = dst.get_deep_value();
+
+    // `update_base` unlocks the pre-batch pending change mid-batch; the malformed
+    // blob then makes the closing reattach fail and rolls the whole batch back.
+    let err = dst
+        .import_batch(&[update_base.clone(), malformed_binary_update(31)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert!(err.to_string().contains("list diff"), "{err:?}");
+    assert!(!dst.is_detached());
+    assert_eq!(
+        pending_len(&dst),
+        1,
+        "the pending change the batch unlocked must be re-parked"
+    );
+    assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+
+    // Retrying without the bad blob applies base and unlocks the re-parked change.
+    dst.import(&update_base).unwrap();
+    assert_eq!(pending_len(&dst), 0);
+    assert_eq!(dst.oplog_vv(), src.oplog_vv());
+    assert_eq!(dst.get_deep_value(), src.get_deep_value());
+}
+
+/// Changes are parked under the ID of the dep they are missing, so two peers waiting
+/// on the same change share one pending slot. When a batch appends to a slot that
+/// already held a pre-batch change, rollback has to trim its own entry off and keep
+/// the older one — dropping the slot loses a change the document still needs, and
+/// keeping both resurrects a change whose arena registrations were just truncated.
+#[test]
+fn failed_import_batch_trims_only_its_own_entry_from_a_shared_pending_slot() {
+    let p1 = LoroDoc::new_auto_commit();
+    p1.set_peer_id(1).unwrap();
+    p1.get_map("map").insert("seed", "v").unwrap();
+    p1.commit_then_renew();
+    // Never shipped to `dst`, so everything below stays parked on it.
+    let u_seed = p1
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let vv_seed = p1.oplog_vv();
+
+    let waiter = |peer: u64, key: &str| {
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(peer).unwrap();
+        d.import(&u_seed).unwrap();
+        d.get_map("map").insert(key, "v").unwrap();
+        d.commit_then_renew();
+        d.export(ExportMode::updates(&vv_seed)).unwrap()
+    };
+    let u_p2 = waiter(2, "p2");
+    let u_p3 = waiter(3, "p3");
+
+    let dst = LoroDoc::new_auto_commit();
+    dst.set_peer_id(9).unwrap();
+    dst.import(&u_p2).unwrap();
+    assert_eq!(pending_len(&dst), 1, "p2 waits on the seed change");
+    let vv_before = dst.oplog_vv();
+    let frontiers_before = dst.oplog_frontiers();
+    let state_before = dst.get_deep_value();
+
+    // `u_p3` parks in the same slot as `u_p2`; the malformed blob then fails the
+    // closing reattach and rolls the whole batch back.
+    let err = dst
+        .import_batch(&[u_p3.clone(), malformed_binary_update(41)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert!(err.to_string().contains("list diff"), "{err:?}");
+    assert!(!dst.is_detached());
+    assert_eq!(
+        pending_len(&dst),
+        1,
+        "rollback must keep the pre-batch change and drop only the batch's own"
+    );
+    assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+
+    // The kept change is still the right one, and the doc converges on a retry.
+    dst.import(&u_seed).unwrap();
+    assert_eq!(pending_len(&dst), 0, "the seed unlocks the kept p2 change");
+    dst.import(&u_p3).unwrap();
+
+    let expected = LoroDoc::new_auto_commit();
+    expected.set_peer_id(8).unwrap();
+    expected.import(&u_seed).unwrap();
+    expected.import(&u_p2).unwrap();
+    expected.import(&u_p3).unwrap();
+    assert_eq!(dst.oplog_vv(), expected.oplog_vv());
+    assert_eq!(dst.get_deep_value(), expected.get_deep_value());
+}
+
+/// One blob can both park a change and unlock it in the same import: B1 parks while
+/// A1 is missing, B0 unlocks A1, and the cascade then applies B1. If that import's
+/// state apply fails, rollback must re-park only what was pending *before* the
+/// import — resurrecting the import's own parked changes would leave pending entries
+/// whose arena registrations were just rolled back.
+#[test]
+fn failed_import_reparks_only_preexisting_pending_changes() {
+    use loro_common::IdSpan;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_text("text").insert_unicode(0, "A0").unwrap();
+    let u_a0 = a
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let vv_a0 = a.oplog_vv();
+    let a_counter_after_a0 = *vv_a0.get(&1).unwrap();
+
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    b.import(&u_a0).unwrap();
+    b.get_text("text").insert_unicode(2, "B0").unwrap();
+    let u_b0 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+    a.import(&u_b0).unwrap();
+    a.get_text("text").insert_unicode(4, "A1").unwrap();
+    let a_counter_after_a1 = *a.oplog_vv().get(&1).unwrap();
+    // Peer-A ops only (A1), without B0 — pending on a doc that only has A0.
+    let u_a1_only = a
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(
+            1,
+            a_counter_after_a0,
+            a_counter_after_a1,
+        )]))
+        .unwrap();
+
+    b.import(&u_a1_only).unwrap();
+    b.get_text("text").insert_unicode(6, "B1").unwrap();
+    // Single blob with B0 and B1; B1 depends on A1.
+    let u_b0_b1 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+    let d = LoroDoc::new_auto_commit();
+    d.set_peer_id(3).unwrap();
+    d.import(&u_a0).unwrap();
+    d.import(&u_a1_only).unwrap();
+    assert_eq!(pending_len(&d), 1);
+    let vv_before = d.oplog_vv();
+    let frontiers_before = d.oplog_frontiers();
+    let state_before = d.get_deep_value();
+
+    fail_next_import_state_apply_for_test();
+    let err = d.import(&u_b0_b1).unwrap_err();
+    assert!(err.to_string().contains("state apply failpoint"), "{err:?}");
+    assert_eq!(
+        pending_len(&d),
+        1,
+        "only the pre-import pending change may be re-parked"
+    );
+    assert_doc_unchanged(&d, &vv_before, &frontiers_before, &state_before);
+
+    // Retrying converges.
+    d.import(&u_b0_b1).unwrap();
+    assert_eq!(pending_len(&d), 0);
+    assert_eq!(d.oplog_vv(), b.oplog_vv());
+    assert_eq!(d.get_deep_value(), b.get_deep_value());
+}
+
+/// The same guarantee for a panic (malformed remote data reaching an `unreachable!`
+/// in decode/apply is the shape that originally stranded the document). The blobs
+/// imported before the panic must still be applied to `DocState`.
+#[test]
+fn import_batch_panic_leaves_doc_attached() {
+    let (dst, blobs, expected) = doc_with_snapshot_and_pending_updates();
+    assert!(blobs.len() > 2);
+
+    crate::loro::panic_at_batch_import_blob_for_test(2);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = dst.import_batch(&blobs);
+    }));
+    assert!(panicked.is_err(), "the failpoint should have panicked");
+
+    assert!(
+        !dst.is_detached(),
+        "import_batch must leave the doc attached"
+    );
+    assert!(!dst.oplog().lock().batch_importing);
+    assert_eq!(dst.state_frontiers(), dst.oplog_frontiers());
+
+    // The document still accepts the updates it missed.
+    dst.import_batch(&blobs).unwrap();
+    assert!(!dst.is_detached());
+    assert_eq!(dst.oplog_vv(), expected.oplog_vv());
+    assert_eq!(dst.get_deep_value(), expected.get_deep_value());
+}
+
+/// A doc that was already detached must stay detached: the batch is only allowed to
+/// restore the pre-batch mode, not to silently attach.
+#[test]
+fn import_batch_keeps_explicitly_detached_doc_detached() {
+    let (dst, blobs, _) = doc_with_snapshot_and_pending_updates();
+    dst.detach();
+    let state_frontiers = dst.state_frontiers();
+
+    dst.import_batch(&blobs).unwrap();
+    assert!(dst.is_detached());
+    assert_eq!(dst.state_frontiers(), state_frontiers);
+    assert!(!dst.oplog().lock().batch_importing);
+}
+
 #[test]
 fn corrupt_snapshot_import_rolls_back_empty_doc() {
     let src = LoroDoc::new_auto_commit();
