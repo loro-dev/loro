@@ -318,7 +318,7 @@ fn malformed_binary_update(peer: u64) -> Vec<u8> {
     let carrier = LoroDoc::new();
     carrier.detach();
     carrier
-        .import_json_updates(&serde_json::to_string(&bad_json).unwrap())
+        .import_json_updates(serde_json::to_string(&bad_json).unwrap())
         .unwrap();
     carrier.export(ExportMode::all_updates()).unwrap()
 }
