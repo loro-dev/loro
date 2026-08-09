@@ -437,6 +437,70 @@ fn failed_import_batch_reparks_prebatch_pending_changes() {
     assert_eq!(dst.get_deep_value(), src.get_deep_value());
 }
 
+/// Changes are parked under the ID of the dep they are missing, so two peers waiting
+/// on the same change share one pending slot. When a batch appends to a slot that
+/// already held a pre-batch change, rollback has to trim its own entry off and keep
+/// the older one — dropping the slot loses a change the document still needs, and
+/// keeping both resurrects a change whose arena registrations were just truncated.
+#[test]
+fn failed_import_batch_trims_only_its_own_entry_from_a_shared_pending_slot() {
+    let p1 = LoroDoc::new_auto_commit();
+    p1.set_peer_id(1).unwrap();
+    p1.get_map("map").insert("seed", "v").unwrap();
+    p1.commit_then_renew();
+    // Never shipped to `dst`, so everything below stays parked on it.
+    let u_seed = p1
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let vv_seed = p1.oplog_vv();
+
+    let waiter = |peer: u64, key: &str| {
+        let d = LoroDoc::new_auto_commit();
+        d.set_peer_id(peer).unwrap();
+        d.import(&u_seed).unwrap();
+        d.get_map("map").insert(key, "v").unwrap();
+        d.commit_then_renew();
+        d.export(ExportMode::updates(&vv_seed)).unwrap()
+    };
+    let u_p2 = waiter(2, "p2");
+    let u_p3 = waiter(3, "p3");
+
+    let dst = LoroDoc::new_auto_commit();
+    dst.set_peer_id(9).unwrap();
+    dst.import(&u_p2).unwrap();
+    assert_eq!(pending_len(&dst), 1, "p2 waits on the seed change");
+    let vv_before = dst.oplog_vv();
+    let frontiers_before = dst.oplog_frontiers();
+    let state_before = dst.get_deep_value();
+
+    // `u_p3` parks in the same slot as `u_p2`; the malformed blob then fails the
+    // closing reattach and rolls the whole batch back.
+    let err = dst
+        .import_batch(&[u_p3.clone(), malformed_binary_update(41)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert!(err.to_string().contains("list diff"), "{err:?}");
+    assert!(!dst.is_detached());
+    assert_eq!(
+        pending_len(&dst),
+        1,
+        "rollback must keep the pre-batch change and drop only the batch's own"
+    );
+    assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+
+    // The kept change is still the right one, and the doc converges on a retry.
+    dst.import(&u_seed).unwrap();
+    assert_eq!(pending_len(&dst), 0, "the seed unlocks the kept p2 change");
+    dst.import(&u_p3).unwrap();
+
+    let expected = LoroDoc::new_auto_commit();
+    expected.set_peer_id(8).unwrap();
+    expected.import(&u_seed).unwrap();
+    expected.import(&u_p2).unwrap();
+    expected.import(&u_p3).unwrap();
+    assert_eq!(dst.oplog_vv(), expected.oplog_vv());
+    assert_eq!(dst.get_deep_value(), expected.get_deep_value());
+}
+
 /// One blob can both park a change and unlock it in the same import: B1 parks while
 /// A1 is missing, B0 unlocks A1, and the cascade then applies B1. If that import's
 /// state apply fails, rollback must re-park only what was pending *before* the

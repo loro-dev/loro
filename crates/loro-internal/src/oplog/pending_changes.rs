@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, ops::Deref};
+use std::{
+    collections::{hash_map::Entry, BTreeMap},
+    ops::Deref,
+};
 
 use crate::{
     change::Change,
@@ -51,6 +54,11 @@ impl PendingChanges {
         })
     }
 
+    /// Number of changes parked under `[peer][counter]`, or `None` if nothing is.
+    fn slot_len(&self, peer: PeerID, counter: Counter) -> Option<usize> {
+        Some(self.changes.get(&peer)?.get(&counter)?.len())
+    }
+
     pub(crate) fn version_range(&self) -> VersionRange {
         let mut range = VersionRange::default();
         for tree in self.changes.values() {
@@ -76,62 +84,92 @@ impl PendingChanges {
     }
 }
 
-/// Chronological journal of `PendingChanges` mutations within one import-rollback
-/// scope, replayed in reverse on rollback so each entry undoes exactly one tree
-/// operation.
+/// What every `PendingChanges` slot this import-rollback scope touched held when the
+/// scope began, recorded on first touch and restored wholesale on rollback.
 ///
-/// A single ordered log — not separate added/removed phases — is required because
-/// one scope can park a change and later unlock it. Within a single blob the
-/// lamport-ordered main pass makes that rare, but `import_batch` opens one scope
-/// across the whole batch, where later blobs routinely unlock what earlier blobs
-/// parked. Undoing "removed" after "added" as two independent phases resurrects
-/// those scope-local changes on rollback, leaving parked `Change`s whose
-/// `ContainerIdx` registrations the arena rollback already truncated.
+/// Snapshot-per-slot rather than a mutation log, for two reasons.
+///
+/// Correctness: one scope can park a change and later unlock it — `import_batch`
+/// opens a single scope across the whole batch, where later blobs routinely unlock
+/// what earlier blobs parked. Undoing individual mutations then depends on getting
+/// their relative order right, while restoring each slot to its pre-scope content is
+/// order-independent by construction.
+///
+/// Size: a slot created inside the scope only needs [`PendingSlot::Absent`], and a
+/// slot merely appended to only needs its original length. Cloning is limited to
+/// content that predates the scope, which is exactly what rollback cannot otherwise
+/// reconstruct — an out-of-order batch parks everything it later unlocks, so it
+/// clones nothing.
 #[derive(Debug, Default)]
 pub(crate) struct PendingChangesRollback {
-    log: Vec<PendingChangesLogEntry>,
+    slots: FxHashMap<(PeerID, Counter), PendingSlot>,
 }
 
 #[derive(Debug)]
-enum PendingChangesLogEntry {
-    /// One change was pushed onto the vec at `[peer][counter]`.
-    Added(PeerID, Counter),
-    /// The whole vec at `[peer][counter]` was removed.
-    Removed(PeerID, Counter, Vec<PendingChange>),
+enum PendingSlot {
+    /// The slot did not exist when the scope began; rollback drops it.
+    Absent,
+    /// The slot held this many changes when the scope began and has only been
+    /// appended to since; rollback truncates it back.
+    Truncate(usize),
+    /// What the slot held when the scope began, kept because the slot was removed
+    /// wholesale and cannot be recovered from the live map.
+    Restore(Vec<PendingChange>),
 }
 
 impl PendingChangesRollback {
-    fn record_added(&mut self, id: ID) {
-        self.log
-            .push(PendingChangesLogEntry::Added(id.peer, id.counter));
+    /// Record the slot before a change is pushed onto `[id.peer][id.counter]`.
+    /// `pre_len` is the slot's current length, or `None` if it does not exist yet.
+    fn record_added(&mut self, id: ID, pre_len: Option<usize>) {
+        self.slots
+            .entry((id.peer, id.counter))
+            .or_insert(match pre_len {
+                Some(len) => PendingSlot::Truncate(len),
+                None => PendingSlot::Absent,
+            });
     }
 
-    fn record_removed(&mut self, peer: PeerID, counter: Counter, changes: Vec<PendingChange>) {
-        self.log
-            .push(PendingChangesLogEntry::Removed(peer, counter, changes));
+    /// Record the slot while `[peer][counter]` is removed wholesale.
+    fn record_removed(&mut self, peer: PeerID, counter: Counter, removed: &[PendingChange]) {
+        match self.slots.entry((peer, counter)) {
+            Entry::Vacant(e) => {
+                e.insert(PendingSlot::Restore(removed.to_vec()));
+            }
+            Entry::Occupied(mut e) => {
+                // `Absent` stays absent (nothing here predates the scope) and
+                // `Restore` already holds the pre-scope content. Only `Truncate`
+                // has to materialize, and just the prefix it was pointing at:
+                // everything past it was pushed inside the scope, so rollback
+                // drops it either way.
+                if let PendingSlot::Truncate(pre_len) = *e.get() {
+                    debug_assert!(pre_len <= removed.len(), "slot shrank inside the scope");
+                    e.insert(PendingSlot::Restore(removed[..pre_len].to_vec()));
+                }
+            }
+        }
     }
 
     pub(crate) fn rollback(self, pending_changes: &mut PendingChanges) {
-        for entry in self.log.into_iter().rev() {
-            match entry {
-                PendingChangesLogEntry::Added(peer, counter) => {
-                    let Some(tree) = pending_changes.changes.get_mut(&peer) else {
-                        continue;
-                    };
-                    let Some(changes) = tree.get_mut(&counter) else {
-                        continue;
-                    };
-                    changes.pop();
-                    if changes.is_empty() {
+        for ((peer, counter), slot) in self.slots {
+            match slot {
+                PendingSlot::Absent => {
+                    if let Some(tree) = pending_changes.changes.get_mut(&peer) {
                         tree.remove(&counter);
                     }
-                    if tree.is_empty() {
-                        pending_changes.changes.remove(&peer);
+                }
+                PendingSlot::Truncate(pre_len) => {
+                    // The slot was never removed (that would have upgraded it to
+                    // `Restore`), so it is still here with `pre_len` or more entries.
+                    if let Some(changes) = pending_changes
+                        .changes
+                        .get_mut(&peer)
+                        .and_then(|tree| tree.get_mut(&counter))
+                    {
+                        changes.truncate(pre_len);
                     }
                 }
-                PendingChangesLogEntry::Removed(peer, counter, changes) => {
-                    // Reverse replay reaches the state right after the forward
-                    // removal, so the key is absent here; `insert` cannot clobber.
+                PendingSlot::Restore(changes) => {
+                    debug_assert!(!changes.is_empty(), "empty slots are never stored");
                     pending_changes
                         .changes
                         .entry(peer)
@@ -140,16 +178,24 @@ impl PendingChangesRollback {
                 }
             }
         }
+
+        pending_changes.changes.retain(|_, tree| !tree.is_empty());
     }
 }
 
 impl OpLog {
     fn push_pending_change(&mut self, missing_dep: ID, change: PendingChange) {
-        if let Some(rollback) = self.import_rollback.as_mut() {
-            rollback.pending.record_added(missing_dep);
+        let Self {
+            pending_changes,
+            import_rollback,
+            ..
+        } = self;
+        if let Some(rollback) = import_rollback.as_mut() {
+            let pre_len = pending_changes.slot_len(missing_dep.peer, missing_dep.counter);
+            rollback.pending.record_added(missing_dep, pre_len);
         }
 
-        self.pending_changes
+        pending_changes
             .changes
             .entry(missing_dep.peer)
             .or_default()
@@ -245,7 +291,7 @@ impl OpLog {
                 if let Some(rollback) = self.import_rollback.as_mut() {
                     rollback
                         .pending
-                        .record_removed(id.peer, cnt, pending_changes.clone());
+                        .record_removed(id.peer, cnt, &pending_changes);
                 }
                 pending_set.push(pending_changes);
             }

@@ -14,7 +14,8 @@ fn make_blobs(n_blobs: usize, ops_per_blob: usize, peer: u64) -> Vec<Vec<u8>> {
     let mut last_vv = doc.oplog_vv();
     for i in 0..n_blobs {
         for j in 0..ops_per_blob {
-            text.insert(text.len_unicode().min(j), "hello world ").unwrap();
+            text.insert(text.len_unicode().min(j), "hello world ")
+                .unwrap();
             map.insert(&format!("k{}", (i * ops_per_blob + j) % 64), j as i64)
                 .unwrap();
             list.push(j as i64).unwrap();
