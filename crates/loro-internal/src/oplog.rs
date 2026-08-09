@@ -268,8 +268,6 @@ impl OpLog {
 
     pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
         let mut ans = ImportChangesPreflight::default();
-        let pending_needs_state_apply_rollback =
-            self.pending_changes.has_state_apply_rollback_ops();
         for change in changes {
             if change.ctr_end() <= self.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 continue;
@@ -304,7 +302,17 @@ impl OpLog {
         // Keep this narrow: text/map-only pending changes cannot return a
         // state-apply error, and forcing rollback there adds lock traffic to
         // small sync/import workloads.
-        if ans.applies_to_dag && pending_needs_state_apply_rollback {
+        //
+        // Scan pending last, and only when it can still change the answer:
+        // `has_state_apply_rollback_ops` walks every parked change and every op in
+        // it, while a blob that only parks (deps not here yet) leaves
+        // `applies_to_dag` false. Evaluating it eagerly made a batch of N
+        // out-of-order blobs quadratic, since each blob re-scanned the pending set
+        // the earlier blobs had grown.
+        if ans.applies_to_dag
+            && !ans.needs_state_apply_rollback
+            && self.pending_changes.has_state_apply_rollback_ops()
+        {
             ans.needs_state_apply_rollback = true;
         }
 
