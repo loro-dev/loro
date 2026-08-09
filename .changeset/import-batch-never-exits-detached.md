@@ -21,3 +21,9 @@ The batch now runs inside an OpLog rollback scope. If the closing checkout canno
 apply the accumulated changes, the whole batch is rolled back and `importBatch`
 returns the state-apply error with the document still attached and unchanged, instead
 of trapping. A panic inside the batch reattaches before it is re-raised.
+
+The pending-changes rollback journal is now a single chronological log replayed in
+reverse. The previous two-phase undo resurrected changes that the same import both
+parked and unlocked — routine across a batch — leaving pending entries that referenced
+container registrations the rollback had already discarded, and pre-batch pending
+changes unlocked by a rolled-back batch are now re-parked instead of silently dropped.

@@ -76,44 +76,69 @@ impl PendingChanges {
     }
 }
 
+/// Chronological journal of `PendingChanges` mutations within one import-rollback
+/// scope, replayed in reverse on rollback so each entry undoes exactly one tree
+/// operation.
+///
+/// A single ordered log — not separate added/removed phases — is required because
+/// one scope can park a change and later unlock it. Within a single blob the
+/// lamport-ordered main pass makes that rare, but `import_batch` opens one scope
+/// across the whole batch, where later blobs routinely unlock what earlier blobs
+/// parked. Undoing "removed" after "added" as two independent phases resurrects
+/// those scope-local changes on rollback, leaving parked `Change`s whose
+/// `ContainerIdx` registrations the arena rollback already truncated.
 #[derive(Debug, Default)]
 pub(crate) struct PendingChangesRollback {
-    added: Vec<(PeerID, Counter)>,
-    removed: Vec<(PeerID, Counter, Vec<PendingChange>)>,
+    log: Vec<PendingChangesLogEntry>,
+}
+
+#[derive(Debug)]
+enum PendingChangesLogEntry {
+    /// One change was pushed onto the vec at `[peer][counter]`.
+    Added(PeerID, Counter),
+    /// The whole vec at `[peer][counter]` was removed.
+    Removed(PeerID, Counter, Vec<PendingChange>),
 }
 
 impl PendingChangesRollback {
     fn record_added(&mut self, id: ID) {
-        self.added.push((id.peer, id.counter));
+        self.log
+            .push(PendingChangesLogEntry::Added(id.peer, id.counter));
     }
 
     fn record_removed(&mut self, peer: PeerID, counter: Counter, changes: Vec<PendingChange>) {
-        self.removed.push((peer, counter, changes));
+        self.log
+            .push(PendingChangesLogEntry::Removed(peer, counter, changes));
     }
 
     pub(crate) fn rollback(self, pending_changes: &mut PendingChanges) {
-        for (peer, counter) in self.added.into_iter().rev() {
-            let Some(tree) = pending_changes.changes.get_mut(&peer) else {
-                continue;
-            };
-            let Some(changes) = tree.get_mut(&counter) else {
-                continue;
-            };
-            changes.pop();
-            if changes.is_empty() {
-                tree.remove(&counter);
+        for entry in self.log.into_iter().rev() {
+            match entry {
+                PendingChangesLogEntry::Added(peer, counter) => {
+                    let Some(tree) = pending_changes.changes.get_mut(&peer) else {
+                        continue;
+                    };
+                    let Some(changes) = tree.get_mut(&counter) else {
+                        continue;
+                    };
+                    changes.pop();
+                    if changes.is_empty() {
+                        tree.remove(&counter);
+                    }
+                    if tree.is_empty() {
+                        pending_changes.changes.remove(&peer);
+                    }
+                }
+                PendingChangesLogEntry::Removed(peer, counter, changes) => {
+                    // Reverse replay reaches the state right after the forward
+                    // removal, so the key is absent here; `insert` cannot clobber.
+                    pending_changes
+                        .changes
+                        .entry(peer)
+                        .or_default()
+                        .insert(counter, changes);
+                }
             }
-            if tree.is_empty() {
-                pending_changes.changes.remove(&peer);
-            }
-        }
-
-        for (peer, counter, changes) in self.removed.into_iter().rev() {
-            pending_changes
-                .changes
-                .entry(peer)
-                .or_default()
-                .insert(counter, changes);
         }
     }
 }

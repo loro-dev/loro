@@ -379,11 +379,129 @@ fn import_batch_with_unappliable_update_stays_attached_and_rolls_back() {
     );
     assert!(!dst.oplog().lock().batch_importing);
     assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+    // The chain blobs were parked and then unlocked *within* the batch; its rollback
+    // must not resurrect them. A resurrected entry would carry `ContainerIdx`
+    // registrations the arena rollback just truncated.
+    assert_eq!(
+        pending_len(&dst),
+        0,
+        "changes the batch itself parked must not survive its rollback"
+    );
 
     // Still fully usable afterwards.
     dst.get_text("text").insert_unicode(0, "after").unwrap();
     dst.commit_then_renew();
     assert_eq!(dst.state_frontiers(), dst.oplog_frontiers());
+}
+
+/// A batch can unlock changes that were parked *before* it started. If the batch is
+/// rolled back, those changes must be re-parked, or the document would silently drop
+/// them and diverge once their deps finally arrive.
+#[test]
+fn failed_import_batch_reparks_prebatch_pending_changes() {
+    let src = LoroDoc::new_auto_commit();
+    src.set_peer_id(1).unwrap();
+    src.get_map("map").insert("seed", "base").unwrap();
+    let update_base = src
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let version_base = src.oplog_vv();
+    src.get_map("map").insert("later", "value").unwrap();
+    let update_later = src.export(ExportMode::updates(&version_base)).unwrap();
+
+    let dst = LoroDoc::new();
+    dst.import(&update_later).unwrap();
+    assert_eq!(pending_len(&dst), 1);
+    let vv_before = dst.oplog_vv();
+    let frontiers_before = dst.oplog_frontiers();
+    let state_before = dst.get_deep_value();
+
+    // `update_base` unlocks the pre-batch pending change mid-batch; the malformed
+    // blob then makes the closing reattach fail and rolls the whole batch back.
+    let err = dst
+        .import_batch(&[update_base.clone(), malformed_binary_update(31)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert!(err.to_string().contains("list diff"), "{err:?}");
+    assert!(!dst.is_detached());
+    assert_eq!(
+        pending_len(&dst),
+        1,
+        "the pending change the batch unlocked must be re-parked"
+    );
+    assert_doc_unchanged(&dst, &vv_before, &frontiers_before, &state_before);
+
+    // Retrying without the bad blob applies base and unlocks the re-parked change.
+    dst.import(&update_base).unwrap();
+    assert_eq!(pending_len(&dst), 0);
+    assert_eq!(dst.oplog_vv(), src.oplog_vv());
+    assert_eq!(dst.get_deep_value(), src.get_deep_value());
+}
+
+/// One blob can both park a change and unlock it in the same import: B1 parks while
+/// A1 is missing, B0 unlocks A1, and the cascade then applies B1. If that import's
+/// state apply fails, rollback must re-park only what was pending *before* the
+/// import — resurrecting the import's own parked changes would leave pending entries
+/// whose arena registrations were just rolled back.
+#[test]
+fn failed_import_reparks_only_preexisting_pending_changes() {
+    use loro_common::IdSpan;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_text("text").insert_unicode(0, "A0").unwrap();
+    let u_a0 = a
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let vv_a0 = a.oplog_vv();
+    let a_counter_after_a0 = *vv_a0.get(&1).unwrap();
+
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    b.import(&u_a0).unwrap();
+    b.get_text("text").insert_unicode(2, "B0").unwrap();
+    let u_b0 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+    a.import(&u_b0).unwrap();
+    a.get_text("text").insert_unicode(4, "A1").unwrap();
+    let a_counter_after_a1 = *a.oplog_vv().get(&1).unwrap();
+    // Peer-A ops only (A1), without B0 — pending on a doc that only has A0.
+    let u_a1_only = a
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(
+            1,
+            a_counter_after_a0,
+            a_counter_after_a1,
+        )]))
+        .unwrap();
+
+    b.import(&u_a1_only).unwrap();
+    b.get_text("text").insert_unicode(6, "B1").unwrap();
+    // Single blob with B0 and B1; B1 depends on A1.
+    let u_b0_b1 = b.export(ExportMode::updates(&vv_a0)).unwrap();
+
+    let d = LoroDoc::new_auto_commit();
+    d.set_peer_id(3).unwrap();
+    d.import(&u_a0).unwrap();
+    d.import(&u_a1_only).unwrap();
+    assert_eq!(pending_len(&d), 1);
+    let vv_before = d.oplog_vv();
+    let frontiers_before = d.oplog_frontiers();
+    let state_before = d.get_deep_value();
+
+    fail_next_import_state_apply_for_test();
+    let err = d.import(&u_b0_b1).unwrap_err();
+    assert!(err.to_string().contains("state apply failpoint"), "{err:?}");
+    assert_eq!(
+        pending_len(&d),
+        1,
+        "only the pre-import pending change may be re-parked"
+    );
+    assert_doc_unchanged(&d, &vv_before, &frontiers_before, &state_before);
+
+    // Retrying converges.
+    d.import(&u_b0_b1).unwrap();
+    assert_eq!(pending_len(&d), 0);
+    assert_eq!(d.oplog_vv(), b.oplog_vv());
+    assert_eq!(d.get_deep_value(), b.get_deep_value());
 }
 
 /// The same guarantee for a panic (malformed remote data reaching an `unreachable!`

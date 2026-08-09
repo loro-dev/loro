@@ -1,6 +1,6 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-08-08.
+Verified against code 2026-08-09.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) does not import blobs the
 way `import` does. It stops the auto-commit txn, keeps the txn mutex for the whole
@@ -46,6 +46,15 @@ Consequences to keep in mind:
   only happens on the closing-checkout failure, where the alternative is an unusable doc.
 - After `rollback_import` the shared `self.diff_calculator` still caches ranges against
   the rolled-back history, so `finish` replaces it with a fresh `DiffCalculator::new(true)`.
+- `PendingChangesRollback` (`src/oplog/pending_changes.rs`) must be a **single
+  chronological log replayed in reverse**, not separate added/removed phases. One scope
+  can park a change and later unlock it — rare within a single blob (the lamport-ordered
+  main pass applies deps first), routine across a batch, where later blobs unlock what
+  earlier blobs parked. Two-phase undo resurrects those scope-local changes on rollback,
+  leaving parked `Change`s whose `ContainerIdx` registrations the arena rollback already
+  truncated (dangling indices — a corruption vector on the next unlock). The batch must
+  also *re-park* pre-batch pending changes it unlocked, or they are silently dropped and
+  the doc diverges when their deps arrive; the same log handles both directions.
 
 ## Why `catch_unwind`, not `Drop`
 
@@ -65,9 +74,12 @@ fix buys in WASM is that the common malformed-blob case is now an `Err` returned
 ## Tests
 
 - `crates/loro-internal/src/tests/import_atomicity.rs`:
-  `import_batch_with_unappliable_update_stays_attached_and_rolls_back`,
+  `import_batch_with_unappliable_update_stays_attached_and_rolls_back` (also pins that
+  batch-parked pendings do not survive the rollback),
   `import_batch_panic_leaves_doc_attached` (uses the `panic_at_batch_import_blob_for_test`
-  failpoint), `import_batch_keeps_explicitly_detached_doc_detached`.
+  failpoint), `import_batch_keeps_explicitly_detached_doc_detached`,
+  `failed_import_batch_reparks_prebatch_pending_changes`,
+  `failed_import_reparks_only_preexisting_pending_changes`.
 - `crates/loro/tests/contracts/sync_import.rs`:
   `import_batch_failure_leaves_doc_attached_and_unchanged`.
 - `crates/loro-internal/src/oplog/pending_changes.rs`: the `import_batch_*` regressions
