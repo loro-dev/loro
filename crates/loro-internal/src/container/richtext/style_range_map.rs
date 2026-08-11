@@ -219,6 +219,48 @@ impl StyleRangeMap {
         false
     }
 
+    /// Whether every position in the range already resolves `key` to `value`.
+    ///
+    /// Unlike [`Self::get_styles_of_range`], this works when the range spans
+    /// multiple style ranges, so callers can skip marks that would not change
+    /// anything (each redundant mark op leaves a pair of style anchors in the
+    /// state forever).
+    pub(crate) fn range_has_key_value(
+        &self,
+        range: Range<usize>,
+        key: &str,
+        value: &loro_common::LoroValue,
+    ) -> bool {
+        if range.is_empty() || !self.has_style {
+            return false;
+        }
+
+        let mut query = self.tree.query::<LengthFinder>(&range.start).unwrap();
+        let mut pos = range.start;
+        loop {
+            let elem = self.tree.get_elem(query.cursor.leaf).unwrap();
+            let remaining_in_elem = elem.len - query.cursor.offset;
+            if remaining_in_elem > 0 && !elem.styles.has_key_value(key, value) {
+                return false;
+            }
+
+            let next_pos = pos + remaining_in_elem;
+            if next_pos >= range.end {
+                break;
+            }
+
+            match self.tree.next_elem(query.cursor) {
+                Some(next_cursor) => {
+                    pos = next_pos;
+                    query.cursor = next_cursor;
+                }
+                None => break,
+            }
+        }
+
+        true
+    }
+
     /// Insert entities at `pos` with length of `len`
     ///
     /// # Internal
