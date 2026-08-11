@@ -1204,9 +1204,11 @@ impl RichtextStateLoader {
     }
 }
 
+pub(crate) use snapshot::redact_dead_style_values;
+
 mod snapshot {
-    use loro_common::{IdFull, InternalString, LoroValue, PeerID};
-    use rustc_hash::FxHashMap;
+    use loro_common::{IdFull, InternalString, LoroResult, LoroValue, PeerID, ID};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use serde_columnar::columnar;
     use std::sync::Arc;
 
@@ -1255,6 +1257,132 @@ mod snapshot {
         spans: Vec<EncodedTextSpan>,
         keys: Vec<InternalString>,
         marks: Vec<EncodedMark>,
+    }
+
+    /// Nulls out the values of style-anchor pairs that no longer enclose any text
+    /// ("dead" pairs) in an encoded richtext state payload (the bytes produced by
+    /// `RichtextState::encode_snapshot_fast`).
+    ///
+    /// Shallow-snapshot export uses this: history before the shallow root is
+    /// trimmed, so a dead pair's value would otherwise ship in the export even
+    /// though no read API can reach it. See
+    /// `context/shallow-snapshot-style-redaction.md` for the invariants:
+    ///
+    /// - Anchors themselves must be preserved: op positions are entity indexes
+    ///   that count each anchor, so removing them would corrupt replay.
+    /// - Pairs whose style expands on both sides are kept intact: an empty
+    ///   both-expand pair still captures future inserts, so its value is live.
+    /// - When `only_pairs` is `Some`, only pairs whose `StyleStart` id is in the
+    ///   set are touched (used to keep an exported latest state consistent with
+    ///   the redacted shallow-root state).
+    ///
+    /// Returns `None` when nothing changed, otherwise the rewritten payload and
+    /// the `StyleStart` ids of the redacted pairs.
+    pub(crate) fn redact_dead_style_values(
+        payload: &[u8],
+        only_pairs: Option<&FxHashSet<ID>>,
+    ) -> LoroResult<Option<(Vec<u8>, Vec<ID>)>> {
+        const CTX: &str = "Redact dead style values failed";
+        // Borrow the text prefix without copying it; only the columnar tail is
+        // ever rewritten.
+        let (_text, mut rest) = postcard::take_from_bytes::<&str>(payload)
+            .map_err(|_| state_decode_error(format!("{CTX}: invalid text value")))?;
+        let peers = decode_peer_table(&mut rest, CTX)?;
+        let prefix_len = payload.len() - rest.len();
+        let encoded = serde_columnar::from_bytes::<EncodedText>(rest)
+            .map_err(|err| state_decode_error(format!("{CTX}: invalid spans: {err}")))?;
+        if encoded.marks.is_empty() {
+            return Ok(None);
+        }
+
+        let EncodedText {
+            spans,
+            keys,
+            mut marks,
+        } = encoded;
+        // Open pairs keyed by the id the matching `StyleEnd` span will carry
+        // (`encode_snapshot_fast` writes the end span with start.counter + 1).
+        // The value records the pair's mark index, its start counter, and how
+        // many text spans had been seen when it opened: if that count is
+        // unchanged when the pair closes, no text lies between the anchors.
+        let mut open: FxHashMap<(usize, i32), (usize, i32, usize)> = FxHashMap::default();
+        let mut start_count = 0usize;
+        let mut text_spans_seen = 0usize;
+        let mut redacted = Vec::new();
+        for span in &spans {
+            match span.len {
+                0 => {
+                    let mark_idx = start_count;
+                    start_count += 1;
+                    if mark_idx >= marks.len() {
+                        return Err(state_decode_error(format!("{CTX}: missing style mark")));
+                    }
+                    let end_counter = span
+                        .counter
+                        .checked_add(1)
+                        .ok_or_else(|| state_decode_error(format!("{CTX}: counter overflow")))?;
+                    if open
+                        .insert(
+                            (span.peer_idx, end_counter),
+                            (mark_idx, span.counter, text_spans_seen),
+                        )
+                        .is_some()
+                    {
+                        return Err(state_decode_error(format!("{CTX}: duplicated style start")));
+                    }
+                }
+                -1 => {
+                    let Some((mark_idx, start_counter, text_spans_at_open)) =
+                        open.remove(&(span.peer_idx, span.counter))
+                    else {
+                        return Err(state_decode_error(format!("{CTX}: unmatched style end")));
+                    };
+                    if text_spans_at_open != text_spans_seen {
+                        // Text lies between the anchors; the pair is alive.
+                        continue;
+                    }
+                    let mark = &mut marks[mark_idx];
+                    let info = TextStyleInfoFlag::from_byte(mark.info);
+                    if info.expand_before() && info.expand_after() {
+                        // An empty both-expand pair still styles future inserts.
+                        continue;
+                    }
+                    if mark.value.is_null() {
+                        continue;
+                    }
+                    let peer = decode_peer_from_table(&peers, span.peer_idx, CTX)?;
+                    let id = ID::new(peer, start_counter);
+                    if only_pairs.is_some_and(|allow| !allow.contains(&id)) {
+                        continue;
+                    }
+                    mark.value = LoroValue::Null;
+                    redacted.push(id);
+                }
+                len if len > 0 => text_spans_seen += 1,
+                _ => {
+                    return Err(state_decode_error(format!(
+                        "{CTX}: invalid text span length"
+                    )));
+                }
+            }
+        }
+
+        if !open.is_empty() {
+            return Err(state_decode_error(format!("{CTX}: unclosed style mark")));
+        }
+        if start_count != marks.len() {
+            return Err(state_decode_error(format!("{CTX}: unused style mark")));
+        }
+        if redacted.is_empty() {
+            return Ok(None);
+        }
+
+        let mut out = Vec::with_capacity(payload.len());
+        out.extend_from_slice(&payload[..prefix_len]);
+        out.extend_from_slice(
+            &serde_columnar::to_vec(&EncodedText { spans, keys, marks }).unwrap(),
+        );
+        Ok(Some((out, redacted)))
     }
 
     impl FastStateSnapshot for RichtextState {
@@ -1512,6 +1640,186 @@ mod snapshot {
                 ctx,
             )
             .is_err());
+        }
+
+        const PEER: PeerID = 7;
+
+        fn payload(text: &str, spans: Vec<EncodedTextSpan>, marks: Vec<EncodedMark>) -> Vec<u8> {
+            let mut out = Vec::new();
+            postcard::to_io(text, &mut out).unwrap();
+            leb128::write::unsigned(&mut out, 1).unwrap();
+            out.extend_from_slice(&PEER.to_le_bytes());
+            out.extend_from_slice(
+                &serde_columnar::to_vec(&EncodedText {
+                    spans,
+                    keys: vec!["hl".into(), "x".into()],
+                    marks,
+                })
+                .unwrap(),
+            );
+            out
+        }
+
+        fn span(counter: i32, len: i32) -> EncodedTextSpan {
+            EncodedTextSpan {
+                peer_idx: 0,
+                counter,
+                lamport_sub_counter: 0,
+                len,
+            }
+        }
+
+        fn mark(value: LoroValue, expand: richtext::ExpandType) -> EncodedMark {
+            EncodedMark {
+                key_idx: 0,
+                value,
+                info: TextStyleInfoFlag::new(expand).to_byte(),
+            }
+        }
+
+        fn decoded_mark_values(payload: &[u8]) -> Vec<LoroValue> {
+            let (_, mut rest) = postcard::take_from_bytes::<&str>(payload).unwrap();
+            decode_peer_table(&mut rest, "test").unwrap();
+            serde_columnar::from_bytes::<EncodedText>(rest)
+                .unwrap()
+                .marks
+                .into_iter()
+                .map(|m| m.value)
+                .collect()
+        }
+
+        /// "a" [S] [E] "d" — a dead pair between two text chunks.
+        fn dead_pair_payload(expand: richtext::ExpandType) -> Vec<u8> {
+            payload(
+                "ad",
+                vec![span(0, 1), span(10, 0), span(11, -1), span(1, 1)],
+                vec![mark(LoroValue::String("SECRET".into()), expand)],
+            )
+        }
+
+        #[test]
+        fn redacts_dead_pair_and_is_idempotent() {
+            let p = dead_pair_payload(richtext::ExpandType::After);
+            let (new_payload, ids) = redact_dead_style_values(&p, None).unwrap().unwrap();
+            assert_eq!(ids, vec![ID::new(PEER, 10)]);
+            assert_eq!(decoded_mark_values(&new_payload), vec![LoroValue::Null]);
+
+            // The redacted payload still decodes into a valid state.
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Text);
+            let configure = crate::configure::Configure::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+            let (value, rest) = RichtextState::decode_value(&new_payload).unwrap();
+            let mut state = RichtextState::decode_snapshot_fast(idx, (value, rest), ctx).unwrap();
+            assert_eq!(state.get_value().into_string().unwrap().to_string(), "ad");
+
+            // Idempotent: a second pass reports nothing to do.
+            assert!(redact_dead_style_values(&new_payload, None)
+                .unwrap()
+                .is_none());
+        }
+
+        #[test]
+        fn keeps_alive_and_both_expand_pairs() {
+            // Text between the anchors: alive, untouched.
+            let alive = payload(
+                "a",
+                vec![span(10, 0), span(0, 1), span(11, -1)],
+                vec![mark(
+                    LoroValue::String("SECRET".into()),
+                    richtext::ExpandType::After,
+                )],
+            );
+            assert!(redact_dead_style_values(&alive, None).unwrap().is_none());
+
+            // Dead but both-expand: still styles future inserts, untouched.
+            let both = dead_pair_payload(richtext::ExpandType::Both);
+            assert!(redact_dead_style_values(&both, None).unwrap().is_none());
+        }
+
+        #[test]
+        fn respects_only_pairs_whitelist() {
+            let p = dead_pair_payload(richtext::ExpandType::None);
+            let mut allow = FxHashSet::default();
+            allow.insert(ID::new(PEER, 999));
+            assert!(redact_dead_style_values(&p, Some(&allow))
+                .unwrap()
+                .is_none());
+
+            allow.insert(ID::new(PEER, 10));
+            let (_, ids) = redact_dead_style_values(&p, Some(&allow)).unwrap().unwrap();
+            assert_eq!(ids, vec![ID::new(PEER, 10)]);
+        }
+
+        #[test]
+        fn handles_interleaved_pairs() {
+            // "ab" [S1 "a"..] [S2] [E1] [E2]: pair 1 encloses text via its start
+            // before "b"? Layout: [S1] "b" [S2] [E1] [E2] over text "ab" with a
+            // leading "a": S1 opens before "b" so it is alive; S2 opens after all
+            // text and closes empty, so it is dead.
+            let p = payload(
+                "ab",
+                vec![
+                    span(0, 1),   // "a"
+                    span(10, 0),  // S1
+                    span(1, 1),   // "b"
+                    span(20, 0),  // S2
+                    span(11, -1), // E1
+                    span(21, -1), // E2
+                ],
+                vec![
+                    mark(
+                        LoroValue::String("ALIVE".into()),
+                        richtext::ExpandType::After,
+                    ),
+                    mark(
+                        LoroValue::String("DEAD".into()),
+                        richtext::ExpandType::After,
+                    ),
+                ],
+            );
+            let (new_payload, ids) = redact_dead_style_values(&p, None).unwrap().unwrap();
+            assert_eq!(ids, vec![ID::new(PEER, 20)]);
+            assert_eq!(
+                decoded_mark_values(&new_payload),
+                vec![LoroValue::String("ALIVE".into()), LoroValue::Null]
+            );
+        }
+
+        #[test]
+        fn rejects_malformed_span_structures() {
+            // Start without a matching end.
+            let unclosed = payload(
+                "",
+                vec![span(10, 0)],
+                vec![mark(LoroValue::Bool(true), richtext::ExpandType::After)],
+            );
+            assert!(redact_dead_style_values(&unclosed, None).is_err());
+
+            // End without a start. (An empty mark list short-circuits before
+            // validation, so give it one mark to reach the scan.)
+            let unmatched = payload(
+                "",
+                vec![span(11, -1)],
+                vec![mark(LoroValue::Bool(true), richtext::ExpandType::After)],
+            );
+            assert!(redact_dead_style_values(&unmatched, None).is_err());
+
+            // More starts than marks.
+            let missing_mark = payload(
+                "",
+                vec![span(10, 0), span(11, -1), span(20, 0), span(21, -1)],
+                vec![mark(LoroValue::Bool(true), richtext::ExpandType::After)],
+            );
+            assert!(redact_dead_style_values(&missing_mark, None).is_err());
+        }
+
+        #[test]
+        fn skips_payload_without_marks() {
+            let p = payload("ab", vec![span(0, 2)], vec![]);
+            assert!(redact_dead_style_values(&p, None).unwrap().is_none());
         }
     }
 }

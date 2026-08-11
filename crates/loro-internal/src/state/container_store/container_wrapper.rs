@@ -485,6 +485,24 @@ impl ContainerWrapper {
         output.into()
     }
 
+    /// Byte offset where the container state payload starts inside an encoded
+    /// [`ContainerWrapper`] value (after the kind byte, depth, and parent id).
+    pub(crate) fn payload_offset(bytes: &[u8]) -> LoroResult<usize> {
+        fn err() -> LoroError {
+            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
+        }
+
+        if bytes.is_empty() {
+            return Err(err());
+        }
+        ContainerType::try_from_u8(bytes[0])?;
+        let mut reader = &bytes[1..];
+        leb128::read::unsigned(&mut reader).map_err(|_| err())?;
+        let (_parent, reader) =
+            postcard::take_from_bytes::<Option<ContainerID>>(reader).map_err(|_| err())?;
+        Ok(bytes.len() - reader.len())
+    }
+
     #[allow(unused)]
     pub fn decode_parent(b: &[u8]) -> Option<ContainerID> {
         let mut bytes = &b[1..];

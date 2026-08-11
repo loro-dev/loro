@@ -4,7 +4,16 @@ use std::{
 };
 
 use super::gen_action;
-use loro::{cursor::CannotFindRelativePosition, ExportMode, Frontiers, LoroDoc, ID};
+use loro::{
+    cursor::CannotFindRelativePosition, ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue,
+    StyleConfig, StyleConfigMap, ID,
+};
+
+fn bytes_contain(haystack: &[u8], needle: &str) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|w| w == needle.as_bytes())
+}
 
 #[test]
 fn state_only_at_concurrent_frontiers_excludes_later_ops() -> anyhow::Result<()> {
@@ -511,5 +520,253 @@ fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Re
     s.import(&p2_updates)
         .expect("shallow doc should accept cross-peer op whose deps include the shallow boundary");
 
+    Ok(())
+}
+
+/// Shallow snapshots are documented as a content-redaction mechanism: exporting at the
+/// current frontiers is supposed to drop the trimmed history, leaving only the live state.
+/// The value of a rich-text style op whose whole range has been deleted must be dropped
+/// just like deleted character content is.
+///
+/// Regression test contributed in <https://github.com/loro-dev/loro/pull/1057> by @nightscape.
+#[test]
+fn shallow_snapshot_drops_deleted_text_and_dead_style_values() -> anyhow::Result<()> {
+    const SECRET_STYLE_VALUE: &str = "SECRET-STYLE-VALUE-e5f1";
+    const SECRET_TEXT: &str = "SECRET-TEXT-a7b2";
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, SECRET_TEXT)?;
+    let len = SECRET_TEXT.chars().count();
+    text.mark(
+        0..len,
+        "comment",
+        LoroValue::String(SECRET_STYLE_VALUE.into()),
+    )?;
+    doc.commit();
+
+    text.delete(0, len)?;
+    doc.commit();
+
+    // Both secrets are unreachable through every read API.
+    assert_eq!(text.to_string(), "");
+    let live_state = format!("{:?}", doc.get_deep_value());
+    assert!(!live_state.contains(SECRET_TEXT));
+    assert!(!live_state.contains(SECRET_STYLE_VALUE));
+
+    let shallow = doc.export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))?;
+
+    assert!(
+        !bytes_contain(&shallow, SECRET_TEXT),
+        "deleted text content must not survive a shallow snapshot"
+    );
+    assert!(
+        !bytes_contain(&shallow, SECRET_STYLE_VALUE),
+        "style value of a fully deleted range must not survive a shallow snapshot"
+    );
+
+    // Re-export from the imported shallow doc (the reuse-existing-root-bytes path)
+    // must stay clean and importable.
+    let imported = LoroDoc::new();
+    imported.import(&shallow)?;
+    let reexported = imported.export(ExportMode::shallow_snapshot(&imported.oplog_frontiers()))?;
+    assert!(
+        !bytes_contain(&reexported, SECRET_STYLE_VALUE),
+        "style value must not survive re-export of an imported shallow snapshot"
+    );
+    let imported_again = LoroDoc::new();
+    imported_again.import(&reexported)?;
+    assert_eq!(imported_again.get_deep_value(), doc.get_deep_value());
+
+    Ok(())
+}
+
+/// An empty both-expand style pair still captures future inserts, so its value is
+/// live data: redacting it would diverge from full-history replicas. It must be
+/// kept, and both replicas must agree after typing into the collapsed range.
+#[test]
+fn shallow_snapshot_keeps_live_both_expand_style_value() -> anyhow::Result<()> {
+    fn cfg() -> StyleConfigMap {
+        let mut map = StyleConfigMap::new();
+        map.insert(
+            "hl".into(),
+            StyleConfig {
+                expand: ExpandType::Both,
+            },
+        );
+        map
+    }
+
+    let a = LoroDoc::new();
+    a.set_peer_id(1)?;
+    a.config_text_style(cfg());
+    let ta = a.get_text("text");
+    ta.insert(0, "abcd")?;
+    ta.mark(1..3, "hl", LoroValue::String("BOTH-EXPAND-VALUE".into()))?;
+    a.commit();
+    ta.delete(1, 2)?;
+    a.commit();
+
+    let bytes = a.export(ExportMode::shallow_snapshot(&a.oplog_frontiers()))?;
+    assert!(
+        bytes_contain(&bytes, "BOTH-EXPAND-VALUE"),
+        "a live both-expand style value must be kept"
+    );
+
+    let b = LoroDoc::new();
+    b.config_text_style(cfg());
+    b.import(&bytes)?;
+
+    // Typing into the collapsed range picks the style back up on both replicas.
+    let vv = a.oplog_vv();
+    ta.insert(1, "x")?;
+    a.commit();
+    b.import(&a.export(ExportMode::updates(&vv))?)?;
+
+    let rendered_a = format!("{:?}", ta.get_richtext_value());
+    let rendered_b = format!("{:?}", b.get_text("text").get_richtext_value());
+    assert_eq!(rendered_a, rendered_b);
+    assert!(rendered_b.contains("BOTH-EXPAND-VALUE"));
+    Ok(())
+}
+
+/// A style that is alive at the requested shallow root and only dies in the
+/// retained tail must keep its value: the imported doc can check out back to the
+/// root and must render it. Re-exporting at the tip then drops it.
+#[test]
+fn shallow_snapshot_keeps_style_alive_at_root_and_redacts_on_reexport() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "hello")?;
+    text.mark(0..5, "comment", LoroValue::String("KEEP-ME-42".into()))?;
+    doc.commit();
+    let root_frontiers = doc.oplog_frontiers();
+    text.delete(0, 5)?;
+    doc.commit();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&root_frontiers))?;
+    assert!(
+        bytes_contain(&bytes, "KEEP-ME-42"),
+        "style alive at the shallow root must keep its value"
+    );
+
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    assert_eq!(imported.get_text("text").to_string(), "");
+    imported.checkout(&root_frontiers)?;
+    let styled = format!("{:?}", imported.get_text("text").get_richtext_value());
+    assert!(styled.contains("KEEP-ME-42"));
+    imported.checkout_to_latest();
+
+    // At the imported doc's tip the pair is dead, so a re-export rooted there
+    // must drop the value.
+    let reexported = imported.export(ExportMode::shallow_snapshot(&imported.oplog_frontiers()))?;
+    assert!(!bytes_contain(&reexported, "KEEP-ME-42"));
+    Ok(())
+}
+
+/// When the retained-op count exceeds the threshold the export also carries the
+/// encoded latest state, which contains the same dead anchors and must be
+/// redacted with the same pair set.
+#[test]
+fn shallow_snapshot_with_latest_state_bytes_redacts_dead_style_values() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "secret")?;
+    text.mark(
+        0..6,
+        "comment",
+        LoroValue::String("SECRET-STYLE-9d3c".into()),
+    )?;
+    doc.commit();
+    text.delete(0, 6)?;
+    doc.commit();
+    let start = doc.oplog_frontiers();
+
+    // Make the latest text state differ from the root state so its entry
+    // survives `remove_same` and must be redacted via the whitelist, and push
+    // the retained-op count above the no-latest-state threshold.
+    text.insert(0, "later")?;
+    let list = doc.get_list("filler");
+    for i in 0..300 {
+        list.push(i)?;
+    }
+    doc.commit();
+
+    let bytes = doc.export(ExportMode::shallow_snapshot(&start))?;
+    assert!(!bytes_contain(&bytes, "SECRET-STYLE-9d3c"));
+
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    assert_eq!(imported.get_deep_value(), doc.get_deep_value());
+    Ok(())
+}
+
+#[test]
+fn state_only_snapshot_redacts_dead_style_values() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "abc")?;
+    text.mark(0..3, "comment", LoroValue::String("SECRET-SO-77".into()))?;
+    doc.commit();
+    text.delete(0, 3)?;
+    doc.commit();
+
+    let f = doc.oplog_frontiers();
+    let bytes = doc.export(ExportMode::state_only(Some(&f)))?;
+    assert!(!bytes_contain(&bytes, "SECRET-SO-77"));
+
+    let imported = LoroDoc::new();
+    imported.import(&bytes)?;
+    assert_eq!(imported.get_text("text").to_string(), "");
+    Ok(())
+}
+
+/// Dead pairs of every non-both expand kind are redacted, and typing at the
+/// collapsed position behaves identically on the exporter and the shallow
+/// replica afterwards.
+#[test]
+fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Result<()> {
+    for expand in [ExpandType::After, ExpandType::Before, ExpandType::None] {
+        let cfg = || {
+            let mut map = StyleConfigMap::new();
+            map.insert("hl".into(), StyleConfig { expand });
+            map
+        };
+
+        let a = LoroDoc::new();
+        a.set_peer_id(1)?;
+        a.config_text_style(cfg());
+        let ta = a.get_text("text");
+        ta.insert(0, "abcd")?;
+        ta.mark(1..3, "hl", LoroValue::String("SECRET-EXP-11".into()))?;
+        a.commit();
+        ta.delete(1, 2)?;
+        a.commit();
+
+        let bytes = a.export(ExportMode::shallow_snapshot(&a.oplog_frontiers()))?;
+        assert!(
+            !bytes_contain(&bytes, "SECRET-EXP-11"),
+            "expand={expand:?}: dead style value must be redacted"
+        );
+
+        let b = LoroDoc::new();
+        b.config_text_style(cfg());
+        b.import(&bytes)?;
+
+        let vv = a.oplog_vv();
+        ta.insert(1, "x")?;
+        a.commit();
+        b.import(&a.export(ExportMode::updates(&vv))?)?;
+        assert_eq!(
+            format!("{:?}", ta.get_richtext_value()),
+            format!("{:?}", b.get_text("text").get_richtext_value()),
+            "expand={expand:?}"
+        );
+    }
     Ok(())
 }

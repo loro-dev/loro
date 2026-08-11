@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use rle::HasLength;
+use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
 use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
@@ -8,7 +9,11 @@ use crate::{
     container::{idx::ContainerIdx, list::list_op::InnerListOp},
     dag::DagUtils,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
-    state::{container_store::FRONTIERS_KEY, DocState},
+    state::{
+        container_store::{ContainerWrapper, FRONTIERS_KEY},
+        redact_dead_style_values, DocState,
+    },
+    utils::kv_wrapper::KvWrapper,
     version::{Frontiers, VersionVector},
     LoroDoc,
 };
@@ -78,7 +83,20 @@ pub(crate) fn export_shallow_snapshot_inner(
         && ops_num <= MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE
     {
         let state = doc.app_state().lock();
-        if let Some(shallow_root_state_bytes) = state.store.encode_shallow_root_state() {
+        if let Some((shallow_root_state_bytes, shallow_root_kv)) =
+            state.store.shallow_root_state_for_export()
+        {
+            // The stored shallow-root bytes may predate dead-style redaction
+            // (e.g. imported from an older export), so re-run it before reuse.
+            let shallow_root_state_bytes = match redact_dead_text_styles(&shallow_root_kv, None)? {
+                None => shallow_root_state_bytes,
+                Some(_) => {
+                    // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
+                    // strips it on import); restore it before export.
+                    shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+                    shallow_root_kv.export()
+                }
+            };
             return Ok((
                 Snapshot {
                     oplog_bytes,
@@ -121,6 +139,20 @@ pub(crate) fn export_shallow_snapshot_inner(
             new_kv.remove_same(&shallow_root_state_kv);
             new_kv.retain_keys(&alive_c_bytes);
 
+            // Redact after `remove_same` so byte-identical entries still dedup:
+            // an entry deduped away resolves to the (redacted) root version. The
+            // latest state only redacts pairs that are dead at the root, so
+            // styles that die later stay renderable on historical checkouts.
+            let shallow_root_state_bytes =
+                match redact_dead_text_styles(&shallow_root_state_kv, None)? {
+                    None => shallow_root_state_bytes,
+                    Some(redacted) => {
+                        redact_dead_text_styles(&new_kv, Some(&redacted))?;
+                        shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+                        shallow_root_state_kv.export()
+                    }
+                };
+
             return Ok((
                 Snapshot {
                     oplog_bytes,
@@ -146,7 +178,7 @@ pub(crate) fn export_shallow_snapshot_inner(
         drop(state);
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
-        let state_bytes = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let latest_state_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
             let mut state = doc.app_state().lock();
             state.ensure_all_alive_containers()?;
             state.store.encode();
@@ -165,12 +197,22 @@ pub(crate) fn export_shallow_snapshot_inner(
             let new_kv = state.store.get_kv_clone();
             new_kv.remove_same(&shallow_root_state_kv);
             new_kv.retain_keys(&alive_c_bytes);
-            Some(new_kv.export())
+            Some(new_kv)
         } else {
             None
         };
 
         shallow_root_state_kv.retain_keys(&alive_c_bytes);
+        // Redact after `remove_same` so byte-identical entries still dedup; the
+        // latest state only redacts pairs that are dead at the root (see the
+        // whitelist), so styles that die later stay renderable on historical
+        // checkouts.
+        if let Some(redacted) = redact_dead_text_styles(&shallow_root_state_kv, None)? {
+            if let Some(new_kv) = &latest_state_kv {
+                redact_dead_text_styles(new_kv, Some(&redacted))?;
+            }
+        }
+        let state_bytes = latest_state_kv.map(|kv| kv.export());
         shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
         let shallow_root_state_bytes = shallow_root_state_kv.export();
 
@@ -192,6 +234,48 @@ fn has_unknown_container(mut idxs: impl Iterator<Item = ContainerIdx>) -> bool {
 
 fn has_unknown_container_key<'a>(mut keys: impl Iterator<Item = &'a Vec<u8>>) -> bool {
     keys.any(|key| ContainerID::from_bytes(key).is_unknown())
+}
+
+/// Nulls the values of rich-text style pairs that are dead in this state (no
+/// text between the anchors). In a document whose history is trimmed at this
+/// state such a pair can never style anything again, but its value would
+/// otherwise ship in the export even though no read API can reach it. See
+/// `context/shallow-snapshot-style-redaction.md`.
+///
+/// Containers are keyed by `ContainerID` bytes whose first byte is the
+/// container type, so the scan stays within the two Text key ranges and blocks
+/// holding other containers are passed through in their compressed form.
+///
+/// Returns the ids of the redacted `StyleStart` ops, or `None` when the KV was
+/// left untouched.
+fn redact_dead_text_styles(
+    kv: &KvWrapper,
+    only_pairs: Option<&FxHashSet<ID>>,
+) -> Result<Option<FxHashSet<ID>>, LoroEncodeError> {
+    const ROOT_MARK: u8 = 0b1000_0000;
+    let text_kind = ContainerType::Text.to_u8();
+    debug_assert_eq!(text_kind & ROOT_MARK, 0);
+    let mut redacted: FxHashSet<ID> = FxHashSet::default();
+    let mut changed = false;
+    for first_key_byte in [text_kind, text_kind | ROOT_MARK] {
+        for (key, value) in kv.scan_range_entries(&[first_key_byte], &[first_key_byte + 1]) {
+            if value.is_empty() {
+                continue;
+            }
+            let offset = ContainerWrapper::payload_offset(&value).map_err(LoroEncodeError::from)?;
+            if let Some((payload, ids)) = redact_dead_style_values(&value[offset..], only_pairs)
+                .map_err(LoroEncodeError::from)?
+            {
+                let mut new_value = Vec::with_capacity(offset + payload.len());
+                new_value.extend_from_slice(&value[..offset]);
+                new_value.extend_from_slice(&payload);
+                kv.insert(&key, new_value.into());
+                redacted.extend(ids);
+                changed = true;
+            }
+        }
+    }
+    Ok(changed.then_some(redacted))
 }
 
 pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
@@ -255,6 +339,11 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         target_state_kv.retain_keys(&alive_c_bytes);
 
         shallow_state_kv.retain_keys(&alive_c_bytes);
+        // Same dead-style redaction as export_shallow_snapshot_inner: root pass
+        // first, then the target state restricted to the same pairs.
+        if let Some(redacted) = redact_dead_text_styles(&shallow_state_kv, None)? {
+            redact_dead_text_styles(&target_state_kv, Some(&redacted))?;
+        }
         shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
         let shallow_state_bytes = shallow_state_kv.export();
         let snapshot = Snapshot {
