@@ -128,3 +128,7 @@ harness = false
 [[bench]]
 name = "jsonpath"
 harness = false
+
+[[bench]]
+name = "undo"
+harness = false

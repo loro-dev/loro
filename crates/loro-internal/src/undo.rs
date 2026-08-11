@@ -191,6 +191,32 @@ impl UndoOrRedo {
     }
 }
 
+/// Restricts which containers an [`UndoManager`] tracks for undo/redo.
+///
+/// The default is [`UndoScope::Doc`], which preserves the historical doc-wide
+/// behavior. [`UndoScope::Containers`] restricts tracking to a fixed set of
+/// containers — local commits that touch only out-of-scope containers are
+/// composed into the stacks as if they were remote (so cursor transforms and
+/// counter bookkeeping stay correct) but are not pushed as undo items.
+#[derive(Debug, Clone, Default)]
+pub enum UndoScope {
+    /// Track every local commit on this peer (default).
+    #[default]
+    Doc,
+    /// Track only commits that touch at least one of the listed containers.
+    Containers(FxHashSet<ContainerID>),
+}
+
+impl UndoScope {
+    /// Build a [`UndoScope::Containers`] from any iterator of [`ContainerID`].
+    pub fn containers<I>(ids: I) -> Self
+    where
+        I: IntoIterator<Item = ContainerID>,
+    {
+        UndoScope::Containers(ids.into_iter().collect())
+    }
+}
+
 /// When a undo/redo item is pushed, the undo manager will call the on_push callback to get the meta data of the undo item.
 /// The returned cursors will be recorded for a new pushed undo item.
 pub type OnPush = Box<
@@ -207,6 +233,7 @@ struct UndoManagerInner {
     merge_interval_in_ms: i64,
     max_stack_size: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
+    scope: UndoScope,
     last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
     on_pop: Option<OnPop>,
@@ -224,6 +251,7 @@ impl std::fmt::Debug for UndoManagerInner {
             .field("merge_interval", &self.merge_interval_in_ms)
             .field("max_stack_size", &self.max_stack_size)
             .field("exclude_origin_prefixes", &self.exclude_origin_prefixes)
+            .field("scope", &self.scope)
             .field("group", &self.group)
             .finish()
     }
@@ -506,6 +534,7 @@ impl UndoManagerInner {
             last_undo_time: 0,
             max_stack_size: usize::MAX,
             exclude_origin_prefixes: vec![],
+            scope: UndoScope::default(),
             last_popped_selection: None,
             on_pop: None,
             on_push: None,
@@ -616,15 +645,30 @@ impl UndoManager {
                     .iter()
                     .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
                 {
-                    let should_exclude = lock
-                        .borrow()
-                        .exclude_origin_prefixes
-                        .iter()
-                        .any(|x| event.event_meta.origin.starts_with(&**x));
+                    let should_exclude = {
+                        let inner = lock.borrow();
+                        let origin_excluded = inner
+                            .exclude_origin_prefixes
+                            .iter()
+                            .any(|x| event.event_meta.origin.starts_with(&**x));
+                        // Inline the scope check so the optimizer can fold the
+                        // Doc arm to a constant `false` and skip the iteration
+                        // entirely in the default path (zero cost when no scope
+                        // is set).
+                        let out_of_scope = match &inner.scope {
+                            UndoScope::Doc => false,
+                            UndoScope::Containers(set) => {
+                                !event.events.iter().any(|d| set.contains(&d.id))
+                            }
+                        };
+                        origin_excluded || out_of_scope
+                    };
                     if should_exclude {
-                        // If the event is from the excluded origin, we don't record it
-                        // in the undo stack. But we need to record its effect like it's
-                        // a remote event.
+                        // If the event is from the excluded origin or touches no
+                        // in-scope containers, we don't record it in the undo stack.
+                        // But we need to record its effect like it's a remote event,
+                        // so cursor transforms remain correct and the next in-scope
+                        // commit's CounterSpan starts past this commit.
                         let mut inner = lock.borrow_mut();
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
@@ -733,6 +777,28 @@ impl UndoManager {
             .push(prefix.into());
     }
 
+    /// Restrict this manager to a specific [`UndoScope`].
+    ///
+    /// When set to [`UndoScope::Containers`], the manager combines two filters:
+    ///
+    /// - **Record-time:** local commits that touch only out-of-scope containers
+    ///   are not pushed onto the undo stack; instead they are composed into the
+    ///   stacks as if they were remote events, which keeps cursor transforms
+    ///   accurate and advances counter bookkeeping cleanly past them.
+    /// - **Replay-time:** when an undo or redo is performed, the computed
+    ///   `DiffBatch` is masked so only in-scope containers are mutated. This
+    ///   means a single commit that touched both in-scope and out-of-scope
+    ///   containers undoes only its in-scope portion.
+    pub fn set_scope(&self, scope: UndoScope) {
+        self.inner.lock().borrow_mut().scope = scope;
+    }
+
+    /// Builder-style variant of [`Self::set_scope`].
+    pub fn with_scope(self, scope: UndoScope) -> Self {
+        self.set_scope(scope);
+        self
+    }
+
     pub fn record_new_checkpoint(&self) -> LoroResult<()> {
         // Use implicit-style barrier to preserve next-commit options across
         // an empty commit before undo/redo processing.
@@ -836,7 +902,13 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
-                let commit = doc.undo_internal(
+                // Snapshot the scope set so undo_internal can mask out-of-scope
+                // entries from the computed diff before applying it.
+                let scope_set = match &self.inner.lock().borrow().scope {
+                    UndoScope::Doc => None,
+                    UndoScope::Containers(set) => Some(set.clone()),
+                };
+                let commit = doc.undo_internal_with_scope(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
@@ -850,6 +922,7 @@ impl UndoManager {
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
+                    scope_set.as_ref(),
                 )?;
                 drop(commit);
                 let inner = self.inner.lock();
