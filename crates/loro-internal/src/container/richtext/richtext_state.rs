@@ -2171,7 +2171,7 @@ impl RichtextState {
 
             let mut cur_style_range = style_range_iter.next();
             let mut cur_styles: Option<StyleMeta> =
-                cur_style_range.as_ref().map(|x| x.1.clone().into());
+                cur_style_range.as_ref().map(|x| StyleMeta::from(x.1));
 
             let mut ans: Vec<(String, StyleMeta)> = Vec::new();
 
@@ -2188,7 +2188,7 @@ impl RichtextState {
                                 if current_entity_index >= inner_cur_range.end {
                                     cur_style_range = style_range_iter.next();
                                     cur_styles =
-                                        cur_style_range.as_ref().map(|x| x.1.clone().into());
+                                        cur_style_range.as_ref().map(|x| StyleMeta::from(x.1));
                                 } else {
                                     break;
                                 }
@@ -2506,7 +2506,7 @@ impl RichtextState {
             };
         let mut cur_style_range = style_range_iter.next();
         let mut cur_styles: Option<StyleMeta> =
-            cur_style_range.as_ref().map(|x| x.1.clone().into());
+            cur_style_range.as_ref().map(|x| StyleMeta::from(x.1));
 
         self.tree.iter().filter_map(move |x| match x {
             RichtextStateChunk::Text(s) => {
@@ -2521,7 +2521,7 @@ impl RichtextState {
                         break;
                     } else {
                         cur_style_range = style_range_iter.next();
-                        cur_styles = cur_style_range.as_ref().map(|x| x.1.clone().into());
+                        cur_styles = cur_style_range.as_ref().map(|x| StyleMeta::from(x.1));
                     }
                 }
 
