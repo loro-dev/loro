@@ -9,6 +9,11 @@ use loro::{
     StyleConfig, StyleConfigMap, ID,
 };
 
+/// Byte-level scan of an exported blob. Only used for *absence* checks, and
+/// even those are best-effort: state KV blocks may be LZ4-compressed, which can
+/// hide a retained secret from this scan. The authoritative leak assertions
+/// decode the exported state structurally — see the tests in
+/// `loro-internal/src/encoding/shallow_snapshot.rs`.
 fn bytes_contain(haystack: &[u8], needle: &str) -> bool {
     haystack
         .windows(needle.len())
@@ -609,11 +614,9 @@ fn shallow_snapshot_keeps_live_both_expand_style_value() -> anyhow::Result<()> {
     a.commit();
 
     let bytes = a.export(ExportMode::shallow_snapshot(&a.oplog_frontiers()))?;
-    assert!(
-        bytes_contain(&bytes, "BOTH-EXPAND-VALUE"),
-        "a live both-expand style value must be kept"
-    );
 
+    // The value's survival is asserted semantically below: after typing into
+    // the collapsed range, the shallow replica must re-apply it.
     let b = LoroDoc::new();
     b.config_text_style(cfg());
     b.import(&bytes)?;
@@ -646,11 +649,9 @@ fn shallow_snapshot_keeps_style_alive_at_root_and_redacts_on_reexport() -> anyho
     text.delete(0, 5)?;
     doc.commit();
 
+    // The value's retention is asserted semantically below: the imported doc
+    // checks out back to the root and must render the style.
     let bytes = doc.export(ExportMode::shallow_snapshot(&root_frontiers))?;
-    assert!(
-        bytes_contain(&bytes, "KEEP-ME-42"),
-        "style alive at the shallow root must keep its value"
-    );
 
     let imported = LoroDoc::new();
     imported.import(&bytes)?;

@@ -19,10 +19,13 @@ a content-redaction mechanism).
   `crates/loro-internal/src/encoding/shallow_snapshot.rs`. It scans only the two
   Text key ranges of the state KV (container keys start with the container-type
   byte), so blocks holding other containers pass through in compressed form.
-- Applied in every shallow export path before the KV is exported:
-  both reuse branches and the checkout branch of
+- `redact_export_states` (same file) is the single place the root/overlay
+  protocol lives: full redaction on the root state, whitelist-restricted
+  redaction on the optional overlay (latest/target state).
+- Applied in every shallow export path before the KV is exported: the
+  shallow-root reuse branch and the checkout branch of
   `export_shallow_snapshot_inner`, and `export_state_only_snapshot`. The reuse
-  branches re-run it so blobs produced before this change are cleaned on
+  branch re-runs it so blobs produced before this change are cleaned on
   re-export.
 
 ## Invariants — read before changing any of this
@@ -77,6 +80,12 @@ a content-redaction mechanism).
 
 - Unit: `state::richtext_state::snapshot::tests` (pairing, whitelist,
   idempotency, malformed payloads, decode round-trip).
+- Structured export assertions: `encoding::shallow_snapshot::tests` decode the
+  exported state KV and assert on the actual `StyleOp` values — root and
+  nested Text key ranges, overlay keep/redact per the whitelist, and a
+  legacy-shaped unredacted blob being cleaned on re-export. Byte-level
+  "secret not in blob" scans are only a best-effort extra because KV blocks
+  may be LZ4-compressed.
 - Integration: `crates/loro/tests/integration_test/shallow_snapshot_test.rs` —
   the #1057 regression, the both-expand keep + convergence guard, root-alive
   style retention with historical checkout, latest-state-bytes and state-only
