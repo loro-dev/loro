@@ -11,6 +11,10 @@ schema, and validation entry points.
   validation, top-level dispatch, and `decode_import_blob_meta`.
 - `fast_snapshot.rs`: current `FastSnapshot` and `FastUpdates` body layouts.
 - `shallow_snapshot.rs`: `ShallowSnapshot`, `StateOnly`, and `SnapshotAt`.
+  Shallow exports null dead rich-text style values before the state KV is
+  exported; read
+  [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
+  before changing that pass or the surrounding branch structure.
 - `json_schema.rs`: JSON updates, peer compression, validation, import/export,
   and redaction.
 - `outdated_encode_reordered.rs`: legacy-named op/value columnar helpers still

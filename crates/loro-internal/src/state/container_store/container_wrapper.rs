@@ -41,6 +41,13 @@ struct LazyContainerData {
     bytes_offset_for_state: Option<usize>,
 }
 
+struct DecodedHeader {
+    kind: ContainerType,
+    depth: usize,
+    parent: Option<ContainerID>,
+    payload_offset: usize,
+}
+
 #[derive(Debug)]
 enum LazyDecodedValue {
     Value(LoroValue),
@@ -485,12 +492,39 @@ impl ContainerWrapper {
         output.into()
     }
 
+    /// Decode the wrapper header (kind, depth, parent id) and locate where the
+    /// container state payload starts. Single source of truth for the header
+    /// layout written by [`Self::encode`].
+    fn decode_header(bytes: &[u8]) -> LoroResult<DecodedHeader> {
+        fn err() -> LoroError {
+            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
+        }
+
+        if bytes.is_empty() {
+            return Err(err());
+        }
+        let kind = ContainerType::try_from_u8(bytes[0])?;
+        let mut reader = &bytes[1..];
+        let depth = leb128::read::unsigned(&mut reader).map_err(|_| err())?;
+        let (parent, reader) =
+            postcard::take_from_bytes::<Option<ContainerID>>(reader).map_err(|_| err())?;
+        Ok(DecodedHeader {
+            kind,
+            depth: depth as usize,
+            parent,
+            payload_offset: bytes.len() - reader.len(),
+        })
+    }
+
+    /// Byte offset where the container state payload starts inside an encoded
+    /// [`ContainerWrapper`] value (after the kind byte, depth, and parent id).
+    pub(crate) fn payload_offset(bytes: &[u8]) -> LoroResult<usize> {
+        Ok(Self::decode_header(bytes)?.payload_offset)
+    }
+
     #[allow(unused)]
     pub fn decode_parent(b: &[u8]) -> Option<ContainerID> {
-        let mut bytes = &b[1..];
-        let _depth = leb128::read::unsigned(&mut bytes).unwrap();
-        let (parent, _bytes) = postcard::take_from_bytes::<Option<ContainerID>>(bytes).unwrap();
-        parent
+        Self::decode_header(b).unwrap().parent
     }
 
     pub fn new_from_bytes(bytes: Bytes) -> Self {
@@ -498,29 +532,15 @@ impl ContainerWrapper {
     }
 
     pub fn try_new_from_bytes(bytes: Bytes) -> LoroResult<Self> {
-        if bytes.is_empty() {
-            return Err(LoroError::DecodeError(
-                "Decode container state failed".to_string().into_boxed_str(),
-            ));
-        }
-
-        let kind = ContainerType::try_from_u8(bytes[0])?;
-        let mut reader = &bytes[1..];
-        let depth = leb128::read::unsigned(&mut reader).map_err(|_| {
-            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
-        })?;
-        let (parent, reader) = postcard::take_from_bytes(reader).map_err(|_| {
-            LoroError::DecodeError("Decode container state failed".to_string().into_boxed_str())
-        })?;
-        let size = bytes.len() - reader.len();
+        let header = Self::decode_header(&bytes)?;
         Ok(Self {
-            depth: depth as usize,
-            kind,
-            parent,
+            depth: header.depth,
+            kind: header.kind,
+            parent: header.parent,
             data: ContainerData::Lazy(Box::new(LazyContainerData {
                 value: None,
                 bytes: Some(bytes.clone()),
-                bytes_offset_for_value: Some(size),
+                bytes_offset_for_value: Some(header.payload_offset),
                 bytes_offset_for_state: None,
             })),
             flushed: true,
@@ -580,14 +600,7 @@ impl ContainerWrapper {
 
         let bytes = lazy.bytes.as_ref()?.clone();
         if lazy.bytes_offset_for_value.is_none() {
-            let mut reader: &[u8] = &bytes;
-            reader = &reader[1..];
-            let _depth = leb128::read::unsigned(&mut reader).unwrap();
-            let (_parent, reader) =
-                postcard::take_from_bytes::<Option<ContainerID>>(reader).unwrap();
-            // SAFETY: bytes is a slice of b
-            let size = bytes.len() - reader.len();
-            lazy.bytes_offset_for_value = Some(size);
+            lazy.bytes_offset_for_value = Some(Self::decode_header(&bytes).unwrap().payload_offset);
         }
 
         Some((bytes, lazy.bytes_offset_for_value.unwrap()))

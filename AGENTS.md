@@ -24,6 +24,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/mergeable-containers.md](context/mergeable-containers.md).
 - `import_batch` force-detach, batch-wide rollback scope, and the never-exit-detached
   invariant: [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
+- Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
+  root-whitelisted latest state):
+  [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
 - User-facing Loro usage, sync, editor integration, and performance guidance:
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:

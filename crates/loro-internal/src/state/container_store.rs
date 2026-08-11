@@ -211,11 +211,6 @@ impl ContainerStore {
             .map(|x| &x.shallow_root_frontiers)
     }
 
-    pub(crate) fn encode_shallow_root_state(&self) -> Option<Bytes> {
-        let shallow_root = self.shallow_root_store.as_ref()?;
-        Some(shallow_root.encoded_state_bytes.clone())
-    }
-
     pub(crate) fn shallow_root_state_for_export(&self) -> Option<(Bytes, KvWrapper)> {
         let shallow_root = self.shallow_root_store.as_ref()?;
         let shallow_root_kv = shallow_root.store.lock().get_kv_clone();

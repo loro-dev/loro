@@ -71,6 +71,15 @@ impl KvWrapper {
         kv.scan(Bound::Unbounded, Bound::Unbounded).collect()
     }
 
+    /// Snapshot the entries whose keys are in `[lower, upper)` while holding
+    /// only the KV lock. See [`Self::scan_all_entries`] for the lock-ordering
+    /// rationale.
+    pub(crate) fn scan_range_entries(&self, lower: &[u8], upper: &[u8]) -> Vec<(Bytes, Bytes)> {
+        let kv = self.kv.lock();
+        kv.scan(Bound::Included(lower), Bound::Excluded(upper))
+            .collect()
+    }
+
     pub(crate) fn scan_all_keys(&self) -> Vec<Bytes> {
         let kv = self.kv.lock();
         kv.scan(Bound::Unbounded, Bound::Unbounded)

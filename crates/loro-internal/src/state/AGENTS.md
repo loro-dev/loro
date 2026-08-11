@@ -14,7 +14,10 @@ before changing mergeable child behavior.
   `ContainerWrapper` encoding.
 - `map_state.rs`, `list_state.rs`, `richtext_state.rs`, `tree_state.rs`,
   `movable_list_state.rs`, `counter_state.rs`: per-container state and snapshot
-  codecs.
+  codecs. `richtext_state.rs` also hosts `redact_dead_style_values`, used by
+  shallow-snapshot export; read
+  [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
+  before changing the richtext snapshot codec or that pass.
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
 - `dead_containers_cache.rs`: dead/alive tracking and marker-driven mergeable
   reactivation.
