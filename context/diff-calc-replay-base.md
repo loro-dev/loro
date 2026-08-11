@@ -1,6 +1,6 @@
 # Diff Calc Replay Base Context
 
-Verified against code 2026-07-28.
+Verified against code 2026-08-11.
 
 Every `checkout`, `fork_at`, `import`, and `revert_to` funnels through
 `DiffCalculator::calc_diff_internal`, which first asks the DAG for a *replay
@@ -39,28 +39,33 @@ is the harness for this shape; at 1600 containers / 194k ops the difference
 between an exact base and an empty one was 1.4ms vs 268ms for `checkout`, and
 the ratio grows with document size (loro-dev/loro#1056).
 
-## The Conservative Fallback
+## The Fallback, And Why The Meet Is Not Enough
 
-`_find_common_ancestor` sets `has_unmatched_branch` when a branch of its walk
-reaches a root, or drains the queue, without ever meeting the other side. It
-then throws away the ancestor it computed and returns `Frontiers::default()`.
+`_find_common_ancestor_new` cannot simply return the meet of the two versions.
+The replay base must be a **critical version** — a cut that no concurrency
+crosses. `crates/loro-internal/docs/critical-version-spec.md` is the normative
+account; read it before touching any of this, and do not reason in terms of
+"LCA" or "maximal common ancestor", which are exactly the traps here.
 
-This is deliberate: some calculators need a base that precedes every branch
-whose operations can affect positions. It is *not* needed when `ans == right`
-(the target is already in the source's past, i.e. an ordinary `checkout` or
-`fork_at` backwards). There, every id of `right` turned out to be reachable from
-`left`, so `right` is provably the maximal common ancestor.
+Concretely, for `current = [10@1, 5@2]` and `target = [10@1]` where `2` branched
+off at `3@1`, the meet is `10@1` — but `0@2..5@2` is concurrent with
+`4@1..10@1`, so `10@1` is not critical and is unsound as a base. The answer is
+`3@1`, the branch point.
 
-That direction is also the safe one for the trackers: `from_vv` strictly
-contains `to_vv`, so the retreat is never empty and
-`RichtextDiffCalculator`/`ListDiffCalculator`/`MovableListDiffCalculator` take
-their `should_rebuild` path regardless of the base.
+Two things therefore have to be right, and they are independent:
 
-The symmetric relaxation (`ans == left`, fast-forwarding past a concurrent
-branch) is **not** safe. It has no retreat to force a rebuild, and leaning on
-`mark_source_not_in_op_context` alone regresses `undo_tree` in
-`crates/fuzz/tests/test.rs`. If you are tempted to widen the condition, run that
-target first — the failure is silent in the unit tests.
+- `all_tips_covered_by_ancestors` decides whether an unmatched tip is a genuine
+  concurrent branch or merely a redundant path into an already-found ancestor.
+  Treating the latter as concurrent is what triggered the fallback on every
+  ordinary backwards checkout (#1056).
+- When the branch *is* genuine, `latest_single_head_critical_version` retreats to
+  the latest safe cut rather than to empty frontiers. Retreating to empty is
+  always sound and always a document-sized cost.
+
+Both landed in #1058. An earlier attempt (#1071) special-cased `ans == right` on
+the theory that the meet is safe whenever the target is already in the source's
+past; that reasoning is wrong for the reason above, and it survived the fuzz
+corpus only by luck.
 
 ## Which Calculators Care About The Base
 

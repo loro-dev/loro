@@ -1646,11 +1646,15 @@ mod tests {
     }
 
     /// Regression for loro-dev/loro#1056: checking out (or `fork_at`-ing) to a
-    /// version that is a strict subset of the current frontiers used to discard
-    /// the exact common ancestor and fall back to empty frontiers, which forces
-    /// the diff calculator to replay the whole history for every container.
+    /// version that is a strict subset of the current frontiers used to fall back
+    /// to empty frontiers, forcing the diff calculator to replay the whole history
+    /// for every container in the document.
+    ///
+    /// The base must retreat only as far as the branch point. Note it is *not*
+    /// the target itself: `2@1..5@2` is concurrent with `4@1..10@1`, so the meet
+    /// `10@1` is not a critical version and would be unsound as a replay base.
     #[test]
-    fn common_ancestor_of_subset_target_is_the_target_itself() {
+    fn common_ancestor_of_subset_target_retreats_only_to_the_branch_point() {
         let a = node(1, 0, 11, 0, Frontiers::default());
         let b = node(2, 0, 6, 4, ID::new(1, 3).into());
         let current = Frontiers::from([ID::new(1, 10), ID::new(2, 5)]);
@@ -1658,7 +1662,12 @@ mod tests {
         let dag = TestDag::new(vec![a, b], current.clone());
 
         let (ancestor, mode) = dag.find_common_ancestor(&current, &target);
-        assert_eq!(ancestor, target);
+        assert_eq!(ancestor, Frontiers::from_id(ID::new(1, 3)));
+        assert_ne!(
+            ancestor,
+            Frontiers::default(),
+            "must not replay from scratch"
+        );
         assert_eq!(mode, DiffMode::Checkout);
     }
 
