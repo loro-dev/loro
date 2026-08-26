@@ -203,6 +203,7 @@ struct UndoManagerInner {
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
+    paused: bool,
     last_undo_time: i64,
     merge_interval_in_ms: i64,
     max_stack_size: usize,
@@ -241,6 +242,16 @@ impl UndoGroup {
             start_counter,
             affected_cids: Default::default(),
         }
+    }
+}
+
+struct ProcessingUndoGuard {
+    inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
+}
+
+impl Drop for ProcessingUndoGuard {
+    fn drop(&mut self) {
+        self.inner.lock().borrow_mut().processing_undo = false;
     }
 }
 
@@ -502,6 +513,7 @@ impl UndoManagerInner {
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
+            paused: false,
             merge_interval_in_ms: 0,
             last_undo_time: 0,
             max_stack_size: usize::MAX,
@@ -616,15 +628,18 @@ impl UndoManager {
                     .iter()
                     .find(|x| x.peer == peer_clone.load(std::sync::atomic::Ordering::Relaxed))
                 {
+                    let is_paused = lock.borrow().paused;
                     let should_exclude = lock
                         .borrow()
                         .exclude_origin_prefixes
                         .iter()
                         .any(|x| event.event_meta.origin.starts_with(&**x));
-                    if should_exclude {
-                        // If the event is from the excluded origin, we don't record it
-                        // in the undo stack. But we need to record its effect like it's
-                        // a remote event.
+                    if is_paused || should_exclude {
+                        // Paused and excluded-origin edits are not recorded as
+                        // undo steps, but their effects must be composed into
+                        // both stacks so transforms stay correct, and
+                        // next_counter must advance so the next recorded item
+                        // does not fold these edits into its span.
                         let mut inner = lock.borrow_mut();
                         inner.undo_stack.compose_remote_event(event.events);
                         inner.redo_stack.compose_remote_event(event.events);
@@ -666,6 +681,9 @@ impl UndoManager {
             }
             EventTriggerKind::Checkout => {
                 let lock = inner_clone.lock();
+                if lock.borrow().paused {
+                    return;
+                }
                 let mut inner = lock.borrow_mut();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
@@ -766,6 +784,9 @@ impl UndoManager {
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
     ) -> LoroResult<bool> {
+        if self.inner.lock().borrow().paused {
+            return Ok(false);
+        }
         let doc = &self.doc.clone();
         // When in the undo/redo loop, the new undo/redo stack item should restore the selection
         // to the state it was in before the item that was popped two steps ago from the stack.
@@ -828,6 +849,9 @@ impl UndoManager {
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
         };
+        let _guard = ProcessingUndoGuard {
+            inner: self.inner.clone(),
+        };
 
         let mut executed = false;
         while let Some((mut span, remote_diff)) = top {
@@ -836,7 +860,7 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
-                let commit = doc.undo_internal(
+                let commit = match doc.undo_internal(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
@@ -850,7 +874,14 @@ impl UndoManager {
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
-                )?;
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        get_stack(&mut self.inner.lock().borrow_mut())
+                            .push(span.span, span.meta);
+                        return Err(e);
+                    }
+                };
                 drop(commit);
                 let inner = self.inner.lock();
                 let mut is_some = false;
@@ -914,7 +945,6 @@ impl UndoManager {
             }
         }
 
-        self.inner.lock().borrow_mut().processing_undo = false;
         Ok(executed)
     }
 
@@ -975,6 +1005,32 @@ impl UndoManager {
     /// Clear only the undo stack, preserving the redo stack.
     pub fn clear_undo(&self) {
         self.inner.lock().borrow_mut().undo_stack.clear();
+    }
+
+    /// Pause the UndoManager so that local edits and checkout events are ignored.
+    ///
+    /// While paused, local edits are not recorded as undo steps and checkout
+    /// events do not clear the stacks. Import events (remote changes) are still
+    /// processed so that the stacks remain correctly transformed against
+    /// concurrent edits.
+    ///
+    /// Use this before temporary checkouts (e.g. read-only history preview) that
+    /// should not disturb the undo/redo history. Close any open group (via
+    /// [`Self::group_end`]) before pausing.
+    ///
+    /// Call [`Self::resume`] after returning the document to its original state.
+    pub fn pause(&self) {
+        self.inner.lock().borrow_mut().paused = true;
+    }
+
+    /// Resume the UndoManager after a [`Self::pause`].
+    pub fn resume(&self) {
+        self.inner.lock().borrow_mut().paused = false;
+    }
+
+    /// Returns whether the UndoManager is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.inner.lock().borrow().paused
     }
 
     pub fn set_top_undo_meta(&self, meta: UndoItemMeta) {
