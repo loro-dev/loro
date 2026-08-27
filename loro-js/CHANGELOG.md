@@ -1,5 +1,17 @@
 # loro.js
 
+## 0.2.0
+
+### Minor Changes
+
+- 880028d: Store text operations in shared range-backed buffers, read visible spans without
+  allocating scalar views, and add lazy line navigation plus explicit text compaction.
+- 5ea2e37: Add `pause()`, `resume()`, and `isPaused()` to `UndoManager`. While paused,
+  local edits are not recorded as undo steps and checkout events do not clear the
+  stacks. Import events (remote changes) are still processed so that the stacks
+  remain correctly transformed against concurrent edits. Use this to preserve
+  undo/redo history across temporary checkouts such as read-only history previews.
+
 ## 0.1.0
 
 ### Minor Changes

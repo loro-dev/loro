@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.15.0
+
+### Minor Changes
+
+- 5ea2e37: Add `pause()`, `resume()`, and `isPaused()` to `UndoManager`. While paused,
+  local edits are not recorded as undo steps and checkout events do not clear the
+  stacks. Import events (remote changes) are still processed so that the stacks
+  remain correctly transformed against concurrent edits. Use this to preserve
+  undo/redo history across temporary checkouts such as read-only history previews.
+
+### Patch Changes
+
+- 4d3d3f1: Shallow snapshot export no longer leaks the values of rich-text marks whose
+  whole range was deleted before the shallow root.
+
+  Deleting styled text removes the characters but keeps the style anchors, and the
+  shallow-root state encoding shipped each anchor's value verbatim — so a mark
+  value (e.g. an inline comment) that every read API already reported as gone
+  still appeared in the exported bytes, defeating the documented content-redaction
+  use of shallow snapshots. Dead style pairs now have their values nulled during
+  export (anchors stay, so positions and replay are unaffected). Styles that only
+  become dead after the shallow root keep their values so historical checkouts
+  render correctly, and styles configured with `expand: "both"` are kept because
+  an empty both-expand pair still applies to future inserts. Re-exporting a
+  shallow snapshot produced by an older version also cleans it.
+
+- 4837d07: Fix unbounded degradation when re-asserting identical text marks over styled ranges.
+
+  `mark` already tried to skip no-op marks, but the check used
+  `StyleRangeMap::get_styles_of_range`, which returns `None` whenever the marked
+  range spans more than one style-range leaf. On any document whose style ranges
+  are already fragmented (i.e. any document with styles), re-asserting an
+  identical mark recorded a new op every time.
+
+  Each redundant mark leaves a pair of style anchors in the container state
+  forever — they survive snapshots and are never consolidated — and every styled
+  read walks all of them. Callers that re-assert marks (for example editor
+  bindings syncing mark state) therefore permanently degraded styled reads without
+  bound: reading a 724-character paragraph went from ~5µs to ~4ms after 1000
+  redundant marks.
+
+  The skip path now falls back to `StyleRangeMap::range_has_key_value`, which
+  scans every style range covering the mark and reports whether each position
+  already resolves the key to the given value. Attached and detached texts both
+  use the new path when the single-leaf fast path cannot answer.
+
+- f4e011f: Fix an O(n^2) slowdown when reading styled text.
+
+  Building the per-range style metadata for `toDelta` / `getRichtextValue` (and
+  the sliced variants used to emit text events) deep-copied the whole `Styles`
+  map once per style range. Each key in that map owns the set of _every_ style op
+  covering the range, while the resulting `StyleMeta` keeps only the LWW winner,
+  so the copy scaled with the number of marks accumulated on the container and
+  then discarded all but one element of it — O(marks) per range across O(marks)
+  ranges. The conversion now borrows instead of cloning.
+
+  Style anchors are never consolidated, so marks accumulate in the container
+  state and every styled read paid for all of them. On a 724-character paragraph
+  carrying 2000 accumulated marks, a styled read drops from ~103ms to ~1ms; a
+  simulated editor binding that re-asserts marks on each keystroke drops from
+  ~5ms to ~200us per read after 500 keystrokes.
+
 ## 1.14.1
 
 ### Patch Changes
