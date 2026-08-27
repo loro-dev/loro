@@ -13,7 +13,7 @@ permissions:
 jobs:
   release:
     name: Release
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
