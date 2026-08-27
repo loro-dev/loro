@@ -1,5 +1,45 @@
 # loro-crdt-map
 
+## 1.15.0
+
+### Patch Changes
+
+- 4837d07: Fix unbounded degradation when re-asserting identical text marks over styled ranges.
+
+  `mark` already tried to skip no-op marks, but the check used
+  `StyleRangeMap::get_styles_of_range`, which returns `None` whenever the marked
+  range spans more than one style-range leaf. On any document whose style ranges
+  are already fragmented (i.e. any document with styles), re-asserting an
+  identical mark recorded a new op every time.
+
+  Each redundant mark leaves a pair of style anchors in the container state
+  forever — they survive snapshots and are never consolidated — and every styled
+  read walks all of them. Callers that re-assert marks (for example editor
+  bindings syncing mark state) therefore permanently degraded styled reads without
+  bound: reading a 724-character paragraph went from ~5µs to ~4ms after 1000
+  redundant marks.
+
+  The skip path now falls back to `StyleRangeMap::range_has_key_value`, which
+  scans every style range covering the mark and reports whether each position
+  already resolves the key to the given value. Attached and detached texts both
+  use the new path when the single-leaf fast path cannot answer.
+
+- f4e011f: Fix an O(n^2) slowdown when reading styled text.
+
+  Building the per-range style metadata for `toDelta` / `getRichtextValue` (and
+  the sliced variants used to emit text events) deep-copied the whole `Styles`
+  map once per style range. Each key in that map owns the set of _every_ style op
+  covering the range, while the resulting `StyleMeta` keeps only the LWW winner,
+  so the copy scaled with the number of marks accumulated on the container and
+  then discarded all but one element of it — O(marks) per range across O(marks)
+  ranges. The conversion now borrows instead of cloning.
+
+  Style anchors are never consolidated, so marks accumulate in the container
+  state and every styled read paid for all of them. On a 724-character paragraph
+  carrying 2000 accumulated marks, a styled read drops from ~103ms to ~1ms; a
+  simulated editor binding that re-asserts marks on each keystroke drops from
+  ~5ms to ~200us per read after 500 keystrokes.
+
 ## 1.14.1
 
 ### Patch Changes
