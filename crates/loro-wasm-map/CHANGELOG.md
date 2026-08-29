@@ -1,5 +1,13 @@
 # loro-crdt-map
 
+## 1.15.1
+
+### Patch Changes
+
+- 34b1fae: Cache immutable container ids per JavaScript wrapper to avoid repeated WASM string decoding.
+- 48b3c52: Keep malformed `cid:`-prefixed strings returned from `toJsonWithReplacer` as
+  plain strings instead of throwing while resolving them as container IDs.
+
 ## 1.15.0
 
 ### Patch Changes
