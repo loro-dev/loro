@@ -233,6 +233,7 @@ async function buildTarget(target: string) {
   console.log();
 
   await postProcessWasm(targetDirPath, target);
+  await installContainerIdCache(targetDirPath, target);
 
   if (target === "nodejs") {
     console.log("🔨  Patching nodejs target");
@@ -271,6 +272,19 @@ async function buildTarget(target: string) {
       patch,
     );
   }
+}
+
+async function installContainerIdCache(targetDirPath: string, target: string) {
+  const generatedBinding =
+    target === "bundler" || target === "browser"
+      ? "loro_wasm_bg.js"
+      : "loro_wasm.js";
+  const generatedBindingPath = path.resolve(targetDirPath, generatedBinding);
+  const patch = await Deno.readTextFile(
+    path.resolve(__dirname, "./container_id_cache_patch.js"),
+  );
+  const generated = await Deno.readTextFile(generatedBindingPath);
+  await Deno.writeTextFile(generatedBindingPath, `${generated}\n${patch}`);
 }
 
 function renderBrowserPatch(template: string, wasmBg: string): string {
