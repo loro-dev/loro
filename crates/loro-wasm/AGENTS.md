@@ -71,6 +71,10 @@ and pitfalls (the `__wbindgen_start` glue invariant, why OOM uses a global
 allocator wrapper, stack-frame limits): see
 [context/wasm-error-reporting.md](../../context/wasm-error-reporting.md).
 
+Container `id` wrapper identity, lazy-cache lifetime, and the focused benchmark
+are documented in
+[context/wasm-container-id-cache.md](../../context/wasm-container-id-cache.md).
+
 ## Packaging Rules
 
 - Preserve the public `loro-crdt` API names and package export paths used by

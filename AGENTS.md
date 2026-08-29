@@ -34,6 +34,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - WASM panic/OOM reporting channels, `__wbindgen_start` glue invariant, and
   trap-testing recipes:
   [context/wasm-error-reporting.md](context/wasm-error-reporting.md).
+- WASM container id wrapper identity, lazy caching, and benchmark:
+  [context/wasm-container-id-cache.md](context/wasm-container-id-cache.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands
