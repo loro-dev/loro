@@ -65,6 +65,12 @@ pub fn LORO_VERSION() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Returns whether `value` is a syntactically valid container ID.
+#[wasm_bindgen(js_name = "isValidContainerId")]
+pub fn is_valid_container_id(value: &str) -> bool {
+    ContainerID::try_from(value).is_ok()
+}
+
 /// The key of the global variable that stores the last Rust panic as a JS
 /// `Error` object: `.message` carries the panic message and `file:line:col`,
 /// and `.stack` carries the stack captured at panic time, including the Rust

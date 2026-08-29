@@ -22,6 +22,7 @@ import {
   EphemeralLocalListener,
   UndoManager,
   callPendingEvents,
+  isValidContainerId,
 } from "loro-wasm";
 
 /**
@@ -39,7 +40,7 @@ const CONTAINER_TYPES = [
 ];
 
 export function isContainerId(s: string): s is ContainerID {
-  return s.startsWith("cid:");
+  return isValidContainerId(s);
 }
 
 /**  Whether the value is a container.

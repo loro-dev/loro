@@ -3,6 +3,7 @@ import {
   LoroDoc,
   LoroMap,
   LoroList,
+  LoroMovableList,
   LoroText,
   TextOp,
   LoroTree,
@@ -414,4 +415,49 @@ describe("toJsonWithReplacer", () => {
     });
     expect(json).toMatchSnapshot()
   })
+
+  it("keeps invalid cid-prefixed strings returned in nested values", () => {
+    const doc = new LoroDoc();
+    const list = doc.getList("history");
+    const map = list.insertContainer(0, new LoroMap());
+    const text = map.setContainer("output", new LoroText());
+    const output = "cid:999@999:Map undefined\nsecond line";
+    text.insert(0, output);
+    doc.commit();
+
+    expect(isContainerId(text.id)).toBe(true);
+    expect(isContainerId(output)).toBe(false);
+
+    function normalize(container: Container): Value {
+      if (container instanceof LoroText) {
+        return container.toJSON();
+      }
+
+      if (container instanceof LoroMap) {
+        const result: Record<string, Value> = {};
+        for (const key of container.keys()) {
+          const value = container.get(key) as Value | Container;
+          result[key] = isContainer(value) ? normalize(value) : value;
+        }
+        return result;
+      }
+
+      if (container instanceof LoroList || container instanceof LoroMovableList) {
+        const result: Value[] = [];
+        for (let index = 0; index < container.length; index++) {
+          const value = container.get(index) as Value | Container;
+          result.push(isContainer(value) ? normalize(value) : value);
+        }
+        return result;
+      }
+
+      return container.toJSON();
+    }
+
+    expect(doc.toJsonWithReplacer((_key, value) => (
+      isContainer(value) ? normalize(value) : value
+    ))).toStrictEqual({
+      history: [{ output }],
+    });
+  });
 });
