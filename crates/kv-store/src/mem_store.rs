@@ -643,6 +643,44 @@ mod tests {
     }
 
     #[test]
+    fn scan_does_not_decode_blocks_outside_its_bounds() {
+        // An entry whose decompressed size exceeds the block cache's byte budget
+        // can never be admitted to the cache. A scan whose bounds exclude that
+        // block must not decode it at all — otherwise every scan that merely
+        // starts (or ends) near it pays the full decompression again.
+        let mut source = MemKvStore::new(MemKvConfig::default().should_encode_none(true));
+        // > 4 MiB decompressed, so it cannot be admitted to the block cache.
+        source.set(b"big", Bytes::from(vec![7u8; 5 * 1024 * 1024]));
+        source.set(b"tail-1", Bytes::from_static(b"v1"));
+        source.set(b"tail-2", Bytes::from_static(b"v2"));
+        let bytes = source.export_all();
+        let mut imported = MemKvStore::new(MemKvConfig::default().should_encode_none(true));
+        imported.import_all(bytes).unwrap();
+
+        let scan_tail = |store: &MemKvStore| {
+            store
+                .scan(
+                    std::ops::Bound::Included(b"tail".as_ref()),
+                    std::ops::Bound::Unbounded,
+                )
+                .map(|(k, v)| (k, v))
+                .collect::<Vec<_>>()
+        };
+        // Warm-up: small in-range blocks may be decoded once and cached.
+        let first = scan_tail(&imported);
+        assert_eq!(first.len(), 2);
+
+        let before = crate::sstable::BLOCK_DECODES_FOR_TEST.with(|c| c.get());
+        let second = scan_tail(&imported);
+        let decodes = crate::sstable::BLOCK_DECODES_FOR_TEST.with(|c| c.get()) - before;
+        assert_eq!(second, first);
+        assert_eq!(
+            decodes, 0,
+            "a repeated scan past the oversized block must not re-decode any block"
+        );
+    }
+
+    #[test]
     fn block_cache_stays_bounded_during_full_scan() {
         // More decompressed bytes than the block cache budget, so an unbounded cache would
         // exceed it after one full scan.

@@ -78,6 +78,8 @@ pub struct ChangeStore {
     root_history_names: Arc<Mutex<RootHistoryNamesState>>,
     #[cfg(test)]
     root_history_scan_count: Arc<AtomicUsize>,
+    #[cfg(test)]
+    ensure_id_lte_scan_count: Arc<AtomicUsize>,
 }
 
 /// A conservative, size-capped set of every top-level root name that appears in the store's
@@ -200,6 +202,8 @@ impl ChangeStore {
             root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),
             #[cfg(test)]
             root_history_scan_count: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            ensure_id_lte_scan_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -508,6 +512,14 @@ impl ChangeStore {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The number of times `ensure_id_lte` had to fall back to scanning the
+    /// external kv store (i.e. the covering parsed block was not already loaded).
+    #[cfg(test)]
+    pub(crate) fn ensure_id_lte_scan_count_for_test(&self) -> usize {
+        self.ensure_id_lte_scan_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
         if id_span.counter.start == id_span.counter.end {
             return vec![];
@@ -704,6 +716,8 @@ impl ChangeStore {
             root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),
             #[cfg(test)]
             root_history_scan_count: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            ensure_id_lte_scan_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -1451,6 +1465,27 @@ mod mut_inner_kv {
         }
 
         pub(super) fn ensure_id_lte(&self, id: ID) {
+            {
+                let inner = self.inner.lock();
+                if let Some((_, block)) = inner.mem_parsed_kv.range(..=id).next_back() {
+                    if block.peer == id.peer
+                        && block.counter_range.0 <= id.counter
+                        && id.counter < block.counter_range.1
+                    {
+                        // The parsed block covering `id` is already loaded. Blocks of the
+                        // same peer cover disjoint, contiguous counter ranges and the
+                        // external store is only ever written from these parsed blocks
+                        // (or from the initial load, when nothing is parsed yet), so it
+                        // cannot hold a closer predecessor. Skipping also avoids a kv
+                        // scan that may re-decode a block bigger than the block cache's
+                        // byte budget on every call.
+                        return;
+                    }
+                }
+            }
+            #[cfg(test)]
+            self.ensure_id_lte_scan_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let kv = self.external_kv.lock();
             let mut inner = self.inner.lock();
             let Some((next_back_id, next_back_bytes)) = kv
@@ -2084,6 +2119,54 @@ mod test {
         assert!(!record_root_name(&mut names, &mut name_bytes, &oversized));
         assert!(names.is_empty());
         assert_eq!(name_bytes, 0);
+    }
+
+    #[test]
+    fn export_updates_does_not_rescan_kv_for_covered_spans() {
+        // After a snapshot export flushed history into the external kv store,
+        // repeated `export(mode=update)` calls iterate spans that the parsed
+        // block cache (`mem_parsed_kv`) already covers. `ensure_id_lte` must not
+        // fall back to a kv scan for those spans: the scan may re-decode a block
+        // bigger than the kv block cache's byte budget on every call (the
+        // export-update perf regression after a snapshot export).
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_record_timestamp(false);
+        let t = doc.get_text("t");
+        for i in 0..64 {
+            t.insert(0, &format!("hello world {i}"), PosType::Unicode)
+                .unwrap();
+            doc.commit_then_renew();
+        }
+        let vv_mid = doc.oplog_vv();
+        for i in 0..8 {
+            t.insert(0, &format!("tail {i}"), PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+        }
+
+        // Flush everything into the external kv store.
+        let _snapshot = doc.export(crate::loro::ExportMode::Snapshot).unwrap();
+
+        // Warm-up: both before and after the fix the first export may load state.
+        let first = doc
+            .export(crate::loro::ExportMode::updates(&vv_mid))
+            .unwrap();
+        let scans_before = {
+            let oplog = doc.oplog().lock();
+            oplog.change_store().ensure_id_lte_scan_count_for_test()
+        };
+        let second = doc
+            .export(crate::loro::ExportMode::updates(&vv_mid))
+            .unwrap();
+        let scans_after = {
+            let oplog = doc.oplog().lock();
+            oplog.change_store().ensure_id_lte_scan_count_for_test()
+        };
+        assert_eq!(second, first);
+        assert_eq!(
+            scans_after - scans_before,
+            0,
+            "a steady-state export(update) must not rescan the external kv store"
+        );
     }
 
     #[test]

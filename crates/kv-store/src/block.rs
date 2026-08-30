@@ -497,6 +497,25 @@ impl BlockIter {
         iter
     }
 
+    /// An iterator with nothing to yield in either direction; decodes no block.
+    pub(crate) fn new_empty() -> Self {
+        Self {
+            block: Arc::new(Block::Normal(NormalBlock {
+                data: Bytes::new(),
+                encoded_data: OnceCell::new(),
+                first_key: Bytes::new(),
+                offsets: Vec::new(),
+            })),
+            next_key: Bytes::new(),
+            next_value_range: 0..0,
+            prev_key: Bytes::new(),
+            prev_value_range: 0..0,
+            next_idx: 0,
+            prev_idx: -1,
+            first_key: Bytes::new(),
+        }
+    }
+
     pub fn new_seek_to_key(block: Arc<Block>, key: &[u8]) -> Self {
         let prev_idx = block.len() as isize - 1;
         let mut iter = Self {

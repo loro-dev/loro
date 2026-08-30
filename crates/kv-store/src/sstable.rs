@@ -22,6 +22,12 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 const BLOCK_CACHE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_BLOCK_NUM: u32 = 10_000_000;
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only count of raw (uncached) block decodes on this thread.
+    pub(crate) static BLOCK_DECODES_FOR_TEST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// ```log
 /// ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 /// │ Block Meta                                                                               │
@@ -553,6 +559,8 @@ impl SsTable {
     }
 
     fn read_block(&self, block_idx: usize) -> Arc<Block> {
+        #[cfg(test)]
+        BLOCK_DECODES_FOR_TEST.with(|c| c.set(c.get() + 1));
         let offset = self.meta[block_idx].offset;
         let offset_end = self
             .meta
@@ -634,9 +642,73 @@ impl Debug for SsTableIter<'_> {
     }
 }
 
+enum StartPosition {
+    /// The scan start falls inside this block; seek within it.
+    InBlock(usize),
+    /// Every key of the start's candidate block sorts before the scan start;
+    /// begin from this (fully in-range) block instead.
+    NextBlock(usize),
+    /// The scan start sorts after every key in the table.
+    PastTable,
+}
+
 impl<'a> SsTableIter<'a> {
     fn new(table: &'a SsTable) -> Self {
         Self::new_scan(table, Bound::Unbounded, Bound::Unbounded)
+    }
+
+    /// Locate the block the scan should start in without decoding any block.
+    ///
+    /// When every key of the candidate block sorts before the scan start, the
+    /// block cannot contribute to the scan, so it is skipped: decoding is
+    /// expensive for large blocks and the block cache does not retain blocks
+    /// bigger than its byte budget, which would make the decode repeat on every
+    /// scan. Every key of the following block sorts after `start`, so it can be
+    /// iterated from its beginning (and an excluded start key can never match) —
+    /// unless its first key already sorts past the `end` bound, in which case
+    /// the whole scan is empty and nothing needs decoding at all.
+    fn start_within_or_after_block(
+        table: &SsTable,
+        start: &[u8],
+        exclusive: bool,
+        end: Bound<&[u8]>,
+    ) -> StartPosition {
+        let idx = table.find_block_idx(start);
+        let meta = &table.meta[idx];
+        let block_last_key: &[u8] = meta.last_key.as_ref().unwrap_or(&meta.first_key);
+        let starts_past_block = if exclusive {
+            block_last_key <= start
+        } else {
+            block_last_key < start
+        };
+        if !starts_past_block {
+            return StartPosition::InBlock(idx);
+        }
+        notify_cov("kv-store::SstableIter::new_scan::start skips block");
+        if idx + 1 >= table.meta.len() {
+            return StartPosition::PastTable;
+        }
+        let next_first_key: &[u8] = &table.meta[idx + 1].first_key;
+        let next_block_in_range = match end {
+            Bound::Included(end) => next_first_key <= end,
+            Bound::Excluded(end) => next_first_key < end,
+            Bound::Unbounded => true,
+        };
+        if next_block_in_range {
+            StartPosition::NextBlock(idx + 1)
+        } else {
+            StartPosition::PastTable
+        }
+    }
+
+    /// An exhausted iterator that never touches (or decodes) any block.
+    fn new_empty(table: &'a SsTable) -> Self {
+        SsTableIter {
+            table,
+            iter: SsTableIterInner::Same(BlockIter::new_empty()),
+            next_block_idx: 1,
+            back_block_idx: 0,
+        }
     }
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
@@ -644,17 +716,33 @@ impl<'a> SsTableIter<'a> {
         let (table_idx, mut iter, excluded) = match start {
             Bound::Included(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start included");
-                let idx = table.find_block_idx(start);
-                let block = read_block(idx);
-                let iter = BlockIter::new_seek_to_key(block, start);
-                (idx, iter, None)
+                match Self::start_within_or_after_block(table, start, false, end) {
+                    StartPosition::PastTable => return Self::new_empty(table),
+                    StartPosition::NextBlock(idx) => {
+                        let block = read_block(idx);
+                        (idx, BlockIter::new(block), None)
+                    }
+                    StartPosition::InBlock(idx) => {
+                        let block = read_block(idx);
+                        let iter = BlockIter::new_seek_to_key(block, start);
+                        (idx, iter, None)
+                    }
+                }
             }
             Bound::Excluded(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start excluded");
-                let idx = table.find_block_idx(start);
-                let block = read_block(idx);
-                let iter = BlockIter::new_seek_to_key(block, start);
-                (idx, iter, Some(start))
+                match Self::start_within_or_after_block(table, start, true, end) {
+                    StartPosition::PastTable => return Self::new_empty(table),
+                    StartPosition::NextBlock(idx) => {
+                        let block = read_block(idx);
+                        (idx, BlockIter::new(block), None)
+                    }
+                    StartPosition::InBlock(idx) => {
+                        let block = read_block(idx);
+                        let iter = BlockIter::new_seek_to_key(block, start);
+                        (idx, iter, Some(start))
+                    }
+                }
             }
             Bound::Unbounded => {
                 notify_cov("kv-store::SstableIter::new_scan::start unbounded");
@@ -667,6 +755,10 @@ impl<'a> SsTableIter<'a> {
             Bound::Included(end) => {
                 notify_cov("kv-store::SstableIter::new_scan::end included");
                 let end_idx = table.find_back_block_idx(end);
+                if end_idx < table_idx {
+                    // The whole range sits inside the skipped prefix: empty scan.
+                    return Self::new_empty(table);
+                }
                 if end_idx == table_idx {
                     iter.back_to_key(end);
                     // if the next back is invalid, the next should also be invalid
@@ -683,6 +775,10 @@ impl<'a> SsTableIter<'a> {
             Bound::Excluded(end) => {
                 notify_cov("kv-store::SstableIter::new_scan::end excluded");
                 let end_idx = table.find_back_block_idx(end);
+                if end_idx < table_idx {
+                    // The whole range sits inside the skipped prefix: empty scan.
+                    return Self::new_empty(table);
+                }
                 if end_idx == table_idx {
                     iter.back_to_key(end);
                     // if the next back is invalid, the next should also be invalid
