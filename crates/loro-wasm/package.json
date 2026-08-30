@@ -25,7 +25,11 @@
         "development": "./bundler/index.js",
         "default": "./browser/index.js"
       },
-      "node": "./nodejs/index.js",
+      "node": {
+        "import": "./nodejs/index.mjs",
+        "require": "./nodejs/index.js",
+        "default": "./nodejs/index.js"
+      },
       "import": "./bundler/index.js",
       "require": "./nodejs/index.js",
       "default": "./bundler/index.js"
@@ -52,7 +56,7 @@
     },
     "./nodejs": {
       "types": "./nodejs/index.d.ts",
-      "import": "./nodejs/index.js",
+      "import": "./nodejs/index.mjs",
       "require": "./nodejs/index.js",
       "default": "./nodejs/index.js"
     },
