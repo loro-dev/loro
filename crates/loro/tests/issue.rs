@@ -718,3 +718,94 @@ fn checkout_with_low_lamport_concurrent_branch_stays_canonical() {
     d.checkout(&v2).unwrap(); // and retreat it again
     assert_eq!(d.get_deep_value(), ref2.get_deep_value());
 }
+
+/// https://github.com/loro-dev/loro/issues/1046
+///
+/// A movable list of containers takes a delete on one peer concurrently with an
+/// edit-then-move of the same element on another peer. When the edit and the move
+/// arrive as two *separate* update batches, importing the second batch used to
+/// panic (`unwrap` on `None` in `movable_list_state.rs`) and poison the doc mutex.
+/// Regression introduced by #974; importing both commits as one batch is fine.
+#[test]
+fn issue_1046_movable_list_delete_vs_edit_then_move_as_two_batches() {
+    use loro::{Container, LoroMap, LoroValue, ValueOrContainer};
+
+    fn index_of(d: &LoroDoc, id: &str) -> Option<usize> {
+        let l = d.get_movable_list("list");
+        (0..l.len()).find(|&i| match l.get(i) {
+            Some(ValueOrContainer::Container(Container::Map(m))) => match m.get("id") {
+                Some(ValueOrContainer::Value(v)) => v == LoroValue::from(id),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
+
+    fn map_at(d: &LoroDoc, idx: usize) -> LoroMap {
+        match d.get_movable_list("list").get(idx) {
+            Some(ValueOrContainer::Container(Container::Map(m))) => m,
+            _ => panic!("expected map container"),
+        }
+    }
+
+    // Base doc: a movable list of two map containers, tagged "a" and "c".
+    let base = LoroDoc::new();
+    base.set_peer_id(1).unwrap();
+    let list = base.get_movable_list("list");
+    for tag in ["a", "c"] {
+        let m = list.insert_container(list.len(), LoroMap::new()).unwrap();
+        m.insert("id", tag).unwrap();
+    }
+    base.commit();
+    let snap = base.export(ExportMode::Snapshot).unwrap();
+
+    let mk = |peer: u64| {
+        let d = LoroDoc::new();
+        d.import(&snap).unwrap();
+        d.set_peer_id(peer).unwrap();
+        d.commit();
+        d
+    };
+    let pa = mk(0xA0);
+    let pb = mk(0xA1);
+
+    // Peer A: delete "c".
+    pa.get_movable_list("list")
+        .delete(index_of(&pa, "c").unwrap(), 1)
+        .unwrap();
+    pa.commit();
+
+    // Peer B, commit 1: edit c's map.
+    let v0 = pb.oplog_vv();
+    map_at(&pb, index_of(&pb, "c").unwrap())
+        .insert("contents", "zombie")
+        .unwrap();
+    pb.commit();
+    let b_edit = pb.export(ExportMode::updates(&v0)).unwrap();
+
+    // Peer B, commit 2: move c to the front.
+    let v1 = pb.oplog_vv();
+    pb.get_movable_list("list")
+        .mov(index_of(&pb, "c").unwrap(), 0)
+        .unwrap();
+    pb.commit();
+    let b_move = pb.export(ExportMode::updates(&v1)).unwrap();
+
+    // Importing the move as a second, separate batch used to panic here.
+    pa.import(&b_edit).unwrap();
+    pa.import(&b_move).unwrap();
+
+    // Full sync in both directions; peers must converge.
+    pb.import(&pa.export(ExportMode::updates(&pb.oplog_vv())).unwrap())
+        .unwrap();
+    pa.import(&pb.export(ExportMode::updates(&pa.oplog_vv())).unwrap())
+        .unwrap();
+    assert_eq!(pa.get_deep_value(), pb.get_deep_value());
+
+    // The converged state must match a fresh-doc replay of the same ops.
+    let fresh = LoroDoc::new();
+    fresh
+        .import(&pa.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(fresh.get_deep_value(), pa.get_deep_value());
+}
