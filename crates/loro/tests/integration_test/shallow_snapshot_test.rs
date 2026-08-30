@@ -468,43 +468,54 @@ fn test_export_shallow_snapshot_from_shallow_doc() -> anyhow::Result<()> {
 
 /// Regression for a branch-specific import bug on `feat/diff-text-lca-review`.
 ///
-/// Setup: 3 peers each commit a few ops, then sync. Peer 1 then commits enough
-/// post-mid_f ops that `shallow_snapshot(&mid_f)` actually trims peer 1's
-/// pre-mid_f history (`shallow_since_vv = {1: 2}`,
-/// `shallow_since_frontiers = [2@1]`). A second peer commits one cross-peer op
-/// whose deps equal mid_f (`[2@1, 2@2, 2@3]`).
+/// Setup: p1 writes a shared base `R`; p2 and p3 fork from it and diverge
+/// concurrently; p1 merges both. `shallow_snapshot` at p1's two-head frontier
+/// picks their common ancestor `R` as the root, and p1's extra post-cut ops
+/// make the trim real (`shallow_since_frontiers = [R]`). A fourth peer that
+/// only ever saw the base then commits a cross-peer op whose deps ARE the
+/// boundary (`[R]`).
 ///
 /// The import preflight should not reuse checkout's conservative
 /// `is_before_shallow_root` semantics here: deps that touch the boundary
 /// together with valid same-or-other-peer post-shallow ids should be
 /// importable.
+///
+/// (This test originally built its shallow doc from three fully-disjoint
+/// heads, which only "trimmed" because the export kept a single peer's head
+/// as the root — a root that was not an ancestor of the cut. The export no
+/// longer produces that unsound root, so the setup now manufactures the same
+/// boundary shape from a sound common ancestor. The missing-peer mixture is
+/// still covered by the `import_deps_before_shallow_root_*` unit tests in
+/// `loro-internal/src/oplog/loro_dag.rs`.)
 #[test]
 fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Result<()> {
     let p1 = LoroDoc::new();
     p1.set_peer_id(1)?;
-    let p2 = LoroDoc::new();
-    p2.set_peer_id(2)?;
-    let p3 = LoroDoc::new();
-    p3.set_peer_id(3)?;
-
     for _ in 0..3 {
         p1.get_text("t").insert(0, "1")?;
         p1.commit();
+    }
+    let base = p1.export(ExportMode::all_updates())?;
+    let base_f = p1.oplog_frontiers();
+
+    // p2 and p3 fork from the base and diverge without ever syncing again.
+    let p2 = LoroDoc::new();
+    p2.set_peer_id(2)?;
+    p2.import(&base)?;
+    let p3 = LoroDoc::new();
+    p3.set_peer_id(3)?;
+    p3.import(&base)?;
+    for _ in 0..3 {
         p2.get_text("t").insert(0, "2")?;
         p2.commit();
         p3.get_text("t").insert(0, "3")?;
         p3.commit();
     }
-    let docs = [&p1, &p2, &p3];
-    for i in 0..3 {
-        for j in 0..3 {
-            if i != j {
-                docs[j].import(&docs[i].export(ExportMode::all_updates())?)?;
-            }
-        }
-    }
+    p1.import(&p2.export(ExportMode::all_updates())?)?;
+    p1.import(&p3.export(ExportMode::all_updates())?)?;
 
     let mid_f = p1.oplog_frontiers();
+    assert_eq!(mid_f.len(), 2, "the cut must be genuinely multi-id");
     for k in 0..5 {
         p1.get_text("t").insert(0, &format!("{k}"))?;
         p1.commit();
@@ -517,12 +528,20 @@ fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Re
         !s.shallow_since_vv().is_empty(),
         "test setup must produce a real shallow trim"
     );
+    assert_eq!(
+        s.shallow_since_frontiers(),
+        base_f,
+        "the root must be the common ancestor of the cut"
+    );
 
-    p2.get_text("t").insert(0, "Y")?;
-    p2.commit();
+    // p4 saw only the base, so its op's deps are exactly the shallow boundary.
+    let p4 = LoroDoc::new();
+    p4.set_peer_id(4)?;
+    p4.import(&base)?;
+    p4.get_text("t").insert(0, "Y")?;
+    p4.commit();
 
-    let p2_updates = p2.export(ExportMode::all_updates())?;
-    s.import(&p2_updates)
+    s.import(&p4.export(ExportMode::all_updates())?)
         .expect("shallow doc should accept cross-peer op whose deps include the shallow boundary");
 
     Ok(())
@@ -769,5 +788,244 @@ fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Re
             "expand={expand:?}"
         );
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Multi-id-frontier shallow exports (the concurrent-client shape).
+//
+// Every existing test in this file takes the shallow cut on a doc whose
+// frontier is a single id. A doc that merges envelope streams from peers that
+// never import each other has a *genuinely multi-id* frontier, and the shallow
+// root the export picks must be a common ancestor of ALL of the cut's heads —
+// otherwise every later update from the other branches is rejected with
+// `ImportUpdatesThatDependsOnOutdatedVersion` (its deps can never cover the
+// bogus root's version), permanently wedging snapshot+tail hydration.
+// ---------------------------------------------------------------------------
+
+/// A peer that never imports anyone — every envelope stream is fully disjoint,
+/// so a doc merging them has one frontier head per peer.
+struct IsolatedPeer {
+    doc: LoroDoc,
+    from: loro::VersionVector,
+}
+
+impl IsolatedPeer {
+    fn new(peer: u64) -> Self {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer).unwrap();
+        doc.set_record_timestamp(false);
+        Self {
+            from: doc.oplog_vv(),
+            doc,
+        }
+    }
+
+    /// Edit, commit, and return the update envelope since the last envelope.
+    fn envelope(&mut self, text: &str) -> Vec<u8> {
+        self.doc.get_text("t").insert(0, text).unwrap();
+        self.doc.commit();
+        let bytes = self.doc.export(ExportMode::updates(&self.from)).unwrap();
+        self.from = self.doc.oplog_vv();
+        bytes
+    }
+}
+
+/// The shallow root recorded in the blob must be a common ancestor of the
+/// requested cut. Before the fix, with three disjoint heads the export kept a
+/// single peer's head as the "root" (not an ancestor of the others at all).
+#[test]
+fn shallow_export_root_is_common_ancestor_of_multi_id_cut() -> anyhow::Result<()> {
+    let mut genesis = IsolatedPeer::new(0);
+    let mut a = IsolatedPeer::new(1);
+    let mut b = IsolatedPeer::new(2);
+
+    let server = LoroDoc::new();
+    for envelope in [
+        genesis.envelope("gggggggg"),
+        a.envelope("aaaaaaaa"),
+        b.envelope("bbbbbbbb"),
+    ] {
+        server.import(&envelope)?;
+    }
+    let cut = server.oplog_frontiers();
+    assert_eq!(cut.len(), 3, "the cut must be genuinely multi-id");
+
+    let blob = server.export(ExportMode::shallow_snapshot(&cut))?;
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false)?;
+    let root_vv = server
+        .frontiers_to_vv(&meta.start_frontiers)
+        .expect("blob root must be reachable in the exporting doc");
+    for id in cut.iter() {
+        let head_vv = server.frontiers_to_vv(&Frontiers::from(id)).unwrap();
+        assert!(
+            head_vv.includes_vv(&root_vv),
+            "shallow root {:?} is not an ancestor of head {id} of the requested cut",
+            meta.start_frontiers,
+        );
+    }
+    Ok(())
+}
+
+/// Snapshot + post-cut tail must hydrate: a periodic-compaction model at the
+/// smallest scale that has the bug (two concurrent peers plus a genesis peer,
+/// one envelope each). Before the fix the tail import dies with
+/// `ImportUpdatesThatDependsOnOutdatedVersion`.
+#[test]
+fn shallow_export_at_multi_id_frontier_accepts_post_cut_tail() -> anyhow::Result<()> {
+    let mut genesis = IsolatedPeer::new(0);
+    let mut a = IsolatedPeer::new(1);
+    let mut b = IsolatedPeer::new(2);
+
+    let early = [
+        genesis.envelope("gggggggg"),
+        a.envelope("aaaaaaaa"),
+        b.envelope("bbbbbbbb"),
+    ];
+    let server = LoroDoc::new();
+    for envelope in &early {
+        server.import(envelope)?;
+    }
+    let cut = server.oplog_frontiers();
+    assert_eq!(cut.len(), 3, "the cut must be genuinely multi-id");
+    let blob = server.export(ExportMode::shallow_snapshot(&cut))?;
+
+    let hydrated = LoroDoc::new();
+    let status = hydrated.import(&blob)?;
+    assert!(status.pending.is_none(), "snapshot import parked: {status:?}");
+    assert_eq!(hydrated.get_deep_value(), server.get_deep_value());
+
+    // The post-cut tail: one more envelope per concurrent peer.
+    let tail = [a.envelope("AAAAAAAA"), b.envelope("BBBBBBBB")];
+    for envelope in &tail {
+        let status = hydrated.import(envelope)?;
+        assert!(status.pending.is_none(), "tail import parked: {status:?}");
+    }
+
+    let reference = LoroDoc::new();
+    for envelope in early.iter().chain(tail.iter()) {
+        reference.import(envelope)?;
+    }
+    assert_eq!(hydrated.get_deep_value(), reference.get_deep_value());
+    assert_eq!(hydrated.oplog_vv(), reference.oplog_vv());
+    Ok(())
+}
+
+/// The full compactor loop: every pass appends one envelope per peer, hydrates
+/// snapshot + tail into a fresh doc, and re-exports a shallow snapshot at the
+/// doc's own (multi-id) frontier. Before the fix pass 3 wedges — and every
+/// pass after it, forever.
+#[test]
+fn shallow_compaction_loop_survives_concurrent_peers() -> anyhow::Result<()> {
+    let mut genesis = IsolatedPeer::new(0);
+    let mut a = IsolatedPeer::new(1);
+    let mut b = IsolatedPeer::new(2);
+
+    let mut log: Vec<Vec<u8>> = vec![genesis.envelope("gggggggg")];
+    let mut snapshot: Option<Vec<u8>> = None;
+    let mut last: Option<LoroDoc> = None;
+    for pass in 0..4 {
+        log.push(a.envelope(&format!("a{pass:07}")));
+        log.push(b.envelope(&format!("b{pass:07}")));
+
+        // Hydrate: snapshot = single import into a fresh doc, then the tail.
+        let doc = LoroDoc::new();
+        if let Some(snapshot) = &snapshot {
+            let status = doc
+                .import(snapshot)
+                .map_err(|e| anyhow::anyhow!("pass {pass}: snapshot import: {e}"))?;
+            assert!(status.pending.is_none(), "pass {pass}: snapshot parked");
+        }
+        for envelope in &log {
+            let status = doc
+                .import(envelope)
+                .map_err(|e| anyhow::anyhow!("pass {pass}: tail import: {e}"))?;
+            assert!(status.pending.is_none(), "pass {pass}: tail parked");
+        }
+
+        let cut = doc.oplog_frontiers();
+        snapshot = Some(
+            doc.export(ExportMode::shallow_snapshot(&cut))
+                .map_err(|e| anyhow::anyhow!("pass {pass}: shallow export: {e}"))?,
+        );
+        log.clear();
+        last = Some(doc);
+    }
+
+    // The final hydrated doc carries every peer's whole stream.
+    let doc = last.unwrap();
+    let vv = doc.oplog_vv();
+    assert_eq!(vv.get(&0).copied(), Some(8));
+    assert_eq!(vv.get(&1).copied(), Some(32));
+    assert_eq!(vv.get(&2).copied(), Some(32));
+    Ok(())
+}
+
+/// The fix must not cost trimming where trimming is sound: when the concurrent
+/// heads share ancestry (clients fork from a common genesis and then diverge),
+/// the export still picks that common ancestor as the root and the blob is
+/// genuinely shallow — and the post-cut tail still hydrates.
+#[test]
+fn shallow_export_still_trims_when_concurrent_heads_share_ancestry() -> anyhow::Result<()> {
+    let base = LoroDoc::new();
+    base.set_peer_id(0)?;
+    base.set_record_timestamp(false);
+    base.get_text("t").insert(0, "gggggggg")?;
+    base.commit();
+    let genesis = base.export(ExportMode::all_updates())?;
+    let genesis_head = base.oplog_frontiers();
+
+    // Two clients fork from the genesis and never sync with each other again.
+    let make_client = |peer: u64| -> anyhow::Result<LoroDoc> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer)?;
+        doc.set_record_timestamp(false);
+        doc.import(&genesis)?;
+        Ok(doc)
+    };
+    let a = make_client(1)?;
+    let b = make_client(2)?;
+    let mut from_a = a.oplog_vv();
+    let mut from_b = b.oplog_vv();
+    a.get_text("t").insert(0, "aaaaaaaa")?;
+    a.commit();
+    b.get_text("t").insert(0, "bbbbbbbb")?;
+    b.commit();
+
+    let server = LoroDoc::new();
+    server.import(&genesis)?;
+    server.import(&a.export(ExportMode::updates(&from_a))?)?;
+    server.import(&b.export(ExportMode::updates(&from_b))?)?;
+    from_a = a.oplog_vv();
+    from_b = b.oplog_vv();
+    let cut = server.oplog_frontiers();
+    assert_eq!(cut.len(), 2, "the cut must be genuinely multi-id");
+
+    let blob = server.export(ExportMode::shallow_snapshot(&cut))?;
+    let meta = LoroDoc::decode_import_blob_meta(&blob, false)?;
+    assert_eq!(
+        meta.start_frontiers, genesis_head,
+        "the shared genesis is the greatest common ancestor of the cut"
+    );
+
+    let hydrated = LoroDoc::new();
+    hydrated.import(&blob)?;
+    assert!(hydrated.is_shallow(), "shared ancestry must still trim");
+    assert_eq!(hydrated.get_deep_value(), server.get_deep_value());
+
+    // Post-cut tail from both concurrent clients.
+    a.get_text("t").insert(0, "AAAAAAAA")?;
+    a.commit();
+    b.get_text("t").insert(0, "BBBBBBBB")?;
+    b.commit();
+    for envelope in [
+        a.export(ExportMode::updates(&from_a))?,
+        b.export(ExportMode::updates(&from_b))?,
+    ] {
+        let status = hydrated.import(&envelope)?;
+        assert!(status.pending.is_none(), "tail import parked: {status:?}");
+    }
+    assert_eq!(hydrated.oplog_vv().get(&1).copied(), Some(16));
+    assert_eq!(hydrated.oplog_vv().get(&2).copied(), Some(16));
     Ok(())
 }

@@ -404,6 +404,18 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
                 let (gca, _) = oplog
                     .dag()
                     .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
+                if gca.is_empty() {
+                    // An empty meet is the bottom of the causal lattice: these two
+                    // heads share no history, so no non-empty version is an ancestor
+                    // of the whole cut. Dropping the empty meet from `next` instead
+                    // would let the remaining heads pose as their own "common
+                    // ancestor", yielding a shallow root that is NOT an ancestor of
+                    // the requested cut — a blob every later import of the other
+                    // branches' updates rejects with
+                    // `ImportUpdatesThatDependsOnOutdatedVersion`.
+                    // Fall back to empty frontiers, meaning export full history.
+                    return clamp_to_shallow_root(oplog, Frontiers::default());
+                }
                 for id in gca.iter() {
                     next.push(id);
                 }
