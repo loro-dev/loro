@@ -718,3 +718,64 @@ fn checkout_with_low_lamport_concurrent_branch_stays_canonical() {
     d.checkout(&v2).unwrap(); // and retreat it again
     assert_eq!(d.get_deep_value(), ref2.get_deep_value());
 }
+
+/// https://github.com/loro-dev/loro/issues/1068
+///
+/// Importing a remote update whose dependencies were folded into a shallow
+/// snapshot used to panic inside `OpLog` (`calc_unknown_lamport_change(..).unwrap()`
+/// in `pending_changes.rs`: the dep is covered by the vv but its DAG node was
+/// trimmed, so no lamport can be computed). The panic poisons the doc mutex and
+/// dropping the doc double-panics, aborting the process. It must return `Err`.
+#[test]
+fn issue_1068_import_dep_folded_into_shallow_snapshot_errs_instead_of_panicking() {
+    use loro::IdSpan;
+
+    // Peer B writes one op and publishes it.
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+    b.get_map("m").insert("k0", "v0").unwrap();
+    b.commit();
+    let b0 = b.export(ExportMode::all_updates()).unwrap();
+
+    // Peer A imports it, writes its own op, then exports a shallow snapshot
+    // starting at A's current frontier — so B's op is folded into the state.
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    a.import(&b0).unwrap();
+    a.get_map("m").insert("k1", "v1").unwrap();
+    a.commit();
+    let snapshot = a
+        .export(ExportMode::shallow_snapshot(&a.oplog_frontiers()))
+        .unwrap();
+
+    // B continues from its own op 0.
+    b.get_map("m").insert("k2", "v2").unwrap();
+    b.commit();
+    let b1 = b
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(2, 1, 2)]))
+        .unwrap();
+
+    // A fresh doc bootstrapped from the shallow snapshot.
+    let fresh = LoroDoc::new();
+    fresh.import(&snapshot).unwrap();
+    fresh.set_peer_id(9).unwrap();
+
+    // Must be a recoverable error, not a panic.
+    let result = fresh.import(&b1);
+    assert!(
+        matches!(
+            result,
+            Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
+        ),
+        "import of an update with deps folded into the shallow snapshot \
+         should return Err, got {result:?}"
+    );
+
+    // The doc must remain usable afterwards (mutex not poisoned).
+    fresh.get_map("m").insert("k3", "v3").unwrap();
+    fresh.commit();
+    assert!(fresh
+        .get_map("m")
+        .get("k3")
+        .is_some_and(|v| !v.is_container()));
+}

@@ -802,6 +802,19 @@ impl AppDag {
             return true;
         }
 
+        // A dep covered by `shallow_since_vv` was folded into the shallow
+        // snapshot: its DAG node is trimmed, so a change depending on it can
+        // never compute its lamport here. This must be checked before
+        // `frontiers_to_vv`, whose `shallow_root_frontiers_deps` fast path
+        // resolves exactly those folded deps and would misclassify such a
+        // change as importable — it then panics later in the unknown-lamport
+        // pending path (#1068). Note the retained root node itself is NOT
+        // covered by `shallow_since_vv`, so deps that touch the boundary node
+        // are unaffected.
+        if deps.iter().any(|id| self.shallow_since_vv.includes_id(id)) {
+            return true;
+        }
+
         let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
         if let Some(vv) = self.frontiers_to_vv(deps) {
             return !vv.includes_vv(&shallow_vv);
@@ -810,15 +823,10 @@ impl AppDag {
         // Import only needs to reject updates whose causal source is older than
         // the shallow root. A dependency set that touches the retained boundary
         // can still be a valid post-root update, even when the rest of the deps
-        // are imported later in the same batch.
-        if deps
-            .iter()
-            .any(|id| self.shallow_since_frontiers.contains(&id))
-        {
-            return false;
-        }
-
-        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
+        // are imported later in the same batch. Deps that are neither folded
+        // (checked above) nor resolvable are future ops the doc has not seen;
+        // they are importable and will be parked as pending.
+        false
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node

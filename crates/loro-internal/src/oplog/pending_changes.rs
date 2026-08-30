@@ -360,7 +360,7 @@ enum ChangeState {
 
 fn remote_change_apply_state(
     vv: &VersionVector,
-    _shallow_vv: &ImVersionVector,
+    shallow_vv: &ImVersionVector,
     change: &Change,
 ) -> ChangeState {
     let peer = change.id.peer;
@@ -377,6 +377,17 @@ fn remote_change_apply_state(
     for dep in change.deps.iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
+            return ChangeState::AwaitingMissingDependency(dep);
+        }
+
+        // The dep is covered by the doc's version, but if it lies below the
+        // shallow root its DAG node was trimmed and the change's lamport can
+        // never be computed here. Claiming `CanApplyDirectly` would panic in
+        // `apply_change_from_remote`'s lamport calculation (#1068); park the
+        // change instead. Imports of such changes are normally rejected up
+        // front by `import_deps_before_shallow_root`, so this only guards
+        // changes that were parked as pending before the doc became shallow.
+        if shallow_vv.includes_id(dep) {
             return ChangeState::AwaitingMissingDependency(dep);
         }
     }
