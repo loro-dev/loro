@@ -809,3 +809,43 @@ fn issue_1046_movable_list_delete_vs_edit_then_move_as_two_batches() {
         .unwrap();
     assert_eq!(fresh.get_deep_value(), pa.get_deep_value());
 }
+
+/// https://github.com/loro-dev/loro/issues/1048
+///
+/// `checkout()` to the frontiers a detached doc is already at must keep the doc
+/// detached. On 1.13.7 (a one-line change in #974's `b81abfc`) the no-op early
+/// return started deriving the detached flag from `frontiers == oplog_frontiers()`,
+/// so a doc parked at HEAD silently re-attached — while a normal checkout that
+/// *lands* on HEAD stays detached. Detached is an explicit mode, left only via
+/// `checkout_to_latest()`/`attach()` (the 1.13.6 behavior).
+#[test]
+fn issue_1048_checkout_to_current_frontiers_should_stay_detached() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("t");
+    let mut checkpoints = Vec::new();
+    for (i, ch) in ["a", "b", "c"].iter().enumerate() {
+        text.insert(i, ch).unwrap();
+        doc.commit();
+        checkpoints.push(doc.oplog_frontiers());
+    }
+
+    // Scrub forward through every checkpoint: each checkout detaches the doc.
+    for f in &checkpoints {
+        doc.checkout(f).unwrap();
+        assert!(doc.is_detached());
+    }
+
+    // The forward pass ended at HEAD, so scrubbing back starts by re-checking-out
+    // the frontiers the doc already occupies. It must stay detached.
+    for f in checkpoints.iter().rev() {
+        doc.checkout(f).unwrap();
+        assert!(
+            doc.is_detached(),
+            "checkout({f:?}) to the current frontiers re-attached the doc"
+        );
+    }
+
+    // Explicit re-attach still works.
+    doc.checkout_to_latest();
+    assert!(!doc.is_detached());
+}

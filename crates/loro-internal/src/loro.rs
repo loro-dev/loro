@@ -1745,7 +1745,18 @@ impl LoroDoc {
         );
 
         if &from_frontiers == frontiers {
-            self.set_detached(frontiers != &self.oplog_frontiers());
+            // Deriving the attached/detached flag here must only go in the
+            // detaching direction. Detached is an explicit mode: it is entered
+            // via `checkout` and left via `checkout_to_latest`/`attach`, which
+            // clear the flag themselves after this returns. Re-attaching a
+            // detached doc just because it is parked at the oplog frontiers
+            // would make `is_detached()` at HEAD depend on how the doc got
+            // there (a no-op checkout vs. a checkout that lands on HEAD), and
+            // silently resumes auto-commit while the user believes the doc is
+            // still in history view (#1048).
+            if frontiers != &self.oplog_frontiers() {
+                self.set_detached(true);
+            }
             return Ok(());
         }
 
