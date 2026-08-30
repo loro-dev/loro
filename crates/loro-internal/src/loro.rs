@@ -1479,6 +1479,44 @@ impl LoroDoc {
         });
 
         let (options, txn) = self.implicit_commit_then_stop();
+
+        // Relates #1066: a snapshot member cannot go
+        // through the detached batch lane below. That lane imports each blob as oplog
+        // changes only (`decode_oplog_changes`), which is sound for full snapshots
+        // (their oplog carries the whole history) but drops a SHALLOW snapshot's
+        // state contribution entirely: only its trimmed oplog window is decoded, the
+        // shallow-root state bytes are never read, so on a fresh doc every change in
+        // the window has unmet deps and the whole batch parks as pending — an empty
+        // doc, silently. When the doc can still be reset by a snapshot (empty, not
+        // mid-batch), peel the best snapshot member — the sort above puts it first —
+        // and import it through the regular snapshot lane while we hold the txn
+        // guard, exactly as `import()` would inside its barrier. The remaining blobs
+        // then run through the unchanged batch lane on top of the initialized doc,
+        // which is the documented-equivalent "import(snapshot) + import_batch(tail)"
+        // sequence. Member-error semantics are unchanged: `import_batch` already
+        // keeps prior members' progress when a later member fails.
+        if meta_arr[0].0.mode.is_snapshot() && self.can_reset_with_snapshot() {
+            let (_, data) = meta_arr.remove(0);
+            match self._import_with(data, Default::default()) {
+                Ok(s) => {
+                    for (peer, (start, end)) in s.success.iter() {
+                        success.insert(*peer, *start, *end);
+                    }
+                }
+                Err(e) => {
+                    self._renew_txn_if_auto_commit_with_guard(options, txn);
+                    return Err(e);
+                }
+            }
+            if meta_arr.is_empty() {
+                self._renew_txn_if_auto_commit_with_guard(options, txn);
+                return Ok(ImportStatus {
+                    success,
+                    pending: None,
+                });
+            }
+        }
+
         // Why we should keep locking `txn` here
         //
         // In a multi-threaded environment, `import_batch` used to drop the txn lock
