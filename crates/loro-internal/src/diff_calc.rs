@@ -112,6 +112,10 @@ pub(crate) struct DiffCalcVersionInfo<'a> {
     from_frontiers: &'a Frontiers,
     to_frontiers: &'a Frontiers,
     replay_base_vv: &'a VersionVector,
+    /// The replay base is a critical version of `ancestry(from) ∪ ancestry(to)`:
+    /// nothing above it is concurrent with anything below it. See
+    /// `OpLog::iter_from_replay_base_causally`.
+    replay_base_is_critical: bool,
 }
 
 fn changed_containers_between(
@@ -347,6 +351,7 @@ impl DiffCalculator {
             from_frontiers: before_frontiers,
             to_frontiers: after_frontiers,
             replay_base_vv: &replay_base,
+            replay_base_is_critical,
         };
         while !all.is_empty() {
             // sort by depth and lamport, ensure we iterate from top to bottom
@@ -489,6 +494,16 @@ pub(crate) trait DiffCalculatorTrait {
     ) -> (InternalDiff, DiffMode);
     /// This round of diff calc is finished, we can clear the cache
     fn finish_this_round(&mut self);
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Counts full-history CRDT tracker rebuilds so tests can assert the
+    /// incremental path actually short-circuits them. Test observability
+    /// only; thread-local so concurrently running tests cannot disturb each
+    /// other's counts (diff calc runs on the importing thread).
+    pub(crate) static FULL_TRACKER_REBUILD_COUNT: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
 }
 
 #[enum_dispatch(DiffCalculatorTrait)]
@@ -1732,10 +1747,27 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             } => {
                 let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
                 let has_retreat = retreat.next().is_some();
-                let should_rebuild = has_retreat
-                    || info.replay_base_vv != info.from_vv
-                    || *source_not_in_op_context
-                    || !oplog.shallow_since_vv().is_empty();
+                // The tracker models everything below its seed version as one
+                // opaque "unknown" span: it can never be retreated and its
+                // interior has no ids. Trusting it is sound exactly when no
+                // replayed op is concurrent with anything below the replay
+                // base — the definition of a critical base (spec D8b). Every
+                // concurrent pair the Fugue adjudication has to order is then
+                // inside the replayed region, and the alive-set of below-base
+                // content is identical at every checkout the replay performs,
+                // so the opaque span is a faithful, length-stable model of
+                // the base state. A reused tracker may be seeded even lower
+                // (`start_vv` ⊆ base); criticality transfers down, because an
+                // op concurrent with an event in `Events(start_vv)` would be
+                // concurrent with that same event in `Events(base)`.
+                // A base that is merely a common ancestor gives no such
+                // promise (`source_not_in_op_context` then reports replayed
+                // ops whose causal context misses the source state), so fall
+                // back to reconstructing the target state from CRDT ids.
+                let base_is_trustworthy = info.replay_base_is_critical
+                    || (info.replay_base_vv == info.from_vv && !*source_not_in_op_context);
+                let should_rebuild =
+                    has_retreat || !base_is_trustworthy || !oplog.shallow_since_vv().is_empty();
                 if should_rebuild {
                     // Richtext diffs can start from a tracker that only knows the replay-base
                     // state as unknown spans. Expressing a rollback or an import from a base
@@ -1746,6 +1778,8 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     // Preserve correctness by replacing the visible source state with the target
                     // state reconstructed from CRDT ids. Shallow docs seed this tracker from the
                     // shallow-root state and replay only the retained suffix of history.
+                    #[cfg(test)]
+                    FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
                     let mut merged = info.from_vv.clone();
                     merged.merge(info.to_vv);
                     let (mut full_tracker, full_styles) =
@@ -1757,12 +1791,28 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     }
                     **tracker = full_tracker;
                     *styles = full_styles;
+                    // `start_vv` is deliberately left as-is: the rebuild's
+                    // real seed is even lower (the empty version, or the
+                    // shallow root), so the reseed test in `start_tracking`
+                    // only becomes more conservative.
 
                     return (InternalDiff::RichtextRaw(delta), DiffMode::Checkout);
                 }
 
                 let mut delta = DeltaRope::new();
                 for item in tracker.diff(info.from_vv, info.to_vv) {
+                    // `has_retreat` in `should_rebuild` is load-bearing for
+                    // this loop: a retreat is the only way to un-delete
+                    // below-base content, so a forward-only diff can never
+                    // emit the opaque span as an insert (which would abort in
+                    // `push_tracker_chunk`).
+                    #[cfg(debug_assertions)]
+                    if let CrdtRopeDelta::Insert { chunk, .. } = &item {
+                        debug_assert!(
+                            !matches!(chunk.value(), RichtextChunkValue::Unknown(_)),
+                            "the opaque below-base span leaked into a richtext diff"
+                        );
+                    }
                     push_tracker_delta_item(&mut delta, idx, oplog, styles, item);
                 }
 

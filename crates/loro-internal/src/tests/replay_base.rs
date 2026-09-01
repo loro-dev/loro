@@ -91,6 +91,7 @@ fn randomized_sync_never_exhausts_the_search_budget() {
     docs[2].import(&all).unwrap();
 
     let fallbacks_before = CRITICAL_BASE_FALLBACK_COUNT.with(|c| c.get());
+    let rebuilds_before = crate::diff_calc::FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
     for _ in 0..600 {
         let i = rng.below(3);
         if rng.below(3) == 0 {
@@ -130,6 +131,11 @@ fn randomized_sync_never_exhausts_the_search_budget() {
     assert_eq!(
         fallbacks, 0,
         "the bounded search fell back to the single-head descent"
+    );
+    let rebuilds = crate::diff_calc::FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before;
+    assert_eq!(
+        rebuilds, 0,
+        "randomized concurrent imports must not rebuild the tracker"
     );
 }
 
@@ -197,4 +203,350 @@ fn disjoint_histories_have_no_cut_below_the_meet() {
         oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
     assert!(base.vv.is_empty());
     assert!(base.is_critical);
+}
+
+// ---- Trusting a critical replay base (richtext) ----
+
+/// peer 1 commits `insert + mark` in ONE change, so `StyleStart` and
+/// `StyleEnd` are adjacent counters inside a single change. Peers 2 and 3
+/// then fork *between* those two counters (detached editing on a mid-change
+/// frontier), which is the only way a doc version can sit inside a style
+/// pair. The greatest critical cut then lands between the two ops of one
+/// mark, exercising the unpaired-end recovery path
+/// (`style_for_end_anchor`) of the non-rebuilt tracker.
+fn style_straddle_forks() -> (LoroDoc, LoroDoc, LoroDoc) {
+    use crate::cursor::PosType;
+    use crate::version::Frontiers;
+    use loro_common::ID;
+
+    let doc1 = LoroDoc::new_auto_commit();
+    doc1.set_peer_id(1).unwrap();
+    doc1.get_text("r")
+        .insert(0, "hello world", PosType::Unicode)
+        .unwrap();
+    doc1.get_text("r")
+        .mark(0, 5, "bold", true.into(), PosType::Unicode)
+        .unwrap();
+    doc1.commit_then_renew();
+    let snapshot = doc1.export(ExportMode::Snapshot).unwrap();
+
+    let mut forks = Vec::new();
+    for (peer, s) in [(2u64, "AAA"), (3u64, "BBB")] {
+        let d = LoroDoc::new_auto_commit();
+        d.set_detached_editing(true);
+        d.import(&snapshot).unwrap();
+        d.set_peer_id(peer).unwrap();
+        // Mid-change frontier: after StyleStart (counter 11), before
+        // StyleEnd (counter 12).
+        d.checkout(&Frontiers::from(ID::new(1, 11))).unwrap();
+        d.set_peer_id(peer).unwrap();
+        d.get_text("r").insert(2, s, PosType::Unicode).unwrap();
+        d.commit_then_renew();
+        forks.push(d);
+    }
+
+    let doc3 = forks.pop().unwrap();
+    let doc2 = forks.pop().unwrap();
+    (doc1, doc2, doc3)
+}
+
+#[test]
+fn critical_base_may_cut_between_style_start_and_end() {
+    let (doc1, doc2, doc3) = style_straddle_forks();
+    let target = LoroDoc::new_auto_commit();
+    target
+        .import(&doc1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    target
+        .import(
+            &doc2
+                .export(ExportMode::updates(&target.oplog_vv()))
+                .unwrap(),
+        )
+        .unwrap();
+
+    let before = target.oplog_vv();
+    let before_frontiers = target.oplog_frontiers();
+    target
+        .import(
+            &doc3
+                .export(ExportMode::updates(&target.oplog_vv()))
+                .unwrap(),
+        )
+        .unwrap();
+    let after = target.oplog_vv();
+    let after_frontiers = target.oplog_frontiers();
+
+    let oplog = target.oplog().lock();
+    let (base, _) =
+        oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
+    // A later change to the base search that rounds cuts to change (or style
+    // pair) boundaries would silently drop this coverage — keep it pinned.
+    assert_eq!(
+        base.vv.get(&1).copied(),
+        Some(12),
+        "base must cut between StyleStart(11) and StyleEnd(12); got {:?}",
+        base.vv
+    );
+    assert!(
+        base.is_critical,
+        "the mid-mark cut must be reported critical"
+    );
+    assert_ne!(base.vv, before, "must be a conservative base");
+}
+
+#[test]
+fn style_straddling_base_converges_in_every_import_order() {
+    use crate::diff_calc::FULL_TRACKER_REBUILD_COUNT;
+    use crate::version::Frontiers;
+
+    let (doc1, doc2, doc3) = style_straddle_forks();
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    // a: import 2 then 3. b: import 3 then 2. c: everything in one batch.
+    let a = LoroDoc::new_auto_commit();
+    a.import(&doc1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    a.import(&doc2.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+        .unwrap();
+    a.import(&doc3.export(ExportMode::updates(&a.oplog_vv())).unwrap())
+        .unwrap();
+
+    let b = LoroDoc::new_auto_commit();
+    b.import(&doc1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    b.import(&doc3.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
+    b.import(&doc2.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
+
+    let rebuilds = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before;
+    assert_eq!(
+        rebuilds, 0,
+        "the straddle imports must take the trusted path"
+    );
+
+    let c = LoroDoc::new_auto_commit();
+    c.import(&doc1.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let all = vec![
+        doc2.export(ExportMode::updates(&c.oplog_vv())).unwrap(),
+        doc3.export(ExportMode::updates(&c.oplog_vv())).unwrap(),
+    ];
+    c.import_batch(&all).unwrap();
+
+    assert_eq!(a.get_text("r").to_string(), b.get_text("r").to_string());
+    assert_eq!(a.get_text("r").to_string(), c.get_text("r").to_string());
+    assert_eq!(
+        a.get_text("r").get_richtext_value(),
+        b.get_text("r").get_richtext_value()
+    );
+    assert_eq!(
+        a.get_text("r").get_richtext_value(),
+        c.get_text("r").get_richtext_value()
+    );
+
+    // Independent oracle: a checkout round-trip through the empty frontiers
+    // forces a full-history rebuild, so the trusted incremental result is
+    // compared against the rebuild path — not just against itself.
+    let incremental = a.get_text("r").get_richtext_value();
+    let head = a.oplog_frontiers();
+    let oracle_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    a.checkout(&Frontiers::default()).unwrap();
+    a.checkout(&head).unwrap();
+    assert!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) > oracle_before,
+        "the oracle round-trip must take the rebuild path"
+    );
+    assert_eq!(a.get_text("r").get_richtext_value(), incremental);
+}
+
+/// Continuous two-peer sync with marks: text and styles converge, and the
+/// full-history tracker rebuild never fires — every concurrent import is
+/// served from a tracker seeded at the (multi-head critical) replay base.
+#[test]
+fn criss_cross_sync_never_rebuilds_the_text_tracker() {
+    use crate::cursor::PosType;
+    use crate::diff_calc::FULL_TRACKER_REBUILD_COUNT;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    a.get_text("r")
+        .insert(0, "seed text here", PosType::Unicode)
+        .unwrap();
+    a.commit_then_renew();
+    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
+
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    for round in 0..40 {
+        for (d, s) in [(&a, "x"), (&b, "y")] {
+            let t = d.get_text("r");
+            t.insert(1, s, PosType::Unicode).unwrap();
+            let len = t.len_unicode();
+            t.mark(
+                0,
+                (len / 2).max(1),
+                "bold",
+                (round % 2 == 0).into(),
+                PosType::Unicode,
+            )
+            .unwrap();
+            d.commit_then_renew();
+        }
+        exchange(&a, &b);
+    }
+    assert_eq!(a.get_text("r").to_string(), b.get_text("r").to_string());
+    assert_eq!(
+        a.get_text("r").get_richtext_value(),
+        b.get_text("r").get_richtext_value()
+    );
+    let rebuilds = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before;
+    assert_eq!(
+        rebuilds, 0,
+        "concurrent imports must not rebuild the tracker"
+    );
+
+    // Independent oracle: force one rebuild via a checkout round-trip and
+    // compare it against the incrementally maintained state.
+    let incremental = a.get_text("r").get_richtext_value();
+    let head = a.oplog_frontiers();
+    a.checkout(&crate::version::Frontiers::default()).unwrap();
+    a.checkout(&head).unwrap();
+    assert!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) > rebuilds_before,
+        "the oracle round-trip must take the rebuild path"
+    );
+    assert_eq!(a.get_text("r").get_richtext_value(), incremental);
+}
+
+/// A persisted calculator replays ops the tracker has already applied
+/// whenever the replay base sits below the version the tracker reached on
+/// an earlier round (the shape `LoroDoc::checkout` produces — driven here
+/// directly through one persisted `DiffCalculator`). The tracker skips
+/// them (`skip_applied`), and the style table must not grow a duplicate
+/// entry per re-replayed StyleStart: trusting the base turns what was a
+/// once-per-retreat re-replay into one on every step.
+#[test]
+fn persisted_walks_do_not_duplicate_style_entries() {
+    use crate::cursor::PosType;
+    use crate::diff_calc::{ContainerDiffCalculator, DiffCalculator, FULL_TRACKER_REBUILD_COUNT};
+    use crate::handler::HandlerTrait;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_text("t")
+        .insert(0, "seed text", PosType::Unicode)
+        .unwrap();
+    a.commit_then_renew();
+    let b = a.fork();
+    b.set_peer_id(2).unwrap();
+
+    // A forward checkout path through half-synced frontiers: `{A_i}` is not
+    // critical (B_i is concurrent), so the step to `{A_i, B_i}` replays from
+    // the previous sync point and re-applies A_i's ops.
+    let rounds = 6;
+    let mut stops = vec![a.oplog_frontiers()];
+    for round in 0..rounds {
+        for (d, s) in [(&a, "x"), (&b, "y")] {
+            let t = d.get_text("t");
+            t.insert(0, s, PosType::Unicode).unwrap();
+            t.mark(0, 4, "bold", (round % 2 == 0).into(), PosType::Unicode)
+                .unwrap();
+            d.commit_then_renew();
+        }
+        stops.push(a.oplog_frontiers());
+        exchange(&a, &b);
+        stops.push(a.oplog_frontiers());
+    }
+
+    let oplog = a.oplog().lock();
+    let idx = a.get_text("t").idx();
+    let mut calc = DiffCalculator::new(true);
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    for w in stops.windows(2) {
+        let before = oplog.dag.frontiers_to_vv(&w[0]).unwrap();
+        let after = oplog.dag.frontiers_to_vv(&w[1]).unwrap();
+        calc.calc_diff_internal(&oplog, &before, &w[0], &after, &w[1], None);
+    }
+    assert_eq!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before,
+        0,
+        "a forward walk over critical bases must not rebuild (a rebuild would reset the style table and mask the leak)"
+    );
+
+    let depth = oplog.arena.get_depth(idx);
+    let (_, c) = calc.get_or_create_calc(idx, depth);
+    let ContainerDiffCalculator::Richtext(text) = c else {
+        panic!("expected a richtext calculator");
+    };
+    assert_eq!(
+        text.tracked_style_ids().len(),
+        2 * rounds,
+        "each StyleStart must appear exactly once in the style table"
+    );
+}
+
+/// The StyleEnd fallback (`style_for_end_anchor`) pushes a style entry when
+/// its StyleStart lies below the tracker's seed. Re-replaying that StyleEnd
+/// must reuse the entry, not push another; likewise a rebuild-created entry
+/// must be reused by a later re-replay.
+#[test]
+fn straddling_walks_never_duplicate_style_entries() {
+    use crate::diff_calc::{ContainerDiffCalculator, DiffCalculator, FULL_TRACKER_REBUILD_COUNT};
+    use crate::handler::HandlerTrait;
+
+    let (doc1, doc2, doc3) = style_straddle_forks();
+    // A second mark on one fork puts a StyleStart into the region the later
+    // steps re-replay (the straddling mark's own StyleStart sits below every
+    // base and only its StyleEnd is replayed, via the fallback).
+    doc2.get_text("r")
+        .mark(0, 3, "italic", true.into(), crate::cursor::PosType::Unicode)
+        .unwrap();
+    doc2.commit_then_renew();
+    let target = LoroDoc::new_auto_commit();
+    for d in [&doc1, &doc2, &doc3] {
+        target
+            .import(&d.export(ExportMode::updates(&target.oplog_vv())).unwrap())
+            .unwrap();
+    }
+    let f0 = doc1.oplog_frontiers();
+    let f1 = {
+        let t = doc1.fork();
+        t.import(&doc2.export(ExportMode::updates(&t.oplog_vv())).unwrap())
+            .unwrap();
+        t.oplog_frontiers()
+    };
+    let f2 = target.oplog_frontiers();
+
+    let oplog = target.oplog().lock();
+    let idx = target.get_text("r").idx();
+    let mut calc = DiffCalculator::new(true);
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    // Forward over a base that cuts between StyleStart and StyleEnd (the
+    // fallback pushes), forward again (the fallback must reuse), retreat
+    // (rebuild replaces the table), forward again (reuse after a rebuild).
+    for w in [[&f0, &f1], [&f1, &f2], [&f2, &f1], [&f1, &f2]] {
+        let before = oplog.dag.frontiers_to_vv(w[0]).unwrap();
+        let after = oplog.dag.frontiers_to_vv(w[1]).unwrap();
+        calc.calc_diff_internal(&oplog, &before, w[0], &after, w[1], None);
+
+        let depth = oplog.arena.get_depth(idx);
+        let (_, c) = calc.get_or_create_calc(idx, depth);
+        let ContainerDiffCalculator::Richtext(text) = c else {
+            panic!("expected a richtext calculator");
+        };
+        let mut ids = text.tracked_style_ids();
+        let len = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), len, "duplicate style entry for one op id");
+        assert_eq!(len, 2, "one entry per mark: the fallback's and the fork's");
+    }
+    assert_eq!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before,
+        1,
+        "only the retreating step may rebuild"
+    );
 }
