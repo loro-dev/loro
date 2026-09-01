@@ -550,3 +550,34 @@ fn straddling_walks_never_duplicate_style_entries() {
         "only the retreating step may rebuild"
     );
 }
+
+/// Same criss-cross shape on a plain list container: the list tracker also
+/// stops rebuilding once the replay base is certified critical.
+#[test]
+fn criss_cross_sync_never_rebuilds_the_list_tracker() {
+    use crate::diff_calc::FULL_TRACKER_REBUILD_COUNT;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    a.get_list("l").insert(0, "seed").unwrap();
+    a.commit_then_renew();
+    b.import(&a.export(ExportMode::updates(&b.oplog_vv())).unwrap())
+        .unwrap();
+
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    for round in 0..40 {
+        for (d, v) in [(&a, "x"), (&b, "y")] {
+            d.get_list("l").insert(0, format!("{v}{round}")).unwrap();
+            d.commit_then_renew();
+        }
+        exchange(&a, &b);
+    }
+    assert_eq!(a.get_deep_value(), b.get_deep_value());
+    let rebuilds = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before;
+    assert_eq!(
+        rebuilds, 0,
+        "concurrent list imports must not rebuild the tracker"
+    );
+}

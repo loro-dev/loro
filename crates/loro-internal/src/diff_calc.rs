@@ -829,9 +829,24 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let mut delta = Delta::new();
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
-        let should_rebuild = matches!(idx.get_type(), crate::ContainerType::List)
-            && (has_retreat || info.replay_base_vv != info.from_vv || self.source_not_in_op_context);
+        let should_rebuild = matches!(idx.get_type(), crate::ContainerType::List) && {
+            // A certified-critical replay base can be trusted for the same
+            // reason as in richtext (see the soundness comment in
+            // `RichtextDiffCalculator::calculate_diff`) — with less
+            // machinery, as list trackers have no style anchors. The critical
+            // arm additionally requires a non-shallow doc, which preserves
+            // the old behavior exactly: list trackers have no shallow-root
+            // seeding, and the pre-existing `base == from` arm never had a
+            // shallow term. `has_retreat` stays load-bearing: a retreat is
+            // the only way a diff could emit the opaque below-base span.
+            let base_is_trustworthy = (info.replay_base_is_critical
+                && oplog.shallow_since_vv().is_empty())
+                || (info.replay_base_vv == info.from_vv && !self.source_not_in_op_context);
+            has_retreat || !base_is_trustworthy
+        };
         let diff_items = if should_rebuild {
+            #[cfg(test)]
+            FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             let mut full_tracker = Self::build_full_tracker(idx, oplog, &merged);
@@ -1975,7 +1990,13 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
-        if has_retreat || info.replay_base_vv != info.from_vv || self.list.source_not_in_op_context {
+        // Deliberately NOT relaxed for a certified-critical replay base: the
+        // movable-list element phase reads positions from a tracker this
+        // rebuild has just refreshed, and trusting an unknown-span tracker
+        // here needs its own argument about element/position state. See the
+        // soundness comment in `RichtextDiffCalculator::calculate_diff`.
+        if has_retreat || info.replay_base_vv != info.from_vv || self.list.source_not_in_op_context
+        {
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             self.rebuild_full_tracker(idx, oplog, &merged);
