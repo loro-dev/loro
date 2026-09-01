@@ -44,7 +44,10 @@ use self::tree::TreeDiffCalculator;
 
 use self::unknown::UnknownDiffCalculator;
 
-use super::{event::InternalContainerDiff, oplog::OpLog};
+use super::{
+    event::InternalContainerDiff,
+    oplog::{OpLog, ReplayBase},
+};
 
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
@@ -192,8 +195,14 @@ impl DiffCalculator {
 
         let mut merged = before.clone();
         merged.merge(after);
-        let (replay_base, origin_diff_mode, iter) =
-            oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
+        let (
+            ReplayBase {
+                vv: replay_base,
+                diff_mode: origin_diff_mode,
+                is_critical: replay_base_is_critical,
+            },
+            iter,
+        ) = oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
         // A conservative replay base may be much older than `before`. The causal replay
         // still needs that common history as position context, but containers
         // whose ops are present on both sides cannot contribute to the diff.
@@ -286,6 +295,15 @@ impl DiffCalculator {
                     if !vv.includes_vv(before) {
                         calculator.mark_source_not_in_op_context();
                     }
+
+                    // A replayed op concurrent with the replay base would
+                    // contradict the base's claimed criticality.
+                    debug_assert!(
+                        !replay_base_is_critical || vv.includes_vv(&replay_base),
+                        "op {}@{} is concurrent with a replay base claimed critical",
+                        op.counter,
+                        change.peer(),
+                    );
 
                     if visited.contains(&op.container) {
                         // don't checkout if we have already checked out this container in this round
@@ -512,7 +530,7 @@ fn replay_container_ops_from_empty(
     let empty_vv = VersionVector::default();
     let empty_frontiers = Frontiers::default();
     let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-    let (_, _, iter) =
+    let (_, iter) =
         oplog.iter_from_replay_base_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
 
     for (change, (start_counter, end_counter), vv) in iter {
@@ -2224,10 +2242,10 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (replay_base, mode, _) =
+    let (base, _) =
         oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_eq!(replay_base, before);
-    assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+    assert_eq!(base.vv, before);
+    assert_eq!(base.diff_mode, DiffMode::ImportGreaterUpdates);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
         [expected_idx].into_iter().collect()
@@ -2274,10 +2292,13 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (replay_base, mode, _) =
+    let (base, _) =
         oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
-    assert_eq!(mode, DiffMode::Import);
+    assert_ne!(
+        base.vv, before,
+        "the fixture must exercise conservative replay"
+    );
+    assert_eq!(base.diff_mode, DiffMode::Import);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
         [expected_idx].into_iter().collect()
@@ -2328,10 +2349,13 @@ fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
     let expected_idx = nested_map(&target).idx();
 
     let oplog = target.oplog().lock();
-    let (replay_base, mode, _) =
+    let (base, _) =
         oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
-    assert_ne!(replay_base, before, "the fixture must exercise conservative replay");
-    assert_eq!(mode, DiffMode::Checkout);
+    assert_ne!(
+        base.vv, before,
+        "the fixture must exercise conservative replay"
+    );
+    assert_eq!(base.diff_mode, DiffMode::Checkout);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
         [expected_idx].into_iter().collect()

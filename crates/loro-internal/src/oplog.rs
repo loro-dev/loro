@@ -17,7 +17,7 @@ use super::arena::{SharedArena, SharedArenaRollback};
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::list::list_op;
-use crate::dag::{Dag, DagUtils};
+use crate::dag::{Dag, DagUtils, MeetAsBase};
 use crate::diff_calc::DiffMode;
 use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
@@ -83,6 +83,44 @@ impl std::fmt::Debug for OpLog {
             .field("pending_changes", &self.pending_changes)
             .finish()
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Counts falls from the multi-head critical version search back to the
+    /// single-head whole-DAG descent. Test observability only; thread-local
+    /// so concurrently running tests cannot disturb each other's counts
+    /// (diff calc runs on the importing thread).
+    pub(crate) static CRITICAL_BASE_FALLBACK_COUNT: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// Result of [`OpLog::latest_critical_version_below_meet`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CriticalVersionSearch {
+    /// The greatest critical version ≤ `meet(from, to)`.
+    Found(VersionVector),
+    /// Provably no non-empty critical version ≤ meet exists: the fixpoint
+    /// bottomed out at ∅, and every critical cut ≤ meet survives every
+    /// lowering step, so the single-head descent cannot find one either —
+    /// callers should skip its whole-DAG walk.
+    NoneBelowMeet,
+    /// A change's deps reach below trimmed history; nothing is known. Fall
+    /// back to the single-head descent.
+    Unknown,
+}
+
+/// The replay base [`OpLog::iter_from_replay_base_causally`] chose.
+#[derive(Debug)]
+pub(crate) struct ReplayBase {
+    pub vv: VersionVector,
+    pub diff_mode: DiffMode,
+    /// The base is a *critical version* of `ancestry(from) ∪ ancestry(to)`:
+    /// no event above it is concurrent with any event inside it. Calculators
+    /// that seed their CRDT state with one opaque "unknown" span for
+    /// everything below the base need exactly this property, because such a
+    /// span can never be retreated.
+    pub is_critical: bool,
 }
 
 impl OpLog {
@@ -611,6 +649,75 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
+    /// The latest critical version below `from ∩ to`: the greatest causally
+    /// closed `V ⊆ from ∩ to` such that every op in `(from ∪ to) − V` is
+    /// causally after every op in `V`. "Causally after" is measured in the
+    /// ancestry the replay hands the diff calculators — a change's recorded
+    /// deps plus the author's own earlier ops — which is exactly what a
+    /// calculator trusting the base relies on. Unlike
+    /// `dag::latest_single_head_critical_version` the result may be
+    /// multi-head, which is what makes it usable on the criss-cross DAG that
+    /// continuous two-peer sync produces — there every merge point has two
+    /// heads, so the single-head descent walks to genesis and returns nothing.
+    ///
+    /// Method: start at the meet `min(from, to)` — the largest candidate — and
+    /// lower it to a fixpoint. `V` is critical iff for every change of the
+    /// region above it, the context of the change's first op above `V`
+    /// covers `V` (the change's later ops only add to that context). Each
+    /// violating change lowers `V` to the intersection with that context,
+    /// which preserves every critical cut below `V`, so the fixpoint is the
+    /// greatest critical version ≤ the meet (spec L13). Lowering cannot
+    /// change a verdict already reached — a context that covered `V` covers
+    /// the smaller one, and the violator covers the lowered `V` by
+    /// construction — it only exposes the spans between the old and the new
+    /// `V`, which go on a worklist; a change is examined once per lowering
+    /// that moves its peer's cut into it. The scan is thus bounded by the
+    /// replay it enables, which walks the same region and computes the same
+    /// contexts, so it needs no budget of its own.
+    pub(crate) fn latest_critical_version_below_meet(
+        &self,
+        from: &VersionVector,
+        to: &VersionVector,
+        merged: &VersionVector,
+    ) -> CriticalVersionSearch {
+        use CriticalVersionSearch::*;
+
+        // An intersection of two causally closed sets is causally closed, so
+        // `min(from, to)` is a version, and it is the meet of the two.
+        let mut v = from.intersection(to);
+        if v.is_empty() {
+            return NoneBelowMeet;
+        }
+
+        let mut pending: Vec<IdSpan> = v.diff_iter(merged).1.collect();
+        while let Some(span) = pending.pop() {
+            for change in self.change_store.iter_changes(span) {
+                // The context of the change's first op above `v`, as
+                // `iter_from_replay_base_causally` computes it for the
+                // replay: the recorded deps plus the same-peer prefix.
+                let Some(mut ctx) = self.dag.frontiers_to_vv(&change.deps) else {
+                    // The deps reach below trimmed history; nothing can be
+                    // proved from here.
+                    return Unknown;
+                };
+                let cut = v.get(&change.id.peer).copied().unwrap_or(0);
+                let first_above = change.id.counter.max(cut);
+                ctx.extend_to_include_end_id(ID::new(change.id.peer, first_above));
+
+                if !ctx.includes_vv(&v) {
+                    let above = v.clone();
+                    v.intersect_with(&ctx);
+                    if v.is_empty() {
+                        return NoneBelowMeet;
+                    }
+                    pending.extend(v.diff_iter(&above).1);
+                }
+            }
+        }
+
+        Found(v)
+    }
+
     /// Iterates causally over all changes between the replay base (a common
     /// ancestor version chosen by `find_common_ancestor`; ideally the latest
     /// critical version in the Eg-walker sense, see
@@ -618,7 +725,7 @@ impl OpLog {
     ///
     /// Tht iterator will include a version vector when the change is applied
     ///
-    /// returns: (common_ancestor_vv, iterator)
+    /// returns: (replay_base, iterator)
     ///
     /// Note: the change returned by the iterator may include redundant ops at the beginning, you should trim it by yourself.
     /// You can trim it by the provided counter value. It should start with the counter.
@@ -632,8 +739,7 @@ impl OpLog {
         to: &VersionVector,
         to_frontiers: &Frontiers,
     ) -> (
-        VersionVector,
-        DiffMode,
+        ReplayBase,
         impl Iterator<
                 Item = (
                     BlockChangeRef,
@@ -645,14 +751,66 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (mut replay_base_frontiers, mut diff_mode) =
-            self.dag.find_common_ancestor(from_frontiers, to_frontiers);
+        let (meet, mut diff_mode) = self.dag.find_meet_and_mode(from_frontiers, to_frontiers);
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
 
-        let mut replay_base_vv = self.dag.frontiers_to_vv(&replay_base_frontiers).unwrap();
         let shallow_since_vv = self.dag.shallow_since_vv().to_vv();
+        let mut replay_base_is_critical = false;
+        let mut replay_base_frontiers = match meet {
+            MeetAsBase::Valid(meet) => meet,
+            MeetAsBase::NeedsCriticalRetreat => {
+                // Some event above the meet is concurrent with it. Retreat to
+                // a critical version — the latest *multi-head* one when we
+                // can find it, because the single-head descent is both a
+                // whole-DAG walk and, on the criss-cross DAG that continuous
+                // two-peer sync produces, doomed to return the empty version.
+                let descend = || {
+                    #[cfg(test)]
+                    CRITICAL_BASE_FALLBACK_COUNT.with(|c| c.set(c.get() + 1));
+                    self.dag
+                        .latest_single_head_critical_version(from_frontiers, to_frontiers)
+                };
+                match self.latest_critical_version_below_meet(from, to, &merged_vv) {
+                    CriticalVersionSearch::Found(v) => {
+                        // Only replay from the version whose criticality was
+                        // proved. A shallow doc cannot replay from below its
+                        // seed version, and a cut assembled from recorded
+                        // deps plus the author's own prefix is causally
+                        // closed only when those deps cover that prefix
+                        // (spec axiom A6, which imported data is not checked
+                        // against) — a version that fails to round-trip
+                        // through frontiers is not one. Both are left to the
+                        // descent, as before.
+                        let f = self.dag.vv_to_frontiers(&v);
+                        let seed = self
+                            .dag
+                            .frontiers_to_vv(self.dag.shallow_since_frontiers())
+                            .unwrap();
+                        if v.includes_vv(&seed) && self.dag.frontiers_to_vv(&f).as_ref() == Some(&v)
+                        {
+                            replay_base_is_critical = true;
+                            f
+                        } else {
+                            descend()
+                        }
+                    }
+                    CriticalVersionSearch::NoneBelowMeet => {
+                        // ∅ is trivially critical (spec D8b), and the
+                        // single-head descent provably cannot find a better
+                        // cut (spec L13(ii); under A6, where its ancestry
+                        // coincides with the replay's) — skip its whole-DAG
+                        // walk.
+                        Frontiers::default()
+                    }
+                    CriticalVersionSearch::Unknown => descend(),
+                }
+            }
+        };
+
+        let mut replay_base_vv = self.dag.frontiers_to_vv(&replay_base_frontiers).unwrap();
+        replay_base_is_critical |= replay_base_vv.is_empty();
         if !replay_base_vv.includes_vv(&shallow_since_vv) {
             // The replay base cannot point before shallow history because those
             // ops are no longer available to the causal iterator.
@@ -661,7 +819,9 @@ impl OpLog {
                 .dag
                 .frontiers_to_vv(&replay_base_frontiers)
                 .unwrap_or(shallow_since_vv);
+            replay_base_is_critical = false;
         }
+
         // go from the replay base to merged_vv
         let diff = replay_base_vv.diff(&merged_vv).forward;
         let mut iter = self.dag.iter_causal(replay_base_frontiers, diff);
@@ -669,8 +829,11 @@ impl OpLog {
         let mut cur_cnt = 0;
         let vv = Rc::new(RefCell::new(VersionVector::default()));
         (
-            replay_base_vv.clone(),
-            diff_mode,
+            ReplayBase {
+                vv: replay_base_vv.clone(),
+                diff_mode,
+                is_critical: replay_base_is_critical,
+            },
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {
                     let mut inner_vv = vv.borrow_mut();
