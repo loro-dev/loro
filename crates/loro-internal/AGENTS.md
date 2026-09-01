@@ -60,10 +60,11 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
   a version V is **critical** when every event outside `Events(V)` happened
   after all of `Events(V)` — no concurrency crosses the cut. Non-`Checkout`
   diff modes and the tree calculator's lamport windows are only sound when
-  the base satisfies this; `dag.rs` enforces it via the
-  `ImportGreaterUpdates` entry check and the
-  `latest_single_head_critical_version` fallback. Do not use "LCA" in new
-  code or docs: the meet of two versions is generally NOT a safe replay
+  the base satisfies this; `dag.rs`/`oplog.rs` enforce it via the
+  `ImportGreaterUpdates` entry check and, on conservative retreat, the
+  multi-head fixpoint `OpLog::latest_critical_version_below_meet`, with
+  the `latest_single_head_critical_version` descent as fallback. Do not
+  use "LCA" in new code or docs: the meet of two versions is generally NOT a safe replay
   base. Read `docs/critical-version-spec.md` before touching
   `find_common_ancestor`, diff modes, or `diff_calc/tree.rs` windows.
 - Internal invariant violation should fail fast. Invalid external bytes or JSON

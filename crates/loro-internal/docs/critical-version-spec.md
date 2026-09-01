@@ -1,7 +1,8 @@
 # 找共同祖先：Loro 历史图遍历算法的规格与证明骨架
 
-状态：草稿 v2，2026-08-01。对应 `crates/loro-internal/src/dag.rs` 中的
-`_find_common_ancestor_new`（含 PR #1058 与 tips 去重修复之后的版本）。
+状态：草稿 v3，2026-09-01（新增多头回退：L13、公理 A6）。对应 `crates/loro-internal/src/dag.rs` 中的
+`_find_common_ancestor_new`（含 PR #1058 与 tips 去重修复之后的版本）；多头回退 L13 的实现在
+`crates/loro-internal/src/oplog.rs`。
 
 这份文档是自包含的：读者不需要了解 Loro、CRDT 或本仓库的代码。
 需要的全部预备知识是：集合、有向图、数学归纳法，以及"堆/优先队列"这个数据结构。
@@ -233,6 +234,18 @@ from_dag_node(u) := 包含 u 的节点在 u 处截断的段。
 可用操作集 D ⊆ Ids；查询函数 get 在 D 之外返回"不存在"。
 输入前沿的成员都在 D 内，但节点的 deps 可以指向 D 外（裁剪边界）。
 
+**A6（deps 完整前沿公理）** *——"提交时记录的是作者当时看到的全部最新端点"。*
+每个节点 N 的显式 deps 是作者提交时的完整前沿，因此其祖先闭包覆盖
+作者自己的前缀：vv(deps(N))[peer(N)] ≥ start(N)。仅对**本地创建**的
+change 强制：attached 提交路径天然满足，detached editing 由
+`check_change_greater_than_last_peer_id` 检查；导入数据不作校验
+（`import`/`import_json_updates` 接受 deps 不覆盖作者自身前缀的
+change）。本公理的作用是让两种祖先关系重合：DAG 的隐式同 peer 边
+（D8b、L11 单头扫描所用）与重放交给差量计算器的逐 op 上下文
+（显式 deps 的闭包 ∪ 作者自身前缀，见 L13）。L13 的 soundness 与
+最大性都在后一种祖先关系内成立、不依赖 A6；A6 只用于"归零即证单头
+扫描亦无解"这一步（L13(ii)）。运行时不做断言。
+
 ---
 
 ## 3. 算法
@@ -404,9 +417,22 @@ ancestry(B) 中的事件并发。Eg-walker 的理论最优是"发生在双方之
    之后不再可能有合法单头切口——立即放弃并返回 ∅（即旧行为；
    场景④的双根正是此情形）。扫描只在回退真正发生时执行，
    代价不超过随后重放区域的一次遍历。
-   与 Eg-walker 的 V_crit 相比仍有两处已知取舍：只找**单头**切口
-   （多头 critical version 无法用"堆宽 = 1"判据探测）；
-   找不到单头切口时不再细分、直接 ∅。
+   2026-09 起升级为**两级搜索**：先在 oplog 层做一次**多头**不动点
+   下降（`OpLog::latest_critical_version_below_meet`，引理 L13）
+   ——从 meet 出发，对区域内每个 change 取其切口上方首个 op 的重放
+   上下文，反复与不覆盖 v 的上下文求交集，收敛点即 ≤ meet 的最大
+   critical version（多头亦可）。每个 change 每次被切口移入时检查
+   一次（L13(iii)），代价不超过随后重放同一区域的代价，故不设预算。
+   依赖触及裁剪边界、切口低于浅历史文档的种子版本、或切口经
+   frontiers 往返后不等于自身（只在 A6 被违反时可能）才退回上述
+   单头扫描。不动点若归零，可证单头扫描同样无解（L13(ii)），直接取
+   ∅、跳过全图扫描。
+   与 Eg-walker 的 V_crit 相比仍有的取舍：只在 ≤ meet 的范围内搜索
+   （长期离线分叉的回归仍落在分岔点，代价 O(分歧量)、一次性）。
+   认证通过的基准以
+   replay_base_is_critical 标记传给差量计算器；text/list 据此直接
+   信任未知段 tracker（守卫条件被 criticality 蕴含；list 另限定
+   非浅历史文档），守卫只对未认证的基准继续兜底。
 3. **meet 不 critical，但走查未探测到**（2026-08-01 起大幅收窄）：
    IGU 候选（ans = L 且无死路）现在必须通过**入场检查**（L12）：
    新区每个入场 change 的因果父集必须版本覆盖 L 的全部头，
@@ -414,8 +440,10 @@ ancestry(B) 中的事件并发。Eg-walker 的理论最优是"发生在双方之
    IGU 的全部已知构造（S4 的两个反例）。仍然遗留的是 **Checkout
    模式下 ans = meet 非 critical** 的情形（双根 x ∥ y 菱形：四条路
    全部会合、无死路，meet = {x,y}，但区域内有事件与 y 并发）：
-   text/list 依赖下游守卫兜底，Tree 的 Checkout 路径是否暴露
-   尚未查证——见 Q7。
+   text/list 依赖下游守卫兜底——本类不受 2026-09 变更影响：L13 只在
+   第 2 类（保守回退）触发，本类的 meet 基准永远不会被认证为
+   critical，守卫（base == from ∧ ¬source_not_in_op_context）仍是
+   唯一保障。Tree 的 Checkout 路径见 Q7（已核查安全）。
 
 因此严格的安全陈述是**双层契约**：「(ans, mode) + 下游守卫」合起来
 保证收敛；单看走查，无条件承诺的只有 S1/S2/S3/T。用论文语言可以把
@@ -523,14 +551,49 @@ e ≥ c ≥ Events(父集) ⊇ L；（⇒）入场 change 自身是新区事件�
 与反链性矛盾——故按节点起点父集判定与逐 op 判定等价。
 快路径：父集与 L 集合相等 ⟹ 覆盖（O(|L|)，日常导入的主流形状）。
 
+**L13（多头不动点的正确性）** *从 meet 向下收紧，直到一刀两断。*
+祖先关系取重放交给差量计算器的逐 op 上下文：op x 的上下文
+ctx(x) = vv(deps(change(x))) ∪ 作者自身在 x 之前的全部 op（正是
+`iter_from_replay_base_causally` 逐 op 交出的 vv，也是 tracker 信任
+基准时所依赖的关系；A6 成立时它与 D8b 的隐式同 peer 边祖先关系重合）。
+设 v₀ = vv(from) ∩ vv(to)（两因果闭集之交仍因果闭，即 meet 的版本
+向量）。迭代：对区域 merged − v 的每个 change C，取 x = C 在 v 之上的
+首个 op（max(start(C), v[peer(C)])），若 ctx(x) ⊉ v 则 v ← v ∩ ctx(x)。
+C 的后续 op 上下文 ⊇ ctx(x)（同 deps、更长前缀），故只需查 x。
+不动点 v* 满足：
+(i) *soundness*：区域内每个 op 的上下文 ⊇ v* ⟹ 每个 op 因果晚于 v*
+的全部 op ⟹ v* 在上述祖先关系下 critical；这正是差量计算器消费的
+性质（重放循环的调试断言逐 op 检查 ctx ⊇ base）。
+(ii) *保持性与最大性*：任一（同一祖先关系下）critical 切口 W ≤ v 在
+每步交集后仍 ≤ v——x 在 v 之上、故在 W 之上，W critical ⟹
+ctx(x) ⊇ W ⟹ W ⊆ v ∩ ctx(x)。故 v* 是 ≤ meet 的最大 critical
+version。v* 归零即证 ≤ meet 无非空 critical 切口；在 A6 下两种祖先
+关系重合，单头扫描的结果也是 ≤ meet 的 critical 切口（L11 + 每个头
+≥ 它），必同样无解。
+(iii) *终止与单遍扫描*：每次收紧至少使某 peer 的计数严格减小，
+良基。且收紧不改变已得出的判定：已覆盖 v 的 ctx(x) 也覆盖更小的
+v（同 peer 分量由前缀覆盖，其余分量单调），违规者收紧后按构造覆盖
+v。故只需扫描收紧新暴露的区间 [v_new, v_old)；跨切口的 change 在
+其 peer 的切口每次移入时各被检查一次，判定不变。访问总数 ≤
+区域 change 数 + 收紧次数，每次访问一次 vv 查表——不超过随后重放
+同一区域的代价，故无需预算。
+(iv) *可用性*：v* 由 ctx 的交集得到；ctx 在 A6 下因果闭（deps 闭包
+已含前缀），否则可能不闭，此时 v* 经 frontiers 往返不等于自身，
+接线处退回单头扫描而不信任它。浅历史文档另要求 v* ⊇ 种子版本
+（`shallow_since_frontiers` 的 vv），否则同样退回。
+
 **依赖图**：
 S1 ← L4；S2 ← L5；S3 ← L9 ← {L3, L6, L7, L8}；T ← L10 ← L0；
+L13 ← {D8b}；L13(ii) 的"归零 ⟹ 单头扫描亦无解" ← {L11, A6}；
 S5b(C1) ← L3 + "无死路 ⟹ Max(C) 的每个成员被双侧到达"（未证，猜想）。
 
 **引理与现有测试的对应**（代码一致性的桥）：
 四套随机 oracle 测试 ≈ S1/S2/S3 的随机检验；
 三个定向单测（trimmed、左多头、右多头）分别钉 L9 的三个分支；
 criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不进证明范围）。
+`src/tests/replay_base.rs` 的定向单测钉 L13 及其接线：criss-cross 上
+多头基准命中最后同步点、单头扫描停在初始分岔、不相交历史归零、
+切口落在同一 change 内部（style 对之间）仍收敛。
 
 ---
 
@@ -555,6 +618,13 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   回归测试 `checkout_across_non_critical_meet_stays_canonical` 与
   `checkout_with_low_lamport_concurrent_branch_stays_canonical`
   （后者显式保护"扫描 ↔ Tree 窗口"的耦合：削弱扫描会静默破坏它）。
+  2026-09 注：oplog 的重放基准可能比 Tree 自算的窗口基准**更晚**
+  （L13 多头 ≥ L11 单头），重放区域只会更小、仍被窗口覆盖；反向
+  （把多头基准喂给 Tree 窗口）需要重做本证明，故未做。
+- **Q10**（新，2026-09）L13 的搜索只在 ≤ meet 的范围内进行，长期离线
+  分叉后的每次导入仍付出 O(分歧量)（分岔点确为最晚 critical
+  version，无状态的基准选择无法更好）。是否值得为这一形状缓存
+  tracker，请维护者定夺。
 - **Q8**（已解决，2026-08-01：澄清而非改行为）深入推演后确认这是
   **刻意的双模式设计**：顶层返回值是**方向模式**（origin），其唯一消费者
   `DocState::apply_diff` 只用它做方向敏感的死容器缓存策略（Checkout 可能
@@ -592,7 +662,7 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
 | happened-before → | a → b：a 在 b 的因果过去（由早指向晚，Lamport 方向；Eg-walker §2.2） |
 | ∥（并发） | a ∥ b ⟺ a ≠ b ∧ a ↛ b ∧ b ↛ a |
 | Events(V) / Version(G) | 论文记法（§2.3）：版本的祖先闭包 / 因果闭子图的前沿，两者互逆 |
-| V_crit | Eg-walker §3.6：合并的理论最优起点——发生在双方之前的最晚 critical version（Loro 已实现其单头近似，见 L11） |
+| V_crit | Eg-walker §3.6：合并的理论最优起点——发生在双方之前的最晚 critical version（Loro 实现：≤ meet 的多头不动点 L13，单头扫描 L11 兜底） |
 | frontier / 前沿 | 用"最新端点"反链表示一个版本 |
 | 反链 | 集合中两两互不为祖先 |
 | 因果闭集 | 包含成员的所有祖先的操作集；与合法版本一一对应 |
