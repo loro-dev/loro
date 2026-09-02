@@ -971,6 +971,18 @@ impl RichtextDiffCalculator {
         }
     }
 
+    /// Test-only: the ids of the style table's entries, to pin that
+    /// re-replayed style ops do not grow the table.
+    #[cfg(test)]
+    pub(crate) fn tracked_style_ids(&self) -> Vec<ID> {
+        match &*self.mode {
+            RichtextCalcMode::Crdt { styles, .. } => {
+                styles.iter().map(|(s, _)| ID::new(s.peer, s.cnt)).collect()
+            }
+            RichtextCalcMode::Linear { .. } => unreachable!(),
+        }
+    }
+
     fn style_for_end_anchor(oplog: &OpLog, op: &RichOp) -> Option<(StyleOp, usize)> {
         let style_start_id = op.id().inc(-1);
         if let Some(start_op) = oplog.get_op_that_includes(style_start_id) {
@@ -1144,18 +1156,45 @@ impl RichtextDiffCalculator {
                     value,
                 } => {
                     debug_assert!(start < end, "start: {}, end: {}", start, end);
-                    let style_id = styles.len();
-                    styles.push((
-                        StyleOp {
-                            lamport: op.lamport(),
-                            peer: op.peer,
-                            cnt: op.id_start().counter,
-                            key: key.clone(),
-                            value: value.clone(),
-                            info: *info,
-                        },
-                        *end as usize,
-                    ));
+                    // A persisted tracker replays ops it has already
+                    // applied whenever the replay base sits below the
+                    // version the tracker reached on an earlier round. The
+                    // tracker itself skips those inserts (`skip_applied`),
+                    // so pushing again would only grow the table with an
+                    // unreferenced duplicate; reuse the entry pushed the
+                    // first time instead. All entries for one op id are
+                    // content-equal: seeded entries (whose position slot is
+                    // not the op's `end` field) only cover ops below the
+                    // shallow root, which are trimmed from the oplog and
+                    // never replayed here. StyleStart is a single atom, so
+                    // applied-vv membership is exact.
+                    let id = op.id_start();
+                    let existing_style_id = if tracker.all_vv().includes_id(id) {
+                        styles
+                            .iter()
+                            .rev()
+                            .position(|(s, _)| s.peer == id.peer && s.cnt == id.counter)
+                            .map(|pos| styles.len() - pos - 1)
+                    } else {
+                        None
+                    };
+                    let style_id = match existing_style_id {
+                        Some(style_id) => style_id,
+                        None => {
+                            styles.push((
+                                StyleOp {
+                                    lamport: op.lamport(),
+                                    peer: id.peer,
+                                    cnt: id.counter,
+                                    key: key.clone(),
+                                    value: value.clone(),
+                                    info: *info,
+                                },
+                                *end as usize,
+                            ));
+                            styles.len() - 1
+                        }
+                    };
                     let start = Self::shallow_clamped_tracker_pos(oplog, tracker, *start as usize);
                     tracker.insert(
                         op.id_full(),
@@ -2311,4 +2350,51 @@ fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
     assert!(calculator.get_calc(expected_idx).is_some());
     // Checking out backward removes the concurrent edit again.
     assert_single_map_value_diff(&diffs, expected_idx, "value", 0.into());
+}
+
+/// A persisted calculator (the shape `LoroDoc::checkout` drives) replays
+/// ops its tracker has already applied whenever the tracker was rebuilt
+/// past `from`: here a retreat rebuilds it over the whole history, and the
+/// forward walk that follows re-replays every op. The tracker skips those
+/// inserts, but the style table must not grow a duplicate entry per
+/// re-replayed StyleStart.
+#[test]
+fn persisted_walk_does_not_duplicate_style_entries() {
+    use crate::{cursor::PosType, handler::HandlerTrait, LoroDoc};
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_text("t")
+        .insert(0, "seed text", PosType::Unicode)
+        .unwrap();
+    a.commit_then_renew();
+    let marks = 5;
+    let mut stops = vec![a.oplog_frontiers()];
+    for round in 0..marks {
+        let t = a.get_text("t");
+        t.insert(0, "x", PosType::Unicode).unwrap();
+        t.mark(0, 4, "bold", (round % 2 == 0).into(), PosType::Unicode)
+            .unwrap();
+        a.commit_then_renew();
+        stops.push(a.oplog_frontiers());
+    }
+
+    let oplog = a.oplog().lock();
+    let idx = a.get_text("t").idx();
+    let vv = |f: &Frontiers| oplog.dag.frontiers_to_vv(f).unwrap();
+    let mut calc = DiffCalculator::new(true);
+    let first = &stops[0];
+    let last = stops.last().unwrap();
+    calc.calc_diff_internal(&oplog, &vv(first), first, &vv(last), last, None);
+    calc.calc_diff_internal(&oplog, &vv(last), last, &vv(first), first, None);
+    for w in stops.windows(2) {
+        calc.calc_diff_internal(&oplog, &vv(&w[0]), &w[0], &vv(&w[1]), &w[1], None);
+    }
+
+    let (_, c) = calc.get_or_create_calc(idx, oplog.arena.get_depth(idx));
+    let ContainerDiffCalculator::Richtext(text) = c else {
+        panic!("expected a richtext calculator");
+    };
+    let ids = text.tracked_style_ids();
+    assert_eq!(ids.len(), marks, "duplicate style entries: {ids:?}");
 }
