@@ -260,6 +260,8 @@ pub(crate) fn decode_oplog_changes(
 
 pub(crate) struct ApplyDecodedChangesResult {
     pub status: ImportStatus,
+    /// A change of this import, or a parked change this import unlocked, depends
+    /// on trimmed history and was dropped.
     pub has_deps_before_shallow_root: bool,
 }
 
@@ -275,18 +277,23 @@ pub(crate) fn apply_decoded_changes_to_oplog(
     } = import_changes_to_oplog(changes, oplog);
 
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids, Some(&mut imported));
+    // A parked change unlocked here can turn out to depend on trimmed history
+    // (parked before the doc became shallow); it is dropped and reported like a
+    // rejected change of this import.
+    let mut dropped_trimmed = oplog.try_apply_pending(latest_ids, Some(&mut imported));
     // Applying previously parked pending ops can unlock deps of `pending_changes`.
     // Those are applied here (and counted in `imported`); only still-blocked ones
     // remain in the returned pending range.
-    let pending =
+    let (pending, dropped) =
         oplog.import_unknown_lamport_pending_changes(pending_changes, Some(&mut imported));
+    dropped_trimmed |= dropped;
     ApplyDecodedChangesResult {
         status: ImportStatus {
             success: imported,
             pending: (!pending.is_empty()).then_some(pending),
         },
-        has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty(),
+        has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty()
+            || dropped_trimmed,
     }
 }
 

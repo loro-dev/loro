@@ -559,7 +559,7 @@ impl OpLog {
         &mut self,
         remote_changes: Vec<Change>,
         would_affect: Option<&mut crate::version::VersionRange>,
-    ) -> crate::version::VersionRange {
+    ) -> (crate::version::VersionRange, bool) {
         self.extend_pending_changes_with_unknown_lamport(remote_changes, would_affect)
     }
 

@@ -5,8 +5,8 @@ use std::{
 
 use super::gen_action;
 use loro::{
-    cursor::CannotFindRelativePosition, Counter, ExpandType, ExportMode, Frontiers, LoroDoc,
-    LoroError, LoroValue, StyleConfig, StyleConfigMap, VersionVector, ID,
+    cursor::CannotFindRelativePosition, Counter, ExpandType, ExportMode, Frontiers, IdSpan,
+    LoroDoc, LoroError, LoroValue, StyleConfig, StyleConfigMap, VersionVector, ID,
 };
 
 /// Byte-level scan of an exported blob. Only used for *absence* checks, and
@@ -881,4 +881,186 @@ fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Re
         );
     }
     Ok(())
+}
+
+/// Peer 1 writes `0@1` and `1@1`; peer 2 forks at `0@1` and writes one op with
+/// deps `[0@1]`. A fresh doc parks peer 2's op (its dep is unknown), then
+/// imports a shallow snapshot rooted at `1@1`, which trims `0@1`. The parked op
+/// now depends on trimmed history and can never be merged.
+struct ParkedBelowCut {
+    /// The shallow doc holding the parked op.
+    doc: LoroDoc,
+    /// Peer 1's doc, one op (`2@1`) ahead of the shallow doc.
+    p1: LoroDoc,
+    /// The shallow doc's version: `p1.export(updates(&cut_vv))` is `2@1`.
+    cut_vv: VersionVector,
+    /// The update that parked peer 2's op.
+    parked: Vec<u8>,
+}
+
+fn shallow_doc_with_parked_change_below_the_cut() -> ParkedBelowCut {
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_text("t").insert(0, "a").unwrap();
+    p1.commit();
+    p1.get_text("t").insert(1, "b").unwrap();
+    p1.commit();
+
+    let p2 = p1.fork_at(&Frontiers::from(ID::new(1, 0))).unwrap();
+    p2.set_peer_id(2).unwrap();
+    // A map op allocates nothing in the arena, so the doc still counts as
+    // empty when the snapshot arrives and imports as a snapshot.
+    p2.get_map("m").insert("k", 1).unwrap();
+    p2.commit();
+    let parked = p2.export(ExportMode::updates(&p1.oplog_vv())).unwrap();
+
+    let root = Frontiers::from(ID::new(1, 1));
+    let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let cut_vv = p1.oplog_vv();
+    p1.get_text("t").insert(2, "c").unwrap();
+    p1.commit();
+
+    let doc = LoroDoc::new();
+    let status = doc.import(&parked).unwrap();
+    assert!(status.pending.is_some(), "{status:?}");
+    doc.import(&snap).unwrap();
+    assert_eq!(doc.shallow_since_frontiers(), root);
+    assert!(doc.shallow_since_vv().to_vv().includes_id(ID::new(1, 0)));
+    assert_eq!(doc.oplog_vv(), cut_vv);
+    ParkedBelowCut {
+        doc,
+        p1,
+        cut_vv,
+        parked,
+    }
+}
+
+/// The parked op is gone for good: importing it again is rejected rather than
+/// parked, and a later peer-1 op revisiting its pending slot imports cleanly.
+/// The unlocking op itself was applied, as for any import that arrives
+/// together with a rejected change, and the doc stays usable.
+fn assert_parked_change_dropped(fx: &ParkedBelowCut) {
+    let ParkedBelowCut {
+        doc, p1, parked, ..
+    } = fx;
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+    assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+    assert_eq!(doc.get_text("t").to_string(), p1.get_text("t").to_string());
+    assert_eq!(
+        doc.import(parked).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+
+    let t1 = p1.get_text("t");
+    t1.insert(t1.len_unicode(), "z").unwrap();
+    p1.commit();
+    let status = doc
+        .import(&p1.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
+    assert!(status.pending.is_none(), "{status:?}");
+    assert_eq!(doc.get_text("t").to_string(), t1.to_string());
+}
+
+/// A change parked before the doc became shallow, whose deps the shallow cut
+/// then trimmed, is concurrent with the shallow root. The update that unlocks
+/// it used to apply it anyway and abort on
+/// `calc_unknown_lamport_change(..).unwrap()`, poisoning the doc mutex.
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+    assert_eq!(
+        fx.doc.import(&unlock).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(fx.doc.get_text("t").to_string(), "abc");
+    assert_parked_change_dropped(&fx);
+}
+
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_json() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export_json_updates(&fx.cut_vv, &fx.p1.oplog_vv());
+    assert_eq!(
+        fx.doc.import_json_updates(unlock).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_parked_change_dropped(&fx);
+}
+
+/// `import_batch` runs its blobs detached and hands a single blob to `import`;
+/// the empty second blob keeps it on the batch path. The reattach at the end
+/// must still happen and report the error.
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_batch() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+    let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+    assert_eq!(
+        fx.doc.import_batch(&[unlock, empty]).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert!(!fx.doc.is_detached());
+    assert_parked_change_dropped(&fx);
+}
+
+/// An import that parks all of its own changes still revisits the pending
+/// slot of the parked op and drops it. That import applies nothing, so it
+/// takes the path that applies no state diff; rolling the arena back on its
+/// error, as that path used to, would leave the import's own parked text op
+/// pointing at freed arena bytes ("abcc" instead of "abcd" once unlocked).
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_dropped_by_an_import_that_only_parks() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    fx.p1.get_text("t").insert(3, "d").unwrap();
+    fx.p1.commit();
+    let only_3 = fx
+        .p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 3, 4)]))
+        .unwrap();
+    let only_2 = fx
+        .p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 2, 3)]))
+        .unwrap();
+
+    assert_eq!(
+        fx.doc.import(&only_3).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(fx.doc.oplog_vv(), fx.cut_vv);
+    fx.doc.import(&only_2).unwrap();
+    assert_eq!(fx.doc.get_text("t").to_string(), "abcd");
+    assert_parked_change_dropped(&fx);
+}
+
+/// The shallow root's own change depends on trimmed history too, and a doc can
+/// hold it parked (imported before the snapshot) while the snapshot then brings
+/// it in. Revisiting it must find it applied, not reject it: the applied check
+/// comes before the trimmed-dep check.
+#[test]
+fn parked_change_that_the_shallow_snapshot_then_applied_is_not_rejected() {
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_map("a").insert("k", 0).unwrap();
+    p1.commit();
+    p1.get_map("b").insert("k", 1).unwrap();
+    p1.commit();
+    let root = Frontiers::from(ID::new(1, 1));
+    let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let cut_vv = p1.oplog_vv();
+    p1.get_map("c").insert("k", 2).unwrap();
+    p1.commit();
+    let only_1 = p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 1, 2)]))
+        .unwrap();
+
+    let doc = LoroDoc::new();
+    assert!(doc.import(&only_1).unwrap().pending.is_some());
+    doc.import(&snap).unwrap();
+    assert_eq!(doc.shallow_since_frontiers(), root);
+    doc.import(&p1.export(ExportMode::updates(&cut_vv)).unwrap())
+        .unwrap();
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+    assert_eq!(doc.get_deep_value(), p1.get_deep_value());
 }

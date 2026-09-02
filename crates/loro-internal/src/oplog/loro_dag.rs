@@ -793,6 +793,18 @@ impl AppDag {
         false
     }
 
+    /// Whether any dep is trimmed history. Such a dep has no dag node, so the
+    /// change can never get a lamport and could only abort or park forever: it
+    /// is concurrent with the shallow root and must be rejected with
+    /// `ImportUpdatesThatDependsOnOutdatedVersion`. Associated rather than a
+    /// method so the pending replay can call it with the vv it already holds.
+    pub(crate) fn deps_reach_trimmed_history(
+        shallow_since_vv: &ImVersionVector,
+        deps: &Frontiers,
+    ) -> bool {
+        deps.iter().any(|id| shallow_since_vv.includes_id(id))
+    }
+
     pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
         if self.shallow_since_vv.is_empty() {
             return false;
@@ -802,13 +814,11 @@ impl AppDag {
             return true;
         }
 
-        // A trimmed dep has no dag node, so the change can never get a lamport
-        // and could only abort or park forever. This has to be decided before
-        // `frontiers_to_vv`: the root's own deps are all trimmed, yet
-        // `frontiers_to_vv` resolves exactly that set to `shallow_since_vv`,
-        // which would pass the inclusion check below even though such a change
-        // is concurrent with the root.
-        if deps.iter().any(|id| self.shallow_since_vv.includes_id(id)) {
+        // This has to be decided before `frontiers_to_vv`: the root's own deps
+        // are all trimmed, yet `frontiers_to_vv` resolves exactly that set to
+        // `shallow_since_vv`, which would pass the inclusion check below even
+        // though such a change is concurrent with the root.
+        if Self::deps_reach_trimmed_history(&self.shallow_since_vv, deps) {
             return true;
         }
 
