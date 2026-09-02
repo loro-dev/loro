@@ -216,6 +216,17 @@ Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
 history before the shallow root.
 
+On the import side the gate is `AppDag::import_deps_before_shallow_root`,
+reached from `preflight_import_changes` and from
+`import_changes_to_oplog`. A change with any dep inside `shallow_since_vv`
+must be rejected with `ImportUpdatesThatDependsOnOutdatedVersion`: trimmed ids
+have no dag node, so no lamport can ever be computed for the change, and the
+pending-change replay (`remote_change_apply_state`) checks deps against the
+oplog vv, which covers trimmed history, so it would apply the change and hit
+the `unwrap` in `apply_change_from_remote`. The check must run before
+`frontiers_to_vv`, which resolves the root's own deps to `shallow_since_vv`
+even though they are trimmed.
+
 ## JSON Updates
 
 `json_schema.rs` is not wrapped in the binary `loro` envelope. Its

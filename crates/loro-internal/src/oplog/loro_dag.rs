@@ -802,23 +802,23 @@ impl AppDag {
             return true;
         }
 
-        let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
-        if let Some(vv) = self.frontiers_to_vv(deps) {
-            return !vv.includes_vv(&shallow_vv);
+        // A trimmed dep has no dag node, so the change can never get a lamport
+        // and could only abort or park forever. This has to be decided before
+        // `frontiers_to_vv`: the root's own deps are all trimmed, yet
+        // `frontiers_to_vv` resolves exactly that set to `shallow_since_vv`,
+        // which would pass the inclusion check below even though such a change
+        // is concurrent with the root.
+        if deps.iter().any(|id| self.shallow_since_vv.includes_id(id)) {
+            return true;
         }
 
-        // Import only needs to reject updates whose causal source is older than
-        // the shallow root. A dependency set that touches the retained boundary
-        // can still be a valid post-root update, even when the rest of the deps
-        // are imported later in the same batch.
-        if deps
-            .iter()
-            .any(|id| self.shallow_since_frontiers.contains(&id))
-        {
-            return false;
-        }
-
-        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
+        // Resolvable deps whose past does not cover the trimmed history sit on
+        // a retained branch concurrent with the root, and the doc has no state
+        // before the root to replay them against. Deps that are not imported
+        // yet are not older than the root, so the change can wait as pending,
+        // even when the rest of the deps are imported later in the same batch.
+        self.frontiers_to_vv(deps)
+            .is_some_and(|vv| !vv.includes_vv(&self.shallow_since_vv.to_vv()))
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node
@@ -1188,7 +1188,11 @@ impl AppDag {
 
     /// Convert a frontiers to a version vector
     ///
-    /// If the frontiers version is not found in the dag, return None
+    /// If the frontiers version is not found in the dag, return None. The one
+    /// exception is the shallow root's own deps: they have no dag nodes but
+    /// resolve to `shallow_since_vv`, so a shallow doc can re-export at its
+    /// own cut. Code deciding whether something can be imported must check
+    /// `shallow_since_vv` first (see `import_deps_before_shallow_root`).
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         if frontiers == &self.shallow_root_frontiers_deps {
             let vv = VersionVector::from_im_vv(&self.shallow_since_vv);
@@ -1451,6 +1455,30 @@ mod ensure_vv_for_tests {
 
         assert!(dag.frontiers_to_vv(&deps).is_none());
         assert!(dag.import_deps_before_shallow_root(&deps));
+    }
+
+    /// A change whose deps are exactly the shallow root's own deps is
+    /// concurrent with the root. `frontiers_to_vv` resolves that set (it must,
+    /// so a shallow doc can re-export at its own cut), so the trimmed-dep
+    /// check has to win.
+    #[test]
+    fn import_deps_before_shallow_root_rejects_deps_equal_to_root_deps() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 1));
+
+        assert!(dag.frontiers_to_vv(&deps).is_some());
+        assert!(dag.get_lamport(&ID::new(1, 1)).is_none());
+        assert!(dag.import_deps_before_shallow_root(&deps));
+    }
+
+    /// The root is retained and resolvable, so a change built on it passes
+    /// without the boundary special case the trimmed-dep check replaced.
+    #[test]
+    fn import_deps_before_shallow_root_allows_deps_on_root() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 2));
+
+        assert!(!dag.import_deps_before_shallow_root(&deps));
     }
 
     #[test]
