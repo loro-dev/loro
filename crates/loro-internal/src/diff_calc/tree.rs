@@ -263,6 +263,13 @@ impl TreeDiffCalculator {
             // in crates/loro/tests/issue.rs. Weakening either the critical
             // version fallback or the ImportGreaterUpdates entry check in
             // dag.rs breaks this invariant.
+            //
+            // The oplog replay base that feeds the calculators may be *later*
+            // than this window's base: `OpLog::latest_critical_version_below_meet`
+            // can find a multi-head critical version above the single-head one
+            // recomputed here. That only shrinks the replayed region relative
+            // to the window, which stays sound; feeding this window the
+            // multi-head base instead would require redoing the Q7 proof.
             let base_min_lamport = self.get_min_lamport_by_frontiers(&base_frontiers, oplog);
 
             // retreat for diff
