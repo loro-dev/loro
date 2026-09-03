@@ -2698,6 +2698,29 @@ impl TextHandler {
         }))
     }
 
+    /// Get the deep value of the text (its content string) as JSON text.
+    ///
+    /// The content is identical to serializing the deep value, but the JSON
+    /// text is produced in one pass.
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
+    }
+
+    /// Get the deep value of the text as JSON text plus container ids.
+    ///
+    /// Returns `(json, cids)` where `json` parses to the same content
+    /// as `get_deep_value_json()` (object key order may differ) and `cids`
+    /// lists the container ids in
+    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this text's
+    /// own id.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| {
+            state.get_container_deep_value_json_with_ids(inner.container_idx)
+        })
+    }
+
     pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
         self.get_cursor_internal(event_index, side, true)
     }
@@ -3366,6 +3389,29 @@ impl ListHandler {
         Ok(inner.with_doc_state(|state| {
             state.get_container_deep_value_with_id(inner.container_idx, None)
         }))
+    }
+
+    /// Get the deep value of this list as JSON text.
+    ///
+    /// The content is identical to serializing the deep value, but the JSON
+    /// text is produced in one pass.
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
+    }
+
+    /// Get the deep value of this list as JSON text plus container ids.
+    ///
+    /// Returns `(json, cids)` where `json` parses to the same content
+    /// as `get_deep_value_json()` (object key order may differ) and `cids`
+    /// lists the container ids in
+    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this list's
+    /// own id.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| {
+            state.get_container_deep_value_json_with_ids(inner.container_idx)
+        })
     }
 
     /// Get the deep value of the elements in the range `[start, end)`.
@@ -4079,6 +4125,29 @@ impl MovableListHandler {
         }))
     }
 
+    /// Get the deep value of this list as JSON text.
+    ///
+    /// The content is identical to serializing the deep value, but the JSON
+    /// text is produced in one pass.
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
+    }
+
+    /// Get the deep value of this list as JSON text plus container ids.
+    ///
+    /// Returns `(json, cids)` where `json` parses to the same content
+    /// as `get_deep_value_json()` (object key order may differ) and `cids`
+    /// lists the container ids in
+    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this list's
+    /// own id.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| {
+            state.get_container_deep_value_json_with_ids(inner.container_idx)
+        })
+    }
+
     /// Get the deep value of the elements in the range `[start, end)`.
     ///
     /// Child containers in the range are recursively resolved to `{ cid, value }`
@@ -4518,6 +4587,29 @@ impl MapHandler {
         }
     }
 
+    /// Get the deep value of the map as JSON text.
+    ///
+    /// The content is identical to serializing the deep value, but the JSON
+    /// text is produced in one pass.
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
+    }
+
+    /// Get the deep value of the map as JSON text plus container ids.
+    ///
+    /// Returns `(json, cids)` where `json` parses to the same content
+    /// as `get_deep_value_json()` (object key order may differ) and `cids`
+    /// lists the container ids in
+    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this map's
+    /// own id.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| {
+            state.get_container_deep_value_json_with_ids(inner.container_idx)
+        })
+    }
+
     pub fn get(&self, key: &str) -> Option<LoroValue> {
         match &self.inner {
             MaybeDetached::Detached(m) => {
@@ -4905,6 +4997,23 @@ pub mod counter {
 
         pub fn clear(&self) -> LoroResult<()> {
             self.decrement(self.get_value().into_double().unwrap())
+        }
+
+        /// Get the counter value as JSON text (a JSON number).
+        ///
+        /// Unlike the other container types this also works on a detached
+        /// counter, mirroring `get_value`.
+        pub fn get_deep_value_json(&self) -> LoroResult<String> {
+            crate::state::deep_value_to_json(&self.get_value())
+        }
+
+        /// Get the counter value as JSON text plus container ids.
+        ///
+        /// Returns `(json, cids)` where `json` is the same string
+        /// `get_deep_value_json()` returns and `cids` contains only this
+        /// counter's own id (a counter has no children).
+        pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+            Ok((self.get_deep_value_json()?, vec![self.id().to_string()]))
         }
     }
 

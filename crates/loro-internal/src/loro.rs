@@ -1609,6 +1609,27 @@ impl LoroDoc {
         self.state.lock().get_deep_value_with_id()
     }
 
+    /// JSON text of the document's deep value.
+    ///
+    /// The content is identical to serializing [`Self::get_deep_value`], but
+    /// the JSON text is produced in one pass.
+    #[inline]
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        self.state.lock().get_deep_value_json()
+    }
+
+    /// Returns `(json, cids)` for the document's deep value.
+    ///
+    /// `json` parses to the same content as [`Self::get_deep_value_json`] (the
+    /// deep value WITHOUT container ids; object key order may differ between
+    /// the two strings) and `cids` lists the container id strings in pre-order
+    /// DFS of the serialized JSON tree, so a consumer can re-attach ids in a
+    /// single walk.
+    #[inline]
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        self.state.lock().get_deep_value_json_with_ids()
+    }
+
     pub fn checkout_to_latest(&self) {
         let (options, _guard) = self.implicit_commit_then_stop();
         if !self.is_detached() {

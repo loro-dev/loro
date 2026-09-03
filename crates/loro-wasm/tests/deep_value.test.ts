@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  LoroCounter,
   LoroDoc,
   LoroList,
   LoroMap,
@@ -196,5 +197,236 @@ describe("range deep reads", () => {
     expect(() =>
       new LoroMovableList().getRangeDeepValueWithID(0, 1),
     ).toThrow();
+  });
+});
+
+describe("getDeepValueJson", () => {
+  const setupAll = () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    map.set("flag", true);
+    map.set("n", 42);
+    const text = map.setContainer("text", new LoroText());
+    text.insert(0, "Hello");
+    const list = doc.getList("list");
+    list.insert(0, "a");
+    const sub = list.insertContainer(1, new LoroMap());
+    sub.set("k", "v");
+    const movable = doc.getMovableList("movable");
+    movable.insert(0, "x");
+    const tree = doc.getTree("tree");
+    const root = tree.createNode();
+    root.data.set("name", "root");
+    const child = root.createNode();
+    child.data.set("name", "child");
+    const counter = doc.getCounter("counter");
+    counter.increment(2.5);
+    doc.commit();
+    return { doc, map, text, list, sub, movable, tree, counter };
+  };
+
+  it("JSON.parse matches toJSON for a doc with every container type", () => {
+    const { doc, map, text, list, movable, tree, counter } = setupAll();
+    expect(JSON.parse(doc.getDeepValueJson())).toStrictEqual(doc.toJSON());
+    expect(JSON.parse(map.getDeepValueJson())).toStrictEqual(map.toJSON());
+    expect(JSON.parse(text.getDeepValueJson())).toStrictEqual(text.toJSON());
+    expect(JSON.parse(list.getDeepValueJson())).toStrictEqual(list.toJSON());
+    expect(JSON.parse(movable.getDeepValueJson())).toStrictEqual(
+      movable.toJSON(),
+    );
+    expect(JSON.parse(tree.getDeepValueJson())).toStrictEqual(tree.toJSON());
+    expect(JSON.parse(counter.getDeepValueJson())).toStrictEqual(
+      counter.toJSON(),
+    );
+  });
+
+  it("empty doc serializes to {}", () => {
+    const doc = new LoroDoc();
+    expect(doc.getDeepValueJson()).toBe("{}");
+  });
+
+  it("throws on detached containers instead of trapping", () => {
+    expect(() => new LoroMap().getDeepValueJson()).toThrow();
+    expect(() => new LoroList().getDeepValueJson()).toThrow();
+    expect(() => new LoroMovableList().getDeepValueJson()).toThrow();
+    expect(() => new LoroTree().getDeepValueJson()).toThrow();
+    expect(() => new LoroText().getDeepValueJson()).toThrow();
+    expect(() => new LoroMap().getDeepValueJsonWithIds()).toThrow();
+    expect(() => new LoroList().getDeepValueJsonWithIds()).toThrow();
+    expect(() => new LoroMovableList().getDeepValueJsonWithIds()).toThrow();
+    expect(() => new LoroTree().getDeepValueJsonWithIds()).toThrow();
+    expect(() => new LoroText().getDeepValueJsonWithIds()).toThrow();
+    // Counter mirrors toJSON(): it also works on a detached counter
+    expect(new LoroCounter().getDeepValueJson()).toBe("0.0");
+  });
+});
+
+describe("getDeepValueJsonWithIds", () => {
+  type ContainerTypeName =
+    | "Text"
+    | "Map"
+    | "List"
+    | "MovableList"
+    | "Tree"
+    | "Counter";
+
+  const containerTypeOf = (cid: string): ContainerTypeName =>
+    cid.slice(cid.lastIndexOf(":") + 1) as ContainerTypeName;
+
+  /**
+   * Rebuild the getDeepValueWithID() shape from the parsed `json` and the
+   * positional `cids` stream, walking against the known Loro grammar:
+   * root object -> every value is a container; Map -> object entries;
+   * List/MovableList/Tree -> arrays; Text -> string; Counter -> number.
+   */
+  function reattachContainerIds(
+    json: unknown,
+    cids: readonly string[],
+    isRoot: boolean,
+  ): unknown {
+    let i = 0;
+    const shapeMatches = (type: ContainerTypeName, value: unknown): boolean => {
+      switch (type) {
+        case "Text":
+          return typeof value === "string";
+        case "Counter":
+          return typeof value === "number";
+        case "Map":
+          return (
+            typeof value === "object" && value !== null && !Array.isArray(value)
+          );
+        case "List":
+        case "MovableList":
+        case "Tree":
+          return Array.isArray(value);
+      }
+    };
+    const walkContainerValue = (
+      type: ContainerTypeName,
+      value: any,
+    ): unknown => {
+      switch (type) {
+        case "Text":
+        case "Counter":
+          return value;
+        case "Map": {
+          const out: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(value)) out[k] = attach(v);
+          return out;
+        }
+        case "List":
+        case "MovableList":
+          return value.map(attach);
+        case "Tree":
+          // Tree node meta maps are plain deep values; no container ids inside
+          return value;
+      }
+    };
+    // Consume the next cid and wrap `value` as a { cid, value } node.
+    const attachForced = (value: unknown): ValueWithContainerID => {
+      const cid = cids[i++];
+      return {
+        cid: cid as ValueWithContainerID["cid"],
+        value: walkContainerValue(containerTypeOf(cid), value) as never,
+      };
+    };
+    // Wrap `value` only if the next pending cid's type matches its shape;
+    // otherwise it is a plain value and is kept as-is.
+    const attach = (value: unknown): unknown => {
+      const cid = cids[i];
+      if (cid === undefined || !shapeMatches(containerTypeOf(cid), value)) {
+        return value;
+      }
+      return attachForced(value);
+    };
+
+    if (!isRoot) return attachForced(json);
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(json as Record<string, unknown>)) {
+      out[k] = attachForced(v);
+    }
+    return out;
+  }
+
+  const setupAll = () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("map");
+    map.set("flag", true);
+    map.set("n", 42);
+    const text = map.setContainer("text", new LoroText());
+    text.insert(0, "Hello");
+    const list = doc.getList("list");
+    list.insert(0, "a");
+    const sub = list.insertContainer(1, new LoroMap());
+    sub.set("k", "v");
+    const movable = doc.getMovableList("movable");
+    movable.insert(0, "x");
+    const tree = doc.getTree("tree");
+    const root = tree.createNode();
+    root.data.set("name", "root");
+    const child = root.createNode();
+    child.data.set("name", "child");
+    const counter = doc.getCounter("counter");
+    counter.increment(2.5);
+    doc.commit();
+    return { doc, map, text, list, sub, movable, tree, counter };
+  };
+
+  it("doc-level: json + cids reconstruct getDeepValueWithID", () => {
+    const { doc, map, text, list, sub, movable, tree, counter } = setupAll();
+    const { json, cids } = doc.getDeepValueJsonWithIds();
+
+    // json parses to the same content as toJSON()
+    expect(JSON.parse(json)).toStrictEqual(doc.toJSON());
+
+    // cids are the pre-order DFS of the serialized tree (root keys are
+    // serialized in sorted order: counter, list, map, movable, tree)
+    expect(cids).toStrictEqual([
+      counter.id,
+      list.id,
+      sub.id,
+      map.id,
+      text.id,
+      movable.id,
+      tree.id,
+    ]);
+
+    expect(reattachContainerIds(JSON.parse(json), cids, true)).toStrictEqual(
+      doc.getDeepValueWithID(),
+    );
+  });
+
+  it("per-container: cids[0] is the container id and the walk round-trips", () => {
+    const { map, text, list, movable, tree, counter } = setupAll();
+    const containers = [
+      ["map", map],
+      ["text", text],
+      ["list", list],
+      ["movable", movable],
+      ["tree", tree],
+      ["counter", counter],
+    ] as const;
+    for (const [name, container] of containers) {
+      const { json, cids } = container.getDeepValueJsonWithIds();
+      expect(cids[0], name).toBe(container.id);
+      expect(JSON.parse(json), name).toStrictEqual(container.toJSON());
+      // LoroCounter has no getDeepValueWithID(); its node shape is trivially
+      // { cid: counter.id, value: number }
+      if (name === "counter") {
+        expect(cids, name).toStrictEqual([counter.id]);
+        continue;
+      }
+      expect(
+        reattachContainerIds(JSON.parse(json), cids, false),
+        name,
+      ).toStrictEqual(container.getDeepValueWithID());
+    }
+  });
+
+  it("empty doc yields {} and no cids", () => {
+    const doc = new LoroDoc();
+    const { json, cids } = doc.getDeepValueJsonWithIds();
+    expect(json).toBe("{}");
+    expect(cids).toStrictEqual([]);
   });
 });

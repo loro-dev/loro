@@ -75,6 +75,11 @@ Container `id` wrapper identity, lazy-cache lifetime, and the focused benchmark
 are documented in
 [context/wasm-container-id-cache.md](../../context/wasm-container-id-cache.md).
 
+Bulk-read APIs (per-container/range deep reads with ids, `getDeepValueJson`,
+`getDeepValueJsonWithIds`, the cid format, and the cids pre-order contract)
+are documented in
+[context/wasm-bulk-read.md](../../context/wasm-bulk-read.md).
+
 ## Packaging Rules
 
 - Preserve the public `loro-crdt` API names and package export paths used by

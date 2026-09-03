@@ -136,4 +136,46 @@ impl LoroCounter {
             .into_double()
             .map_err(|_| JsValue::from_str("Counter value is not a number"))
     }
+
+    /// Get the counter value as JSON text (a JSON number).
+    ///
+    /// The content is identical to `JSON.stringify(counter.toJSON())`, but the
+    /// JSON text is produced inside WASM. Unlike the other container types,
+    /// this also works on a detached counter, mirroring `toJSON()`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const counter = doc.getCounter("counter");
+    /// counter.increment(1.5);
+    /// console.log(counter.getDeepValueJson());  // "1.5"
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the counter value as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` is the same string
+    /// `getDeepValueJson()` returns and `cids` contains only this counter's
+    /// own id (a counter has no children).
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const counter = doc.getCounter("counter");
+    /// counter.increment(1.5);
+    /// const { json, cids } = counter.getDeepValueJsonWithIds();
+    /// // json === "1.5", cids === [counter.id]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        crate::deep_value_json_with_ids_to_js(json, cids)
+    }
 }

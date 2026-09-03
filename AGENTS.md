@@ -36,6 +36,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/wasm-error-reporting.md](context/wasm-error-reporting.md).
 - WASM container id wrapper identity, lazy caching, and benchmark:
   [context/wasm-container-id-cache.md](context/wasm-container-id-cache.md).
+- WASM bulk-read APIs (per-container/range deep reads, JSON text export, cid
+  format, cids pre-order contract):
+  [context/wasm-bulk-read.md](context/wasm-bulk-read.md).
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).

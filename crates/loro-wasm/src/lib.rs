@@ -525,6 +525,17 @@ fn id_to_js(id: &ID) -> JsResult<JsValue> {
     Ok(obj.into())
 }
 
+pub(crate) fn deep_value_json_with_ids_to_js(json: String, cids: Vec<String>) -> JsResult<JsValue> {
+    let obj = Object::new();
+    Reflect::set(&obj, &"json".into(), &json.into())?;
+    let arr = Array::new();
+    for cid in cids {
+        arr.push(&cid.into());
+    }
+    Reflect::set(&obj, &"cids".into(), &arr)?;
+    Ok(obj.into())
+}
+
 fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
     let v: JsValue = peer.to_string().into();
     v.into()
@@ -1466,6 +1477,54 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "getDeepValueWithID")]
     pub fn get_deep_value_with_id(&self) -> JsValue {
         self.doc.get_deep_value_with_id().into()
+    }
+
+    /// Get the deep value of the document as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(doc.toJSON())`, but the
+    /// JSON text is produced inside WASM in a single call, avoiding the cost
+    /// of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.getText("text").insert(0, "Hello");
+    /// console.log(doc.getDeepValueJson());  // {"text":"Hello"}
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.doc.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the document as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container id strings in pre-order DFS of the serialized JSON tree, so a
+    /// consumer can re-attach ids in a single JS walk to reconstruct the
+    /// `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const { json, cids } = doc.getDeepValueJsonWithIds();
+    /// // json === '{"text":"Hello"}', cids === ["cid:root-text:Text"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.doc.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
     }
 
     /// Get the path from the root to the container
@@ -3253,6 +3312,61 @@ impl LoroText {
     pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
         Ok(self.handler.get_deep_value_with_id()?.into())
     }
+
+    /// Get the deep value of the text as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(text.toJSON())`, but
+    /// the JSON text is produced inside WASM in a single call, avoiding the
+    /// cost of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// For a text container the JSON text is a JSON string of the text
+    /// content.
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// console.log(text.getDeepValueJson());  // \"Hello\"
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the text as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container ids in pre-order DFS of the serialized JSON tree, so
+    /// `cids[0]` is this container's own id. A single JS walk can re-attach
+    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// const { json, cids } = text.getDeepValueJsonWithIds();
+    /// // json === '\"Hello\"', cids === ["cid:root-text:Text"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
+    }
 }
 
 impl Default for LoroText {
@@ -3540,6 +3654,59 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
     pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
         Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the map as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(map.toJSON())`, but
+    /// the JSON text is produced inside WASM in a single call, avoiding the
+    /// cost of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// console.log(map.getDeepValueJson());  // {\"foo\":\"bar\"}
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the map as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container ids in pre-order DFS of the serialized JSON tree, so
+    /// `cids[0]` is this container's own id. A single JS walk can re-attach
+    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const { json, cids } = map.getDeepValueJsonWithIds();
+    /// // json === '{\"foo\":\"bar\"}', cids === ["cid:root-map:Map"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
     }
 
     /// Set the key with a regular child container.
@@ -3971,6 +4138,59 @@ impl LoroList {
     #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
     pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
         Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the list as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(list.toJSON())`, but
+    /// the JSON text is produced inside WASM in a single call, avoiding the
+    /// cost of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// console.log(list.getDeepValueJson());  // [100]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the list as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container ids in pre-order DFS of the serialized JSON tree, so
+    /// `cids[0]` is this container's own id. A single JS walk can re-attach
+    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const { json, cids } = list.getDeepValueJsonWithIds();
+    /// // json === '[100]', cids === ["cid:root-list:List"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
     }
 
     /// Get the deep value of the elements in the range `[start, end)`, with
@@ -4413,6 +4633,59 @@ impl LoroMovableList {
     #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
     pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
         Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the movableList as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(movableList.toJSON())`, but
+    /// the JSON text is produced inside WASM in a single call, avoiding the
+    /// cost of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const movableList = doc.getMovableList("list");
+    /// movableList.insert(0, 100);
+    /// console.log(movableList.getDeepValueJson());  // [100]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the movableList as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container ids in pre-order DFS of the serialized JSON tree, so
+    /// `cids[0]` is this container's own id. A single JS walk can re-attach
+    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const movableList = doc.getMovableList("list");
+    /// movableList.insert(0, 100);
+    /// const { json, cids } = movableList.getDeepValueJsonWithIds();
+    /// // json === '[100]', cids === ["cid:root-list:MovableList"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
     }
 
     /// Get the deep value of the elements in the range `[start, end)`, with
@@ -5236,6 +5509,61 @@ impl LoroTree {
     #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
     pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
         Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the tree as JSON text.
+    ///
+    /// The content is identical to `JSON.stringify(tree.toJSON())`, but
+    /// the JSON text is produced inside WASM in a single call, avoiding the
+    /// cost of crossing the WASM/JS boundary with a large structured value.
+    ///
+    /// Tree node meta maps are plain deep values, so their container ids
+    /// do not appear in `cids`.
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const tree = doc.getTree("tree");
+    /// tree.createNode();
+    /// console.log(tree.getDeepValueJson());  // [{\"id\":\"...\",\"parent\":null,\"meta\":{},\"index\":0,\"fractional_index\":\"...\",\"children\":[]}]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
+    pub fn get_deep_value_json(&self) -> JsResult<String> {
+        Ok(self.handler.get_deep_value_json()?)
+    }
+
+    /// Get the deep value of the tree as JSON text, plus container ids.
+    ///
+    /// Returns `{ json, cids }` where `json` parses to the same content as
+    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
+    /// order may differ between the two strings) and `cids` lists the
+    /// container ids in pre-order DFS of the serialized JSON tree, so
+    /// `cids[0]` is this container's own id. A single JS walk can re-attach
+    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    ///
+    /// Note: a plain object value that has exactly the keys `cid` and `value`
+    /// with `cid` being a valid container id string is indistinguishable from
+    /// a container node in this format.
+    ///
+    /// Throws if the container is detached.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const tree = doc.getTree("tree");
+    /// tree.createNode();
+    /// const { json, cids } = tree.getDeepValueJsonWithIds();
+    /// // json === '[{\"id\":\"...\",\"parent\":null,\"meta\":{},\"index\":0,\"fractional_index\":\"...\",\"children\":[]}]', cids === ["cid:root-tree:Tree"]
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
+    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
+        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
+        deep_value_json_with_ids_to_js(json, cids)
     }
 
     /// Get all tree nodes of the forest, including deleted nodes.
@@ -6636,6 +6964,25 @@ export type ValueWithContainerID = {
     value: Value,
 }
 
+/**
+ * The result of `getDeepValueJsonWithIds()`.
+ *
+ * `json` is the JSON text of the deep value WITHOUT container ids (it parses
+ * to the same content as `getDeepValueJson()`). `cids` lists the container id
+ * strings in pre-order DFS of the serialized JSON tree: the ids appear in the
+ * same order as the key/item order a consumer sees after `JSON.parse(json)`,
+ * so a single JS walk can re-attach ids and reconstruct the
+ * `getDeepValueWithID()` shape.
+ *
+ * Note: a plain object value that has exactly the keys `cid` and `value` with
+ * `cid` being a valid container id string is indistinguishable from a
+ * container node in this format.
+ */
+export type DeepValueJsonWithIds = {
+    json: string,
+    cids: ContainerID[],
+}
+
 export type IdSpan = {
     peer: PeerID,
     counter: number,
@@ -7121,6 +7468,40 @@ interface LoroDoc {
      * You can debounce/throttle the callback before running `JSONPath(...)` to optimize heavy reads.
      */
     subscribeJsonpath(path: string, callback: () => void): Subscription;
+    /**
+     * Get the deep value of the document as JSON text.
+     *
+     * The content is identical to `JSON.stringify(doc.toJSON())`, but the
+     * JSON text is produced inside WASM in a single call, avoiding the cost
+     * of crossing the WASM/JS boundary with a large structured value.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the document as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so a single JS walk can
+     * re-attach the ids to reconstruct the `getDeepValueWithID()` shape.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
+}
+
+interface LoroCounter {
+    /**
+     * Get the counter value as JSON text (a JSON number).
+     *
+     * Unlike the other container types, this also works on a detached
+     * counter, mirroring `toJSON()`.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the counter value as JSON text, plus container ids.
+     *
+     * `json` is the same string `getDeepValueJson()` returns and `cids`
+     * contains only this counter's own id (a counter has no children).
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
 }
 
 interface UndoManager {
@@ -7276,6 +7657,30 @@ interface LoroList<T = unknown> {
      * own `{ cid, value }` nodes.
      */
     getDeepValueWithID(): ValueWithContainerID;
+
+    /**
+     * Get the deep value of the container as JSON text.
+     *
+     * The content is identical to `JSON.stringify` of the container's
+     * `toJSON()`, but the JSON text is produced inside WASM in a single call,
+     * avoiding the cost of crossing the WASM/JS boundary with a large
+     * structured value.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the container as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
+     * container's own id. A single JS walk can re-attach the ids to
+     * reconstruct the `getDeepValueWithID()` shape.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get the deep value of the elements in the range `[start, end)`, with
      * container ids.
@@ -7379,6 +7784,30 @@ interface LoroMovableList<T = unknown> {
      * own `{ cid, value }` nodes.
      */
     getDeepValueWithID(): ValueWithContainerID;
+
+    /**
+     * Get the deep value of the container as JSON text.
+     *
+     * The content is identical to `JSON.stringify` of the container's
+     * `toJSON()`, but the JSON text is produced inside WASM in a single call,
+     * avoiding the cost of crossing the WASM/JS boundary with a large
+     * structured value.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the container as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
+     * container's own id. A single JS walk can re-attach the ids to
+     * reconstruct the `getDeepValueWithID()` shape.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get the deep value of the elements in the range `[start, end)`, with
      * container ids.
@@ -7548,6 +7977,30 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
      * `{ cid, value }` nodes.
      */
     getDeepValueWithID(): ValueWithContainerID;
+
+    /**
+     * Get the deep value of the container as JSON text.
+     *
+     * The content is identical to `JSON.stringify` of the container's
+     * `toJSON()`, but the JSON text is produced inside WASM in a single call,
+     * avoiding the cost of crossing the WASM/JS boundary with a large
+     * structured value.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the container as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
+     * container's own id. A single JS walk can re-attach the ids to
+     * reconstruct the `getDeepValueWithID()` shape.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get or create a regular child container at the given key.
      *
@@ -7674,6 +8127,30 @@ interface LoroText {
      * string (the same as `text.id`) and `value` is the text content.
      */
     getDeepValueWithID(): { cid: ContainerID, value: string };
+
+    /**
+     * Get the deep value of the container as JSON text.
+     *
+     * The content is identical to `JSON.stringify` of the container's
+     * `toJSON()`, but the JSON text is produced inside WASM in a single call,
+     * avoiding the cost of crossing the WASM/JS boundary with a large
+     * structured value.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the container as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
+     * container's own id. A single JS walk can re-attach the ids to
+     * reconstruct the `getDeepValueWithID()` shape.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
@@ -7719,6 +8196,30 @@ interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> 
      * emits for every container.
      */
     getDeepValueWithID(): ValueWithContainerID;
+
+    /**
+     * Get the deep value of the container as JSON text.
+     *
+     * The content is identical to `JSON.stringify` of the container's
+     * `toJSON()`, but the JSON text is produced inside WASM in a single call,
+     * avoiding the cost of crossing the WASM/JS boundary with a large
+     * structured value.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJson(): string;
+    /**
+     * Get the deep value of the container as JSON text, plus container ids.
+     *
+     * `json` parses to the same content as `getDeepValueJson()` (the deep
+     * value WITHOUT container ids) and `cids` lists the container ids in
+     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
+     * container's own id. A single JS walk can re-attach the ids to
+     * reconstruct the `getDeepValueWithID()` shape.
+     *
+     * Throws if the container is detached.
+     */
+    getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
      * If the parent is undefined, the tree node will be a root node.

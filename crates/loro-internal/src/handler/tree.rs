@@ -363,6 +363,30 @@ impl TreeHandler {
         }))
     }
 
+    /// Get the deep value of the tree as JSON text.
+    ///
+    /// The content is identical to serializing the deep value, but the JSON
+    /// text is produced in one pass.
+    pub fn get_deep_value_json(&self) -> LoroResult<String> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
+    }
+
+    /// Get the deep value of the tree as JSON text plus container ids.
+    ///
+    /// Returns `(json, cids)` where `json` parses to the same content
+    /// as `get_deep_value_json()` (object key order may differ) and `cids`
+    /// lists the container ids in
+    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this tree's
+    /// own id. Tree node meta maps are plain deep values, so their container
+    /// ids do not appear in `cids`.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+        let inner = self.inner.try_attached_state()?;
+        inner.with_doc_state(|state| {
+            state.get_container_deep_value_json_with_ids(inner.container_idx)
+        })
+    }
+
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
