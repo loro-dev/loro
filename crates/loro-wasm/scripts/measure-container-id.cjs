@@ -68,6 +68,10 @@ const repeatedRun = ({ container }) => {
   for (let i = 0; i < REPEATED_READS; i++) blackhole += container.id.length;
 };
 
+const repeatedKindRun = ({ container }) => {
+  for (let i = 0; i < REPEATED_READS; i++) blackhole += container.kind().length;
+};
+
 const firstRun = ({ containers }) => {
   for (const container of containers) blackhole += container.id.length;
 };
@@ -78,6 +82,8 @@ const mirrorReuseRun = ({ containers }) => {
     blackhole += container.id.length;
     blackhole += container.id.length;
     blackhole += container.id.length;
+    blackhole += container.kind().length;
+    blackhole += container.kind().length;
     const json = container.toJSON();
     if (json != null) blackhole++;
   }
@@ -99,6 +105,7 @@ const churnRun = ({ doc, ids }) => {
 
 const cases = [
   ["same-wrapper-repeated-id", repeatedSetup, repeatedRun],
+  ["same-wrapper-repeated-kind", repeatedSetup, repeatedKindRun],
   ["distinct-wrappers-first-id", makeContainers, firstRun],
   ["mirror-reuse-wrapper", makeContainers, mirrorReuseRun],
   ["mirror-new-wrapper-per-id", churnSetup, churnRun],

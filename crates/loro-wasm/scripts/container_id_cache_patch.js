@@ -56,6 +56,35 @@ function __loroCacheContainerIdGetter(ContainerClass) {
   });
 }
 
+// `kind()` returns a constant string per container class and never depends on
+// instance state, so one module-level memo per class is enough. Repeated reads
+// (e.g. loro-mirror's traversal) must not cross into WASM again.
+function __loroCacheKindMethod(ContainerClass) {
+  const prototype = ContainerClass.prototype;
+  const kindDescriptor = Object.getOwnPropertyDescriptor(prototype, "kind");
+  const kind = kindDescriptor && kindDescriptor.value;
+
+  if (typeof kind !== "function") {
+    throw new Error("Unexpected wasm-bindgen container wrapper shape");
+  }
+
+  let cached;
+  Object.defineProperty(prototype, "kind", {
+    ...kindDescriptor,
+    value() {
+      // Preserve wasm-bindgen's post-free error instead of returning stale data.
+      if (this.__wbg_ptr === 0) {
+        return kind.call(this);
+      }
+
+      if (cached === undefined) {
+        cached = kind.call(this);
+      }
+      return cached;
+    },
+  });
+}
+
 for (const ContainerClass of [
   LoroMap,
   LoroText,
@@ -65,4 +94,5 @@ for (const ContainerClass of [
   LoroCounter,
 ]) {
   __loroCacheContainerIdGetter(ContainerClass);
+  __loroCacheKindMethod(ContainerClass);
 }

@@ -112,3 +112,51 @@ describe("container id cache", () => {
     text.free();
   });
 });
+
+describe("container kind cache", () => {
+  it("returns the same kind string on repeated calls without re-decoding", () => {
+    const doc = new LoroDoc();
+    const first = doc.getMap("a");
+    const second = doc.getMap("b");
+    // Warm the class-level memo; kind() is constant per container class.
+    first.kind();
+
+    const { result: kinds, decoderCalls } = countTextDecodes(() => [
+      first.kind(),
+      first.kind(),
+      second.kind(),
+    ]);
+
+    expect(kinds).toEqual(["Map", "Map", "Map"]);
+    expect(decoderCalls).toBe(0);
+  });
+
+  it("decodes kind() at most once per container class", () => {
+    const doc = new LoroDoc();
+    const containers: Container[] = [
+      doc.getMap("map"),
+      doc.getText("text"),
+      doc.getList("list"),
+      doc.getTree("tree"),
+      doc.getMovableList("movable-list"),
+      doc.getCounter("counter"),
+    ];
+
+    const { result: kinds, decoderCalls } = countTextDecodes(() =>
+      containers.map((container) => [container.kind(), container.kind()]),
+    );
+
+    expect(decoderCalls).toBeLessThanOrEqual(containers.length);
+    for (const [first, second] of kinds) {
+      expect(second).toBe(first);
+    }
+  });
+
+  it("does not return a cached kind after free", () => {
+    const text = new LoroText();
+    expect(text.kind()).toBe("Text");
+    text.free();
+
+    expect(() => text.kind()).toThrow("null pointer passed to rust");
+  });
+});
