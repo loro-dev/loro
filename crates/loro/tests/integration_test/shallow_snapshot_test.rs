@@ -771,3 +771,85 @@ fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Re
     }
     Ok(())
 }
+
+/// The forward-replay fast path (attached doc at latest) and the checkout
+/// path (detached doc) must produce shallow snapshots that are semantically
+/// identical: both import to the same state with the same shallow metadata.
+/// They are not required to be byte-identical.
+#[test]
+fn shallow_export_forward_replay_matches_checkout_path() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+
+    // Phase 1 (before the shallow root F): content on every container type,
+    // plus an accessed-but-op-less root container and a text whose content is
+    // deleted before F — these are the cases where the replay doc's store can
+    // diverge from the live store.
+    doc.get_map("map").insert("a", 1)?;
+    doc.get_list("list").insert(0, "l0")?;
+    doc.get_text("text").insert(0, "hello")?;
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "m0")?;
+    movable.insert(1, "m1")?;
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+    let root = tree.create(loro::TreeParentId::Root)?;
+    tree.create(root)?;
+    let _accessed_but_empty = doc.get_text("empty_text");
+    doc.get_text("text").delete(0, 2)?;
+    doc.commit();
+    let f = doc.oplog_frontiers();
+
+    // Phase 2 (after F): enough ops to force the export to carry the encoded
+    // latest state as an overlay.
+    for i in 0..20 {
+        doc.get_map("map").insert(&format!("k{i}"), i as i64)?;
+    }
+    doc.get_list("list").insert(1, "l1")?;
+    doc.get_text("text").insert(3, " world")?;
+    movable.mov(0, 1)?;
+    doc.commit();
+
+    // Fast path: attached, state at latest -> forward replay.
+    let fast = doc.export(ExportMode::shallow_snapshot(&f))?;
+    // Checkout path: detach at an older version so state_frontiers differs
+    // from the latest frontiers.
+    doc.checkout(&Frontiers::default())?;
+    let old = doc.export(ExportMode::shallow_snapshot(&f))?;
+    doc.checkout_to_latest();
+
+    for (name, blob) in [("forward", &fast), ("checkout", &old)] {
+        let meta = LoroDoc::decode_import_blob_meta(blob, false)?;
+        assert_eq!(meta.start_frontiers, f, "{name}: start frontiers");
+    }
+
+    let fast_doc = LoroDoc::new();
+    fast_doc.import(&fast)?;
+    let old_doc = LoroDoc::new();
+    old_doc.import(&old)?;
+
+    assert_eq!(fast_doc.get_deep_value(), doc.get_deep_value(), "forward");
+    assert_eq!(old_doc.get_deep_value(), doc.get_deep_value(), "checkout");
+    assert_eq!(fast_doc.get_deep_value(), old_doc.get_deep_value());
+    assert_eq!(fast_doc.shallow_since_frontiers(), f);
+    assert_eq!(old_doc.shallow_since_frontiers(), f);
+
+    let vv_pairs = |d: &LoroDoc| {
+        let mut pairs: Vec<(u64, i32)> = d
+            .shallow_since_vv()
+            .iter()
+            .map(|(peer, counter)| (*peer, *counter))
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    };
+    assert_eq!(vv_pairs(&fast_doc), vv_pairs(&old_doc));
+    assert!(fast_doc.is_shallow() && old_doc.is_shallow());
+    // The accessed-but-op-less root container must survive both paths.
+    for (name, d) in [("forward", &fast_doc), ("checkout", &old_doc)] {
+        assert!(d.is_shallow(), "{name}");
+        assert_eq!(d.get_text("empty_text").to_string(), "", "{name}");
+    }
+
+    Ok(())
+}
