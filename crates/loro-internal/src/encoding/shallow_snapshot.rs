@@ -3,11 +3,12 @@ use rle::HasLength;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
-use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
+use loro_common::{ContainerID, ContainerType, IdSpan, LoroEncodeError, LoroError, ID};
 
 use crate::{
     container::{idx::ContainerIdx, list::list_op::InnerListOp},
     dag::DagUtils,
+    encoding::export_fast_updates_in_range,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::{
         container_store::{ContainerWrapper, FRONTIERS_KEY},
@@ -40,7 +41,11 @@ pub(crate) fn export_shallow_snapshot_inner(
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
-    let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
+    // `root_vv` is the version of the state at the shallow root; `start_vv`
+    // additionally excludes the frontier ops themselves because the retained
+    // history must include them.
+    let root_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
+    let mut start_vv = root_vv.clone();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -78,6 +83,20 @@ pub(crate) fn export_shallow_snapshot_inner(
     let oplog_bytes = oplog.export_change_store_from(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
+    // Pre-encode the pre-root history for the forward-replay path below while
+    // the oplog lock is held. Calling `LoroDoc::export` there instead would
+    // re-enter `with_barrier` and violate the txn lock order. Shallow docs are
+    // excluded: their pre-root history is trimmed, so forward replay from
+    // empty cannot reconstruct the root state.
+    let pre_root_updates =
+        (state_frontiers == latest_frontiers && oplog.shallow_since_vv().is_empty()).then(|| {
+            let spans: Vec<IdSpan> = root_vv
+                .iter()
+                .filter(|(_, counter)| **counter > 0)
+                .map(|(peer, counter)| IdSpan::new(*peer, 0, *counter))
+                .collect();
+            export_fast_updates_in_range(&oplog, &spans)
+        });
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
         if let Some((shallow_root_state_bytes, shallow_root_kv)) =
@@ -138,6 +157,63 @@ pub(crate) fn export_shallow_snapshot_inner(
     }
     drop(oplog);
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
+        if let Some(pre_root_updates) = pre_root_updates {
+            // The live state is already at the latest version: build the root
+            // state by replaying pre-root history forward into a temporary doc
+            // instead of checking the live doc out backwards. A reverse
+            // checkout (latest -> root) makes the diff calculators rebuild a
+            // full CRDT tracker from empty for every list-like container
+            // touched in the range (the `should_rebuild` path in
+            // `RichtextDiffCalculator::calculate_diff`), which costs orders of
+            // magnitude more than forward replay when the doc has many small
+            // containers. Forward replay also leaves the live doc untouched,
+            // so no state restore is needed.
+            let root_doc = LoroDoc::new();
+            root_doc
+                .import(&pre_root_updates)
+                .map_err(LoroEncodeError::from)?;
+            let mut root_state = root_doc.app_state().lock();
+            // Root containers exist on the live doc once they are accessed,
+            // even when they have no ops; the replay doc cannot know about
+            // those. Mirror the live store's root entries so the exported root
+            // state ships the same empty root containers the checkout path
+            // would.
+            {
+                let mut live_state = doc.app_state().lock();
+                for cid in live_state.store.iter_all_container_ids() {
+                    if matches!(cid, ContainerID::Root { .. }) {
+                        root_state.store.ensure_container(&cid);
+                    }
+                }
+            }
+            let alive_containers = root_state.ensure_all_alive_containers()?;
+            if has_unknown_container(alive_containers.iter().copied()) {
+                return Err(LoroEncodeError::UnknownContainer);
+            }
+            let mut alive_c_bytes = alive_indices_to_bytes(&root_state, &alive_containers);
+            root_state.store.flush();
+            let shallow_root_state_kv = root_state.store.get_kv_clone();
+            drop(root_state);
+
+            let latest_state_kv = {
+                let mut state = doc.app_state().lock();
+                latest_state_overlay_kv(
+                    &mut state,
+                    ops_num,
+                    &start_from,
+                    &shallow_root_state_kv,
+                    &mut alive_c_bytes,
+                )?
+            };
+            return encode_shallow_sections(
+                oplog_bytes,
+                &start_from,
+                shallow_root_state_kv,
+                latest_state_kv,
+                alive_c_bytes,
+            );
+        }
+
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
@@ -151,46 +227,83 @@ pub(crate) fn export_shallow_snapshot_inner(
         drop(state);
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
-        let latest_state_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let latest_state_kv = {
             let mut state = doc.app_state().lock();
-            state.ensure_all_alive_containers()?;
-            state.store.encode();
-            // All the containers that are created after start_from need to be encoded
-            for cid in state.store.iter_all_container_ids() {
-                if let ContainerID::Normal { peer, counter, .. } = cid {
-                    let temp_id = ID::new(peer, counter);
-                    if !start_from.contains(&temp_id) {
-                        alive_c_bytes.insert(cid.to_bytes());
-                    }
-                } else {
-                    alive_c_bytes.insert(cid.to_bytes());
-                }
-            }
-
-            let new_kv = state.store.get_kv_clone();
-            new_kv.remove_same(&shallow_root_state_kv);
-            new_kv.retain_keys(&alive_c_bytes);
-            Some(new_kv)
-        } else {
-            None
+            latest_state_overlay_kv(
+                &mut state,
+                ops_num,
+                &start_from,
+                &shallow_root_state_kv,
+                &mut alive_c_bytes,
+            )?
         };
-
-        shallow_root_state_kv.retain_keys(&alive_c_bytes);
-        redact_export_states(&shallow_root_state_kv, latest_state_kv.as_ref())?;
-        let state_bytes = latest_state_kv.map(|kv| kv.export());
-        shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-        let shallow_root_state_bytes = shallow_root_state_kv.export();
-
-        Ok(Snapshot {
+        encode_shallow_sections(
             oplog_bytes,
-            state_bytes,
-            shallow_root_state_bytes,
-        })
+            &start_from,
+            shallow_root_state_kv,
+            latest_state_kv,
+            alive_c_bytes,
+        )
     })();
 
     restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
     Ok((result?, start_from))
+}
+
+/// Compute the encoded latest-state overlay shipped alongside the shallow root
+/// when the retained history is too large to replay on import. Containers
+/// created after `start_from` are added to `alive_c_bytes` so both the root
+/// state and the overlay keep them.
+fn latest_state_overlay_kv(
+    state: &mut DocState,
+    ops_num: usize,
+    start_from: &Frontiers,
+    shallow_root_state_kv: &KvWrapper,
+    alive_c_bytes: &mut BTreeSet<Vec<u8>>,
+) -> Result<Option<KvWrapper>, LoroEncodeError> {
+    if ops_num <= MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        return Ok(None);
+    }
+
+    state.ensure_all_alive_containers()?;
+    state.store.encode();
+    // All the containers that are created after start_from need to be encoded
+    for cid in state.store.iter_all_container_ids() {
+        if let ContainerID::Normal { peer, counter, .. } = cid {
+            let temp_id = ID::new(peer, counter);
+            if !start_from.contains(&temp_id) {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        } else {
+            alive_c_bytes.insert(cid.to_bytes());
+        }
+    }
+
+    let new_kv = state.store.get_kv_clone();
+    new_kv.remove_same(shallow_root_state_kv);
+    new_kv.retain_keys(alive_c_bytes);
+    Ok(Some(new_kv))
+}
+
+fn encode_shallow_sections(
+    oplog_bytes: Bytes,
+    start_from: &Frontiers,
+    shallow_root_state_kv: KvWrapper,
+    latest_state_kv: Option<KvWrapper>,
+    alive_c_bytes: BTreeSet<Vec<u8>>,
+) -> Result<Snapshot, LoroEncodeError> {
+    shallow_root_state_kv.retain_keys(&alive_c_bytes);
+    redact_export_states(&shallow_root_state_kv, latest_state_kv.as_ref())?;
+    let state_bytes = latest_state_kv.map(|kv| kv.export());
+    shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let shallow_root_state_bytes = shallow_root_state_kv.export();
+
+    Ok(Snapshot {
+        oplog_bytes,
+        state_bytes,
+        shallow_root_state_bytes,
+    })
 }
 
 fn has_unknown_container(mut idxs: impl Iterator<Item = ContainerIdx>) -> bool {
