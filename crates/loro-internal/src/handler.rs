@@ -2689,6 +2689,15 @@ impl TextHandler {
         }
     }
 
+    /// Get the deep value of the text with its container id, as a
+    /// `{ cid, value }` map where `value` is the text content.
+    pub fn get_deep_value_with_id(&self) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_container_deep_value_with_id(inner.container_idx, None)
+        }))
+    }
+
     pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
         self.get_cursor_internal(event_index, side, true)
     }
@@ -3356,6 +3365,30 @@ impl ListHandler {
         let inner = self.inner.try_attached_state()?;
         Ok(inner.with_doc_state(|state| {
             state.get_container_deep_value_with_id(inner.container_idx, None)
+        }))
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Child containers in the range are recursively resolved to `{ cid, value }`
+    /// nodes. Out-of-range bounds are clamped to the list length; an empty or
+    /// inverted range returns an empty list.
+    pub fn get_slice_deep_value_with_id(&self, start: usize, end: usize) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_list_range_deep_value(inner.container_idx, start, end, true)
+        }))
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Child containers in the range are recursively resolved to their deep value.
+    /// Out-of-range bounds are clamped to the list length; an empty or inverted
+    /// range returns an empty list.
+    pub fn get_slice_deep_value(&self, start: usize, end: usize) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_list_range_deep_value(inner.container_idx, start, end, false)
         }))
     }
 
@@ -4039,13 +4072,35 @@ impl MovableListHandler {
         self.len() == 0
     }
 
-    pub fn get_deep_value_with_id(&self) -> LoroValue {
-        let inner = self.inner.try_attached_state().unwrap();
-        inner
-            .doc
-            .state
-            .lock()
-            .get_container_deep_value_with_id(inner.container_idx, None)
+    pub fn get_deep_value_with_id(&self) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_container_deep_value_with_id(inner.container_idx, None)
+        }))
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Child containers in the range are recursively resolved to `{ cid, value }`
+    /// nodes. Out-of-range bounds are clamped to the list length; an empty or
+    /// inverted range returns an empty list.
+    pub fn get_slice_deep_value_with_id(&self, start: usize, end: usize) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_list_range_deep_value(inner.container_idx, start, end, true)
+        }))
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Child containers in the range are recursively resolved to their deep value.
+    /// Out-of-range bounds are clamped to the list length; an empty or inverted
+    /// range returns an empty list.
+    pub fn get_slice_deep_value(&self, start: usize, end: usize) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_list_range_deep_value(inner.container_idx, start, end, false)
+        }))
     }
 
     pub fn get(&self, index: usize) -> Option<LoroValue> {
@@ -5732,5 +5787,172 @@ mod test {
         assert_eq!(format!("{unknown:?}"), "UnknownHandler");
         assert!(unknown.get_attached().is_some());
         assert!(super::UnknownHandler::from_handler(handler).is_some());
+    }
+
+    #[test]
+    fn deep_value_with_id_cid_matches_container_id_string() {
+        let loro = LoroDoc::new_auto_commit();
+        let map = loro.get_map("map");
+        map.insert("key", "value").unwrap();
+        let child = map
+            .insert_container("child", ListHandler::new_detached())
+            .unwrap();
+        child.push("item").unwrap();
+
+        let value = loro.get_deep_value_with_id();
+        assert_eq!(
+            value["map"]["cid"].to_json_value(),
+            json!(map.id().to_string())
+        );
+        assert_eq!(
+            value["map"]["cid"].to_json_value(),
+            json!("cid:root-map:Map")
+        );
+        let child_cid = value["map"]["value"]["child"]["cid"].to_json_value();
+        assert_eq!(child_cid, json!(child.id().to_string()));
+        let child_cid = child_cid.as_str().unwrap();
+        assert!(child_cid.starts_with("cid:"), "unexpected cid: {child_cid}");
+        assert!(!child_cid.contains("idx:"), "unexpected cid: {child_cid}");
+
+        // The per-container handler API emits the same node shape
+        let map_value = map.get_deep_value_with_id().unwrap();
+        assert_eq!(
+            map_value["cid"].to_json_value(),
+            json!(map.id().to_string())
+        );
+        assert_eq!(
+            map_value["value"]["child"]["cid"].to_json_value(),
+            json!(child.id().to_string())
+        );
+        assert_eq!(
+            map_value["value"]["child"]["value"][0].to_json_value(),
+            json!("item")
+        );
+    }
+
+    #[test]
+    fn text_and_tree_deep_value_with_id() {
+        let loro = LoroDoc::new_auto_commit();
+        let text = loro.get_text("text");
+        text.insert(0, "hello", PosType::Unicode).unwrap();
+        let text_value = text.get_deep_value_with_id().unwrap();
+        assert_eq!(
+            text_value.to_json_value(),
+            json!({"cid": text.id().to_string(), "value": "hello"})
+        );
+
+        let tree = loro.get_tree("tree");
+        let node = tree.create(TreeParentId::Root).unwrap();
+        tree.get_meta(node).unwrap().insert("name", "root").unwrap();
+        let tree_value = tree.get_deep_value_with_id().unwrap();
+        assert_eq!(
+            tree_value["cid"].to_json_value(),
+            json!(tree.id().to_string())
+        );
+        assert_eq!(
+            tree_value["value"][0]["meta"]["name"].to_json_value(),
+            json!("root")
+        );
+
+        // Detached containers must error rather than panic
+        let detached_text = TextHandler::new_detached();
+        assert!(matches!(
+            detached_text.get_deep_value_with_id(),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+        let detached_tree = crate::handler::TreeHandler::new_detached();
+        assert!(matches!(
+            detached_tree.get_deep_value_with_id(),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+    }
+
+    #[test]
+    fn list_slice_deep_value() {
+        let loro = LoroDoc::new_auto_commit();
+        let list = loro.get_list("list");
+        list.push("a").unwrap();
+        list.push("b").unwrap();
+        let child = list.push_container(MapHandler::new_detached()).unwrap();
+        child.insert("k", "v").unwrap();
+        list.push("d").unwrap();
+
+        // Full range with ids: containers become { cid, value } nodes
+        let all = list.get_slice_deep_value_with_id(0, 4).unwrap();
+        assert_eq!(all[0].to_json_value(), json!("a"));
+        assert_eq!(
+            all[2].to_json_value(),
+            json!({"cid": child.id().to_string(), "value": {"k": "v"}})
+        );
+
+        // Sub-range without ids: containers become their plain deep value
+        let mid = list.get_slice_deep_value(1, 3).unwrap();
+        assert_eq!(mid.to_json_value(), json!(["b", {"k": "v"}]));
+
+        // Bounds are clamped to the list length
+        let clamped = list.get_slice_deep_value_with_id(2, 100).unwrap();
+        assert_eq!(clamped.to_json_value().as_array().unwrap().len(), 2);
+        let clamped_start = list.get_slice_deep_value_with_id(100, 200).unwrap();
+        assert_eq!(clamped_start.to_json_value(), json!([]));
+
+        // Empty and inverted ranges return an empty list
+        assert_eq!(
+            list.get_slice_deep_value(2, 2).unwrap().to_json_value(),
+            json!([])
+        );
+        assert_eq!(
+            list.get_slice_deep_value(3, 1).unwrap().to_json_value(),
+            json!([])
+        );
+
+        // Detached lists must error rather than panic
+        let detached = ListHandler::new_detached();
+        assert!(matches!(
+            detached.get_slice_deep_value_with_id(0, 1),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+        assert!(matches!(
+            detached.get_slice_deep_value(0, 1),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+    }
+
+    #[test]
+    fn movable_list_slice_deep_value() {
+        let loro = LoroDoc::new_auto_commit();
+        let list = loro.get_movable_list("list");
+        list.push("a".into()).unwrap();
+        let child = list.push_container(ListHandler::new_detached()).unwrap();
+        child.push("x").unwrap();
+        list.push("b".into()).unwrap();
+
+        let all = list.get_slice_deep_value_with_id(0, 3).unwrap();
+        assert_eq!(
+            all[1].to_json_value(),
+            json!({"cid": child.id().to_string(), "value": ["x"]})
+        );
+
+        let plain = list.get_slice_deep_value(0, 2).unwrap();
+        assert_eq!(plain.to_json_value(), json!(["a", ["x"]]));
+
+        // Whole-container deep value with id errors on detached containers
+        let attached = list.get_deep_value_with_id().unwrap();
+        assert_eq!(
+            attached["cid"].to_json_value(),
+            json!(list.id().to_string())
+        );
+        let detached = MovableListHandler::new_detached();
+        assert!(matches!(
+            detached.get_deep_value_with_id(),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+        assert!(matches!(
+            detached.get_slice_deep_value_with_id(0, 1),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
+        assert!(matches!(
+            detached.get_slice_deep_value(0, 1),
+            Err(LoroError::MisuseDetachedContainer { .. })
+        ));
     }
 }

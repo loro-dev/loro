@@ -3232,6 +3232,27 @@ impl LoroText {
     pub fn to_json(&self) -> JsValue {
         self.handler.get_value().into()
     }
+
+    /// Get the deep value of the text with its container id.
+    ///
+    /// The result is a `{ cid, value }` object, where `cid` is the container id
+    /// string (the same as `text.id`) and `value` is the text content. This is
+    /// the same node shape that `LoroDoc.getDeepValueWithID()` emits for every
+    /// container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const text = doc.getText("text");
+    /// text.insert(0, "Hello");
+    /// console.log(text.getDeepValueWithID());  // { cid: "cid:root-text:Text", value: "Hello" }
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
+    pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
+        Ok(self.handler.get_deep_value_with_id()?.into())
+    }
 }
 
 impl Default for LoroText {
@@ -3493,6 +3514,32 @@ impl LoroMap {
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
+    }
+
+    /// Get the deep value of the map with its container id.
+    ///
+    /// The result is a `{ cid, value }` object, where `cid` is the container id
+    /// string (the same as `map.id`) and `value` is the deep value of the map.
+    /// Child containers inside `value` are recursively replaced by their own
+    /// `{ cid, value }` nodes. This is the same node shape that
+    /// `LoroDoc.getDeepValueWithID()` emits for every container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const map = doc.getMap("map");
+    /// map.set("foo", "bar");
+    /// const text = map.setContainer("text", new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(map.getDeepValueWithID());
+    /// // { cid: "cid:root-map:Map",
+    /// //   value: { foo: "bar", text: { cid: "cid:0@1:Text", value: "Hello" } } }
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
+    pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
+        Ok(self.handler.get_deep_value_with_id()?.into())
     }
 
     /// Set the key with a regular child container.
@@ -3900,6 +3947,85 @@ impl LoroList {
         value.into()
     }
 
+    /// Get the deep value of the list with its container id.
+    ///
+    /// The result is a `{ cid, value }` object, where `cid` is the container id
+    /// string (the same as `list.id`) and `value` is the deep value of the
+    /// list. Child containers inside `value` are recursively replaced by their
+    /// own `{ cid, value }` nodes. This is the same node shape that
+    /// `LoroDoc.getDeepValueWithID()` emits for every container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValueWithID());
+    /// // { cid: "cid:root-list:List",
+    /// //   value: [100, { cid: "cid:0@1:Text", value: "Hello" }] }
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
+    pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
+        Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`, with
+    /// container ids.
+    ///
+    /// Each child container in the range is recursively replaced by its own
+    /// `{ cid, value }` node. Negative bounds are clamped to 0 and
+    /// out-of-range bounds are clamped to the list length; an empty or
+    /// inverted range returns `[]`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getRangeDeepValueWithID(0, 2));
+    /// // [100, { cid: "cid:0@1:Text", value: "Hello" }]
+    /// ```
+    #[wasm_bindgen(js_name = "getRangeDeepValueWithID", skip_typescript)]
+    pub fn get_range_deep_value_with_id(&self, start: isize, end: isize) -> JsResult<JsValue> {
+        let value = self
+            .handler
+            .get_slice_deep_value_with_id(start.max(0) as usize, end.max(0) as usize)?;
+        Ok(value.into())
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Each child container in the range is recursively resolved to its deep
+    /// value. Negative bounds are clamped to 0 and out-of-range bounds are
+    /// clamped to the list length; an empty or inverted range returns `[]`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getRangeValue(0, 2));  // [100, "Hello"]
+    /// ```
+    #[wasm_bindgen(js_name = "getRangeValue", skip_typescript)]
+    pub fn get_range_value(&self, start: isize, end: isize) -> JsResult<JsValue> {
+        let value = self
+            .handler
+            .get_slice_deep_value(start.max(0) as usize, end.max(0) as usize)?;
+        Ok(value.into())
+    }
+
     /// Insert a container at the index.
     ///
     /// @example
@@ -4261,6 +4387,85 @@ impl LoroMovableList {
     pub fn to_json(&self) -> JsValue {
         let value = self.handler.get_deep_value();
         value.into()
+    }
+
+    /// Get the deep value of the movable list with its container id.
+    ///
+    /// The result is a `{ cid, value }` object, where `cid` is the container id
+    /// string (the same as `list.id`) and `value` is the deep value of the
+    /// list. Child containers inside `value` are recursively replaced by their
+    /// own `{ cid, value }` nodes. This is the same node shape that
+    /// `LoroDoc.getDeepValueWithID()` emits for every container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getMovableList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getDeepValueWithID());
+    /// // { cid: "cid:root-list:MovableList",
+    /// //   value: [100, { cid: "cid:0@1:Text", value: "Hello" }] }
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
+    pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
+        Ok(self.handler.get_deep_value_with_id()?.into())
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`, with
+    /// container ids.
+    ///
+    /// Each child container in the range is recursively replaced by its own
+    /// `{ cid, value }` node. Negative bounds are clamped to 0 and
+    /// out-of-range bounds are clamped to the list length; an empty or
+    /// inverted range returns `[]`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getMovableList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getRangeDeepValueWithID(0, 2));
+    /// // [100, { cid: "cid:0@1:Text", value: "Hello" }]
+    /// ```
+    #[wasm_bindgen(js_name = "getRangeDeepValueWithID", skip_typescript)]
+    pub fn get_range_deep_value_with_id(&self, start: isize, end: isize) -> JsResult<JsValue> {
+        let value = self
+            .handler
+            .get_slice_deep_value_with_id(start.max(0) as usize, end.max(0) as usize)?;
+        Ok(value.into())
+    }
+
+    /// Get the deep value of the elements in the range `[start, end)`.
+    ///
+    /// Each child container in the range is recursively resolved to its deep
+    /// value. Negative bounds are clamped to 0 and out-of-range bounds are
+    /// clamped to the list length; an empty or inverted range returns `[]`.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc, LoroText } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const list = doc.getMovableList("list");
+    /// list.insert(0, 100);
+    /// const text = list.insertContainer(1, new LoroText());
+    /// text.insert(0, "Hello");
+    /// console.log(list.getRangeValue(0, 2));  // [100, "Hello"]
+    /// ```
+    #[wasm_bindgen(js_name = "getRangeValue", skip_typescript)]
+    pub fn get_range_value(&self, start: isize, end: isize) -> JsResult<JsValue> {
+        let value = self
+            .handler
+            .get_slice_deep_value(start.max(0) as usize, end.max(0) as usize)?;
+        Ok(value.into())
     }
 
     /// Insert a container at the index.
@@ -5006,6 +5211,31 @@ impl LoroTree {
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsValue {
         self.handler.get_deep_value().into()
+    }
+
+    /// Get the deep value of the tree with its container id.
+    ///
+    /// The result is a `{ cid, value }` object, where `cid` is the container id
+    /// string (the same as `tree.id`) and `value` is the deep value of the
+    /// tree (each node's `meta` is the deep value of its associated metadata
+    /// map). This is the same node shape that `LoroDoc.getDeepValueWithID()`
+    /// emits for every container.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// const tree = doc.getTree("tree");
+    /// const root = tree.createNode();
+    /// root.data.set("color", "red");
+    /// console.log(tree.getDeepValueWithID());
+    /// // { cid: "cid:root-tree:Tree",
+    /// //   value: [ { id: '0@1', parent: null, ..., meta: { color: 'red' }, children: [] } ] }
+    /// ```
+    #[wasm_bindgen(js_name = "getDeepValueWithID", skip_typescript)]
+    pub fn get_deep_value_with_id(&self) -> JsResult<JsValue> {
+        Ok(self.handler.get_deep_value_with_id()?.into())
     }
 
     /// Get all tree nodes of the forest, including deleted nodes.
@@ -6393,6 +6623,19 @@ export type Value =
   | Value[]
   | undefined;
 
+/**
+ * A container node inside a deep value returned by `getDeepValueWithID()` or
+ * `getRangeDeepValueWithID()`.
+ *
+ * `cid` is the container id string (the same as the container's `id`
+ * property). `value` is the deep value of the container; child containers
+ * inside it are recursively represented as `ValueWithContainerID` nodes.
+ */
+export type ValueWithContainerID = {
+    cid: ContainerID,
+    value: Value,
+}
+
 export type IdSpan = {
     peer: PeerID,
     counter: number,
@@ -7025,6 +7268,33 @@ interface LoroDoc<T extends Record<string, Container> = Record<string, Container
 interface LoroList<T = unknown> {
     new(): LoroList<T>;
     /**
+     * Get the deep value of the list with its container id.
+     *
+     * The result is a `{ cid, value }` object, where `cid` is the container id
+     * string (the same as `list.id`) and `value` is the deep value of the
+     * list. Child containers inside `value` are recursively replaced by their
+     * own `{ cid, value }` nodes.
+     */
+    getDeepValueWithID(): ValueWithContainerID;
+    /**
+     * Get the deep value of the elements in the range `[start, end)`, with
+     * container ids.
+     *
+     * Each child container in the range is recursively replaced by its own
+     * `{ cid, value }` node. Negative bounds are clamped to 0 and
+     * out-of-range bounds are clamped to the list length; an empty or
+     * inverted range returns `[]`.
+     */
+    getRangeDeepValueWithID(start: number, end: number): (ValueWithContainerID | Value)[];
+    /**
+     * Get the deep value of the elements in the range `[start, end)`.
+     *
+     * Each child container in the range is recursively resolved to its deep
+     * value. Negative bounds are clamped to 0 and out-of-range bounds are
+     * clamped to the list length; an empty or inverted range returns `[]`.
+     */
+    getRangeValue(start: number, end: number): Value[];
+    /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
      *
@@ -7100,6 +7370,33 @@ interface LoroList<T = unknown> {
 }
 interface LoroMovableList<T = unknown> {
     new(): LoroMovableList<T>;
+    /**
+     * Get the deep value of the movable list with its container id.
+     *
+     * The result is a `{ cid, value }` object, where `cid` is the container id
+     * string (the same as `list.id`) and `value` is the deep value of the
+     * list. Child containers inside `value` are recursively replaced by their
+     * own `{ cid, value }` nodes.
+     */
+    getDeepValueWithID(): ValueWithContainerID;
+    /**
+     * Get the deep value of the elements in the range `[start, end)`, with
+     * container ids.
+     *
+     * Each child container in the range is recursively replaced by its own
+     * `{ cid, value }` node. Negative bounds are clamped to 0 and
+     * out-of-range bounds are clamped to the list length; an empty or
+     * inverted range returns `[]`.
+     */
+    getRangeDeepValueWithID(start: number, end: number): (ValueWithContainerID | Value)[];
+    /**
+     * Get the deep value of the elements in the range `[start, end)`.
+     *
+     * Each child container in the range is recursively resolved to its deep
+     * value. Negative bounds are clamped to 0 and out-of-range bounds are
+     * clamped to the list length; an empty or inverted range returns `[]`.
+     */
+    getRangeValue(start: number, end: number): Value[];
     /**
      *  Get elements of the list. If the value is a child container, the corresponding
      *  `Container` will be returned.
@@ -7243,6 +7540,15 @@ interface LoroMovableList<T = unknown> {
 interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
     new(): LoroMap<T>;
     /**
+     * Get the deep value of the map with its container id.
+     *
+     * The result is a `{ cid, value }` object, where `cid` is the container id
+     * string (the same as `map.id`) and `value` is the deep value of the map.
+     * Child containers inside `value` are recursively replaced by their own
+     * `{ cid, value }` nodes.
+     */
+    getDeepValueWithID(): ValueWithContainerID;
+    /**
      * Get or create a regular child container at the given key.
      *
      * @deprecated Use `ensureMergeable*` for lazy map-key child creation. This
@@ -7361,6 +7667,13 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
 }
 interface LoroText {
     new(): LoroText;
+    /**
+     * Get the deep value of the text with its container id.
+     *
+     * The result is a `{ cid, value }` object, where `cid` is the container id
+     * string (the same as `text.id`) and `value` is the text content.
+     */
+    getDeepValueWithID(): { cid: ContainerID, value: string };
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
     subscribe(listener: Listener): Subscription;
@@ -7397,6 +7710,15 @@ interface LoroText {
 }
 interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> {
     new(): LoroTree<T>;
+    /**
+     * Get the deep value of the tree with its container id.
+     *
+     * The result is a `{ cid, value }` object, where `cid` is the container id
+     * string (the same as `tree.id`) and `value` is the deep value of the
+     * tree. This is the same node shape that `LoroDoc.getDeepValueWithID()`
+     * emits for every container.
+     */
+    getDeepValueWithID(): ValueWithContainerID;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.
      * If the parent is undefined, the tree node will be a root node.
