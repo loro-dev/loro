@@ -63,10 +63,12 @@ const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 1 << 20;
 #[cfg(not(test))]
 const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 32 << 20;
 
-/// Estimate the decoded byte size of all op payloads in `spans`, following
-/// arena slices by reference and never copying values. Returns early with a
-/// value greater than `cap` once exceeded, so a rejected prefix costs one
-/// bounded walk instead of a full copy.
+/// Estimate the decoded byte size of everything in `spans` — op payloads
+/// (recursing into nested `LoroValue::List`/`Map`), style values, and commit
+/// messages — following arena slices by reference and never copying values.
+/// The walk is cap-aware: every counting step takes a remaining budget and
+/// bails as soon as it is exceeded, so a rejected prefix costs one bounded
+/// walk instead of a full copy.
 fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize) -> usize {
     let mut total = 0usize;
     'outer: for span in spans {
@@ -82,10 +84,27 @@ fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize
             continue;
         }
 
-        for op in oplog.iter_ops(span) {
-            total = total.saturating_add(rich_op_content_bytes(oplog, &op));
-            if total > cap {
-                break 'outer;
+        for change in oplog.iter_changes(span) {
+            let start =
+                ((span.counter.start - change.id.counter).max(0) as usize).min(change.atom_len());
+            let end =
+                ((span.counter.end - change.id.counter).max(0) as usize).min(change.atom_len());
+            if start == end {
+                continue;
+            }
+
+            if let Some(msg) = change.commit_msg.as_ref() {
+                total = total.saturating_add(msg.len());
+                if total > cap {
+                    break 'outer;
+                }
+            }
+
+            for op in crate::op::RichOp::new_iter_by_cnt_range(change, span.counter) {
+                total = total.saturating_add(rich_op_content_bytes(oplog, &op, cap - total));
+                if total > cap {
+                    break 'outer;
+                }
             }
         }
     }
@@ -93,34 +112,91 @@ fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize
 }
 
 /// Byte size of an op's payload plus a small flat per-op overhead. Arena
-/// slices are measured by reference; nothing is copied.
-fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp) -> usize {
+/// slices are measured by reference; nothing is copied. `remaining` is the
+/// budget left before the cap; the count may stop early once it is exceeded.
+fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining: usize) -> usize {
     const PER_OP_OVERHEAD: usize = 16;
-    fn value_bytes(v: &loro_common::LoroValue) -> usize {
-        match v {
-            loro_common::LoroValue::String(s) => s.len(),
-            loro_common::LoroValue::Binary(b) => b.len(),
-            _ => PER_OP_OVERHEAD,
-        }
+    if remaining < PER_OP_OVERHEAD {
+        return remaining + 1;
     }
 
     PER_OP_OVERHEAD
         + match &op.raw_op().content {
             crate::op::InnerContent::Map(map) => {
-                map.key.len() + map.value.as_ref().map_or(0, value_bytes)
+                let mut used = map.key.len();
+                if let Some(value) = map.value.as_ref() {
+                    used = used.saturating_add(value_bytes_capped(
+                        value,
+                        remaining.saturating_sub(PER_OP_OVERHEAD + used),
+                    ));
+                }
+                used
             }
             crate::op::InnerContent::List(list) => match list {
-                InnerListOp::Insert { slice, .. } => oplog
-                    .arena
-                    .with_values(slice.0.start as usize..slice.0.end as usize, |values| {
-                        values.iter().map(value_bytes).sum()
-                    }),
+                InnerListOp::Insert { slice, .. } => oplog.arena.with_values(
+                    slice.0.start as usize..slice.0.end as usize,
+                    |values| {
+                        let mut used = 0usize;
+                        for value in values {
+                            used = used.saturating_add(value_bytes_capped(
+                                value,
+                                remaining.saturating_sub(PER_OP_OVERHEAD + used),
+                            ));
+                            if PER_OP_OVERHEAD + used > remaining {
+                                break;
+                            }
+                        }
+                        used
+                    },
+                ),
                 InnerListOp::InsertText { slice, .. } => slice.len(),
-                InnerListOp::Set { value, .. } => value_bytes(value),
+                InnerListOp::Set { value, .. } | InnerListOp::StyleStart { value, .. } => {
+                    value_bytes_capped(value, remaining.saturating_sub(PER_OP_OVERHEAD))
+                }
                 _ => 0,
             },
             _ => 0,
         }
+}
+
+/// Byte size of a value, recursing into nested lists and maps (the encoder
+/// writes them recursively, so the estimate must too). `remaining` is the
+/// budget left before the cap; the count may stop early once it is exceeded.
+fn value_bytes_capped(value: &loro_common::LoroValue, remaining: usize) -> usize {
+    const OVERHEAD: usize = 16;
+    if remaining < OVERHEAD {
+        return remaining + 1;
+    }
+
+    let mut used = OVERHEAD;
+    match value {
+        loro_common::LoroValue::String(s) => used = used.saturating_add(s.len()),
+        loro_common::LoroValue::Binary(b) => used = used.saturating_add(b.len()),
+        loro_common::LoroValue::List(list) => {
+            for item in list.iter() {
+                used =
+                    used.saturating_add(value_bytes_capped(item, remaining.saturating_sub(used)));
+                if used > remaining {
+                    break;
+                }
+            }
+        }
+        loro_common::LoroValue::Map(map) => {
+            for (key, item) in map.iter() {
+                used = used.saturating_add(key.len());
+                if used > remaining {
+                    break;
+                }
+                used =
+                    used.saturating_add(value_bytes_capped(item, remaining.saturating_sub(used)));
+                if used > remaining {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+    used
 }
 
 /// Whether the forward-replay path may be used for the given prefix/tail
@@ -1113,16 +1189,20 @@ mod tests {
         assert!(forward_replay_gate(min, 1, max_bytes));
     }
 
-    /// A byte-heavy, low-op prefix (one huge Map value, later overwritten)
-    /// must not be replayed into a temporary doc just because the tail clears
-    /// the retained-ops threshold. The export must still be correct.
+    /// A byte-heavy, low-op prefix (a huge payload nested inside a Map value,
+    /// later overwritten) must not be replayed into a temporary doc just
+    /// because the tail clears the retained-ops threshold. The export must
+    /// still be correct.
     #[test]
     fn byte_heavy_low_op_prefix_exports_correctly() {
         let doc = LoroDoc::new_auto_commit();
         doc.set_peer_id(1).unwrap();
         let map = doc.get_map("m");
         let big = "v".repeat(MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY + 1024);
-        map.insert("k", big.as_str()).unwrap();
+        // Nested one level down: the estimator must recurse into it.
+        let mut payload = crate::FxHashMap::default();
+        payload.insert("payload".to_string(), LoroValue::String(big.into()));
+        map.insert("k", LoroValue::Map(payload.into())).unwrap();
         map.insert("k", "small").unwrap();
         doc.commit_then_renew();
         let f = doc.oplog_frontiers();
@@ -1165,5 +1245,43 @@ mod tests {
         // Early exit: a smaller cap stops the walk as soon as it is exceeded.
         let capped = estimate_ops_content_bytes(&oplog, &spans, 1024);
         assert!(capped > 1024 && capped <= 1024 + (2 << 20) + 64);
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_nested_style_and_commit_msg_bytes() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let big = "v".repeat(1 << 20);
+
+        // One atom whose payload is a nested map/list holding the big string.
+        let mut inner = crate::FxHashMap::default();
+        inner.insert("payload".to_string(), LoroValue::String(big.clone().into()));
+        let nested = LoroValue::List(vec![LoroValue::Map(inner.into())].into());
+        doc.get_map("m").insert("k", nested).unwrap();
+
+        // A style mark value.
+        let text = doc.get_text("t");
+        text.insert(0, "ab", PosType::Unicode).unwrap();
+        text.mark(
+            0,
+            1,
+            "comment",
+            LoroValue::String(big.clone().into()),
+            PosType::Unicode,
+        )
+        .unwrap();
+
+        // A commit message.
+        doc.set_next_commit_message(&big);
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let end = *oplog.vv().get(&1).unwrap();
+        let spans = vec![IdSpan::new(1, 0, end)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= 3 * big.len(),
+            "estimate must count nested values, style values and the commit message, got {est}"
+        );
     }
 }
