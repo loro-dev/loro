@@ -781,8 +781,13 @@ impl LoroDoc {
         if !preflight.applies_to_dag {
             let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            // The preflight above already rejected this import if any of its own
+            // changes depends on trimmed history, so here the flag can only come
+            // from a previously parked change that the replay dropped. This
+            // import's changes are parked and keep referencing what they
+            // allocated in the arena, so the arena is not rolled back, as in
+            // the detached and applying paths.
             if result.has_deps_before_shallow_root {
-                oplog.arena.rollback(arena_checkpoint);
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
             }
 

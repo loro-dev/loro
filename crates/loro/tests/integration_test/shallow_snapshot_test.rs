@@ -5,8 +5,8 @@ use std::{
 
 use super::gen_action;
 use loro::{
-    cursor::CannotFindRelativePosition, ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue,
-    StyleConfig, StyleConfigMap, ID,
+    cursor::CannotFindRelativePosition, Counter, ExpandType, ExportMode, Frontiers, IdSpan,
+    LoroDoc, LoroError, LoroValue, StyleConfig, StyleConfigMap, VersionVector, ID,
 };
 
 /// Byte-level scan of an exported blob. Only used for *absence* checks, and
@@ -528,6 +528,117 @@ fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Re
     Ok(())
 }
 
+/// Counter of the shallow root in `import_fork_into_shallow_doc`.
+const SHALLOW_ROOT: Counter = 2;
+
+/// Peer 1 writes three single-char ops. A shallow snapshot at `2@1` keeps
+/// `2@1` as the root and trims `0@1` and `1@1`. Peer 2 forks at `fork@1`
+/// and writes one op, whose deps are therefore `[fork@1]`. Returns the
+/// shallow doc's import result for that op together with the doc.
+fn import_fork_into_shallow_doc(fork: Counter) -> (LoroDoc, loro::LoroResult<()>) {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    for i in 0..=SHALLOW_ROOT {
+        doc.get_text("t").insert(i as usize, "a").unwrap();
+        doc.commit();
+    }
+
+    let root = Frontiers::from(ID::new(1, SHALLOW_ROOT));
+    let snap = doc.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let shallow_doc = LoroDoc::new();
+    shallow_doc.import(&snap).unwrap();
+    assert_eq!(shallow_doc.shallow_since_frontiers(), root);
+
+    let forked = doc.fork_at(&Frontiers::from(ID::new(1, fork))).unwrap();
+    forked.set_peer_id(2).unwrap();
+    forked.get_text("t").insert(0, "b").unwrap();
+    forked.commit();
+    let update = forked.export(ExportMode::updates(&doc.oplog_vv())).unwrap();
+    let result = shallow_doc.import(&update).map(|_| ());
+    (shallow_doc, result)
+}
+
+/// Deps strictly below the shallow root's deps are rejected.
+#[test]
+fn shallow_doc_rejects_op_depending_below_root() {
+    let (_, result) = import_fork_into_shallow_doc(SHALLOW_ROOT - 2);
+    assert_eq!(
+        result.unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+}
+
+/// Deps equal to the shallow root's own deps (`[1@1]`) make the op concurrent
+/// with the root: the doc holds no state without the root op, and the dag has
+/// no node, hence no lamport, for a trimmed id. This used to pass the
+/// preflight, get parked as pending, and abort on
+/// `calc_unknown_lamport_change(..).unwrap()` when the pending replay applied
+/// it, poisoning the doc mutex.
+#[test]
+fn shallow_doc_rejects_op_depending_on_root_deps() {
+    let (shallow_doc, result) = import_fork_into_shallow_doc(SHALLOW_ROOT - 1);
+    assert_eq!(
+        result.unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    // The rejected import left no trace and the doc stays usable.
+    assert_eq!(
+        shallow_doc.oplog_frontiers(),
+        Frontiers::from(ID::new(1, SHALLOW_ROOT))
+    );
+    assert_eq!(shallow_doc.get_text("t").to_string(), "aaa");
+    shallow_doc.get_text("t").insert(0, "c").unwrap();
+    shallow_doc.commit();
+    assert_eq!(shallow_doc.get_text("t").to_string(), "caaa");
+}
+
+/// Deps on the shallow root itself are importable.
+#[test]
+fn shallow_doc_accepts_op_depending_on_root() {
+    let (shallow_doc, result) = import_fork_into_shallow_doc(SHALLOW_ROOT);
+    result.unwrap();
+    assert_eq!(shallow_doc.get_text("t").to_string(), "baaa");
+}
+
+/// Deps mixing the shallow root with a trimmed id of another peer cannot come
+/// from loro itself (a frontier holds one id per peer and is minimal), but
+/// they can come from hand-written JSON. They used to slip past the preflight
+/// through its boundary special case and abort like the case above.
+#[test]
+fn shallow_doc_rejects_json_op_mixing_root_with_trimmed_dep() {
+    // Trimmed history spanning two peers: on top of the shallow doc holding
+    // `2@1` and peer 2's `0@2`, peer 3 writes one op and the doc is
+    // re-exported shallow at that op.
+    let (shallow_doc, result) = import_fork_into_shallow_doc(SHALLOW_ROOT);
+    result.unwrap();
+    shallow_doc.set_peer_id(3).unwrap();
+    shallow_doc.get_text("t").insert(0, "c").unwrap();
+    shallow_doc.commit();
+    let root = Frontiers::from(ID::new(3, 0));
+    let snap = shallow_doc
+        .export(ExportMode::shallow_snapshot(&root))
+        .unwrap();
+    let nested = LoroDoc::new();
+    nested.import(&snap).unwrap();
+    let trimmed = nested.shallow_since_vv().to_vv();
+    assert!(trimmed.includes_id(ID::new(1, SHALLOW_ROOT)));
+    assert!(trimmed.includes_id(ID::new(2, 0)));
+
+    let other = LoroDoc::new();
+    other.set_peer_id(7).unwrap();
+    other.get_text("t").insert(0, "x").unwrap();
+    other.commit();
+    let mut json = other
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &other.oplog_vv());
+    json.changes[0].deps = vec![ID::new(3, 0), ID::new(1, SHALLOW_ROOT)];
+
+    assert_eq!(
+        nested.import_json_updates(json).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(nested.get_text("t").to_string(), "cbaaa");
+}
+
 /// Shallow snapshots are documented as a content-redaction mechanism: exporting at the
 /// current frontiers is supposed to drop the trimmed history, leaving only the live state.
 /// The value of a rich-text style op whose whole range has been deleted must be dropped
@@ -770,4 +881,186 @@ fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Re
         );
     }
     Ok(())
+}
+
+/// Peer 1 writes `0@1` and `1@1`; peer 2 forks at `0@1` and writes one op with
+/// deps `[0@1]`. A fresh doc parks peer 2's op (its dep is unknown), then
+/// imports a shallow snapshot rooted at `1@1`, which trims `0@1`. The parked op
+/// now depends on trimmed history and can never be merged.
+struct ParkedBelowCut {
+    /// The shallow doc holding the parked op.
+    doc: LoroDoc,
+    /// Peer 1's doc, one op (`2@1`) ahead of the shallow doc.
+    p1: LoroDoc,
+    /// The shallow doc's version: `p1.export(updates(&cut_vv))` is `2@1`.
+    cut_vv: VersionVector,
+    /// The update that parked peer 2's op.
+    parked: Vec<u8>,
+}
+
+fn shallow_doc_with_parked_change_below_the_cut() -> ParkedBelowCut {
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_text("t").insert(0, "a").unwrap();
+    p1.commit();
+    p1.get_text("t").insert(1, "b").unwrap();
+    p1.commit();
+
+    let p2 = p1.fork_at(&Frontiers::from(ID::new(1, 0))).unwrap();
+    p2.set_peer_id(2).unwrap();
+    // A map op allocates nothing in the arena, so the doc still counts as
+    // empty when the snapshot arrives and imports as a snapshot.
+    p2.get_map("m").insert("k", 1).unwrap();
+    p2.commit();
+    let parked = p2.export(ExportMode::updates(&p1.oplog_vv())).unwrap();
+
+    let root = Frontiers::from(ID::new(1, 1));
+    let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let cut_vv = p1.oplog_vv();
+    p1.get_text("t").insert(2, "c").unwrap();
+    p1.commit();
+
+    let doc = LoroDoc::new();
+    let status = doc.import(&parked).unwrap();
+    assert!(status.pending.is_some(), "{status:?}");
+    doc.import(&snap).unwrap();
+    assert_eq!(doc.shallow_since_frontiers(), root);
+    assert!(doc.shallow_since_vv().to_vv().includes_id(ID::new(1, 0)));
+    assert_eq!(doc.oplog_vv(), cut_vv);
+    ParkedBelowCut {
+        doc,
+        p1,
+        cut_vv,
+        parked,
+    }
+}
+
+/// The parked op is gone for good: importing it again is rejected rather than
+/// parked, and a later peer-1 op revisiting its pending slot imports cleanly.
+/// The unlocking op itself was applied, as for any import that arrives
+/// together with a rejected change, and the doc stays usable.
+fn assert_parked_change_dropped(fx: &ParkedBelowCut) {
+    let ParkedBelowCut {
+        doc, p1, parked, ..
+    } = fx;
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+    assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+    assert_eq!(doc.get_text("t").to_string(), p1.get_text("t").to_string());
+    assert_eq!(
+        doc.import(parked).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+
+    let t1 = p1.get_text("t");
+    t1.insert(t1.len_unicode(), "z").unwrap();
+    p1.commit();
+    let status = doc
+        .import(&p1.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
+    assert!(status.pending.is_none(), "{status:?}");
+    assert_eq!(doc.get_text("t").to_string(), t1.to_string());
+}
+
+/// A change parked before the doc became shallow, whose deps the shallow cut
+/// then trimmed, is concurrent with the shallow root. The update that unlocks
+/// it used to apply it anyway and abort on
+/// `calc_unknown_lamport_change(..).unwrap()`, poisoning the doc mutex.
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+    assert_eq!(
+        fx.doc.import(&unlock).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(fx.doc.get_text("t").to_string(), "abc");
+    assert_parked_change_dropped(&fx);
+}
+
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_json() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export_json_updates(&fx.cut_vv, &fx.p1.oplog_vv());
+    assert_eq!(
+        fx.doc.import_json_updates(unlock).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_parked_change_dropped(&fx);
+}
+
+/// `import_batch` runs its blobs detached and hands a single blob to `import`;
+/// the empty second blob keeps it on the batch path. The reattach at the end
+/// must still happen and report the error.
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_batch() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+    let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+    assert_eq!(
+        fx.doc.import_batch(&[unlock, empty]).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert!(!fx.doc.is_detached());
+    assert_parked_change_dropped(&fx);
+}
+
+/// An import that parks all of its own changes still revisits the pending
+/// slot of the parked op and drops it. That import applies nothing, so it
+/// takes the path that applies no state diff; rolling the arena back on its
+/// error, as that path used to, would leave the import's own parked text op
+/// pointing at freed arena bytes ("abcc" instead of "abcd" once unlocked).
+#[test]
+fn parked_change_below_shallow_cut_is_rejected_when_dropped_by_an_import_that_only_parks() {
+    let fx = shallow_doc_with_parked_change_below_the_cut();
+    fx.p1.get_text("t").insert(3, "d").unwrap();
+    fx.p1.commit();
+    let only_3 = fx
+        .p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 3, 4)]))
+        .unwrap();
+    let only_2 = fx
+        .p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 2, 3)]))
+        .unwrap();
+
+    assert_eq!(
+        fx.doc.import(&only_3).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    assert_eq!(fx.doc.oplog_vv(), fx.cut_vv);
+    fx.doc.import(&only_2).unwrap();
+    assert_eq!(fx.doc.get_text("t").to_string(), "abcd");
+    assert_parked_change_dropped(&fx);
+}
+
+/// The shallow root's own change depends on trimmed history too, and a doc can
+/// hold it parked (imported before the snapshot) while the snapshot then brings
+/// it in. Revisiting it must find it applied, not reject it: the applied check
+/// comes before the trimmed-dep check.
+#[test]
+fn parked_change_that_the_shallow_snapshot_then_applied_is_not_rejected() {
+    let p1 = LoroDoc::new();
+    p1.set_peer_id(1).unwrap();
+    p1.get_map("a").insert("k", 0).unwrap();
+    p1.commit();
+    p1.get_map("b").insert("k", 1).unwrap();
+    p1.commit();
+    let root = Frontiers::from(ID::new(1, 1));
+    let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let cut_vv = p1.oplog_vv();
+    p1.get_map("c").insert("k", 2).unwrap();
+    p1.commit();
+    let only_1 = p1
+        .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 1, 2)]))
+        .unwrap();
+
+    let doc = LoroDoc::new();
+    assert!(doc.import(&only_1).unwrap().pending.is_some());
+    doc.import(&snap).unwrap();
+    assert_eq!(doc.shallow_since_frontiers(), root);
+    doc.import(&p1.export(ExportMode::updates(&cut_vv)).unwrap())
+        .unwrap();
+    assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+    assert_eq!(doc.get_deep_value(), p1.get_deep_value());
 }

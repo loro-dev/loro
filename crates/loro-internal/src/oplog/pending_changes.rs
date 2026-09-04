@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     change::Change,
+    oplog::AppDag,
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
@@ -212,14 +213,17 @@ impl OpLog {
     /// later B change depended on). Treat that as normal: apply when possible, skip if
     /// already present, and only park changes that are still waiting on a missing dep.
     ///
-    /// Returns the version range of changes from `remote_changes` that remain pending.
+    /// Returns the version range of changes from `remote_changes` that remain pending,
+    /// and whether a change was dropped for depending on trimmed history (see
+    /// [`Self::try_apply_pending`]).
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
         mut would_affect: Option<&mut VersionRange>,
-    ) -> VersionRange {
+    ) -> (VersionRange, bool) {
         let mut parked = Vec::new();
         let mut newly_applied_ids = Vec::new();
+        let mut dropped_trimmed = false;
 
         for change in remote_changes {
             let local_change = PendingChange::Unknown(change);
@@ -233,11 +237,12 @@ impl OpLog {
                     newly_applied_ids.push(local_change.id_last());
                     self.apply_change_from_remote(local_change, would_affect.as_deref_mut());
                 }
+                ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
             }
         }
 
         if !newly_applied_ids.is_empty() {
-            self.try_apply_pending(newly_applied_ids, would_affect);
+            dropped_trimmed |= self.try_apply_pending(newly_applied_ids, would_affect);
         }
 
         // A parked change can already be partially covered by the oplog VV: a change whose
@@ -262,7 +267,7 @@ impl OpLog {
             }
         }
 
-        still_pending
+        (still_pending, dropped_trimmed)
     }
 }
 
@@ -270,11 +275,20 @@ impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
+    ///
+    /// Returns whether a parked change was dropped because it depends on trimmed
+    /// history. The caller reports that as `ImportUpdatesThatDependsOnOutdatedVersion`,
+    /// the same outcome the change would have had if it had arrived after the doc
+    /// became shallow, even though the import being reported may be sound itself.
+    /// Changes parked on the dropped one stay parked, as they do behind any dep
+    /// that never arrives.
+    #[must_use]
     pub(crate) fn try_apply_pending(
         &mut self,
         mut new_ids: Vec<ID>,
         mut would_affect: Option<&mut VersionRange>,
-    ) {
+    ) -> bool {
+        let mut dropped_trimmed = false;
         while let Some(id) = new_ids.pop() {
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
@@ -318,10 +332,13 @@ impl OpLog {
                         ChangeState::AwaitingMissingDependency(miss_dep) => {
                             self.push_pending_change(miss_dep, pending_change)
                         }
+                        ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                     }
                 }
             }
         }
+
+        dropped_trimmed
     }
 
     pub(super) fn apply_change_from_remote(
@@ -356,11 +373,18 @@ enum ChangeState {
     CanApplyDirectly,
     // The id of first missing dep
     AwaitingMissingDependency(ID),
+    /// A dep is trimmed history: it has no dag node, so the change can never get
+    /// a lamport. It is concurrent with the shallow root and is dropped with the
+    /// error the import preflight (`AppDag::import_deps_before_shallow_root`)
+    /// gives a change that arrives after the cut. The whole change is dropped:
+    /// a change straddling the cut with an applicable tail cannot reach here,
+    /// since a shallow snapshot never retains ops concurrent with its root.
+    DependsOnTrimmedHistory,
 }
 
 fn remote_change_apply_state(
     vv: &VersionVector,
-    _shallow_vv: &ImVersionVector,
+    shallow_vv: &ImVersionVector,
     change: &Change,
 ) -> ChangeState {
     let peer = change.id.peer;
@@ -368,6 +392,14 @@ fn remote_change_apply_state(
     let vv_latest_ctr = vv.get(&peer).copied().unwrap_or(0);
     if vv_latest_ctr >= end {
         return ChangeState::Applied;
+    }
+
+    // The oplog vv covers trimmed history, so the dep loop below would take a
+    // trimmed dep for satisfied. A change parked before the doc became shallow
+    // can hold one: a snapshot import into an empty doc leaves parked changes
+    // where they are.
+    if AppDag::deps_reach_trimmed_history(shallow_vv, &change.deps) {
+        return ChangeState::DependsOnTrimmedHistory;
     }
 
     if vv_latest_ctr < start {
