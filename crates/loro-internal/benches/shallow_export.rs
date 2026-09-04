@@ -123,10 +123,42 @@ fn shallow_export_scalar_prefix_heavy(c: &mut Criterion) {
     g.finish();
 }
 
+/// Regression guard for the gate's byte bound: a byte-heavy but low-op prefix
+/// (few large Map values) must not be replayed just because the retained tail
+/// clears the op threshold — a Map write is one atom regardless of value
+/// size. With the encoded-byte cap this export stays on the checkout path.
+fn shallow_export_byte_prefix_heavy(c: &mut Criterion) {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let map = doc.get_map("m");
+    // 64 distinct 1 MiB values to the same key: 64 atoms, ~64 MiB of prefix
+    // history. Distinct values matter — identical strings dedup in the arena.
+    for i in 0..64 {
+        let big = format!("{i:08}{}", "v".repeat(1 << 20));
+        map.insert("k", big.as_str()).unwrap();
+    }
+    let f = doc.oplog_frontiers();
+    doc.get_text("t")
+        .insert(
+            0,
+            &"x".repeat(70_000),
+            loro_internal::cursor::PosType::Unicode,
+        )
+        .unwrap();
+
+    let mut g = c.benchmark_group("shallow_export_byte_prefix");
+    g.sample_size(10);
+    g.bench_function("export", |b| {
+        b.iter(|| black_box(doc.export(ExportMode::shallow_snapshot(&f)).unwrap()))
+    });
+    g.finish();
+}
+
 criterion_group!(
     benches,
     shallow_export,
     shallow_export_lazy,
-    shallow_export_scalar_prefix_heavy
+    shallow_export_scalar_prefix_heavy,
+    shallow_export_byte_prefix_heavy
 );
 criterion_main!(benches);
