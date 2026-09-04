@@ -212,19 +212,30 @@ path reuses the root bytes without that check. Containers introduced after the
 root are not checked again and can survive either in retained operations (`E`)
 or as raw/lazy overlay state bytes.
 
-When the source doc is not shallow and its state is already at the latest
-version, `export_shallow_snapshot_inner` builds the root state by replaying
-pre-root history forward into a temporary doc (`export_fast_updates_in_range`
-pre-encoded under the oplog lock, then imported), not by checking the live doc
-out backwards: a reverse checkout makes the richtext/list diff calculators
-rebuild a full CRDT tracker from empty per touched container (the
-`should_rebuild` path in `RichtextDiffCalculator::calculate_diff`), which
-dominated shallow export cost (~20x slower than forward replay on
-container-heavy docs). The replay doc mirrors the live store's root container
-entries so accessed-but-op-less root containers still ship. Detached or
-already-shallow sources keep the old checkout path (the reuse branch handles
-cached roots; a shallow source's trimmed history cannot be forward-replayed).
-The forward path never moves the live doc, so no state restore is needed.
+When the source doc is not shallow, its state is already at the latest
+version, and at least `MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE` (65536; 16 in
+unit tests) ops are retained since the root, `export_shallow_snapshot_inner`
+builds the root state by replaying pre-root history forward into a temporary
+doc (`export_fast_updates_in_range` pre-encoded under the oplog lock, then
+imported), not by checking the live doc out backwards: a reverse checkout
+makes the richtext/list diff calculators rebuild a full CRDT tracker from
+empty per touched container (the `should_rebuild` path in
+`RichtextDiffCalculator::calculate_diff`), which dominated shallow export cost
+(~20x slower than forward replay on container-heavy docs). Below the retained-ops
+threshold the checkout path is used instead: it ties in time around ~8k
+retained ops and peaks at ~4x less memory, which matters for lazily imported
+docs (exporting right after import must not materialize the whole state).
+The replay doc mirrors the live store's root container entries via
+`DocState::existing_retention_roots` (a root-only key scan — never
+`iter_all_container_ids`, which calls `load_all`) so accessed-but-op-less root
+containers still ship, and it receives a copy of the live doc's
+`deleted_root_containers` config so roots deleted before the root are dropped
+at flush instead of being resurrected as empty entries (roots deleted after
+the root keep their at-root content because flush only drops entries whose
+value is empty). Detached or already-shallow sources keep the old checkout
+path (the reuse branch handles cached roots; a shallow source's trimmed
+history cannot be forward-replayed). The forward path never moves the live
+doc, so no state restore is needed.
 
 Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
