@@ -229,12 +229,14 @@ The fast path pays for re-encoding and replaying the ENTIRE pre-root history,
 so the prefix is also gated: `pre_root_ops <= 16 * ops_num`
 (`MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO`; measured crossover — fast wins at
 ratio 9, loses at 19), `pre_root_ops <= 1_000_000`
-(`MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY`), and an encoded-byte cap on the
-pre-encoded prefix blob (`MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY`, 32 MiB)
-because op counts miss value sizes — a Map write is one atom regardless of
-how large its Binary/String value is. Note the byte cap sees LZ4-compressed
-sizes, so highly compressible payloads pass it; it bounds realistic
-(incompressible) binary payloads, not adversarial repeated-byte ones.
+(`MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY`), and a decoded-byte cap on the prefix
+(`MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY`, 32 MiB) because op counts miss value
+sizes — a Map write is one atom regardless of how large its Binary/String
+value is. The byte leg runs BEFORE encoding: `estimate_ops_content_bytes`
+walks op payloads by reference (arena slices are never copied) with an early
+exit past the cap, while `export_fast_updates_in_range` slice-copies values
+into a fresh store — so the cap must be checked before any prefix bytes are
+copied.
 A huge unrelated prefix with a large tail must stay on the checkout path —
 see the `shallow_export_scalar_prefix` and `shallow_export_byte_prefix`
 benches.
