@@ -111,23 +111,35 @@ fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize
     total
 }
 
-/// Byte size of an op's payload plus a small flat per-op overhead. Arena
-/// slices are measured by reference; nothing is copied. `remaining` is the
-/// budget left before the cap; the count may stop early once it is exceeded.
+/// Byte size of an op's variable-length fields plus a small flat per-op
+/// overhead: everything the block encoder copies (payload values, map and
+/// style keys, fractional indexes, root container names, unknown-future
+/// bytes). Arena slices are measured by reference; nothing is copied.
+/// `remaining` is the budget left before the cap; the count may stop early
+/// once it is exceeded.
 fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining: usize) -> usize {
     const PER_OP_OVERHEAD: usize = 16;
     if remaining < PER_OP_OVERHEAD {
         return remaining + 1;
     }
 
+    // Root container names are variable-length and copied into the encoded
+    // block's container arena.
+    let container_name_len = match oplog.arena.get_container_id(op.raw_op().container) {
+        Some(ContainerID::Root { name, .. }) => name.len(),
+        _ => 0,
+    };
+    let after_fixed = remaining.saturating_sub(PER_OP_OVERHEAD + container_name_len);
+
     PER_OP_OVERHEAD
+        + container_name_len
         + match &op.raw_op().content {
             crate::op::InnerContent::Map(map) => {
                 let mut used = map.key.len();
                 if let Some(value) = map.value.as_ref() {
                     used = used.saturating_add(value_bytes_capped(
                         value,
-                        remaining.saturating_sub(PER_OP_OVERHEAD + used),
+                        after_fixed.saturating_sub(used),
                     ));
                 }
                 used
@@ -140,9 +152,9 @@ fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining
                         for value in values {
                             used = used.saturating_add(value_bytes_capped(
                                 value,
-                                remaining.saturating_sub(PER_OP_OVERHEAD + used),
+                                after_fixed.saturating_sub(used),
                             ));
-                            if PER_OP_OVERHEAD + used > remaining {
+                            if used > after_fixed {
                                 break;
                             }
                         }
@@ -150,13 +162,55 @@ fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining
                     },
                 ),
                 InnerListOp::InsertText { slice, .. } => slice.len(),
-                InnerListOp::Set { value, .. } | InnerListOp::StyleStart { value, .. } => {
-                    value_bytes_capped(value, remaining.saturating_sub(PER_OP_OVERHEAD))
+                InnerListOp::Set { value, .. } => value_bytes_capped(value, after_fixed),
+                InnerListOp::StyleStart { key, value, .. } => {
+                    let mut used = key.len();
+                    used = used.saturating_add(value_bytes_capped(
+                        value,
+                        after_fixed.saturating_sub(used),
+                    ));
+                    used
                 }
                 _ => 0,
             },
-            _ => 0,
+            // Fractional indexes are variable-length and copied by the encoder.
+            crate::op::InnerContent::Tree(tree_op) => match tree_op.as_ref() {
+                crate::container::tree::tree_op::TreeOp::Create { position, .. }
+                | crate::container::tree::tree_op::TreeOp::Move { position, .. } => {
+                    position.as_bytes().len()
+                }
+                crate::container::tree::tree_op::TreeOp::Delete { .. } => 0,
+            },
+            crate::op::InnerContent::Future(future) => match future {
+                crate::op::FutureInnerContent::Unknown { value, .. } => {
+                    owned_value_bytes_capped(value, after_fixed)
+                }
+                #[cfg(feature = "counter")]
+                crate::op::FutureInnerContent::Counter(_) => 0,
+            },
         }
+}
+
+/// Byte size of an owned future/unknown value, recursing where the payload is
+/// a `LoroValue`. `remaining` is the budget left before the cap.
+fn owned_value_bytes_capped(value: &crate::encoding::value::OwnedValue, remaining: usize) -> usize {
+    use crate::encoding::value::OwnedValue;
+    const OVERHEAD: usize = 16;
+    if remaining < OVERHEAD {
+        return remaining + 1;
+    }
+
+    match value {
+        OwnedValue::Str(s) => OVERHEAD.saturating_add(s.len()),
+        OwnedValue::Binary(b) => OVERHEAD.saturating_add(b.len()),
+        OwnedValue::LoroValue(v) => OVERHEAD.saturating_add(value_bytes_capped(v, remaining)),
+        OwnedValue::Future(owned) => match owned {
+            crate::encoding::value::OwnedFutureValue::Unknown { data, .. } => {
+                OVERHEAD.saturating_add(data.len())
+            }
+        },
+        _ => OVERHEAD,
+    }
 }
 
 /// Byte size of a value, recursing into nested lists and maps (the encoder
@@ -1282,6 +1336,43 @@ mod tests {
         assert!(
             est >= 3 * big.len(),
             "estimate must count nested values, style values and the commit message, got {est}"
+        );
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_style_keys_and_root_names() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let big = "k".repeat(1 << 20);
+
+        // A huge style key: the block encoder copies keys into the block's
+        // key register.
+        let mut styles = crate::container::richtext::config::StyleConfigMap::new();
+        styles.insert(
+            big.as_str().into(),
+            crate::container::richtext::config::StyleConfig {
+                expand: crate::container::richtext::ExpandType::After,
+            },
+        );
+        doc.config_text_style(styles);
+        let text = doc.get_text("t");
+        text.insert(0, "ab", PosType::Unicode).unwrap();
+        text.mark(0, 1, big.as_str(), LoroValue::Bool(true), PosType::Unicode)
+            .unwrap();
+
+        // A huge root container name: copied into the block's container arena.
+        doc.get_text(big.as_str())
+            .insert(0, "x", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let end = *oplog.vv().get(&1).unwrap();
+        let spans = vec![IdSpan::new(1, 0, end)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= 2 * big.len(),
+            "estimate must count style keys and root container names, got {est}"
         );
     }
 }
