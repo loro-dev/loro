@@ -50,16 +50,78 @@ const MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO: usize = 16;
 /// on wasm32.
 const MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY: usize = 1_000_000;
 
-/// Cap on the encoded pre-root updates blob. Op counts miss value sizes: a Map
-/// write is one atom regardless of how large its Binary/String value is, so a
-/// byte-heavy but low-op prefix would bypass the op-count gates. The blob is
-/// copied into a temporary doc for replay, so bound its actual encoded size.
-/// Encoding the blob is cheap (block-level copy), so it is encoded first and
-/// then filtered.
+/// Cap on the pre-root prefix's decoded byte size, estimated by walking op
+/// payloads by reference BEFORE any value is copied (see
+/// `estimate_ops_content_bytes`). Op counts miss value sizes: a Map write is
+/// one atom regardless of how large its Binary/String value is, so a
+/// byte-heavy but low-op prefix would bypass the op-count gates. Checking only
+/// the encoded blob afterwards would be too late —
+/// `export_fast_updates_in_range` slice-copies values into a fresh store while
+/// building it, which is exactly the allocation this cap exists to prevent.
 #[cfg(test)]
 const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 1 << 20;
 #[cfg(not(test))]
 const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 32 << 20;
+
+/// Estimate the decoded byte size of all op payloads in `spans`, following
+/// arena slices by reference and never copying values. Returns early with a
+/// value greater than `cap` once exceeded, so a rejected prefix costs one
+/// bounded walk instead of a full copy.
+fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize) -> usize {
+    let mut total = 0usize;
+    'outer: for span in spans {
+        let mut span = *span;
+        span.normalize_();
+        if span.counter.end <= 0 {
+            continue;
+        }
+
+        span.counter.start = span.counter.start.max(0);
+        span.counter.end = span.counter.end.max(0);
+        if span.counter.start >= span.counter.end {
+            continue;
+        }
+
+        for op in oplog.iter_ops(span) {
+            total = total.saturating_add(rich_op_content_bytes(oplog, &op));
+            if total > cap {
+                break 'outer;
+            }
+        }
+    }
+    total
+}
+
+/// Byte size of an op's payload plus a small flat per-op overhead. Arena
+/// slices are measured by reference; nothing is copied.
+fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp) -> usize {
+    const PER_OP_OVERHEAD: usize = 16;
+    fn value_bytes(v: &loro_common::LoroValue) -> usize {
+        match v {
+            loro_common::LoroValue::String(s) => s.len(),
+            loro_common::LoroValue::Binary(b) => b.len(),
+            _ => PER_OP_OVERHEAD,
+        }
+    }
+
+    PER_OP_OVERHEAD
+        + match &op.raw_op().content {
+            crate::op::InnerContent::Map(map) => {
+                map.key.len() + map.value.as_ref().map_or(0, value_bytes)
+            }
+            crate::op::InnerContent::List(list) => match list {
+                InnerListOp::Insert { slice, .. } => oplog
+                    .arena
+                    .with_values(slice.0.start as usize..slice.0.end as usize, |values| {
+                        values.iter().map(value_bytes).sum()
+                    }),
+                InnerListOp::InsertText { slice, .. } => slice.len(),
+                InnerListOp::Set { value, .. } => value_bytes(value),
+                _ => 0,
+            },
+            _ => 0,
+        }
+}
 
 /// Whether the forward-replay path may be used for the given prefix/tail
 /// shape. The caller still has to require a non-shallow doc whose state is at
@@ -144,9 +206,12 @@ pub(crate) fn export_shallow_snapshot_inner(
         .iter()
         .map(|(_, counter)| (*counter).max(0) as usize)
         .sum();
-    // Cheap op-count legs first (encoding the prefix blob on every export
-    // would regress the small-tail cases the checkout path handles best);
-    // the byte leg runs on the encoded blob afterwards.
+    // Cheap op-count legs first (even the estimate walks the prefix's ops, so
+    // it must not run for the small-tail cases the checkout path handles
+    // best). The byte leg runs BEFORE encoding: the estimate follows arena
+    // slices by reference, while export_fast_updates_in_range would
+    // slice-copy every value into a fresh store — the very allocation the cap
+    // exists to prevent.
     let pre_root_updates = (state_frontiers == latest_frontiers
         && oplog.shallow_since_vv().is_empty()
         && forward_replay_gate(ops_num, pre_root_ops, 0))
@@ -156,12 +221,15 @@ pub(crate) fn export_shallow_snapshot_inner(
             .filter(|(_, counter)| **counter > 0)
             .map(|(peer, counter)| IdSpan::new(*peer, 0, *counter))
             .collect();
-        export_fast_updates_in_range(&oplog, &spans)
+        if estimate_ops_content_bytes(&oplog, &spans, MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY)
+            > MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY
+        {
+            return None;
+        }
+
+        Some(export_fast_updates_in_range(&oplog, &spans))
     })
-    // Op counts miss value sizes: a Map write is one atom regardless of
-    // how large its Binary/String value is, so a byte-heavy but low-op
-    // prefix would bypass the op-count gates above.
-    .filter(|bytes| bytes.len() <= MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY);
+    .flatten();
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
         if let Some((shallow_root_state_bytes, shallow_root_kv)) =
@@ -1073,5 +1141,29 @@ mod tests {
         imported.import(&blob).unwrap();
         assert_eq!(imported.get_deep_value(), doc.get_deep_value());
         assert_eq!(imported.shallow_since_frontiers(), f);
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_value_bytes() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // One atom carrying 2 MiB of payload.
+        let big = "v".repeat(2 << 20);
+        doc.get_map("m").insert("k", big.as_str()).unwrap();
+        doc.get_text("t")
+            .insert(0, "abc", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let spans = vec![IdSpan::new(1, 0, 4)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= (2 << 20) + 3,
+            "estimate must include the value bytes, got {est}"
+        );
+        // Early exit: a smaller cap stops the walk as soon as it is exceeded.
+        let capped = estimate_ops_content_bytes(&oplog, &spans, 1024);
+        assert!(capped > 1024 && capped <= 1024 + (2 << 20) + 64);
     }
 }
