@@ -16,8 +16,9 @@ history forward into a temporary doc, and the latest state is read from the
 live store directly without moving the document. The pre-root prefix is bounded
 both relative to the tail (at most 16x the retained op count) and absolutely
 (at most 1M ops) and decoded payload size (at most 32 MiB, estimated by
-walking op payloads before any value is copied — op counts miss value sizes,
-since a Map write is one atom regardless of payload size), so a document whose
+walking op payloads — recursing into nested values, style values, and commit
+messages — before any value is copied; op counts miss value sizes, since a Map
+write is one atom regardless of payload size), so a document whose
 pre-root history is huge or byte-heavy and unrelated to the tail keeps the
 previous checkout path. The same export drops to
 ~370ms and the produced blob is slightly smaller (~17% on the same fixture).
