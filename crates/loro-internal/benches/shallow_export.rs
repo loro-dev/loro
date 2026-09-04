@@ -67,5 +67,29 @@ fn shallow_export(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, shallow_export);
+/// A document imported from a snapshot and never read stays lazy: exporting a
+/// shallow snapshot at the latest version must not materialize the whole
+/// state. Each iteration exports from a freshly imported doc, so this measures
+/// the cold path (setup time is excluded).
+fn shallow_export_lazy(c: &mut Criterion) {
+    let (doc, _) = build_structured_doc();
+    let full = doc.export(ExportMode::Snapshot).unwrap();
+    let latest = doc.oplog_frontiers();
+    let mut g = c.benchmark_group("shallow_export_lazy");
+    g.sample_size(10);
+    g.bench_function("at_latest", |b| {
+        b.iter_batched(
+            || {
+                let lazy = LoroDoc::new();
+                lazy.import(&full).unwrap();
+                lazy
+            },
+            |lazy| black_box(lazy.export(ExportMode::shallow_snapshot(&latest)).unwrap()),
+            criterion::BatchSize::LargeInput,
+        )
+    });
+    g.finish();
+}
+
+criterion_group!(benches, shallow_export, shallow_export_lazy);
 criterion_main!(benches);

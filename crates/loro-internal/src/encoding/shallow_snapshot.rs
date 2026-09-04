@@ -24,6 +24,19 @@ const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 16;
 #[cfg(not(test))]
 const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 256;
 
+/// Minimum number of retained ops (root..latest) for the forward-replay fast
+/// path to be worth it. Below this, the old checkout path is used: at F ==
+/// latest it is trivial (no history to walk back), and on the 66k-container /
+/// 720k-op fixture the paths tie at ~8k retained ops while the checkout path
+/// peaks at ~4x less memory; forward replay only wins decisively past ~64k
+/// (1.25-3.6x at 79k, 10-14x at 393k). Note this fixture has tiny
+/// per-container histories; docs with long text histories penalize the
+/// checkout path more, shifting the real crossover lower.
+#[cfg(test)]
+const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 16;
+#[cfg(not(test))]
+const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 65536;
+
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
@@ -87,9 +100,13 @@ pub(crate) fn export_shallow_snapshot_inner(
     // the oplog lock is held. Calling `LoroDoc::export` there instead would
     // re-enter `with_barrier` and violate the txn lock order. Shallow docs are
     // excluded: their pre-root history is trimmed, so forward replay from
-    // empty cannot reconstruct the root state.
-    let pre_root_updates =
-        (state_frontiers == latest_frontiers && oplog.shallow_since_vv().is_empty()).then(|| {
+    // empty cannot reconstruct the root state. Small retained ranges are
+    // excluded too: the checkout path is then cheap and peaks at far less
+    // memory (see MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE).
+    let pre_root_updates = (state_frontiers == latest_frontiers
+        && oplog.shallow_since_vv().is_empty()
+        && ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE)
+        .then(|| {
             let spans: Vec<IdSpan> = root_vv
                 .iter()
                 .filter(|(_, counter)| **counter > 0)
@@ -173,17 +190,25 @@ pub(crate) fn export_shallow_snapshot_inner(
                 .import(&pre_root_updates)
                 .map_err(LoroEncodeError::from)?;
             let mut root_state = root_doc.app_state().lock();
+            // The replay doc does not share the live doc's deleted-root set;
+            // without it a root container deleted before the root would be
+            // re-encoded as an empty entry instead of being dropped at flush.
+            // (`InnerStore::flush` only drops the entry when the value is
+            // still empty, so roots deleted *after* the root keep their
+            // at-root content even with the set mirrored.)
+            *root_state.config.deleted_root_containers.lock() =
+                doc.config().deleted_root_containers.lock().clone();
             // Root containers exist on the live doc once they are accessed,
             // even when they have no ops; the replay doc cannot know about
             // those. Mirror the live store's root entries so the exported root
             // state ships the same empty root containers the checkout path
-            // would.
+            // would. `existing_retention_roots` is a root-only key scan — a
+            // full `load_all` here would defeat lazily imported docs.
             {
                 let mut live_state = doc.app_state().lock();
-                for cid in live_state.store.iter_all_container_ids() {
-                    if matches!(cid, ContainerID::Root { .. }) {
-                        root_state.store.ensure_container(&cid);
-                    }
+                for idx in live_state.existing_retention_roots() {
+                    let cid = live_state.arena.get_container_id(idx).unwrap();
+                    root_state.store.ensure_container(&cid);
                 }
             }
             let alive_containers = root_state.ensure_all_alive_containers()?;

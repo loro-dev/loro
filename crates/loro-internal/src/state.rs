@@ -1818,7 +1818,9 @@ impl DocState {
         self.get_all_alive_container_indices_from_roots(&roots)
     }
 
-    fn existing_retention_roots(&mut self) -> Vec<ContainerIdx> {
+    /// Root containers that currently have a store entry. Uses a root-only
+    /// key scan (`load_roots`), so lazily imported docs stay lazy.
+    pub(crate) fn existing_retention_roots(&mut self) -> Vec<ContainerIdx> {
         let flag = self.store.load_root_containers();
         self.arena
             .root_containers(flag)
