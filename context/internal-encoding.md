@@ -225,6 +225,13 @@ empty per touched container (the `should_rebuild` path in
 threshold the checkout path is used instead: it ties in time around ~8k
 retained ops and peaks at ~4x less memory, which matters for lazily imported
 docs (exporting right after import must not materialize the whole state).
+The fast path pays for re-encoding and replaying the ENTIRE pre-root history,
+so the prefix is also gated: `pre_root_ops <= 16 * ops_num`
+(`MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO`; measured crossover — fast wins at
+ratio 9, loses at 19) and `pre_root_ops <= 1_000_000`
+(`MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY`; bounds peak memory on wasm32). A huge
+unrelated scalar prefix with a large tail must stay on the checkout path —
+see the `shallow_export_scalar_prefix` bench.
 The replay doc mirrors the live store's root container entries via
 `DocState::existing_retention_roots` (a root-only key scan — never
 `iter_all_container_ids`, which calls `load_all`) so accessed-but-op-less root

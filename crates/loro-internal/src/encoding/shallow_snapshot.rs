@@ -37,6 +37,19 @@ const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 16;
 #[cfg(not(test))]
 const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 65536;
 
+/// The fast path re-encodes and replays ALL pre-root history into a temporary
+/// doc, so its cost scales with the prefix, not the tail. Cap the prefix/tail
+/// ratio: on the fixture the fast path wins at ratio 9 and loses at ratio 19,
+/// and an unrelated huge prefix (e.g. millions of same-key Map overwrites
+/// before the root) must not be replayed just because the tail is large.
+const MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO: usize = 16;
+
+/// Absolute cap on pre-root ops for the forward-replay path. Replaying ~1M ops
+/// costs roughly 0.5-1s and several hundred MiB of peak memory; beyond that
+/// the checkout path is safer (its work is bounded by the tail), especially
+/// on wasm32.
+const MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY: usize = 1_000_000;
+
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
@@ -102,10 +115,18 @@ pub(crate) fn export_shallow_snapshot_inner(
     // excluded: their pre-root history is trimmed, so forward replay from
     // empty cannot reconstruct the root state. Small retained ranges are
     // excluded too: the checkout path is then cheap and peaks at far less
-    // memory (see MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE).
+    // memory (see MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE). The prefix itself
+    // is bounded absolutely and relative to the tail, because this path pays
+    // for replaying all of it while the checkout path only walks the tail.
+    let pre_root_ops: usize = root_vv
+        .iter()
+        .map(|(_, counter)| (*counter).max(0) as usize)
+        .sum();
     let pre_root_updates = (state_frontiers == latest_frontiers
         && oplog.shallow_since_vv().is_empty()
-        && ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE)
+        && ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE
+        && pre_root_ops <= MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY
+        && pre_root_ops <= MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO * ops_num)
         .then(|| {
             let spans: Vec<IdSpan> = root_vv
                 .iter()

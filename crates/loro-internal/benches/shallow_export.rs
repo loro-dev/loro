@@ -91,5 +91,42 @@ fn shallow_export_lazy(c: &mut Criterion) {
     g.finish();
 }
 
-criterion_group!(benches, shallow_export, shallow_export_lazy);
+/// Regression guard for the forward-replay gate's prefix bound: a huge
+/// pre-root prefix of unrelated scalar overwrites must not be re-encoded and
+/// replayed just because the retained tail clears the 65536-op threshold.
+/// With the prefix/tail ratio and absolute caps this export stays on the
+/// checkout path, whose cost is bounded by the tail.
+fn shallow_export_scalar_prefix_heavy(c: &mut Criterion) {
+    const PREFIX_OPS: usize = 2_000_000;
+
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let map = doc.get_map("m");
+    for i in 0..PREFIX_OPS {
+        map.insert("k", i as i64).unwrap();
+    }
+    let f = doc.oplog_frontiers();
+    // One big-atom insert past the 65536-op retained threshold.
+    doc.get_text("t")
+        .insert(
+            0,
+            &"x".repeat(70_000),
+            loro_internal::cursor::PosType::Unicode,
+        )
+        .unwrap();
+
+    let mut g = c.benchmark_group("shallow_export_scalar_prefix");
+    g.sample_size(10);
+    g.bench_function("export", |b| {
+        b.iter(|| black_box(doc.export(ExportMode::shallow_snapshot(&f)).unwrap()))
+    });
+    g.finish();
+}
+
+criterion_group!(
+    benches,
+    shallow_export,
+    shallow_export_lazy,
+    shallow_export_scalar_prefix_heavy
+);
 criterion_main!(benches);
