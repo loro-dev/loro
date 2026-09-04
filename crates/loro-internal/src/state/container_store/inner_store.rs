@@ -8,13 +8,32 @@ use crate::{
 };
 use bytes::Bytes;
 use loro_common::{ContainerID, LoroResult, LoroValue};
+use std::collections::VecDeque;
 
 use super::ContainerWrapper;
+
+/// Upper bound on how many lazy containers keep their decoded value cached in
+/// memory for the read paths (`map_get`, `list_get`, text reads, ...).
+///
+/// Reading a container through a handler decodes its value into the wrapper
+/// once so repeated reads of the same container are cheap. Without a bound, a
+/// container-by-container walk over an imported document pins O(containers
+/// ever read) of memory until the doc is dropped — about 4 KB per container,
+/// which traps wasm32 at the 4 GiB limit around one million containers
+/// (loro-dev/loro#1092). Evicted wrappers are re-created from the KV store on
+/// the next read, so eviction only costs a re-decode. The queue is a
+/// second-chance FIFO: a container whose cached value is hit again survives
+/// one eviction pass, which keeps ancestors hot during deep walks.
+const MAX_CACHED_CONTAINER_VALUES: usize = 2048;
 
 /// The invariants about this struct:
 ///
 /// - `kv` is either the same or older than `store`.
-/// - if `load_state` is `AllLoaded`, then `store` contains all the entries from `kv`
+/// - `store` is a cache over `kv`: every container in `kv` is either present in
+///   `store` or was evicted from it by the bounded decoded-value cache
+///   ([`MAX_CACHED_CONTAINER_VALUES`]). Evicted entries are re-created from
+///   `kv` on the next access, so lookups must always fall back to `kv` on a
+///   `store` miss, regardless of `load_state`.
 ///
 /// Invariants: it should be agnostic to the users of this struct whether a container is stored in `kv` or `store`
 pub(crate) struct InnerStore {
@@ -23,6 +42,11 @@ pub(crate) struct InnerStore {
     kv: KvWrapper,
     load_state: LoadState,
     config: Configure,
+    /// FIFO (with a second-chance bit on each wrapper) of containers whose
+    /// decoded value is currently cached in `store`. Bounded by
+    /// [`MAX_CACHED_CONTAINER_VALUES`]. Entries may be stale (the wrapper was
+    /// dropped or materialized into a full state); eviction skips those.
+    value_cache_queue: VecDeque<ContainerIdx>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,14 +118,11 @@ impl InnerStore {
         if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
-            let container = if self.load_state != LoadState::AllLoaded {
-                self.kv
-                    .get(&key)
-                    .map(ContainerWrapper::new_from_bytes)
-                    .unwrap_or_else(f)
-            } else {
-                f()
-            };
+            let container = self
+                .kv
+                .get(&key)
+                .map(ContainerWrapper::new_from_bytes)
+                .unwrap_or_else(f);
             Self::insert_entry(&mut self.store, idx, container);
         }
 
@@ -117,14 +138,12 @@ impl InnerStore {
             return;
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
-            if let Some(v) = self.kv.get(&key) {
-                let c = ContainerWrapper::new_from_bytes(v);
-                Self::insert_entry(&mut self.store, idx, c);
-                return;
-            }
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(v) = self.kv.get(&key) {
+            let c = ContainerWrapper::new_from_bytes(v);
+            Self::insert_entry(&mut self.store, idx, c);
+            return;
         }
 
         let c = f();
@@ -132,7 +151,7 @@ impl InnerStore {
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
-        if self.get_entry_mut(idx).is_none() && self.load_state != LoadState::AllLoaded {
+        if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
@@ -150,23 +169,82 @@ impl InnerStore {
         f: impl FnOnce(&mut ContainerWrapper) -> R,
     ) -> Option<R> {
         if let Some(entry) = self.get_entry_mut(idx) {
-            return Some(f(entry));
+            let ans = f(entry);
+            self.track_value_cache(idx);
+            return Some(ans);
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
-            if let Some(v) = self.kv.get(&key) {
-                let mut container = ContainerWrapper::new_from_bytes(v);
-                let ans = f(&mut container);
-                if container.has_cached_value() {
-                    Self::insert_entry(&mut self.store, idx, container);
-                }
-                return Some(ans);
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(v) = self.kv.get(&key) {
+            let mut container = ContainerWrapper::new_from_bytes(v);
+            let ans = f(&mut container);
+            if container.has_cached_value() {
+                Self::insert_entry(&mut self.store, idx, container);
+                self.track_value_cache(idx);
             }
+            return Some(ans);
         }
 
         None
+    }
+
+    /// Track a wrapper whose read may have populated the decoded-value cache,
+    /// and evict the oldest cached values once the cache exceeds
+    /// [`MAX_CACHED_CONTAINER_VALUES`].
+    ///
+    /// Eviction drops the whole wrapper from `store`; the wrapper is a pure
+    /// cache over the KV bytes (`ContainerWrapper::is_evictable_cached_value`
+    /// requires a flushed lazy wrapper), so the next read re-creates it from
+    /// the KV store.
+    fn track_value_cache(&mut self, idx: ContainerIdx) {
+        let Some(entry) = self.get_entry_mut(idx) else {
+            return;
+        };
+        if !entry.is_evictable_cached_value() {
+            return;
+        }
+        if !entry.is_in_value_cache_queue() {
+            entry.set_in_value_cache_queue(true);
+            self.value_cache_queue.push_back(idx);
+        }
+        self.get_entry_mut(idx)
+            .unwrap()
+            .mark_value_cache_referenced();
+
+        while self.value_cache_queue.len() > MAX_CACHED_CONTAINER_VALUES {
+            let Some(victim) = self.value_cache_queue.pop_front() else {
+                break;
+            };
+            enum Action {
+                Skip,
+                Requeue,
+                Evict,
+            }
+            let action = match self.get_entry_mut(victim) {
+                Some(entry) if entry.is_evictable_cached_value() => {
+                    if entry.take_value_cache_referenced() {
+                        Action::Requeue
+                    } else {
+                        entry.set_in_value_cache_queue(false);
+                        Action::Evict
+                    }
+                }
+                // Stale entry: the wrapper was dropped or materialized into a
+                // full state since it was enqueued.
+                _ => Action::Skip,
+            };
+            match action {
+                Action::Skip => {}
+                Action::Requeue => self.value_cache_queue.push_back(victim),
+                Action::Evict => {
+                    let slot = Self::slot(victim);
+                    if let Some(entry) = self.store.get_mut(slot) {
+                        *entry = None;
+                    }
+                }
+            }
+        }
     }
 
     /// Read a container without retaining a wrapper loaded only for this read.
@@ -179,13 +257,11 @@ impl InnerStore {
             return Ok(Some(f(entry)));
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
-            if let Some(v) = self.kv.get(&key) {
-                let mut container = ContainerWrapper::try_new_from_bytes(v)?;
-                return Ok(Some(f(&mut container)));
-            }
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(v) = self.kv.get(&key) {
+            let mut container = ContainerWrapper::try_new_from_bytes(v)?;
+            return Ok(Some(f(&mut container)));
         }
 
         Ok(None)
@@ -205,13 +281,11 @@ impl InnerStore {
             return entry.try_get_value_ephemeral(idx, ctx).map(Some);
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
-            if let Some(bytes) = self.kv.get(&key) {
-                let mut container = ContainerWrapper::try_new_from_bytes(bytes)?;
-                return container.try_get_value(idx, ctx).map(Some);
-            }
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(bytes) = self.kv.get(&key) {
+            let mut container = ContainerWrapper::try_new_from_bytes(bytes)?;
+            return container.try_get_value(idx, ctx).map(Some);
         }
 
         Ok(None)
@@ -234,17 +308,15 @@ impl InnerStore {
             return Ok(Some((parent, value)));
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let id = self.arena.get_container_id(idx).unwrap();
-            let key = id.to_bytes();
-            if let Some(value) = self.kv.get(&key) {
-                let mut container = ContainerWrapper::try_new_from_bytes(value)?;
-                let parent = container.parent().cloned();
-                // This wrapper is already temporary, so decoding into it does not retain state in
-                // the document and avoids constructing another temporary wrapper internally.
-                let value = container.try_get_value(idx, ctx)?;
-                return Ok(Some((parent, value)));
-            }
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(value) = self.kv.get(&key) {
+            let mut container = ContainerWrapper::try_new_from_bytes(value)?;
+            let parent = container.parent().cloned();
+            // This wrapper is already temporary, so decoding into it does not retain state in
+            // the document and avoids constructing another temporary wrapper internally.
+            let value = container.try_get_value(idx, ctx)?;
+            return Ok(Some((parent, value)));
         }
 
         Ok(None)
@@ -274,12 +346,8 @@ impl InnerStore {
             }
         }
 
-        if self.load_state != LoadState::AllLoaded {
-            let key = id.to_bytes();
-            return self.kv.contains_key(&key);
-        }
-
-        false
+        let key = id.to_bytes();
+        self.kv.contains_key(&key)
     }
 
     pub(crate) fn iter_all_containers_mut(
@@ -376,6 +444,7 @@ impl InnerStore {
             }));
 
         self.store.clear();
+        self.value_cache_queue.clear();
         self.load_state = LoadState::Lazy;
         Ok(fr)
     }
@@ -408,6 +477,14 @@ impl InnerStore {
                 if Self::insert_entry(store, idx, c).is_some() {}
             }
         });
+
+        // Entries were rebuilt from the KV store; drop any queue entries that
+        // refer to replaced wrappers so the queue only names wrappers that are
+        // actually enqueued.
+        self.value_cache_queue.clear();
+        for entry in self.store.iter_mut().flatten() {
+            entry.set_in_value_cache_queue(false);
+        }
 
         self.load_state = LoadState::AllLoaded;
         Ok(())
@@ -489,6 +566,7 @@ impl InnerStore {
             kv: KvWrapper::new_mem(),
             load_state: LoadState::AllLoaded,
             config,
+            value_cache_queue: VecDeque::new(),
         }
     }
 

@@ -24,6 +24,13 @@ pub(crate) struct ContainerWrapper {
     parent: Option<ContainerID>,
     data: ContainerData,
     flushed: bool,
+    /// Whether this wrapper is currently enqueued in the store's bounded
+    /// decoded-value cache (`InnerStore::value_cache_queue`).
+    in_value_cache_queue: bool,
+    /// Second-chance bit for the value-cache eviction clock: set on every read
+    /// that uses the cached value, cleared when the eviction pass considers
+    /// this wrapper.
+    value_cache_referenced: bool,
 }
 
 #[derive(Debug)]
@@ -148,6 +155,8 @@ impl ContainerWrapper {
             kind: idx.get_type(),
             data: ContainerData::State(state),
             flushed: false,
+            in_value_cache_queue: false,
+            value_cache_referenced: false,
         }
     }
 
@@ -544,6 +553,8 @@ impl ContainerWrapper {
                 bytes_offset_for_state: None,
             })),
             flushed: true,
+            in_value_cache_queue: false,
+            value_cache_referenced: false,
         })
     }
 
@@ -575,6 +586,30 @@ impl ContainerWrapper {
             ContainerData::State(_) => true,
             ContainerData::Lazy(lazy) => lazy.value.is_some(),
         }
+    }
+
+    /// Whether this wrapper holds an evictable cached decoded value: a flushed
+    /// lazy wrapper is a pure cache over the KV bytes, so dropping it loses
+    /// nothing (a later read re-creates it from the KV store).
+    pub(super) fn is_evictable_cached_value(&self) -> bool {
+        self.flushed && matches!(&self.data, ContainerData::Lazy(lazy) if lazy.value.is_some())
+    }
+
+    pub(super) fn is_in_value_cache_queue(&self) -> bool {
+        self.in_value_cache_queue
+    }
+
+    pub(super) fn set_in_value_cache_queue(&mut self, value: bool) {
+        self.in_value_cache_queue = value;
+    }
+
+    pub(super) fn mark_value_cache_referenced(&mut self) {
+        self.value_cache_referenced = true;
+    }
+
+    /// Returns and clears the second-chance bit.
+    pub(super) fn take_value_cache_referenced(&mut self) -> bool {
+        std::mem::take(&mut self.value_cache_referenced)
     }
 
     #[cfg(test)]
