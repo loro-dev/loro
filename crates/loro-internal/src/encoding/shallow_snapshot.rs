@@ -204,11 +204,27 @@ fn owned_value_bytes_capped(value: &crate::encoding::value::OwnedValue, remainin
         OwnedValue::Str(s) => OVERHEAD.saturating_add(s.len()),
         OwnedValue::Binary(b) => OVERHEAD.saturating_add(b.len()),
         OwnedValue::LoroValue(v) => OVERHEAD.saturating_add(value_bytes_capped(v, remaining)),
+        // The encoder writes the mark key into the block's key register and
+        // recurses into the value; both are variable-length.
+        OwnedValue::MarkStart(mark) => {
+            let mut used = OVERHEAD.saturating_add(mark.key.len());
+            used = used.saturating_add(value_bytes_capped(
+                &mark.value,
+                remaining.saturating_sub(used),
+            ));
+            used
+        }
+        // The encoder recurses into the set value.
+        OwnedValue::ListSet { value, .. } => {
+            OVERHEAD.saturating_add(value_bytes_capped(value, remaining))
+        }
         OwnedValue::Future(owned) => match owned {
             crate::encoding::value::OwnedFutureValue::Unknown { data, .. } => {
                 OVERHEAD.saturating_add(data.len())
             }
         },
+        // TreeMove/RawTreeMove/ListMove carry only fixed-size indices; the
+        // fractional-index payloads they point at are small by construction.
         _ => OVERHEAD,
     }
 }
@@ -1373,6 +1389,61 @@ mod tests {
         assert!(
             est >= 2 * big.len(),
             "estimate must count style keys and root container names, got {est}"
+        );
+    }
+
+    /// Unknown-container ops can carry OwnedValue::MarkStart / ListSet with
+    /// variable-length key/value payloads (the decoder accepts any Value for
+    /// unknown containers and owns it); the prefix estimator must count them.
+    #[test]
+    fn prefix_content_bytes_estimate_counts_unknown_owned_values() {
+        use crate::change::Change;
+        use crate::encoding::value::{MarkStart, OwnedValue};
+        use crate::op::{FutureInnerContent, InnerContent, Op};
+        use rle::RleVec;
+
+        let big = "v".repeat(1 << 20);
+        let doc = LoroDoc::new();
+        let mut oplog = doc.oplog().lock();
+        let idx = oplog
+            .arena
+            .register_container(&ContainerID::new_root("u", ContainerType::Unknown(7)));
+
+        let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        ops.push(Op::new(
+            ID::new(1, 0),
+            InnerContent::Future(FutureInnerContent::Unknown {
+                prop: 0,
+                value: Box::new(OwnedValue::MarkStart(MarkStart {
+                    len: 1,
+                    key: big.as_str().into(),
+                    value: LoroValue::Null,
+                    info: 0,
+                })),
+            }),
+            idx,
+        ));
+        ops.push(Op::new(
+            ID::new(1, 1),
+            InnerContent::Future(FutureInnerContent::Unknown {
+                prop: 0,
+                value: Box::new(OwnedValue::ListSet {
+                    peer_idx: 0,
+                    lamport: 0,
+                    value: LoroValue::String(big.clone().into()),
+                }),
+            }),
+            idx,
+        ));
+        oplog.insert_new_change(
+            Change::new(ops, Frontiers::default(), ID::new(1, 0), 0, 0),
+            false,
+        );
+
+        let est = estimate_ops_content_bytes(&oplog, &[IdSpan::new(1, 0, 2)], usize::MAX);
+        assert!(
+            est >= 2 * big.len(),
+            "estimate must count MarkStart keys and ListSet values on unknown ops, got {est}"
         );
     }
 }
