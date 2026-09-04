@@ -466,6 +466,33 @@ mod test {
         assert!(!store.store.has_cached_value_for_test(map_idx));
         assert_eq!(store.map_len(map_idx), 2);
         assert!(store.store.has_cached_value_for_test(map_idx));
+
+        // The cache is bounded (loro-dev/loro#1092): reading more containers
+        // than the bound evicts older cached values, and re-reading an evicted
+        // container transparently re-decodes it from the KV store.
+        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let source = doc_with_many_child_maps(n);
+        let bytes = export_container_store(&source);
+        let mut store = decode_container_store(bytes);
+        let list_idx = store
+            .arena
+            .register_container(&ContainerID::new_root("list", ContainerType::List));
+        let mut child_ids = Vec::new();
+        for i in 0..n {
+            let value = store.list_get(list_idx, i).unwrap();
+            child_ids.push(value.as_container().unwrap().clone());
+            let child_idx = store.arena.register_container(child_ids.last().unwrap());
+            assert_eq!(store.map_get(child_idx, "key"), Some((i as i64).into()));
+        }
+
+        assert!(
+            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            "cached decoded values must stay bounded, got {}",
+            store.store.cached_value_count_for_test()
+        );
+        // The first children were evicted; re-reading must fall back to KV.
+        let first_idx = store.arena.register_container(&child_ids[0]);
+        assert_eq!(store.map_get(first_idx, "key"), Some(0i64.into()));
     }
 
     #[test]
