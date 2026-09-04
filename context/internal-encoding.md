@@ -236,7 +236,8 @@ value is. The byte leg runs BEFORE encoding: `estimate_ops_content_bytes`
 walks op payloads by reference (arena slices are never copied), recursing into
 nested `LoroValue::List`/`Map` and counting everything the block encoder
 copies: map and style keys, style values, fractional indexes, root container
-names, unknown-future bytes, and commit messages, with a budget-aware early
+names, unknown-op OwnedValue payloads (including MarkStart keys and
+MarkStart/ListSet values), and commit messages, with a budget-aware early
 exit past the cap, while
 `export_fast_updates_in_range` slice-copies values into a fresh store — so the
 cap must be checked before any prefix bytes are copied.
