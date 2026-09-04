@@ -45,6 +45,25 @@ regardless of `load_state`. Do not reintroduce `load_state != AllLoaded` gates
 on those fallbacks — `load_all`/`decode_twice` (GC snapshot import) put the
 store in `AllLoaded` mode, and evicted entries must stay reachable there.
 
+## What `AllLoaded` means with eviction
+
+`LoadState::AllLoaded` now means "every `kv` entry was materialized into
+`store` at some point", NOT "`store` is complete right now". Eviction can
+remove entries afterwards, so `load_all()` tracks `evicted_since_full_load`
+(set on every eviction, cleared by `decode`/`decode_twice`/a full `load_all`
+scan) and re-scans `kv` when it is set instead of short-circuiting on
+`AllLoaded`. Without this, `iter_all_container_ids()` /
+`iter_all_containers_mut()` silently miss evicted containers; the shallow
+snapshot re-export path (`encoding/shallow_snapshot.rs`) enumerates containers
+that way and dropped them from the latest-state overlay — a silent data-loss
+on re-import. The "content in `store` is newer than `kv`" skip inside
+`load_all` stays sound: evicted entries are absent from `store`, so they are
+rebuilt from `kv`.
+
+Cost: one bool check per `load_all()` call, plus at most one `kv` re-scan
+after the first eviction following a full load (the scan's per-entry
+"already in `store`" skip makes repeat scans cheap).
+
 ## Remaining pins
 
 - Tree containers materialize a full `State` on first value read
@@ -58,7 +77,14 @@ store in `AllLoaded` mode, and evicted entries must stay reachable there.
 - `crates/loro-internal/src/state/container_store.rs` (`mod test`):
   `handle_reads_bound_cached_container_values`,
   `evicted_containers_stay_readable_and_editable`,
-  `evicted_entries_stay_readable_when_all_loaded`.
+  `evicted_entries_stay_readable_when_all_loaded` (also asserts
+  `iter_all_container_ids` stays complete after evictions),
+  `evicted_mergeable_child_and_tree_meta_survive_round_trip`,
+  `stale_queue_entry_after_lazy_to_state_conversion`.
+- `crates/loro-internal/src/encoding/shallow_snapshot.rs`:
+  `reexport_same_shallow_root_after_walk_eviction_keeps_overlay_containers`
+  (the silent data-loss regression).
 - `crates/loro-wasm/tests/walk_mem.test.ts`: ~100k-container handle walk keeps
   `process.memoryUsage().external` within a small multiple of the `toJSON()`
-  delta (fails at ~286 MB on the pre-fix build, ~13 MB after).
+  delta (fails at ~286 MB on the pre-fix build, ~13 MB after); also asserts
+  the walk result equals `toJSON()` so an incomplete walk cannot pass.

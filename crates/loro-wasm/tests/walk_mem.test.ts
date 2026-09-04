@@ -96,9 +96,13 @@ describe("container handle walk memory", () => {
         docB.import(snapshot);
         global.gc();
         const beforeWalk = process.memoryUsage().external;
-        walk(docB.getList("history") as unknown as ContainerHandle);
+        const walked = walk(docB.getList("history") as unknown as ContainerHandle);
         global.gc();
         const walkDelta = process.memoryUsage().external - beforeWalk;
+
+        // The walk must have visited every container: a walk that silently
+        // visits fewer containers would pass the memory threshold more easily.
+        expect(walked).toEqual(docB.toJSON().history);
         docB.free();
 
         console.log(

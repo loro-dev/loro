@@ -39,6 +39,9 @@ pub(super) const MAX_CACHED_CONTAINER_VALUES: usize = 16;
 ///   ([`MAX_CACHED_CONTAINER_VALUES`]). Evicted entries are re-created from
 ///   `kv` on the next access, so lookups must always fall back to `kv` on a
 ///   `store` miss, regardless of `load_state`.
+/// - `load_state == AllLoaded` means every `kv` entry was materialized into
+///   `store` at some point; it does NOT mean `store` is still complete. Once
+///   `evicted_since_full_load` is set, `load_all()` must re-scan `kv`.
 ///
 /// Invariants: it should be agnostic to the users of this struct whether a container is stored in `kv` or `store`
 pub(crate) struct InnerStore {
@@ -52,6 +55,11 @@ pub(crate) struct InnerStore {
     /// [`MAX_CACHED_CONTAINER_VALUES`]. Entries may be stale (the wrapper was
     /// dropped or materialized into a full state); eviction skips those.
     value_cache_queue: VecDeque<ContainerIdx>,
+    /// True once the value cache has evicted at least one wrapper since the
+    /// last full KV scan. While this is set, `load_state == AllLoaded` no
+    /// longer implies `store` contains every entry in `kv`, so `load_all()`
+    /// must re-scan `kv` instead of short-circuiting.
+    evicted_since_full_load: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,6 +255,9 @@ impl InnerStore {
                     if let Some(entry) = self.store.get_mut(slot) {
                         *entry = None;
                     }
+                    // `store` may no longer mirror `kv`: a full enumeration has
+                    // to re-scan `kv` even in `AllLoaded` mode.
+                    self.evicted_since_full_load = true;
                 }
             }
         }
@@ -450,6 +461,7 @@ impl InnerStore {
 
         self.store.clear();
         self.value_cache_queue.clear();
+        self.evicted_since_full_load = false;
         self.load_state = LoadState::Lazy;
         Ok(fr)
     }
@@ -491,12 +503,13 @@ impl InnerStore {
             entry.set_in_value_cache_queue(false);
         }
 
+        self.evicted_since_full_load = false;
         self.load_state = LoadState::AllLoaded;
         Ok(())
     }
 
     pub fn load_all(&mut self) {
-        if self.load_state == LoadState::AllLoaded {
+        if self.load_state == LoadState::AllLoaded && !self.evicted_since_full_load {
             return;
         }
 
@@ -518,6 +531,7 @@ impl InnerStore {
             }
         });
 
+        self.evicted_since_full_load = false;
         self.load_state = LoadState::AllLoaded;
     }
 
@@ -584,6 +598,7 @@ impl InnerStore {
             load_state: LoadState::AllLoaded,
             config,
             value_cache_queue: VecDeque::new(),
+            evicted_since_full_load: false,
         }
     }
 

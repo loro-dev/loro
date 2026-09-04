@@ -57,10 +57,7 @@ fn build_snapshot(turns: usize, items_per_turn: usize) -> Vec<u8> {
                 raw.insert("command", "pnpm test").unwrap();
                 raw.insert("cwd", "/repo").unwrap();
                 let text = item
-                    .insert_container(
-                        "title",
-                        loro_internal::handler::TextHandler::new_detached(),
-                    )
+                    .insert_container("title", loro_internal::handler::TextHandler::new_detached())
                     .unwrap();
                 text.insert(0, TEXT, PosType::Unicode).unwrap();
             }
@@ -104,11 +101,20 @@ fn handle_walk_retains_bounded_memory() {
     doc.import(&snapshot).unwrap();
     let history = Handler::List(doc.get_list("history"));
 
+    // Every walk must visit all 13,260 containers (48 even turns × 5
+    // containers + 47 odd turns × 277 containers + the root list): a walk that
+    // silently visits fewer containers would pass the memory thresholds below
+    // more easily.
+    let expected_containers = 48 * 5 + 47 * 277 + 1;
+
     let after_import = live_bytes();
     let mut handles = 0;
     walk(&history, &mut handles);
+    assert_eq!(handles, expected_containers, "first walk is incomplete");
     let after_walk1 = live_bytes();
+    handles = 0;
     walk(&history, &mut handles);
+    assert_eq!(handles, expected_containers, "second walk is incomplete");
     let after_walk2 = live_bytes();
 
     let walk1_retained = after_walk1.saturating_sub(after_import);

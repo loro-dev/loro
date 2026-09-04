@@ -885,6 +885,11 @@ mod test {
             store.store.cached_value_count_for_test()
         );
 
+        // `AllLoaded` must not blind full enumeration to evicted entries: once
+        // an eviction has happened, `load_all` re-scans the KV store instead of
+        // short-circuiting on `load_state`.
+        assert_eq!(store.store.iter_all_container_ids().count(), n + 1);
+
         // The first children were evicted during the walk; re-reading them must
         // fall back to the KV store even in AllLoaded mode.
         for i in 0..n {
@@ -893,5 +898,137 @@ mod test {
             let child_idx = store.arena.register_container(&child_id);
             assert_eq!(store.map_get(child_idx, "key"), Some((i as i64).into()));
         }
+    }
+
+    /// Mergeable children and tree meta maps are reachable through a parent
+    /// marker / a tree node rather than a plain value slot. Evicting their
+    /// cached values must not lose them: re-read through the parent/path,
+    /// mutate, and snapshot round-trip.
+    #[test]
+    fn evicted_mergeable_child_and_tree_meta_survive_round_trip() {
+        let filler = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let source = LoroDoc::new_auto_commit();
+        source
+            .get_map("state")
+            .ensure_mergeable_text("notes")
+            .unwrap()
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        let node = source.get_tree("tree").create(TreeParentId::Root).unwrap();
+        source
+            .get_tree("tree")
+            .get_meta(node)
+            .unwrap()
+            .insert("k", "v")
+            .unwrap();
+        let list = source.get_list("list");
+        for i in 0..filler {
+            let map = list
+                .insert_container(i, MapHandler::new_detached())
+                .unwrap();
+            map.insert("key", i as i64).unwrap();
+        }
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&snapshot).unwrap();
+
+        // Cache the mergeable child and the tree meta values, then evict them
+        // by reading more containers than the cache bound.
+        let notes = doc.get_map("state").ensure_mergeable_text("notes").unwrap();
+        assert_eq!(notes.to_string(), "hello");
+        let meta = doc.get_tree("tree").get_meta(node).unwrap();
+        assert_eq!(meta.get("k"), Some("v".into()));
+        let list = doc.get_list("list");
+        for i in 0..filler {
+            let child_id = list.get(i).unwrap().as_container().unwrap().clone();
+            assert_eq!(doc.get_map(child_id).get("key"), Some((i as i64).into()));
+        }
+        {
+            let mut state = doc.app_state().lock();
+            assert!(
+                state.store.store.cached_value_count_for_test()
+                    <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+                "the walk must have evicted cached values, got {}",
+                state.store.store.cached_value_count_for_test()
+            );
+        }
+
+        // Re-read through the parent marker / tree path after eviction, then
+        // mutate both.
+        let notes = doc.get_map("state").ensure_mergeable_text("notes").unwrap();
+        assert_eq!(notes.to_string(), "hello");
+        notes.insert(5, "!", PosType::Unicode).unwrap();
+        let meta = doc.get_tree("tree").get_meta(node).unwrap();
+        assert_eq!(meta.get("k"), Some("v".into()));
+        meta.insert("k2", "v2").unwrap();
+
+        let snapshot = doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+        assert_eq!(round_tripped.get_deep_value(), doc.get_deep_value());
+        assert_eq!(
+            round_tripped
+                .get_map("state")
+                .ensure_mergeable_text("notes")
+                .unwrap()
+                .to_string(),
+            "hello!"
+        );
+        assert_eq!(
+            round_tripped
+                .get_tree("tree")
+                .get_meta(node)
+                .unwrap()
+                .get("k2"),
+            Some("v2".into())
+        );
+    }
+
+    /// A wrapper that is mutated while enqueued in the value-cache queue
+    /// materializes into a full state, leaving a stale queue entry behind.
+    /// Eviction must skip the stale entry without losing the mutation or
+    /// wedging the queue.
+    #[test]
+    fn stale_queue_entry_after_lazy_to_state_conversion() {
+        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let source = doc_with_many_child_maps(n);
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&snapshot).unwrap();
+
+        // Read child 0 (cached + enqueued), then mutate it: the lazy wrapper
+        // materializes into a full state and its queue entry becomes stale.
+        let list = doc.get_list("list");
+        let first_id = list.get(0).unwrap().as_container().unwrap().clone();
+        let first_map = doc.get_map(first_id);
+        assert_eq!(first_map.get("key"), Some(0i64.into()));
+        first_map.insert("edited", true).unwrap();
+
+        // Keep reading past the bound so eviction pops the stale entry.
+        for i in 0..n {
+            let child_id = list.get(i).unwrap().as_container().unwrap().clone();
+            assert_eq!(doc.get_map(child_id).get("key"), Some((i as i64).into()));
+        }
+        {
+            let mut state = doc.app_state().lock();
+            assert!(
+                state.store.store.cached_value_count_for_test()
+                    <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+                "cached decoded values must stay bounded, got {}",
+                state.store.store.cached_value_count_for_test()
+            );
+        }
+
+        assert_eq!(first_map.get("edited"), Some(true.into()));
+        let round_tripped = LoroDoc::new();
+        round_tripped
+            .import(&doc.export(crate::encoding::ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert_eq!(round_tripped.get_deep_value(), doc.get_deep_value());
     }
 }
