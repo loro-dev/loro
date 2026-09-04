@@ -746,4 +746,125 @@ mod test {
         let mut state = round_tripped.app_state().lock();
         assert!(state.store.contains_id(&child_id));
     }
+
+    fn doc_with_many_child_maps(n: usize) -> LoroDoc {
+        let doc = LoroDoc::new_auto_commit();
+        let list = doc.get_list("list");
+        for i in 0..n {
+            let map = list
+                .insert_container(i, MapHandler::new_detached())
+                .unwrap();
+            map.insert("key", i as i64).unwrap();
+        }
+        doc
+    }
+
+    /// Regression test for loro-dev/loro#1092: walking an imported document
+    /// container by container must not pin every decoded value in memory.
+    #[test]
+    fn handle_reads_bound_cached_container_values() {
+        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let source = doc_with_many_child_maps(n);
+        let bytes = export_container_store(&source);
+        let mut store = decode_container_store(bytes);
+
+        let list_idx = store
+            .arena
+            .register_container(&ContainerID::new_root("list", ContainerType::List));
+        assert_eq!(store.list_len(list_idx), n);
+        for i in 0..n {
+            let value = store.list_get(list_idx, i).unwrap();
+            let child_id = value.as_container().unwrap().clone();
+            let child_idx = store.arena.register_container(&child_id);
+            assert_eq!(store.map_get(child_idx, "key"), Some((i as i64).into()));
+        }
+
+        assert!(
+            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            "cached decoded values must stay bounded, got {}",
+            store.store.cached_value_count_for_test()
+        );
+    }
+
+    /// Evicted containers are pure KV caches: re-reading and editing them after
+    /// eviction must return and preserve the correct values.
+    #[test]
+    fn evicted_containers_stay_readable_and_editable() {
+        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let source = doc_with_many_child_maps(n);
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new_auto_commit();
+        imported.import(&snapshot).unwrap();
+
+        let read_all = |doc: &LoroDoc| {
+            let list = doc.get_list("list");
+            for i in 0..n {
+                let value = list.get(i).unwrap();
+                let child_id = value.as_container().unwrap().clone();
+                let child = doc.get_map(child_id);
+                assert_eq!(child.get("key"), Some((i as i64).into()));
+            }
+        };
+
+        // The first walk evicts the early children; the second walk re-reads
+        // them through the KV fallback.
+        read_all(&imported);
+        read_all(&imported);
+
+        // Mutating an evicted-then-reloaded container must persist.
+        let first_id = imported
+            .get_list("list")
+            .get(0)
+            .unwrap()
+            .as_container()
+            .unwrap()
+            .clone();
+        imported.get_map(first_id).insert("edited", true).unwrap();
+
+        let snapshot = imported
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let round_tripped = LoroDoc::new();
+        round_tripped.import(&snapshot).unwrap();
+        assert_eq!(round_tripped.get_deep_value(), imported.get_deep_value());
+    }
+
+    /// `load_all` (and GC snapshot imports) put the store in `AllLoaded` mode;
+    /// evicted entries must still be re-created from the KV store there.
+    #[test]
+    fn evicted_entries_stay_readable_when_all_loaded() {
+        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let source = doc_with_many_child_maps(n);
+        let bytes = export_container_store(&source);
+        let mut store = decode_container_store(bytes);
+
+        let list_idx = store
+            .arena
+            .register_container(&ContainerID::new_root("list", ContainerType::List));
+        store.store.load_all();
+
+        for i in 0..n {
+            let value = store.list_get(list_idx, i).unwrap();
+            let child_id = value.as_container().unwrap().clone();
+            let child_idx = store.arena.register_container(&child_id);
+            assert_eq!(store.map_get(child_idx, "key"), Some((i as i64).into()));
+        }
+
+        assert!(
+            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            "cached decoded values must stay bounded, got {}",
+            store.store.cached_value_count_for_test()
+        );
+
+        // The first children were evicted during the walk; re-reading them must
+        // fall back to the KV store even in AllLoaded mode.
+        for i in 0..n {
+            let value = store.list_get(list_idx, i).unwrap();
+            let child_id = value.as_container().unwrap().clone();
+            let child_idx = store.arena.register_container(&child_id);
+            assert_eq!(store.map_get(child_idx, "key"), Some((i as i64).into()));
+        }
+    }
 }

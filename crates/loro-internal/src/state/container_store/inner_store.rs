@@ -24,7 +24,12 @@ use super::ContainerWrapper;
 /// the next read, so eviction only costs a re-decode. The queue is a
 /// second-chance FIFO: a container whose cached value is hit again survives
 /// one eviction pass, which keeps ancestors hot during deep walks.
+#[cfg(not(test))]
 const MAX_CACHED_CONTAINER_VALUES: usize = 2048;
+/// Tests use a small bound so exercising eviction does not require building
+/// thousands of containers.
+#[cfg(test)]
+pub(super) const MAX_CACHED_CONTAINER_VALUES: usize = 16;
 
 /// The invariants about this struct:
 ///
@@ -549,6 +554,18 @@ impl InnerStore {
     pub(super) fn has_cached_value_for_test(&mut self, idx: ContainerIdx) -> bool {
         self.get_entry_mut(idx)
             .is_some_and(|entry| entry.has_cached_value_for_test())
+    }
+
+    /// Number of wrappers currently holding an evictable cached decoded value.
+    /// Must stay bounded by [`MAX_CACHED_CONTAINER_VALUES`] no matter how many
+    /// containers have been read (loro-dev/loro#1092).
+    #[cfg(test)]
+    pub(super) fn cached_value_count_for_test(&self) -> usize {
+        self.store
+            .iter()
+            .flatten()
+            .filter(|entry| entry.is_evictable_cached_value())
+            .count()
     }
 
     #[cfg(test)]
