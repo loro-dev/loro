@@ -863,9 +863,15 @@ fn shallow_export_forward_replay_matches_checkout_path() -> anyhow::Result<()> {
     };
     assert_eq!(vv_pairs(&fast_doc), vv_pairs(&old_doc));
     assert!(fast_doc.is_shallow() && old_doc.is_shallow());
-    // The accessed-but-op-less root container must survive both paths.
+    // The accessed-but-op-less root container must survive both paths. Check
+    // existence BEFORE materializing it: `get_text` would create the root on
+    // access and prove nothing.
     for (name, d) in [("forward", &fast_doc), ("checkout", &old_doc)] {
         assert!(d.is_shallow(), "{name}");
+        assert!(
+            d.has_container(&ContainerID::new_root("empty_text", ContainerType::Text)),
+            "{name}: op-less root container must survive the shallow export"
+        );
         assert_eq!(d.get_text("empty_text").to_string(), "", "{name}");
     }
 

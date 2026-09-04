@@ -50,6 +50,28 @@ const MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO: usize = 16;
 /// on wasm32.
 const MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY: usize = 1_000_000;
 
+/// Cap on the encoded pre-root updates blob. Op counts miss value sizes: a Map
+/// write is one atom regardless of how large its Binary/String value is, so a
+/// byte-heavy but low-op prefix would bypass the op-count gates. The blob is
+/// copied into a temporary doc for replay, so bound its actual encoded size.
+/// Encoding the blob is cheap (block-level copy), so it is encoded first and
+/// then filtered.
+#[cfg(test)]
+const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 1 << 20;
+#[cfg(not(test))]
+const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 32 << 20;
+
+/// Whether the forward-replay path may be used for the given prefix/tail
+/// shape. The caller still has to require a non-shallow doc whose state is at
+/// the latest version. Extracted as a pure predicate so the gate can be
+/// tested directly.
+fn forward_replay_gate(ops_num: usize, pre_root_ops: usize, pre_root_bytes: usize) -> bool {
+    ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE
+        && pre_root_ops <= MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY
+        && pre_root_ops <= MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO * ops_num
+        && pre_root_bytes <= MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY
+}
+
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
@@ -122,19 +144,24 @@ pub(crate) fn export_shallow_snapshot_inner(
         .iter()
         .map(|(_, counter)| (*counter).max(0) as usize)
         .sum();
+    // Cheap op-count legs first (encoding the prefix blob on every export
+    // would regress the small-tail cases the checkout path handles best);
+    // the byte leg runs on the encoded blob afterwards.
     let pre_root_updates = (state_frontiers == latest_frontiers
         && oplog.shallow_since_vv().is_empty()
-        && ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE
-        && pre_root_ops <= MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY
-        && pre_root_ops <= MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO * ops_num)
-        .then(|| {
-            let spans: Vec<IdSpan> = root_vv
-                .iter()
-                .filter(|(_, counter)| **counter > 0)
-                .map(|(peer, counter)| IdSpan::new(*peer, 0, *counter))
-                .collect();
-            export_fast_updates_in_range(&oplog, &spans)
-        });
+        && forward_replay_gate(ops_num, pre_root_ops, 0))
+    .then(|| {
+        let spans: Vec<IdSpan> = root_vv
+            .iter()
+            .filter(|(_, counter)| **counter > 0)
+            .map(|(peer, counter)| IdSpan::new(*peer, 0, *counter))
+            .collect();
+        export_fast_updates_in_range(&oplog, &spans)
+    })
+    // Op counts miss value sizes: a Map write is one atom regardless of
+    // how large its Binary/String value is, so a byte-heavy but low-op
+    // prefix would bypass the op-count gates above.
+    .filter(|bytes| bytes.len() <= MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY);
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
         if let Some((shallow_root_state_bytes, shallow_root_kv)) =
@@ -995,5 +1022,56 @@ mod tests {
                 .clone();
             assert_eq!(d.get_map(child_id).get("key"), Some((i as i64).into()));
         }
+    }
+
+    #[test]
+    fn forward_replay_gate_bounds_prefix_by_ops_ratio_and_bytes() {
+        let min = MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE;
+        let max_ops = MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY;
+        let max_bytes = MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY;
+
+        // Tail below the minimum: never.
+        assert!(!forward_replay_gate(min - 1, 0, 0));
+        // Balanced prefix/tail: allowed.
+        assert!(forward_replay_gate(min, min, 1));
+        // Prefix larger than 16x the tail: blocked even though both op counts
+        // are small.
+        assert!(!forward_replay_gate(min, 17 * min, 1));
+        // Prefix above the absolute op cap: blocked.
+        assert!(!forward_replay_gate(max_ops, max_ops + 1, 1));
+        // A byte-heavy but low-op prefix (a Map write is one atom regardless
+        // of value size): blocked only by the byte leg.
+        assert!(!forward_replay_gate(min, 1, max_bytes + 1));
+        assert!(forward_replay_gate(min, 1, max_bytes));
+    }
+
+    /// A byte-heavy, low-op prefix (one huge Map value, later overwritten)
+    /// must not be replayed into a temporary doc just because the tail clears
+    /// the retained-ops threshold. The export must still be correct.
+    #[test]
+    fn byte_heavy_low_op_prefix_exports_correctly() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let map = doc.get_map("m");
+        let big = "v".repeat(MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY + 1024);
+        map.insert("k", big.as_str()).unwrap();
+        map.insert("k", "small").unwrap();
+        doc.commit_then_renew();
+        let f = doc.oplog_frontiers();
+        // Tail just past the (test-scale) retained-ops threshold.
+        let text = doc.get_text("t");
+        text.insert(
+            0,
+            &"x".repeat(MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE + 1),
+            PosType::Unicode,
+        )
+        .unwrap();
+        doc.commit_then_renew();
+
+        let blob = doc.export(ExportMode::shallow_snapshot(&f)).unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&blob).unwrap();
+        assert_eq!(imported.get_deep_value(), doc.get_deep_value());
+        assert_eq!(imported.shallow_since_frontiers(), f);
     }
 }
