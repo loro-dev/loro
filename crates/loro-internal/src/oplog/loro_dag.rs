@@ -802,6 +802,17 @@ impl AppDag {
             return true;
         }
 
+        // Deps equal to the root's own deps describe a change CONCURRENT with
+        // the root frontier op: its causal past is covered by the root state,
+        // so the boundary shortcut in `frontiers_to_vv` would resolve it to
+        // the shallow vv below. But the dep ids themselves are trimmed from
+        // the dag, so no lamport can be computed for such a change — it would
+        // be parked as pending and then panic in `calc_unknown_lamport_change`.
+        // Reject it like any other pre-root update.
+        if deps == &self.shallow_root_frontiers_deps {
+            return true;
+        }
+
         let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
         if let Some(vv) = self.frontiers_to_vv(deps) {
             return !vv.includes_vv(&shallow_vv);
@@ -1450,6 +1461,21 @@ mod ensure_vv_for_tests {
         let deps = Frontiers::from_id(ID::new(1, 0));
 
         assert!(dag.frontiers_to_vv(&deps).is_none());
+        assert!(dag.import_deps_before_shallow_root(&deps));
+    }
+
+    /// Deps exactly equal to the root's own deps describe a change concurrent
+    /// with the root frontier op. The boundary shortcut in `frontiers_to_vv`
+    /// resolves them to the shallow vv, but the dep ids are trimmed from the
+    /// dag, so the change could never get a lamport — reject it.
+    #[test]
+    fn import_deps_before_shallow_root_rejects_deps_equal_to_root_deps() {
+        let dag = make_shallow_dag_for_import_deps();
+        let deps = Frontiers::from_id(ID::new(1, 1));
+
+        // The boundary shortcut resolves these deps to the shallow vv...
+        assert!(dag.frontiers_to_vv(&deps).is_some());
+        // ...but the import check must still reject them.
         assert!(dag.import_deps_before_shallow_root(&deps));
     }
 

@@ -44,6 +44,12 @@ first retained op.
    unchanged. The same rejection applies to a peer that never synced with A at
    all, because its genesis change has no dependencies and is treated as
    rooted before F. (`update_based_on_version_before_shallow_root_is_rejected`)
+   The boundary case is included: a change whose deps are exactly the root's
+   own deps — i.e. concurrent with the root frontier op itself — is rejected
+   too, because its dep ids are trimmed from the DAG and no lamport can be
+   computed for it. (`outdated_update_on_shallow_doc_is_dropped_not_pending`,
+   which also asserts the rejected change never enters the pending store, and
+   `import_deps_before_shallow_root_rejects_deps_equal_to_root_deps`)
 
 5. **Post-root updates with missing dependencies are parked as pending.** If
    an update's dependencies are not before F but are simply not delivered yet,
