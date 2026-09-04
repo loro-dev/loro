@@ -11,7 +11,10 @@ before changing mergeable child behavior.
 - `../state.rs`: `DocState`, checkout/path/deep-value traversal, state replay,
   lifecycle, and alive-container discovery.
 - `container_store/`: persisted KV-backed container snapshots and
-  `ContainerWrapper` encoding.
+  `ContainerWrapper` encoding. The decoded-value cache in `InnerStore` is
+  bounded and evicted wrappers must stay re-creatable from KV; read
+  [../../../../context/container-value-cache.md](../../../../context/container-value-cache.md)
+  before changing read/caching paths there.
 - `map_state.rs`, `list_state.rs`, `richtext_state.rs`, `tree_state.rs`,
   `movable_list_state.rs`, `counter_state.rs`: per-container state and snapshot
   codecs. `richtext_state.rs` also hosts `redact_dead_style_values`, used by

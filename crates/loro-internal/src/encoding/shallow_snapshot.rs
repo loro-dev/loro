@@ -549,6 +549,7 @@ mod tests {
     use crate::encoding::fast_snapshot::_decode_snapshot_bytes;
     use crate::encoding::EncodeMode;
     use crate::encoding::ExportMode;
+    use crate::handler::MapHandler;
     use crate::handler::TextHandler;
     use crate::state::{ContainerCreationContext, FastStateSnapshot, RichtextState};
     use crate::HandlerTrait;
@@ -764,5 +765,76 @@ mod tests {
             text_style_values(&resections.shallow_root_state_bytes, &cid)[0].1,
             LoroValue::Null
         );
+    }
+
+    /// Regression test for the P1 found in review of the bounded container
+    /// value cache (loro-dev/loro#1092): after a shallow-snapshot import the
+    /// store is `AllLoaded`, and a container walk evicts most decoded values.
+    /// Re-exporting the same shallow root must still enumerate every container
+    /// created after the root — otherwise the latest-state overlay silently
+    /// drops the evicted ones and the next import loses them.
+    #[test]
+    fn reexport_same_shallow_root_after_walk_eviction_keeps_overlay_containers() {
+        // Doc A: base content behind the shallow root.
+        let a = LoroDoc::new_auto_commit();
+        a.set_peer_id(1).unwrap();
+        a.get_text("text")
+            .insert(0, "base", PosType::Unicode)
+            .unwrap();
+        a.commit_then_renew();
+        let start = a.oplog_frontiers();
+
+        // Doc B: import the shallow snapshot, then create containers that live
+        // only in the latest-state overlay (they are not in the root KV).
+        let b = LoroDoc::new_auto_commit();
+        b.set_peer_id(2).unwrap();
+        b.import(&a.export(ExportMode::shallow_snapshot(&start)).unwrap())
+            .unwrap();
+        let n = 64;
+        let list = b.get_list("list");
+        for i in 0..n {
+            let map = list
+                .insert_container(i, MapHandler::new_detached())
+                .unwrap();
+            map.insert("key", i as i64).unwrap();
+        }
+        b.commit_then_renew();
+        // 2 ops per container > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE
+        // (16 in test builds), so this export ships the latest-state overlay.
+        let blob = b.export(ExportMode::shallow_snapshot(&start)).unwrap();
+
+        // Doc C imports the blob (store is AllLoaded with lazy wrappers) and
+        // walks every overlay container, evicting most of them from the
+        // bounded value cache.
+        let c = LoroDoc::new_auto_commit();
+        c.import(&blob).unwrap();
+        let list = c.get_list("list");
+        for i in 0..n {
+            let child_id = list.get(i).unwrap().as_container().unwrap().clone();
+            assert_eq!(c.get_map(child_id).get("key"), Some((i as i64).into()));
+        }
+
+        // Re-exporting the same shallow root reuses the stored root bytes and
+        // rebuilds the overlay by enumerating all containers. With the broken
+        // `load_all` short-circuit this dropped every evicted container.
+        let reexported = c.export(ExportMode::shallow_snapshot(&start)).unwrap();
+        assert!(
+            shallow_sections(&reexported).state_bytes.is_some(),
+            "test setup must take the overlay export path"
+        );
+
+        let d = LoroDoc::new_auto_commit();
+        d.import(&reexported).unwrap();
+        let list = d.get_list("list");
+        assert_eq!(list.len(), n);
+        for i in 0..n {
+            let child_id = list
+                .get(i)
+                .unwrap_or_else(|| panic!("container {i} lost after shallow re-export"))
+                .as_container()
+                .unwrap()
+                .clone();
+            assert_eq!(d.get_map(child_id).get("key"), Some((i as i64).into()));
+        }
     }
 }
