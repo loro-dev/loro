@@ -31,26 +31,25 @@ impl DocState {
         s: &mut S,
         cid: Option<&ContainerID>,
         rich: bool,
-        range: Option<(usize, usize)>,
+        selected_roots: Option<&[String]>,
     ) -> LoroResult<()> {
         if let Some(id) = cid {
             let idx = self.arena.register_container(id);
-            if range.is_some()
-                && !matches!(
-                    idx.get_type(),
-                    ContainerType::List | ContainerType::MovableList
-                )
-            {
-                return Err(err("readState range requires a List or MovableList"));
-            }
-            return self.read_state_container(s, idx, rich, range, None, 0);
-        }
-        if range.is_some() {
-            return Err(err("readState range requires a container"));
+            return self.read_state_container(s, idx, rich, None, None, 0);
         }
         let roots = self.preferred_root_containers();
         let mut visible = Vec::new();
+        let selected: Option<std::collections::HashSet<&str>> =
+            selected_roots.map(|names| names.iter().map(String::as_str).collect());
         for idx in roots {
+            if let Some(names) = &selected {
+                let name = self
+                    .root_container_name(idx)
+                    .ok_or_else(|| err("Missing root name"))?;
+                if !names.contains(name.as_str()) {
+                    continue;
+                }
+            }
             if matches!(idx.get_type(), ContainerType::Unknown(_)) {
                 return Err(err("Unsupported container type"));
             }
@@ -89,6 +88,32 @@ impl DocState {
             self.read_state_container(s, idx, rich, None, value, 0)?;
         }
         s.emit(Event::End)
+    }
+    /// Read a list window and its coordinates under the same state lock.
+    pub fn read_state_slice<S: Sink>(
+        &mut self,
+        sink: &mut S,
+        cid: &ContainerID,
+        rich: bool,
+        start: usize,
+        end: usize,
+    ) -> LoroResult<(usize, usize)> {
+        let idx = self.arena.register_container(cid);
+        let kind = idx.get_type();
+        if !matches!(kind, ContainerType::List | ContainerType::MovableList) {
+            return Err(err("Expected list container"));
+        }
+        let value = self
+            .store
+            .try_get_value_ephemeral(idx)?
+            .unwrap_or_else(|| kind.default_value());
+        let total = value
+            .as_list()
+            .ok_or_else(|| err("Expected list value"))?
+            .len();
+        let start = start.min(total);
+        self.read_state_container(sink, idx, rich, Some((start, end)), Some(value), 0)?;
+        Ok((start, total))
     }
     fn read_state_container<S: Sink>(
         &mut self,
@@ -237,7 +262,7 @@ fn raw<S: Sink>(s: &mut S, v: &LoroValue, depth: usize) -> LoroResult<()> {
 
 fn check_depth(depth: usize) -> LoroResult<()> {
     if depth > 256 {
-        Err(err("readState nesting exceeds 256 levels"))
+        Err(err("toContainerTree nesting exceeds 256 levels"))
     } else {
         Ok(())
     }
