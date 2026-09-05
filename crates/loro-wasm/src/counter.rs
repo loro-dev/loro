@@ -136,41 +136,4 @@ impl LoroCounter {
             .into_double()
             .map_err(|_| JsValue::from_str("Counter value is not a number"))
     }
-
-    /// Get the counter value as JSON text (a JSON number).
-    ///
-    /// The content is identical to `JSON.stringify(counter.toJSON())`, but the
-    /// JSON text is produced inside WASM. Unlike the other container types,
-    /// this also works on a detached counter, mirroring `toJSON()`.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const counter = doc.getCounter("counter");
-    /// counter.increment(1.5);
-    /// console.log(counter.getDeepValueJson());  // "1.5"
-    /// ```
-    #[wasm_bindgen(js_name = "getDeepValueJson", skip_typescript)]
-    pub fn get_deep_value_json(&self) -> JsResult<String> {
-        Ok(self.handler.get_deep_value_json()?)
-    }
-
-    /// Read plain JSON plus an exact, sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
-    /// Count every value in pre-order from zero, including scalars and plain
-    /// objects/arrays; visit object children in `Object.keys` order.
-    /// The document object counts as zero but has no id; for a container call,
-    /// position zero identifies that container. Tree metadata remains plain
-    /// deep data, matching `getDeepValueWithID()`.
-    ///
-    /// No schema or value-shape guesses are needed. The positions are a copied
-    /// Uint32Array (four bytes per container), not a view into WASM memory.
-    /// Detached containers throw, except counters which also support reads.
-    #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
-    pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        crate::deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
-    }
 }

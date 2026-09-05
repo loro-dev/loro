@@ -14,6 +14,8 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
+pub use state::read_state;
+
 use crate::sync::{AtomicBool, AtomicUsize};
 use std::sync::Arc;
 mod change_meta;
@@ -36,7 +38,7 @@ use pre_commit::{
     PreCommitCallbackPayload,
 };
 pub use rustc_hash::FxHashMap;
-pub use state::{DeepValueJsonWithIds, DocState};
+pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;

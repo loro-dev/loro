@@ -2698,30 +2698,6 @@ impl TextHandler {
         }))
     }
 
-    /// Get the deep value of the text (its content string) as JSON text.
-    ///
-    /// The content is identical to serializing the deep value, but the JSON
-    /// text is produced in one pass.
-    pub fn get_deep_value_json(&self) -> LoroResult<String> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| {
-            state.get_container_deep_value_json_with_ids(inner.container_idx)
-        })
-    }
-
     pub fn get_cursor(&self, event_index: usize, side: Side) -> Option<Cursor> {
         self.get_cursor_internal(event_index, side, true)
     }
@@ -3390,30 +3366,6 @@ impl ListHandler {
         Ok(inner.with_doc_state(|state| {
             state.get_container_deep_value_with_id(inner.container_idx, None)
         }))
-    }
-
-    /// Get the deep value of this list as JSON text.
-    ///
-    /// The content is identical to serializing the deep value, but the JSON
-    /// text is produced in one pass.
-    pub fn get_deep_value_json(&self) -> LoroResult<String> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| {
-            state.get_container_deep_value_json_with_ids(inner.container_idx)
-        })
     }
 
     /// Get the deep value of the elements in the range `[start, end)`.
@@ -4127,30 +4079,6 @@ impl MovableListHandler {
         }))
     }
 
-    /// Get the deep value of this list as JSON text.
-    ///
-    /// The content is identical to serializing the deep value, but the JSON
-    /// text is produced in one pass.
-    pub fn get_deep_value_json(&self) -> LoroResult<String> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| {
-            state.get_container_deep_value_json_with_ids(inner.container_idx)
-        })
-    }
-
     /// Get the deep value of the elements in the range `[start, end)`.
     ///
     /// Child containers in the range are recursively resolved to `{ cid, value }`
@@ -4590,30 +4518,6 @@ impl MapHandler {
         }
     }
 
-    /// Get the deep value of the map as JSON text.
-    ///
-    /// The content is identical to serializing the deep value, but the JSON
-    /// text is produced in one pass.
-    pub fn get_deep_value_json(&self) -> LoroResult<String> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
-        let inner = self.inner.try_attached_state()?;
-        inner.with_doc_state(|state| {
-            state.get_container_deep_value_json_with_ids(inner.container_idx)
-        })
-    }
-
     pub fn get(&self, key: &str) -> Option<LoroValue> {
         match &self.inner {
             MaybeDetached::Detached(m) => {
@@ -5001,30 +4905,6 @@ pub mod counter {
 
         pub fn clear(&self) -> LoroResult<()> {
             self.decrement(self.get_value().into_double().unwrap())
-        }
-
-        /// Get the counter value as JSON text (a JSON number).
-        ///
-        /// Unlike the other container types this also works on a detached
-        /// counter, mirroring `get_value`.
-        pub fn get_deep_value_json(&self) -> LoroResult<String> {
-            crate::state::deep_value_to_json(&self.get_value())
-        }
-
-        /// Read plain JSON with a sparse container-position index.
-        ///
-        /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-        /// Count every JSON value in pre-order, starting at zero, using JavaScript
-        /// `Object.keys` order for objects. Plain data never acquires a container id.
-        /// A document object counts as value zero but has no id; a container-level
-        /// result marks position zero. Tree metadata is plain deep data, as in
-        /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-        pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
-            Ok(crate::DeepValueJsonWithIds {
-                json: self.get_deep_value_json()?,
-                cids: vec![self.id().to_string()],
-                container_positions: vec![0],
-            })
         }
     }
 
