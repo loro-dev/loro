@@ -666,3 +666,48 @@ fn snapshot_import_rejects_corrupt_inner_sstable_with_valid_envelope_checksum() 
             .is_some_and(|value| value.is_empty()));
     }
 }
+
+/// A change whose deps are before the shallow root is rejected AND dropped:
+/// it must not linger in the pending store, where it could never be unlocked.
+/// Locks in the "dropped, not pending" guarantee documented by
+/// `loro/tests/shallow_snapshot_concurrency.rs`.
+#[test]
+fn outdated_update_on_shallow_doc_is_dropped_not_pending() {
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_map("m").insert("a", 1).unwrap();
+    a.commit_then_renew();
+    let v_vv = a.oplog_vv();
+    let v_frontiers = a.oplog_frontiers();
+    a.get_map("m").insert("b", 2).unwrap();
+    a.commit_then_renew();
+    let f = a.oplog_frontiers();
+    a.get_map("m").insert("c", 3).unwrap();
+    a.commit_then_renew();
+
+    // B is bootstrapped from the shallow snapshot at F.
+    let b = LoroDoc::new();
+    b.import(&a.export(ExportMode::shallow_snapshot(&f)).unwrap())
+        .unwrap();
+    assert_eq!(pending_len(&b), 0);
+
+    // C holds full history up to V and edits on top of it, concurrent with F.
+    let c = LoroDoc::new();
+    c.import(&a.export(ExportMode::snapshot_at(&v_frontiers)).unwrap())
+        .unwrap();
+    c.set_peer_id(2).unwrap();
+    c.get_map("m").insert("from_c", true).unwrap();
+    c.commit_then_renew();
+    let updates = c.export(ExportMode::updates(&v_vv)).unwrap();
+
+    let err = b.import(&updates).unwrap_err();
+    assert!(matches!(
+        err,
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    ));
+    assert_eq!(
+        pending_len(&b),
+        0,
+        "outdated changes must be dropped, not parked as pending"
+    );
+}
