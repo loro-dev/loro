@@ -75,11 +75,6 @@ Container `id` wrapper identity, lazy-cache lifetime, and the focused benchmark
 are documented in
 [context/wasm-container-id-cache.md](../../context/wasm-container-id-cache.md).
 
-Bulk-read APIs (per-container/range deep reads with ids, `getDeepValueJson`,
-`getDeepValueJsonWithIds`, the cid format, and the cids pre-order contract)
-are documented in
-[context/wasm-bulk-read.md](../../context/wasm-bulk-read.md).
-
 ## Packaging Rules
 
 - Preserve the public `loro-crdt` API names and package export paths used by
@@ -92,3 +87,7 @@ are documented in
   and Rollup need either the `base64` entry or an explicit asset copy. Keep the
   bundler smoke tests aligned with these expectations.
 - If package output or published behavior changes, add a changeset.
+
+`LoroDoc.readState` constructs typed nested snapshots with fixed JS helpers. See
+[context/wasm-bulk-read.md](../../context/wasm-bulk-read.md) for identity, ownership,
+range and Mirror integration contracts.
