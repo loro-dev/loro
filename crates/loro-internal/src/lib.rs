@@ -36,7 +36,7 @@ use pre_commit::{
     PreCommitCallbackPayload,
 };
 pub use rustc_hash::FxHashMap;
-pub use state::DocState;
+pub use state::{DeepValueJsonWithIds, DocState};
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};
 use txn::Transaction;

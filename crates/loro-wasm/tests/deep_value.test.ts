@@ -135,12 +135,7 @@ describe("range deep reads", () => {
   it("getRangeValue resolves containers to plain deep values", () => {
     const { list } = setup();
     expect(list.getRangeValue(1, 3)).toStrictEqual(["b", { k: "v" }]);
-    expect(list.getRangeValue(0, 4)).toStrictEqual([
-      "a",
-      "b",
-      { k: "v" },
-      "d",
-    ]);
+    expect(list.getRangeValue(0, 4)).toStrictEqual(["a", "b", { k: "v" }, "d"]);
   });
 
   it("clamps out-of-range bounds and returns [] for empty ranges", () => {
@@ -194,9 +189,7 @@ describe("range deep reads", () => {
     expect(() => new LoroList().getRangeValue(0, 1)).toThrow();
     expect(() => new LoroList().getRangeDeepValueWithID(0, 1)).toThrow();
     expect(() => new LoroMovableList().getRangeValue(0, 1)).toThrow();
-    expect(() =>
-      new LoroMovableList().getRangeDeepValueWithID(0, 1),
-    ).toThrow();
+    expect(() => new LoroMovableList().getRangeDeepValueWithID(0, 1)).toThrow();
   });
 });
 
@@ -262,90 +255,31 @@ describe("getDeepValueJson", () => {
 });
 
 describe("getDeepValueJsonWithIds", () => {
-  type ContainerTypeName =
-    | "Text"
-    | "Map"
-    | "List"
-    | "MovableList"
-    | "Tree"
-    | "Counter";
-
-  const containerTypeOf = (cid: string): ContainerTypeName =>
-    cid.slice(cid.lastIndexOf(":") + 1) as ContainerTypeName;
-
-  /**
-   * Rebuild the getDeepValueWithID() shape from the parsed `json` and the
-   * positional `cids` stream, walking against the known Loro grammar:
-   * root object -> every value is a container; Map -> object entries;
-   * List/MovableList/Tree -> arrays; Text -> string; Counter -> number.
-   */
-  function reattachContainerIds(
-    json: unknown,
-    cids: readonly string[],
-    isRoot: boolean,
-  ): unknown {
-    let i = 0;
-    const shapeMatches = (type: ContainerTypeName, value: unknown): boolean => {
-      switch (type) {
-        case "Text":
-          return typeof value === "string";
-        case "Counter":
-          return typeof value === "number";
-        case "Map":
-          return (
-            typeof value === "object" && value !== null && !Array.isArray(value)
-          );
-        case "List":
-        case "MovableList":
-        case "Tree":
-          return Array.isArray(value);
+  // Walk every parsed JSON value. Identity is determined only by the sparse
+  // position index, never by a scalar/object shape or a schema guess.
+  function reattachContainerIds(result: {
+    json: string;
+    cids: readonly string[];
+    containerPositions: Uint32Array;
+  }): unknown {
+    let position = 0;
+    let next = 0;
+    const walk = (value: any): unknown => {
+      const cid =
+        result.containerPositions[next] === position++
+          ? result.cids[next++]
+          : undefined;
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++) value[i] = walk(value[i]);
+      } else if (value !== null && typeof value === "object") {
+        for (const key of Object.keys(value)) value[key] = walk(value[key]);
       }
+      return cid === undefined ? value : { cid, value };
     };
-    const walkContainerValue = (
-      type: ContainerTypeName,
-      value: any,
-    ): unknown => {
-      switch (type) {
-        case "Text":
-        case "Counter":
-          return value;
-        case "Map": {
-          const out: Record<string, unknown> = {};
-          for (const [k, v] of Object.entries(value)) out[k] = attach(v);
-          return out;
-        }
-        case "List":
-        case "MovableList":
-          return value.map(attach);
-        case "Tree":
-          // Tree node meta maps are plain deep values; no container ids inside
-          return value;
-      }
-    };
-    // Consume the next cid and wrap `value` as a { cid, value } node.
-    const attachForced = (value: unknown): ValueWithContainerID => {
-      const cid = cids[i++];
-      return {
-        cid: cid as ValueWithContainerID["cid"],
-        value: walkContainerValue(containerTypeOf(cid), value) as never,
-      };
-    };
-    // Wrap `value` only if the next pending cid's type matches its shape;
-    // otherwise it is a plain value and is kept as-is.
-    const attach = (value: unknown): unknown => {
-      const cid = cids[i];
-      if (cid === undefined || !shapeMatches(containerTypeOf(cid), value)) {
-        return value;
-      }
-      return attachForced(value);
-    };
-
-    if (!isRoot) return attachForced(json);
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(json as Record<string, unknown>)) {
-      out[k] = attachForced(v);
-    }
-    return out;
+    const value = walk(JSON.parse(result.json));
+    expect(next).toBe(result.cids.length);
+    expect(next).toBe(result.containerPositions.length);
+    return value;
   }
 
   const setupAll = () => {
@@ -374,7 +308,8 @@ describe("getDeepValueJsonWithIds", () => {
 
   it("doc-level: json + cids reconstruct getDeepValueWithID", () => {
     const { doc, map, text, list, sub, movable, tree, counter } = setupAll();
-    const { json, cids } = doc.getDeepValueJsonWithIds();
+    const result = doc.getDeepValueJsonWithIds();
+    const { json, cids } = result;
 
     // json parses to the same content as toJSON()
     expect(JSON.parse(json)).toStrictEqual(doc.toJSON());
@@ -391,7 +326,7 @@ describe("getDeepValueJsonWithIds", () => {
       tree.id,
     ]);
 
-    expect(reattachContainerIds(JSON.parse(json), cids, true)).toStrictEqual(
+    expect(reattachContainerIds(result)).toStrictEqual(
       doc.getDeepValueWithID(),
     );
   });
@@ -407,7 +342,8 @@ describe("getDeepValueJsonWithIds", () => {
       ["counter", counter],
     ] as const;
     for (const [name, container] of containers) {
-      const { json, cids } = container.getDeepValueJsonWithIds();
+      const result = container.getDeepValueJsonWithIds();
+      const { json, cids } = result;
       expect(cids[0], name).toBe(container.id);
       expect(JSON.parse(json), name).toStrictEqual(container.toJSON());
       // LoroCounter has no getDeepValueWithID(); its node shape is trivially
@@ -416,16 +352,122 @@ describe("getDeepValueJsonWithIds", () => {
         expect(cids, name).toStrictEqual([counter.id]);
         continue;
       }
-      expect(
-        reattachContainerIds(JSON.parse(json), cids, false),
-        name,
-      ).toStrictEqual(container.getDeepValueWithID());
+      expect(reattachContainerIds(result), name).toStrictEqual(
+        container.getDeepValueWithID(),
+      );
     }
+  });
+
+  it("distinguishes scalar strings from Text containers at either position", () => {
+    const results = ["a", "b"].map((textKey) => {
+      const doc = new LoroDoc();
+      doc.setPeerId("1");
+      const map = doc.getMap("m");
+      map.setContainer(textKey, new LoroText()).insert(0, "same");
+      map.set(textKey === "a" ? "b" : "a", "same");
+      const result = doc.getDeepValueJsonWithIds();
+      expect(reattachContainerIds(result)).toStrictEqual(
+        doc.getDeepValueWithID(),
+      );
+      return result;
+    });
+    expect(results[0].json).toBe(results[1].json);
+    expect(results[0].cids).toStrictEqual(results[1].cids);
+    expect([...results[0].containerPositions]).toStrictEqual([1, 2]);
+    expect([...results[1].containerPositions]).toStrictEqual([1, 3]);
+  });
+
+  it("follows JS integer-key order at document and nested map levels", () => {
+    const doc = new LoroDoc();
+    for (const key of [
+      "10",
+      "2",
+      "01",
+      "0",
+      "4294967294",
+      "4294967295",
+      "-1",
+    ]) {
+      const map = doc.getMap(key);
+      map.setContainer("10", new LoroText()).insert(0, "ten");
+      map.setContainer("2", new LoroText()).insert(0, "two");
+      map.set("0", "plain");
+    }
+    const result = doc.getDeepValueJsonWithIds();
+    expect(reattachContainerIds(result)).toStrictEqual(
+      doc.getDeepValueWithID(),
+    );
+    expect(JSON.parse(result.json)).toStrictEqual(doc.toJSON());
+  });
+
+  it("preserves cid/value lookalikes and counts plain nested data and binary items", () => {
+    const doc = new LoroDoc();
+    const map = doc.getMap("m");
+    map.set("a", { cid: "cid:root-fake:Text", value: "ordinary data" });
+    map.set("b", {
+      "10": [1, "literal"],
+      "2": { cid: "cid:root-fake:Map", value: {} },
+    });
+    map.set("c", new Uint8Array([3, 4, 5]));
+    const text = map.setContainer("z", new LoroText());
+    text.insert(0, "actual container");
+    const result = doc.getDeepValueJsonWithIds();
+    expect(result.cids).toStrictEqual([map.id, text.id]);
+    expect(JSON.parse(result.json)).toStrictEqual(
+      JSON.parse(doc.getDeepValueJson()),
+    );
+    // Binary's JSON representation is an array rather than toJSON's Uint8Array.
+    const rebuilt = reattachContainerIds(result) as any;
+    expect(rebuilt.m.value.a).toStrictEqual({
+      cid: "cid:root-fake:Text",
+      value: "ordinary data",
+    });
+    expect(rebuilt.m.value.z).toStrictEqual({
+      cid: text.id,
+      value: "actual container",
+    });
+  });
+
+  it("keeps __proto__ as an own JSON property without changing prototypes", () => {
+    const doc = new LoroDoc();
+    doc.getText("__proto__").insert(0, "data");
+    const result = doc.getDeepValueJsonWithIds();
+    const parsed = JSON.parse(result.json);
+    const restored = reattachContainerIds(result) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype);
+    expect(Object.getPrototypeOf(restored)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(restored, "__proto__")).toBe(
+      true,
+    );
+    expect(restored.__proto__).toStrictEqual({
+      cid: "cid:root-__proto__:Text",
+      value: "data",
+    });
+  });
+
+  it("preserves mixed scalar/container arrays and plain empty values", () => {
+    const doc = new LoroDoc();
+    const list = doc.getList("list");
+    list.push("same");
+    list.pushContainer(new LoroText()).insert(0, "same");
+    list.push({});
+    list.pushContainer(new LoroMap());
+    list.push([]);
+    list.pushContainer(new LoroList());
+    list.push(null);
+    list.push(1.5);
+    list.pushContainer(new LoroCounter()).increment(1.5);
+    const result = list.getDeepValueJsonWithIds();
+    expect(reattachContainerIds(result)).toStrictEqual(
+      list.getDeepValueWithID(),
+    );
+    expect(result.containerPositions[0]).toBe(0);
   });
 
   it("empty doc yields {} and no cids", () => {
     const doc = new LoroDoc();
-    const { json, cids } = doc.getDeepValueJsonWithIds();
+    const result = doc.getDeepValueJsonWithIds();
+    const { json, cids } = result;
     expect(json).toBe("{}");
     expect(cids).toStrictEqual([]);
   });
