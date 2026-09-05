@@ -88,6 +88,11 @@ are documented in
   bundler smoke tests aligned with these expectations.
 - If package output or published behavior changes, add a changeset.
 
-`LoroDoc.readState` constructs typed nested snapshots with fixed JS helpers. See
+`LoroDoc.toContainerTree` constructs typed nested snapshots with fixed JS helpers. See
 [context/wasm-bulk-read.md](../../context/wasm-bulk-read.md) for identity, ownership,
 range and Mirror integration contracts.
+
+`toContainerTree` on attached containers recursively applies its text format.
+Document `roots` filters before reading values; missing roots are omitted. List
+`toContainerTreeSlice` returns coordinates and items under one state lock, never
+a partial ContainerNode. Keep receiver and text-format inference in TypeScript.

@@ -1,22 +1,22 @@
 # Structured WASM reads and the performance stack
 
-Verified against code 2026-09-05.
+Verified against code 2026-09-06.
 
 ## Responsibility
 
 - #1093 bounds retained decoded container state; it benefits existing handle reads.
 - #1085 caches wrapper kind; #1086 supplies legacy subtree/range reads with IDs.
-- #1087 adds `LoroDoc.readState` to construct a consumer-ready JS snapshot directly.
+- #1087 adds `LoroDoc.toContainerTree` to construct a consumer-ready JS snapshot directly.
 - #1090/#1091 concern shallow snapshot causal boundaries and constructing their
   root state. They optimize history import/export, independently of this read API.
 
 ## Contract
 
 ```ts
-const roots = doc.readState();
-const subtree = doc.readState({container: map.id});
-const window = doc.readState({container: list.id, range: {start: 20, end: 40}});
-const formatted = doc.readState({container: text.id, text: "delta"});
+const roots = doc.toContainerTree();
+const subtree = map.toContainerTree();
+const window = list.toContainerTreeSlice(20, 40);
+const formatted = text.toContainerTree({text: "delta"});
 ```
 
 Containers are `{type, cid, value}`. Map values and List/MovableList items are
@@ -29,12 +29,11 @@ fields follow the same node contract. Counter contains a number.
 Identity is emitted only at real CRDT edges, including mergeable Map markers
 and Tree metadata edges. No keys, scalar values, paths, traversal positions, or
 user object shapes are used to guess identity. Full-document reads obey root
-visibility. Explicit root IDs can read empty implicit roots. Missing normal or
-mergeable containers and unknown container types return errors. Reads do not
+visibility. An attached root handle can read its empty root. Detached handles and unknown container types return errors. Document roots selection uses visible root names; missing names are omitted without creating roots, duplicates are ignored, and an empty selection returns {}. Reads do not
 commit; caller mutations of returned objects/buffers do not mutate the document.
 
-Ranges require List/MovableList container IDs and nonnegative u32 integer bounds;
-end is exclusive, bounds clamp, inverted ranges are empty. Only selected child
+List/MovableList.toContainerTreeSlice requires nonnegative u32 integer bounds;
+end is exclusive, bounds clamp, inverted ranges are empty. It returns {cid, start, totalLength, items}, not a full container node; metadata and items are read under one state lock. Only selected child
 subtrees are traversed, though obtaining the parent shallow list is still O(N).
 Read traversal rejects nesting above 256 levels. JS number conversion follows
 existing reads (including i64 rounding, NaN and infinity); Binary is Uint8Array.
@@ -99,3 +98,5 @@ Pre-creating dense array slots likewise gave no material improvement. The shippe
 builder retains fixed wrapper constructors, per-read peer/key reuse, and safe own
 property writes. These timings describe the tested machines/workload, not a general
 speed guarantee. Mirror's Tree normalization still uses its existing handle path.
+
+Document toContainerTree({roots}) filters before reading root values; the optional text format applies recursively. TypeScript infers both the receiver kind and Text value format. Mirror selects schema roots and, when preserving unknown roots, includes them while excluding explicit Ignore roots.
