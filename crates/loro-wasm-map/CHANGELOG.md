@@ -1,5 +1,38 @@
 # loro-crdt-map
 
+## 1.16.0
+
+### Minor Changes
+
+- 98b2ac6: Add bulk deep-read APIs on containers. `LoroMap`/`LoroList`/`LoroMovableList`/`LoroTree`/`LoroText` now expose `getDeepValueWithID()` returning the same `{ cid, value }` node shape as `LoroDoc.getDeepValueWithID()`. `LoroList` and `LoroMovableList` also expose `getRangeDeepValueWithID(start, end)` and `getRangeValue(start, end)` for reading a slice of a list in one WASM call; bounds are clamped (negatives to 0, overflows to the length) and empty or inverted ranges return `[]`. Detached containers throw a readable error instead of trapping.
+
+  Potentially breaking: the `cid` field in `getDeepValueWithID()` results is now the bare container id string (e.g. `cid:92@2311024965712536503:Map`, `cid:root-map:Map`) — exactly what the container's `id` property returns. Previously it was a Debug-style composite like `idx:85, id:cid:92@2311024965712536503:Map`. Update any consumer that parsed or matched the old `idx:N, id:...` shape.
+
+### Patch Changes
+
+- fcd039c: Fix wasm memory retention when reading a document container by container
+  (loro-dev/loro#1092).
+
+  Every read through a container handle (`LoroMap.keys()`/`get()`,
+  `LoroList.get()`, `LoroText.toJSON()`, ...) decoded the container's value into
+  an in-memory cache that was pinned for the lifetime of the document — about
+  4 KB per container, released only by `doc.free()`. Walking a large document
+  this way (the pattern loro-mirror's initial state build uses) retained ~4 KB ×
+  containers-ever-read and trapped wasm32 at the 4 GiB limit around one million
+  containers.
+
+  The decoded-value cache is now bounded (2048 entries, second-chance FIFO).
+  Evicted entries are pure caches over the KV store and are re-decoded on the
+  next read, so this only changes memory behavior, not API semantics.
+  `doc.free()` semantics are unchanged.
+
+  Measured on the issue's repro (570-turn document, 188k container handles,
+  release build): the handle walk retains no per-container memory (external
+  memory flat at ~84 MiB vs +641 MiB before) and runs ~10x faster
+  (1.28 s vs 12.5 s) thanks to the smaller working set.
+
+- 8874574: perf: cache `kind()` results on container wrappers. `kind()` returns a constant string per container class; it is now memoized after the first call, so repeated reads (e.g. tree traversal in loro-mirror) no longer cross into WASM or allocate a fresh JS string. This extends the existing `id` cache to `kind()`.
+
 ## 1.15.1
 
 ### Patch Changes
