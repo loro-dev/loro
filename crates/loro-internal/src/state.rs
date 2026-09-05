@@ -1469,7 +1469,10 @@ impl DocState {
         let Some(value) = self.store.get_value_ephemeral(container) else {
             return container.get_type().default_value();
         };
-        let cid_str = LoroValue::String(format!("idx:{}, id:{}", container.to_index(), id).into());
+        // The `cid` is the container id's Display string, the same form that the
+        // JS `container.id` getter returns (e.g. `cid:root-map:Map`,
+        // `cid:92@2311024965712536503:Map`).
+        let cid_str = LoroValue::String(id.to_string().into());
         match value {
             LoroValue::Container(_) => unreachable!(),
             LoroValue::List(mut list) => {
@@ -1619,6 +1622,54 @@ impl DocState {
             }
             _ => value,
         }
+    }
+
+    /// Get the deep value of a list/movable-list container's elements in the range
+    /// `[start, end)`.
+    ///
+    /// `start`/`end` are clamped to the list length; an empty or inverted range
+    /// returns an empty list. Container items inside the range are replaced by
+    /// their deep value: when `with_id` is true they become `{ cid, value }` nodes
+    /// (via [`Self::get_container_deep_value_with_id`]), otherwise their plain deep
+    /// value (via [`Self::get_container_deep_value`]).
+    pub(crate) fn get_list_range_deep_value(
+        &mut self,
+        container: ContainerIdx,
+        start: usize,
+        end: usize,
+        with_id: bool,
+    ) -> LoroValue {
+        let Some(value) = self.store.get_value_ephemeral(container) else {
+            return container.get_type().default_value();
+        };
+        let LoroValue::List(list) = value else {
+            return container.get_type().default_value();
+        };
+
+        let len = list.len();
+        let start = start.min(len);
+        let end = end.min(len);
+        if start >= end {
+            return LoroValue::List(Default::default());
+        }
+
+        let mut ans = Vec::with_capacity(end - start);
+        for item in list.iter().skip(start).take(end - start) {
+            if item.is_container() {
+                let cid = item.as_container().unwrap();
+                let container_idx = self.arena.register_container(cid);
+                let value = if with_id {
+                    self.get_container_deep_value_with_id(container_idx, Some(cid.clone()))
+                } else {
+                    self.get_container_deep_value(container_idx)
+                };
+                ans.push(value);
+            } else {
+                ans.push(item.clone());
+            }
+        }
+
+        LoroValue::List(ans.into())
     }
 
     pub(crate) fn get_all_alive_containers(&mut self) -> LoroResult<FxHashSet<ContainerID>> {
