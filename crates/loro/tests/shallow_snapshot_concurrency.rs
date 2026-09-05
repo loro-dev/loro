@@ -318,3 +318,38 @@ fn shallow_doc_merges_back_into_full_history_doc() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// The change immediately concurrent with F must be rejected too: its deps
+/// equal F's own deps, which have already been trimmed from the shallow DAG.
+#[test]
+fn update_concurrent_with_root_frontier_is_rejected() -> anyhow::Result<()> {
+    let a = LoroDoc::new();
+    a.set_peer_id(1)?;
+    a.get_map("m").insert("before", 1)?;
+    a.commit();
+    let v = a.oplog_frontiers();
+    let vv = a.oplog_vv();
+    a.get_map("m").insert("root", 2)?;
+    a.commit();
+    let f = a.oplog_frontiers();
+    let b = LoroDoc::from_snapshot(&a.export(ExportMode::shallow_snapshot(&f))?)?;
+    let before = b.get_deep_value();
+    let c = LoroDoc::from_snapshot(&a.export(ExportMode::snapshot_at(&v))?)?;
+    c.set_peer_id(2)?;
+    c.get_map("m").insert("concurrent", true)?;
+    c.commit();
+    let err = b.import(&c.export(ExportMode::updates(&vv))?).unwrap_err();
+    assert!(matches!(
+        err,
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    ));
+    assert_eq!(b.get_deep_value(), before);
+    assert_eq!(b.shallow_since_frontiers(), f);
+    // Rejection leaves the doc usable for valid post-root updates.
+    a.get_map("m").insert("after", 3)?;
+    a.commit();
+    let status = b.import(&a.export(ExportMode::updates(&b.oplog_vv()))?)?;
+    assert!(status.pending.is_none());
+    assert_eq!(b.get_deep_value(), a.get_deep_value());
+    Ok(())
+}
