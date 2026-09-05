@@ -44,3 +44,7 @@ before changing mergeable child behavior.
 - `cargo test -p loro-internal --test mergeable_cid_encoding`
 - `cargo test -p loro-internal --test mergeable_container`
 - `cargo test -p loro-internal import_atomicity` if import or rollback is involved.
+
+`read_state.rs` traverses ephemeral shallow values into a sink. Container identity
+comes from CRDT edges, including mergeable markers and Tree metadata; ordinary
+values remain opaque. See [bulk reads](../../../../context/wasm-bulk-read.md).
