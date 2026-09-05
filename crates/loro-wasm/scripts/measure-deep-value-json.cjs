@@ -1,15 +1,19 @@
 const { performance } = require("node:perf_hooks");
-const { LoroDoc, LoroList, LoroMap, LoroText } = require("../nodejs/index.js");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const modulePath =
+  process.env.LORO_BENCH_MODULE ||
+  path.resolve(__dirname, "../nodejs/index.js");
+const { LoroDoc, LoroList, LoroMap, LoroText } = require(modulePath);
 
-// Mirrors the distribution of a real-world document:
-// Map 15,632 / List 9,956 / Text 44,463 containers (~70k in total),
-// ~3.9 MB of JSON content.
 const MAP_COUNT = 15_632;
 const LIST_COUNT = 9_956;
 const TEXT_COUNT = 44_463;
 const PARENT_POOL_SIZE = 2_048;
-const PARAGRAPH =
-  "The quick brown fox jumps over the lazy dog. Pack my box. ";
+const PARAGRAPH = "The quick brown fox jumps over the lazy dog. Pack my box. ";
 
 const WARMUP_ROUNDS = 2;
 const ROUNDS = 5;
@@ -17,6 +21,7 @@ let blackhole = 0;
 
 function buildDocument() {
   const doc = new LoroDoc();
+  doc.setPeerId("1");
   const root = doc.getMap("root");
   const parents = [root];
   let mi = 1;
@@ -59,126 +64,261 @@ function buildDocument() {
   return doc;
 }
 
-function median(values) {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
+function decode(result, project = false) {
+  let next = 0,
+    position = 0;
+  const registry = new Set();
+  function walk(value) {
+    const cid =
+      result.containerPositions[next] === position++
+        ? result.cids[next++]
+        : undefined;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) value[i] = walk(value[i]);
+    } else if (value !== null && typeof value === "object") {
+      for (const key of Object.keys(value)) value[key] = walk(value[key]);
+    }
+    if (cid === undefined) return value;
+    if (!project) return { cid, value };
+    registry.add(cid);
+    if (cid.endsWith(":Map"))
+      Object.defineProperty(value, "$cid", { value: cid });
+    return value;
+  }
+  const value = walk(JSON.parse(result.json));
+  assert.equal(next, result.cids.length);
+  return project ? { value, registry } : value;
 }
 
-function timed(name, run) {
+function pathsFor(result) {
+  let next = 0,
+    position = 0;
+  const paths = [],
+    stack = [];
+  function walk(value) {
+    if (result.containerPositions[next] === position++) {
+      paths.push(stack.slice());
+      next++;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const key of Object.keys(value)) {
+        stack.push(Array.isArray(value) ? Number(key) : key);
+        walk(value[key]);
+        stack.pop();
+      }
+    }
+  }
+  walk(JSON.parse(result.json));
+  assert.equal(next, result.cids.length);
+  return paths;
+}
+
+function attachPaths(json, cids, paths) {
+  let value = JSON.parse(json);
+  // Descendants first so replacing a parent does not invalidate its paths.
+  for (let i = paths.length - 1; i >= 0; i--) {
+    const steps = paths[i];
+    if (!steps.length) {
+      value = { cid: cids[i], value };
+      continue;
+    }
+    let parent = value;
+    for (let j = 0; j < steps.length - 1; j++) parent = parent[steps[j]];
+    const key = steps[steps.length - 1];
+    parent[key] = { cid: cids[i], value: parent[key] };
+  }
+  return value;
+}
+
+function handleProjection(container, registry) {
+  const kind = container.kind();
+  const cid = container.id;
+  registry.add(cid);
+  let out;
+  if (kind === "Map") {
+    out = {};
+    Object.defineProperty(out, "$cid", { value: cid });
+    for (const key of container.keys()) {
+      const child = container.get(key);
+      out[key] =
+        child && typeof child.kind === "function"
+          ? handleProjection(child, registry)
+          : child;
+    }
+  } else if (kind === "List" || kind === "MovableList") {
+    out = [];
+    for (let i = 0, n = container.length; i < n; i++) {
+      const child = container.get(i);
+      out.push(
+        child && typeof child.kind === "function"
+          ? handleProjection(child, registry)
+          : child,
+      );
+    }
+  } else {
+    out = container.toJSON();
+  }
+  container.free();
+  return out;
+}
+
+const name = process.argv[2];
+if (name) {
+  // Each case gets its own process and a freshly imported snapshot. Do not
+  // hide allocations in an already materialized, directly built document.
+  const snapshot = fs.readFileSync(process.argv[3]);
+  const doc = new LoroDoc();
+  const startImport = performance.now();
+  doc.import(snapshot);
+  const importMs = performance.now() - startImport;
+  const run = {
+    toJSON: () => doc.toJSON(),
+    getDeepValueWithID: () => doc.getDeepValueWithID(),
+    jsonParse: () => JSON.parse(doc.getDeepValueJson()),
+    indexedJson: () => doc.getDeepValueJsonWithIds(),
+    legacyJson: () => doc.getDeepValueJsonWithIds(),
+    indexedJsonParseReattach: () => decode(doc.getDeepValueJsonWithIds()),
+    indexedProjection: () => decode(doc.getDeepValueJsonWithIds(), true),
+    handleProjection: () => {
+      const registry = new Set();
+      return {
+        value: { root: handleProjection(doc.getMap("root"), registry) },
+        registry,
+      };
+    },
+  }[name];
+  global.gc?.();
+  const before = process.memoryUsage();
+  const start = performance.now();
+  let held = run();
+  const coldMs = performance.now() - start;
+  global.gc?.();
+  const after = process.memoryUsage();
+  const memory = Object.fromEntries(
+    ["external", "heapUsed", "rss"].map((k) => [
+      k + "DeltaBytes",
+      after[k] - before[k],
+    ]),
+  );
+  // Correctness outside timed regions; a faster read of the wrong shape is
+  // not an optimization. Projection includes cid registration and map $cid.
+  if (name === "indexedJson" || name === "indexedJsonParseReattach") {
+    assert.deepStrictEqual(
+      name === "indexedJson" ? decode(held) : held,
+      doc.getDeepValueWithID(),
+    );
+  } else if (name === "indexedProjection" || name === "handleProjection") {
+    assert.deepStrictEqual(held.value, doc.toJSON());
+    assert.equal(held.registry.size, MAP_COUNT + LIST_COUNT + TEXT_COUNT);
+    assert.equal(held.value.root.$cid, doc.getMap("root").id);
+  } else if (name === "legacyJson") {
+    assert.deepStrictEqual(
+      JSON.parse(held.json),
+      JSON.parse(doc.getDeepValueJson()),
+    );
+  } else if (name !== "getDeepValueWithID") {
+    assert.deepStrictEqual(held, doc.toJSON());
+  }
+  held = null;
   const samples = [];
   for (let round = 0; round < WARMUP_ROUNDS + ROUNDS; round++) {
     global.gc?.();
-    const start = performance.now();
-    run();
-    const elapsed = performance.now() - start;
+    const t = performance.now();
+    held = run();
+    const elapsed = performance.now() - t;
+    blackhole += Object.keys(held).length;
+    held = null;
     if (round >= WARMUP_ROUNDS) samples.push(elapsed);
   }
-  return { name, medianMs: median(samples), samplesMs: samples };
-}
-
-// The same pre-order re-attach walk documented for consumers of
-// getDeepValueJsonWithIds(): root object -> every value is a container;
-// Map -> object entries; List/MovableList/Tree -> arrays; Text -> string;
-// Counter -> number.
-function makeReattach(cids) {
-  let i = 0;
-  const containerTypeOf = (cid) => cid.slice(cid.lastIndexOf(":") + 1);
-  const shapeMatches = (type, value) => {
-    switch (type) {
-      case "Text":
-        return typeof value === "string";
-      case "Counter":
-        return typeof value === "number";
-      case "Map":
-        return (
-          typeof value === "object" && value !== null && !Array.isArray(value)
-        );
-      case "List":
-      case "MovableList":
-      case "Tree":
-        return Array.isArray(value);
-    }
-  };
-  const attach = (value) => {
-    const cid = cids[i];
-    if (cid === undefined || !shapeMatches(containerTypeOf(cid), value)) {
-      return value;
-    }
-    return attachForced(value);
-  };
-  const attachForced = (value) => {
-    const cid = cids[i++];
-    return { cid, value: walkContainerValue(containerTypeOf(cid), value) };
-  };
-  const walkContainerValue = (type, value) => {
-    switch (type) {
-      case "Text":
-      case "Counter":
-        return value;
-      case "Map": {
-        const out = {};
-        for (const k of Object.keys(value)) out[k] = attach(value[k]);
-        return out;
-      }
-      case "List":
-      case "MovableList":
-        return value.map(attach);
-      case "Tree":
-        return value;
-    }
-  };
-  return (json) => {
-    const out = {};
-    for (const k of Object.keys(json)) out[k] = attachForced(json[k]);
-    blackhole += i;
-    return out;
-  };
-}
-
-const doc = buildDocument();
-const stats = {
-  containers: MAP_COUNT + LIST_COUNT + TEXT_COUNT,
-  jsonBytes: Buffer.byteLength(doc.getDeepValueJson(), "utf8"),
-};
-
-const cases = [
-  ["toJSON", () => blackhole += JSON.stringify(doc.toJSON()).length],
-  ["getDeepValueWithID", () => blackhole += Object.keys(doc.getDeepValueWithID()).length],
-  ["getDeepValueJson", () => blackhole += doc.getDeepValueJson().length],
-  [
-    "getDeepValueJson+parse",
-    () => blackhole += Object.keys(JSON.parse(doc.getDeepValueJson())).length,
-  ],
-  [
-    "getDeepValueJsonWithIds+parse+reattach",
-    () => {
-      const { json, cids } = doc.getDeepValueJsonWithIds();
-      const out = makeReattach(cids)(JSON.parse(json));
-      blackhole += Object.keys(out).length;
-    },
-  ],
-];
-
-const result = cases.map(([name, run]) => timed(name, run));
-const withId = result.find((r) => r.name === "getDeepValueWithID").medianMs;
-const jsonParse = result.find(
-  (r) => r.name === "getDeepValueJson+parse",
-).medianMs;
-
-console.log(
-  JSON.stringify(
-    {
-      ...stats,
-      warmupRounds: WARMUP_ROUNDS,
-      rounds: ROUNDS,
+  samples.sort((a, b) => a - b);
+  console.log(
+    JSON.stringify({
+      name,
+      importMs,
+      coldMs,
+      warmMedianMs: samples[Math.floor(samples.length / 2)],
+      ...memory,
       blackhole,
-      result,
-      speedup: {
-        "getDeepValueJson+parse vs getDeepValueWithID": withId / jsonParse,
-      },
-    },
-    null,
-    2,
-  ),
-);
-doc.free();
+    }),
+  );
+  doc.free();
+} else {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loro-bulk-bench-"));
+  try {
+    const doc = buildDocument();
+    const file = path.join(dir, "fixture.bin");
+    fs.writeFileSync(file, doc.export({ mode: "snapshot" }));
+    const result = doc.getDeepValueJsonWithIds();
+    const supportsPositions = result.containerPositions instanceof Uint32Array;
+    const cases = [
+      "toJSON",
+      "getDeepValueWithID",
+      "jsonParse",
+      "handleProjection",
+    ];
+    let metadata;
+    if (supportsPositions) {
+      cases.push(
+        "indexedJson",
+        "indexedJsonParseReattach",
+        "indexedProjection",
+      );
+      const paths = pathsFor(result);
+      assert.deepStrictEqual(
+        attachPaths(result.json, result.cids, paths),
+        decode(result),
+      );
+      const positionSamples = [],
+        pathSamples = [];
+      for (let i = 0; i < WARMUP_ROUNDS + ROUNDS; i++) {
+        global.gc?.();
+        let t = performance.now();
+        decode(result);
+        const posMs = performance.now() - t;
+        t = performance.now();
+        attachPaths(result.json, result.cids, paths);
+        const pathMs = performance.now() - t;
+        if (i >= WARMUP_ROUNDS) {
+          positionSamples.push(posMs);
+          pathSamples.push(pathMs);
+        }
+      }
+      const median = (xs) =>
+        xs.sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+      metadata = {
+        positionsBytes: result.containerPositions.byteLength,
+        pathsJsonBytes: Buffer.byteLength(JSON.stringify(paths)),
+        pathSegments: paths.reduce((n, p) => n + p.length, 0),
+        cidsJsonBytes: Buffer.byteLength(JSON.stringify(result.cids)),
+        // These isolate JS consumption; path generation/transfer is excluded.
+        positionsParseAttachMs: median(positionSamples),
+        pathsParseAttachMs: median(pathSamples),
+      };
+    }
+    if (!supportsPositions) cases.push("legacyJson");
+    doc.free();
+    const measurements = cases.map((name) => {
+      const child = spawnSync(
+        process.execPath,
+        ["--expose-gc", __filename, name, file],
+        { encoding: "utf8", env: process.env },
+      );
+      if (child.status !== 0) throw new Error(child.stderr || child.stdout);
+      return JSON.parse(child.stdout);
+    });
+    console.log(
+      JSON.stringify(
+        {
+          containers: MAP_COUNT + LIST_COUNT + TEXT_COUNT,
+          jsonBytes: Buffer.byteLength(result.json),
+          metadata,
+          measurements,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

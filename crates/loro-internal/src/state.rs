@@ -35,6 +35,8 @@ pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod dead_containers_cache;
+mod deep_value_json;
+pub use deep_value_json::DeepValueJsonWithIds;
 mod list_state;
 mod map_state;
 mod mergeable;
@@ -94,94 +96,11 @@ fn state_decode_error(message: impl Into<Box<str>>) -> LoroError {
     LoroError::DecodeError(message.into())
 }
 
-/// Serialize a deep value to JSON text.
+/// Serialize a scalar counter value to JSON text.
+#[cfg(feature = "counter")]
 pub(crate) fn deep_value_to_json(value: &LoroValue) -> LoroResult<String> {
     serde_json::to_string(value)
         .map_err(|e| state_decode_error(format!("Failed to serialize deep value to JSON: {e}")))
-}
-
-/// Convert a with-id deep value (the node shape produced by
-/// [`DocState::get_deep_value_with_id`] / [`DocState::get_container_deep_value_with_id`])
-/// into `(json, cids)`:
-///
-/// - `json` is the JSON text of the same deep value WITHOUT ids — the same
-///   content as the plain deep value, serialized through `serde_json::Value`
-///   (object keys follow serde_json's map order).
-/// - `cids` lists the container id strings in pre-order DFS of the serialized
-///   JSON tree: when a container node is visited, its `cid` is pushed before
-///   recursing into its `value`.
-///
-/// The conversion runs in ONE pass: the with-id value is first converted to a
-/// `serde_json::Value`, then that value is walked once, collecting `cids` and
-/// building the stripped value while iterating each `serde_json::Map` in its
-/// own iteration order. This keeps `cids` consistent with the key/item order a
-/// consumer sees after parsing `json`, regardless of serde_json's
-/// `preserve_order` feature.
-///
-/// Node detection is structural: a JSON object is treated as a container node
-/// iff it has exactly two keys, `cid` (a string that parses as a
-/// [`ContainerID`]) and `value`. Because the with-id builder emits nodes with
-/// exactly this shape, the walk does not need to dispatch on the container
-/// type: every container node's `value` is walked recursively and any nested
-/// nodes are found the same way. (Tree node objects carry their meta map as a
-/// plain deep value, so they contain no nodes.)
-///
-/// Known ambiguity: a user map that legitimately stores an object with exactly
-/// the keys `cid` + `value` where `cid` happens to be a valid container id
-/// string would be mistaken for a container node. This is inherent to the
-/// format and accepted.
-fn strip_container_id_nodes(with_id: LoroValue) -> LoroResult<(String, Vec<String>)> {
-    let value = serde_json::to_value(&with_id)
-        .map_err(|e| state_decode_error(format!("Failed to serialize deep value to JSON: {e}")))?;
-    let mut cids = Vec::new();
-    let stripped = strip_container_id_nodes_in_json(value, &mut cids);
-    let json = serde_json::to_string(&stripped)
-        .map_err(|e| state_decode_error(format!("Failed to serialize deep value to JSON: {e}")))?;
-    Ok((json, cids))
-}
-
-fn strip_container_id_nodes_in_json(
-    value: serde_json::Value,
-    cids: &mut Vec<String>,
-) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => match take_container_node(map) {
-            Ok((cid, inner)) => {
-                cids.push(cid);
-                strip_container_id_nodes_in_json(inner, cids)
-            }
-            Err(map) => serde_json::Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| (k, strip_container_id_nodes_in_json(v, cids)))
-                    .collect(),
-            ),
-        },
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.into_iter()
-                .map(|v| strip_container_id_nodes_in_json(v, cids))
-                .collect(),
-        ),
-        scalar => scalar,
-    }
-}
-
-/// If `map` is a container node (`{ cid, value }` with a `cid` string that
-/// parses as a [`ContainerID`]), return `(cid, value)`; otherwise return the
-/// map unchanged.
-fn take_container_node(
-    map: serde_json::Map<String, serde_json::Value>,
-) -> Result<(String, serde_json::Value), serde_json::Map<String, serde_json::Value>> {
-    if map.len() == 2
-        && matches!(map.get("cid"), Some(serde_json::Value::String(cid)) if ContainerID::try_from(cid.as_str()).is_ok())
-        && map.contains_key("value")
-    {
-        let mut map = map;
-        let cid = map.remove("cid").unwrap().as_str().unwrap().to_string();
-        let value = map.remove("value").unwrap();
-        Ok((cid, value))
-    } else {
-        Err(map)
-    }
 }
 
 fn decode_peer_table(bytes: &mut &[u8], context: &str) -> LoroResult<Vec<PeerID>> {
@@ -1451,22 +1370,19 @@ impl DocState {
     /// text is produced in one pass so callers (e.g. the WASM bindings) can
     /// avoid a structured-clone round trip.
     pub fn get_deep_value_json(&mut self) -> LoroResult<String> {
-        deep_value_to_json(&self.get_deep_value())
+        Ok(self.write_deep_value_json(false)?.json)
     }
 
-    /// Returns `(json, cids)` for the document's deep value:
+    /// Read plain JSON with a sparse container-position index.
     ///
-    /// - `json` parses to the same content as [`Self::get_deep_value_json`]
-    ///   (the deep value WITHOUT container ids). Object key order may differ
-    ///   between the two strings: this method serializes through a
-    ///   `serde_json::Value` while `get_deep_value_json` serializes the
-    ///   `LoroValue` directly.
-    /// - `cids` lists the container id strings in pre-order DFS of the
-    ///   serialized JSON tree, so a consumer can re-attach ids in a single walk.
-    ///
-    /// See [`strip_container_id_nodes`] for the format contract.
-    pub fn get_deep_value_json_with_ids(&mut self) -> LoroResult<(String, Vec<String>)> {
-        strip_container_id_nodes(self.get_deep_value_with_id())
+    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
+    /// Count every JSON value in pre-order, starting at zero, using JavaScript
+    /// `Object.keys` order for objects. Plain data never acquires a container id.
+    /// A document object counts as value zero but has no id; a container-level
+    /// result marks position zero. Tree metadata is plain deep data, as in
+    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
+    pub fn get_deep_value_json_with_ids(&mut self) -> LoroResult<DeepValueJsonWithIds> {
+        self.write_deep_value_json(true)
     }
 
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
@@ -1675,18 +1591,22 @@ impl DocState {
         &mut self,
         container: ContainerIdx,
     ) -> LoroResult<String> {
-        deep_value_to_json(&self.get_container_deep_value(container))
+        Ok(self.write_container_deep_value_json(container, false)?.json)
     }
 
-    /// Container-level variant of [`Self::get_deep_value_json_with_ids`].
+    /// Read plain JSON with a sparse container-position index.
     ///
-    /// `json` is the container's deep value (without ids) and `cids` lists the
-    /// container ids in pre-order DFS, so `cids[0]` is this container's own id.
+    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
+    /// Count every JSON value in pre-order, starting at zero, using JavaScript
+    /// `Object.keys` order for objects. Plain data never acquires a container id.
+    /// A document object counts as value zero but has no id; a container-level
+    /// result marks position zero. Tree metadata is plain deep data, as in
+    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
     pub(crate) fn get_container_deep_value_json_with_ids(
         &mut self,
         container: ContainerIdx,
-    ) -> LoroResult<(String, Vec<String>)> {
-        strip_container_id_nodes(self.get_container_deep_value_with_id(container, None))
+    ) -> LoroResult<DeepValueJsonWithIds> {
+        self.write_container_deep_value_json(container, true)
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {

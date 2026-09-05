@@ -372,15 +372,15 @@ impl TreeHandler {
         inner.with_doc_state(|state| state.get_container_deep_value_json(inner.container_idx))
     }
 
-    /// Get the deep value of the tree as JSON text plus container ids.
+    /// Read plain JSON with a sparse container-position index.
     ///
-    /// Returns `(json, cids)` where `json` parses to the same content
-    /// as `get_deep_value_json()` (object key order may differ) and `cids`
-    /// lists the container ids in
-    /// pre-order DFS of the serialized JSON tree, so `cids[0]` is this tree's
-    /// own id. Tree node meta maps are plain deep values, so their container
-    /// ids do not appear in `cids`.
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
+    /// Count every JSON value in pre-order, starting at zero, using JavaScript
+    /// `Object.keys` order for objects. Plain data never acquires a container id.
+    /// A document object counts as value zero but has no id; a container-level
+    /// result marks position zero. Tree metadata is plain deep data, as in
+    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
         let inner = self.inner.try_attached_state()?;
         inner.with_doc_state(|state| {
             state.get_container_deep_value_json_with_ids(inner.container_idx)
