@@ -3,11 +3,12 @@ use rle::HasLength;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
-use loro_common::{ContainerID, ContainerType, LoroEncodeError, LoroError, ID};
+use loro_common::{ContainerID, ContainerType, IdSpan, LoroEncodeError, LoroError, ID};
 
 use crate::{
     container::{idx::ContainerIdx, list::list_op::InnerListOp},
     dag::DagUtils,
+    encoding::export_fast_updates_in_range,
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::{
         container_store::{ContainerWrapper, FRONTIERS_KEY},
@@ -22,6 +23,262 @@ use crate::{
 const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 16;
 #[cfg(not(test))]
 const MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE: usize = 256;
+
+/// Minimum number of retained ops (root..latest) for the forward-replay fast
+/// path to be worth it. Below this, the old checkout path is used: at F ==
+/// latest it is trivial (no history to walk back), and on the 66k-container /
+/// 720k-op fixture the paths tie at ~8k retained ops while the checkout path
+/// peaks at ~4x less memory; forward replay only wins decisively past ~64k
+/// (1.25-3.6x at 79k, 10-14x at 393k). Note this fixture has tiny
+/// per-container histories; docs with long text histories penalize the
+/// checkout path more, shifting the real crossover lower.
+#[cfg(test)]
+const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 16;
+#[cfg(not(test))]
+const MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE: usize = 65536;
+
+/// The fast path re-encodes and replays ALL pre-root history into a temporary
+/// doc, so its cost scales with the prefix, not the tail. Cap the prefix/tail
+/// ratio: on the fixture the fast path wins at ratio 9 and loses at ratio 19,
+/// and an unrelated huge prefix (e.g. millions of same-key Map overwrites
+/// before the root) must not be replayed just because the tail is large.
+const MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO: usize = 16;
+
+/// Absolute cap on pre-root ops for the forward-replay path. Replaying ~1M ops
+/// costs roughly 0.5-1s and several hundred MiB of peak memory; beyond that
+/// the checkout path is safer (its work is bounded by the tail), especially
+/// on wasm32.
+const MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY: usize = 1_000_000;
+
+/// Cap on the pre-root prefix's decoded byte size, estimated by walking op
+/// payloads by reference BEFORE any value is copied (see
+/// `estimate_ops_content_bytes`). Op counts miss value sizes: a Map write is
+/// one atom regardless of how large its Binary/String value is, so a
+/// byte-heavy but low-op prefix would bypass the op-count gates. Checking only
+/// the encoded blob afterwards would be too late —
+/// `export_fast_updates_in_range` slice-copies values into a fresh store while
+/// building it, which is exactly the allocation this cap exists to prevent.
+#[cfg(test)]
+const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 1 << 20;
+#[cfg(not(test))]
+const MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY: usize = 32 << 20;
+
+/// Estimate the decoded byte size of everything in `spans` — op payloads
+/// (recursing into nested `LoroValue::List`/`Map`), style values, and commit
+/// messages — following arena slices by reference and never copying values.
+/// The walk is cap-aware: every counting step takes a remaining budget and
+/// bails as soon as it is exceeded, so a rejected prefix costs one bounded
+/// walk instead of a full copy.
+fn estimate_ops_content_bytes(oplog: &crate::OpLog, spans: &[IdSpan], cap: usize) -> usize {
+    let mut total = 0usize;
+    'outer: for span in spans {
+        let mut span = *span;
+        span.normalize_();
+        if span.counter.end <= 0 {
+            continue;
+        }
+
+        span.counter.start = span.counter.start.max(0);
+        span.counter.end = span.counter.end.max(0);
+        if span.counter.start >= span.counter.end {
+            continue;
+        }
+
+        for change in oplog.iter_changes(span) {
+            let start =
+                ((span.counter.start - change.id.counter).max(0) as usize).min(change.atom_len());
+            let end =
+                ((span.counter.end - change.id.counter).max(0) as usize).min(change.atom_len());
+            if start == end {
+                continue;
+            }
+
+            if let Some(msg) = change.commit_msg.as_ref() {
+                total = total.saturating_add(msg.len());
+                if total > cap {
+                    break 'outer;
+                }
+            }
+
+            for op in crate::op::RichOp::new_iter_by_cnt_range(change, span.counter) {
+                total = total.saturating_add(rich_op_content_bytes(oplog, &op, cap - total));
+                if total > cap {
+                    break 'outer;
+                }
+            }
+        }
+    }
+    total
+}
+
+/// Byte size of an op's variable-length fields plus a small flat per-op
+/// overhead: everything the block encoder copies (payload values, map and
+/// style keys, fractional indexes, root container names, unknown-future
+/// bytes). Arena slices are measured by reference; nothing is copied.
+/// `remaining` is the budget left before the cap; the count may stop early
+/// once it is exceeded.
+fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining: usize) -> usize {
+    const PER_OP_OVERHEAD: usize = 16;
+    if remaining < PER_OP_OVERHEAD {
+        return remaining + 1;
+    }
+
+    // Root container names are variable-length and copied into the encoded
+    // block's container arena.
+    let container_name_len = match oplog.arena.get_container_id(op.raw_op().container) {
+        Some(ContainerID::Root { name, .. }) => name.len(),
+        _ => 0,
+    };
+    let after_fixed = remaining.saturating_sub(PER_OP_OVERHEAD + container_name_len);
+
+    PER_OP_OVERHEAD
+        + container_name_len
+        + match &op.raw_op().content {
+            crate::op::InnerContent::Map(map) => {
+                let mut used = map.key.len();
+                if let Some(value) = map.value.as_ref() {
+                    used = used.saturating_add(value_bytes_capped(
+                        value,
+                        after_fixed.saturating_sub(used),
+                    ));
+                }
+                used
+            }
+            crate::op::InnerContent::List(list) => match list {
+                InnerListOp::Insert { slice, .. } => oplog.arena.with_values(
+                    slice.0.start as usize..slice.0.end as usize,
+                    |values| {
+                        let mut used = 0usize;
+                        for value in values {
+                            used = used.saturating_add(value_bytes_capped(
+                                value,
+                                after_fixed.saturating_sub(used),
+                            ));
+                            if used > after_fixed {
+                                break;
+                            }
+                        }
+                        used
+                    },
+                ),
+                InnerListOp::InsertText { slice, .. } => slice.len(),
+                InnerListOp::Set { value, .. } => value_bytes_capped(value, after_fixed),
+                InnerListOp::StyleStart { key, value, .. } => {
+                    let mut used = key.len();
+                    used = used.saturating_add(value_bytes_capped(
+                        value,
+                        after_fixed.saturating_sub(used),
+                    ));
+                    used
+                }
+                _ => 0,
+            },
+            // Fractional indexes are variable-length and copied by the encoder.
+            crate::op::InnerContent::Tree(tree_op) => match tree_op.as_ref() {
+                crate::container::tree::tree_op::TreeOp::Create { position, .. }
+                | crate::container::tree::tree_op::TreeOp::Move { position, .. } => {
+                    position.as_bytes().len()
+                }
+                crate::container::tree::tree_op::TreeOp::Delete { .. } => 0,
+            },
+            crate::op::InnerContent::Future(future) => match future {
+                crate::op::FutureInnerContent::Unknown { value, .. } => {
+                    owned_value_bytes_capped(value, after_fixed)
+                }
+                #[cfg(feature = "counter")]
+                crate::op::FutureInnerContent::Counter(_) => 0,
+            },
+        }
+}
+
+/// Byte size of an owned future/unknown value, recursing where the payload is
+/// a `LoroValue`. `remaining` is the budget left before the cap.
+fn owned_value_bytes_capped(value: &crate::encoding::value::OwnedValue, remaining: usize) -> usize {
+    use crate::encoding::value::OwnedValue;
+    const OVERHEAD: usize = 16;
+    if remaining < OVERHEAD {
+        return remaining + 1;
+    }
+
+    match value {
+        OwnedValue::Str(s) => OVERHEAD.saturating_add(s.len()),
+        OwnedValue::Binary(b) => OVERHEAD.saturating_add(b.len()),
+        OwnedValue::LoroValue(v) => OVERHEAD.saturating_add(value_bytes_capped(v, remaining)),
+        // The encoder writes the mark key into the block's key register and
+        // recurses into the value; both are variable-length.
+        OwnedValue::MarkStart(mark) => {
+            let mut used = OVERHEAD.saturating_add(mark.key.len());
+            used = used.saturating_add(value_bytes_capped(
+                &mark.value,
+                remaining.saturating_sub(used),
+            ));
+            used
+        }
+        // The encoder recurses into the set value.
+        OwnedValue::ListSet { value, .. } => {
+            OVERHEAD.saturating_add(value_bytes_capped(value, remaining))
+        }
+        OwnedValue::Future(owned) => match owned {
+            crate::encoding::value::OwnedFutureValue::Unknown { data, .. } => {
+                OVERHEAD.saturating_add(data.len())
+            }
+        },
+        // TreeMove/RawTreeMove/ListMove carry only fixed-size indices; the
+        // fractional-index payloads they point at are small by construction.
+        _ => OVERHEAD,
+    }
+}
+
+/// Byte size of a value, recursing into nested lists and maps (the encoder
+/// writes them recursively, so the estimate must too). `remaining` is the
+/// budget left before the cap; the count may stop early once it is exceeded.
+fn value_bytes_capped(value: &loro_common::LoroValue, remaining: usize) -> usize {
+    const OVERHEAD: usize = 16;
+    if remaining < OVERHEAD {
+        return remaining + 1;
+    }
+
+    let mut used = OVERHEAD;
+    match value {
+        loro_common::LoroValue::String(s) => used = used.saturating_add(s.len()),
+        loro_common::LoroValue::Binary(b) => used = used.saturating_add(b.len()),
+        loro_common::LoroValue::List(list) => {
+            for item in list.iter() {
+                used =
+                    used.saturating_add(value_bytes_capped(item, remaining.saturating_sub(used)));
+                if used > remaining {
+                    break;
+                }
+            }
+        }
+        loro_common::LoroValue::Map(map) => {
+            for (key, item) in map.iter() {
+                used = used.saturating_add(key.len());
+                if used > remaining {
+                    break;
+                }
+                used =
+                    used.saturating_add(value_bytes_capped(item, remaining.saturating_sub(used)));
+                if used > remaining {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+    used
+}
+
+/// Whether the forward-replay path may be used for the given prefix/tail
+/// shape. The caller still has to require a non-shallow doc whose state is at
+/// the latest version. Extracted as a pure predicate so the gate can be
+/// tested directly.
+fn forward_replay_gate(ops_num: usize, pre_root_ops: usize, pre_root_bytes: usize) -> bool {
+    ops_num >= MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE
+        && pre_root_ops <= MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY
+        && pre_root_ops <= MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO * ops_num
+        && pre_root_bytes <= MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY
+}
 
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
@@ -40,7 +297,11 @@ pub(crate) fn export_shallow_snapshot_inner(
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, start_from);
-    let mut start_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
+    // `root_vv` is the version of the state at the shallow root; `start_vv`
+    // additionally excludes the frontier ops themselves because the retained
+    // history must include them.
+    let root_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_shallow_snapshot")?;
+    let mut start_vv = root_vv.clone();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -78,6 +339,43 @@ pub(crate) fn export_shallow_snapshot_inner(
     let oplog_bytes = oplog.export_change_store_from(&start_vv, &start_from);
     let latest_vv = oplog.vv();
     let ops_num: usize = latest_vv.sub_iter(&start_vv).map(|x| x.atom_len()).sum();
+    // Pre-encode the pre-root history for the forward-replay path below while
+    // the oplog lock is held. Calling `LoroDoc::export` there instead would
+    // re-enter `with_barrier` and violate the txn lock order. Shallow docs are
+    // excluded: their pre-root history is trimmed, so forward replay from
+    // empty cannot reconstruct the root state. Small retained ranges are
+    // excluded too: the checkout path is then cheap and peaks at far less
+    // memory (see MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE). The prefix itself
+    // is bounded absolutely and relative to the tail, because this path pays
+    // for replaying all of it while the checkout path only walks the tail.
+    let pre_root_ops: usize = root_vv
+        .iter()
+        .map(|(_, counter)| (*counter).max(0) as usize)
+        .sum();
+    // Cheap op-count legs first (even the estimate walks the prefix's ops, so
+    // it must not run for the small-tail cases the checkout path handles
+    // best). The byte leg runs BEFORE encoding: the estimate follows arena
+    // slices by reference, while export_fast_updates_in_range would
+    // slice-copy every value into a fresh store — the very allocation the cap
+    // exists to prevent.
+    let pre_root_updates = (state_frontiers == latest_frontiers
+        && oplog.shallow_since_vv().is_empty()
+        && forward_replay_gate(ops_num, pre_root_ops, 0))
+    .then(|| {
+        let spans: Vec<IdSpan> = root_vv
+            .iter()
+            .filter(|(_, counter)| **counter > 0)
+            .map(|(peer, counter)| IdSpan::new(*peer, 0, *counter))
+            .collect();
+        if estimate_ops_content_bytes(&oplog, &spans, MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY)
+            > MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY
+        {
+            return None;
+        }
+
+        Some(export_fast_updates_in_range(&oplog, &spans))
+    })
+    .flatten();
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
         if let Some((shallow_root_state_bytes, shallow_root_kv)) =
@@ -138,6 +436,71 @@ pub(crate) fn export_shallow_snapshot_inner(
     }
     drop(oplog);
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
+        if let Some(pre_root_updates) = pre_root_updates {
+            // The live state is already at the latest version: build the root
+            // state by replaying pre-root history forward into a temporary doc
+            // instead of checking the live doc out backwards. A reverse
+            // checkout (latest -> root) makes the diff calculators rebuild a
+            // full CRDT tracker from empty for every list-like container
+            // touched in the range (the `should_rebuild` path in
+            // `RichtextDiffCalculator::calculate_diff`), which costs orders of
+            // magnitude more than forward replay when the doc has many small
+            // containers. Forward replay also leaves the live doc untouched,
+            // so no state restore is needed.
+            let root_doc = LoroDoc::new();
+            root_doc
+                .import(&pre_root_updates)
+                .map_err(LoroEncodeError::from)?;
+            let mut root_state = root_doc.app_state().lock();
+            // The replay doc does not share the live doc's deleted-root set;
+            // without it a root container deleted before the root would be
+            // re-encoded as an empty entry instead of being dropped at flush.
+            // (`InnerStore::flush` only drops the entry when the value is
+            // still empty, so roots deleted *after* the root keep their
+            // at-root content even with the set mirrored.)
+            *root_state.config.deleted_root_containers.lock() =
+                doc.config().deleted_root_containers.lock().clone();
+            // Root containers exist on the live doc once they are accessed,
+            // even when they have no ops; the replay doc cannot know about
+            // those. Mirror the live store's root entries so the exported root
+            // state ships the same empty root containers the checkout path
+            // would. `existing_retention_roots` is a root-only key scan — a
+            // full `load_all` here would defeat lazily imported docs.
+            {
+                let mut live_state = doc.app_state().lock();
+                for idx in live_state.existing_retention_roots() {
+                    let cid = live_state.arena.get_container_id(idx).unwrap();
+                    root_state.store.ensure_container(&cid);
+                }
+            }
+            let alive_containers = root_state.ensure_all_alive_containers()?;
+            if has_unknown_container(alive_containers.iter().copied()) {
+                return Err(LoroEncodeError::UnknownContainer);
+            }
+            let mut alive_c_bytes = alive_indices_to_bytes(&root_state, &alive_containers);
+            root_state.store.flush();
+            let shallow_root_state_kv = root_state.store.get_kv_clone();
+            drop(root_state);
+
+            let latest_state_kv = {
+                let mut state = doc.app_state().lock();
+                latest_state_overlay_kv(
+                    &mut state,
+                    ops_num,
+                    &start_from,
+                    &shallow_root_state_kv,
+                    &mut alive_c_bytes,
+                )?
+            };
+            return encode_shallow_sections(
+                oplog_bytes,
+                &start_from,
+                shallow_root_state_kv,
+                latest_state_kv,
+                alive_c_bytes,
+            );
+        }
+
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
@@ -151,46 +514,83 @@ pub(crate) fn export_shallow_snapshot_inner(
         drop(state);
         doc._checkout_without_emitting(&latest_frontiers, false, false)
             .map_err(LoroEncodeError::from)?;
-        let latest_state_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let latest_state_kv = {
             let mut state = doc.app_state().lock();
-            state.ensure_all_alive_containers()?;
-            state.store.encode();
-            // All the containers that are created after start_from need to be encoded
-            for cid in state.store.iter_all_container_ids() {
-                if let ContainerID::Normal { peer, counter, .. } = cid {
-                    let temp_id = ID::new(peer, counter);
-                    if !start_from.contains(&temp_id) {
-                        alive_c_bytes.insert(cid.to_bytes());
-                    }
-                } else {
-                    alive_c_bytes.insert(cid.to_bytes());
-                }
-            }
-
-            let new_kv = state.store.get_kv_clone();
-            new_kv.remove_same(&shallow_root_state_kv);
-            new_kv.retain_keys(&alive_c_bytes);
-            Some(new_kv)
-        } else {
-            None
+            latest_state_overlay_kv(
+                &mut state,
+                ops_num,
+                &start_from,
+                &shallow_root_state_kv,
+                &mut alive_c_bytes,
+            )?
         };
-
-        shallow_root_state_kv.retain_keys(&alive_c_bytes);
-        redact_export_states(&shallow_root_state_kv, latest_state_kv.as_ref())?;
-        let state_bytes = latest_state_kv.map(|kv| kv.export());
-        shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-        let shallow_root_state_bytes = shallow_root_state_kv.export();
-
-        Ok(Snapshot {
+        encode_shallow_sections(
             oplog_bytes,
-            state_bytes,
-            shallow_root_state_bytes,
-        })
+            &start_from,
+            shallow_root_state_kv,
+            latest_state_kv,
+            alive_c_bytes,
+        )
     })();
 
     restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
     Ok((result?, start_from))
+}
+
+/// Compute the encoded latest-state overlay shipped alongside the shallow root
+/// when the retained history is too large to replay on import. Containers
+/// created after `start_from` are added to `alive_c_bytes` so both the root
+/// state and the overlay keep them.
+fn latest_state_overlay_kv(
+    state: &mut DocState,
+    ops_num: usize,
+    start_from: &Frontiers,
+    shallow_root_state_kv: &KvWrapper,
+    alive_c_bytes: &mut BTreeSet<Vec<u8>>,
+) -> Result<Option<KvWrapper>, LoroEncodeError> {
+    if ops_num <= MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        return Ok(None);
+    }
+
+    state.ensure_all_alive_containers()?;
+    state.store.encode();
+    // All the containers that are created after start_from need to be encoded
+    for cid in state.store.iter_all_container_ids() {
+        if let ContainerID::Normal { peer, counter, .. } = cid {
+            let temp_id = ID::new(peer, counter);
+            if !start_from.contains(&temp_id) {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        } else {
+            alive_c_bytes.insert(cid.to_bytes());
+        }
+    }
+
+    let new_kv = state.store.get_kv_clone();
+    new_kv.remove_same(shallow_root_state_kv);
+    new_kv.retain_keys(alive_c_bytes);
+    Ok(Some(new_kv))
+}
+
+fn encode_shallow_sections(
+    oplog_bytes: Bytes,
+    start_from: &Frontiers,
+    shallow_root_state_kv: KvWrapper,
+    latest_state_kv: Option<KvWrapper>,
+    alive_c_bytes: BTreeSet<Vec<u8>>,
+) -> Result<Snapshot, LoroEncodeError> {
+    shallow_root_state_kv.retain_keys(&alive_c_bytes);
+    redact_export_states(&shallow_root_state_kv, latest_state_kv.as_ref())?;
+    let state_bytes = latest_state_kv.map(|kv| kv.export());
+    shallow_root_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+    let shallow_root_state_bytes = shallow_root_state_kv.export();
+
+    Ok(Snapshot {
+        oplog_bytes,
+        state_bytes,
+        shallow_root_state_bytes,
+    })
 }
 
 fn has_unknown_container(mut idxs: impl Iterator<Item = ContainerIdx>) -> bool {
@@ -836,5 +1236,214 @@ mod tests {
                 .clone();
             assert_eq!(d.get_map(child_id).get("key"), Some((i as i64).into()));
         }
+    }
+
+    #[test]
+    fn forward_replay_gate_bounds_prefix_by_ops_ratio_and_bytes() {
+        let min = MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE;
+        let max_ops = MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY;
+        let max_bytes = MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY;
+
+        // Tail below the minimum: never.
+        assert!(!forward_replay_gate(min - 1, 0, 0));
+        // Balanced prefix/tail: allowed.
+        assert!(forward_replay_gate(min, min, 1));
+        // Prefix larger than 16x the tail: blocked even though both op counts
+        // are small.
+        assert!(!forward_replay_gate(min, 17 * min, 1));
+        // Prefix above the absolute op cap: blocked.
+        assert!(!forward_replay_gate(max_ops, max_ops + 1, 1));
+        // A byte-heavy but low-op prefix (a Map write is one atom regardless
+        // of value size): blocked only by the byte leg.
+        assert!(!forward_replay_gate(min, 1, max_bytes + 1));
+        assert!(forward_replay_gate(min, 1, max_bytes));
+    }
+
+    /// A byte-heavy, low-op prefix (a huge payload nested inside a Map value,
+    /// later overwritten) must not be replayed into a temporary doc just
+    /// because the tail clears the retained-ops threshold. The export must
+    /// still be correct.
+    #[test]
+    fn byte_heavy_low_op_prefix_exports_correctly() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let map = doc.get_map("m");
+        let big = "v".repeat(MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY + 1024);
+        // Nested one level down: the estimator must recurse into it.
+        let mut payload = crate::FxHashMap::default();
+        payload.insert("payload".to_string(), LoroValue::String(big.into()));
+        map.insert("k", LoroValue::Map(payload.into())).unwrap();
+        map.insert("k", "small").unwrap();
+        doc.commit_then_renew();
+        let f = doc.oplog_frontiers();
+        // Tail just past the (test-scale) retained-ops threshold.
+        let text = doc.get_text("t");
+        text.insert(
+            0,
+            &"x".repeat(MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE + 1),
+            PosType::Unicode,
+        )
+        .unwrap();
+        doc.commit_then_renew();
+
+        let blob = doc.export(ExportMode::shallow_snapshot(&f)).unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&blob).unwrap();
+        assert_eq!(imported.get_deep_value(), doc.get_deep_value());
+        assert_eq!(imported.shallow_since_frontiers(), f);
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_value_bytes() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // One atom carrying 2 MiB of payload.
+        let big = "v".repeat(2 << 20);
+        doc.get_map("m").insert("k", big.as_str()).unwrap();
+        doc.get_text("t")
+            .insert(0, "abc", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let spans = vec![IdSpan::new(1, 0, 4)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= (2 << 20) + 3,
+            "estimate must include the value bytes, got {est}"
+        );
+        // Early exit: a smaller cap stops the walk as soon as it is exceeded.
+        let capped = estimate_ops_content_bytes(&oplog, &spans, 1024);
+        assert!(capped > 1024 && capped <= 1024 + (2 << 20) + 64);
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_nested_style_and_commit_msg_bytes() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let big = "v".repeat(1 << 20);
+
+        // One atom whose payload is a nested map/list holding the big string.
+        let mut inner = crate::FxHashMap::default();
+        inner.insert("payload".to_string(), LoroValue::String(big.clone().into()));
+        let nested = LoroValue::List(vec![LoroValue::Map(inner.into())].into());
+        doc.get_map("m").insert("k", nested).unwrap();
+
+        // A style mark value.
+        let text = doc.get_text("t");
+        text.insert(0, "ab", PosType::Unicode).unwrap();
+        text.mark(
+            0,
+            1,
+            "comment",
+            LoroValue::String(big.clone().into()),
+            PosType::Unicode,
+        )
+        .unwrap();
+
+        // A commit message.
+        doc.set_next_commit_message(&big);
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let end = *oplog.vv().get(&1).unwrap();
+        let spans = vec![IdSpan::new(1, 0, end)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= 3 * big.len(),
+            "estimate must count nested values, style values and the commit message, got {est}"
+        );
+    }
+
+    #[test]
+    fn prefix_content_bytes_estimate_counts_style_keys_and_root_names() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let big = "k".repeat(1 << 20);
+
+        // A huge style key: the block encoder copies keys into the block's
+        // key register.
+        let mut styles = crate::container::richtext::config::StyleConfigMap::new();
+        styles.insert(
+            big.as_str().into(),
+            crate::container::richtext::config::StyleConfig {
+                expand: crate::container::richtext::ExpandType::After,
+            },
+        );
+        doc.config_text_style(styles);
+        let text = doc.get_text("t");
+        text.insert(0, "ab", PosType::Unicode).unwrap();
+        text.mark(0, 1, big.as_str(), LoroValue::Bool(true), PosType::Unicode)
+            .unwrap();
+
+        // A huge root container name: copied into the block's container arena.
+        doc.get_text(big.as_str())
+            .insert(0, "x", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog().lock();
+        let end = *oplog.vv().get(&1).unwrap();
+        let spans = vec![IdSpan::new(1, 0, end)];
+        let est = estimate_ops_content_bytes(&oplog, &spans, usize::MAX);
+        assert!(
+            est >= 2 * big.len(),
+            "estimate must count style keys and root container names, got {est}"
+        );
+    }
+
+    /// Unknown-container ops can carry OwnedValue::MarkStart / ListSet with
+    /// variable-length key/value payloads (the decoder accepts any Value for
+    /// unknown containers and owns it); the prefix estimator must count them.
+    #[test]
+    fn prefix_content_bytes_estimate_counts_unknown_owned_values() {
+        use crate::change::Change;
+        use crate::encoding::value::{MarkStart, OwnedValue};
+        use crate::op::{FutureInnerContent, InnerContent, Op};
+        use rle::RleVec;
+
+        let big = "v".repeat(1 << 20);
+        let doc = LoroDoc::new();
+        let mut oplog = doc.oplog().lock();
+        let idx = oplog
+            .arena
+            .register_container(&ContainerID::new_root("u", ContainerType::Unknown(7)));
+
+        let mut ops: RleVec<[Op; 1]> = RleVec::new();
+        ops.push(Op::new(
+            ID::new(1, 0),
+            InnerContent::Future(FutureInnerContent::Unknown {
+                prop: 0,
+                value: Box::new(OwnedValue::MarkStart(MarkStart {
+                    len: 1,
+                    key: big.as_str().into(),
+                    value: LoroValue::Null,
+                    info: 0,
+                })),
+            }),
+            idx,
+        ));
+        ops.push(Op::new(
+            ID::new(1, 1),
+            InnerContent::Future(FutureInnerContent::Unknown {
+                prop: 0,
+                value: Box::new(OwnedValue::ListSet {
+                    peer_idx: 0,
+                    lamport: 0,
+                    value: LoroValue::String(big.clone().into()),
+                }),
+            }),
+            idx,
+        ));
+        oplog.insert_new_change(
+            Change::new(ops, Frontiers::default(), ID::new(1, 0), 0, 0),
+            false,
+        );
+
+        let est = estimate_ops_content_bytes(&oplog, &[IdSpan::new(1, 0, 2)], usize::MAX);
+        assert!(
+            est >= 2 * big.len(),
+            "estimate must count MarkStart keys and ListSet values on unknown ops, got {est}"
+        );
     }
 }
