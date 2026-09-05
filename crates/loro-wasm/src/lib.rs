@@ -525,7 +525,14 @@ fn id_to_js(id: &ID) -> JsResult<JsValue> {
     Ok(obj.into())
 }
 
-pub(crate) fn deep_value_json_with_ids_to_js(json: String, cids: Vec<String>) -> JsResult<JsValue> {
+pub(crate) fn deep_value_json_with_ids_to_js(
+    result: loro_internal::DeepValueJsonWithIds,
+) -> JsResult<JsValue> {
+    let loro_internal::DeepValueJsonWithIds {
+        json,
+        cids,
+        container_positions,
+    } = result;
     let obj = Object::new();
     Reflect::set(&obj, &"json".into(), &json.into())?;
     let arr = Array::new();
@@ -533,6 +540,8 @@ pub(crate) fn deep_value_json_with_ids_to_js(json: String, cids: Vec<String>) ->
         arr.push(&cid.into());
     }
     Reflect::set(&obj, &"cids".into(), &arr)?;
+    let positions = js_sys::Uint32Array::from(container_positions.as_slice());
+    Reflect::set(&obj, &"containerPositions".into(), &positions)?;
     Ok(obj.into())
 }
 
@@ -1498,33 +1507,21 @@ impl LoroDoc {
         Ok(self.doc.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the document as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container id strings in pre-order DFS of the serialized JSON tree, so a
-    /// consumer can re-attach ids in a single JS walk to reconstruct the
-    /// `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const text = doc.getText("text");
-    /// text.insert(0, "Hello");
-    /// const { json, cids } = doc.getDeepValueJsonWithIds();
-    /// // json === '{"text":"Hello"}', cids === ["cid:root-text:Text"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.doc.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.doc.get_deep_value_json_with_ids()?)
     }
 
     /// Get the path from the root to the container
@@ -3337,35 +3334,21 @@ impl LoroText {
         Ok(self.handler.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the text as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container ids in pre-order DFS of the serialized JSON tree, so
-    /// `cids[0]` is this container's own id. A single JS walk can re-attach
-    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// Throws if the container is detached.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const text = doc.getText("text");
-    /// text.insert(0, "Hello");
-    /// const { json, cids } = text.getDeepValueJsonWithIds();
-    /// // json === '\"Hello\"', cids === ["cid:root-text:Text"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
     }
 }
 
@@ -3678,35 +3661,21 @@ impl LoroMap {
         Ok(self.handler.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the map as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container ids in pre-order DFS of the serialized JSON tree, so
-    /// `cids[0]` is this container's own id. A single JS walk can re-attach
-    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// Throws if the container is detached.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const map = doc.getMap("map");
-    /// map.set("foo", "bar");
-    /// const { json, cids } = map.getDeepValueJsonWithIds();
-    /// // json === '{\"foo\":\"bar\"}', cids === ["cid:root-map:Map"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
     }
 
     /// Set the key with a regular child container.
@@ -4162,35 +4131,21 @@ impl LoroList {
         Ok(self.handler.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the list as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container ids in pre-order DFS of the serialized JSON tree, so
-    /// `cids[0]` is this container's own id. A single JS walk can re-attach
-    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// Throws if the container is detached.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const list = doc.getList("list");
-    /// list.insert(0, 100);
-    /// const { json, cids } = list.getDeepValueJsonWithIds();
-    /// // json === '[100]', cids === ["cid:root-list:List"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
     }
 
     /// Get the deep value of the elements in the range `[start, end)`, with
@@ -4657,35 +4612,21 @@ impl LoroMovableList {
         Ok(self.handler.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the movableList as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container ids in pre-order DFS of the serialized JSON tree, so
-    /// `cids[0]` is this container's own id. A single JS walk can re-attach
-    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// Throws if the container is detached.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const movableList = doc.getMovableList("list");
-    /// movableList.insert(0, 100);
-    /// const { json, cids } = movableList.getDeepValueJsonWithIds();
-    /// // json === '[100]', cids === ["cid:root-list:MovableList"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
     }
 
     /// Get the deep value of the elements in the range `[start, end)`, with
@@ -5535,35 +5476,21 @@ impl LoroTree {
         Ok(self.handler.get_deep_value_json()?)
     }
 
-    /// Get the deep value of the tree as JSON text, plus container ids.
+    /// Read plain JSON plus an exact, sparse container-position index.
     ///
-    /// Returns `{ json, cids }` where `json` parses to the same content as
-    /// `getDeepValueJson()` (the deep value WITHOUT container ids; object key
-    /// order may differ between the two strings) and `cids` lists the
-    /// container ids in pre-order DFS of the serialized JSON tree, so
-    /// `cids[0]` is this container's own id. A single JS walk can re-attach
-    /// the ids to reconstruct the `getDeepValueWithID()` shape.
+    /// `cids[i]` belongs to the JSON value at `containerPositions[i]`.
+    /// Count every value in pre-order from zero, including scalars and plain
+    /// objects/arrays; visit object children in `Object.keys` order.
+    /// The document object counts as zero but has no id; for a container call,
+    /// position zero identifies that container. Tree metadata remains plain
+    /// deep data, matching `getDeepValueWithID()`.
     ///
-    /// Note: a plain object value that has exactly the keys `cid` and `value`
-    /// with `cid` being a valid container id string is indistinguishable from
-    /// a container node in this format.
-    ///
-    /// Throws if the container is detached.
-    ///
-    /// @example
-    /// ```ts
-    /// import { LoroDoc } from "loro-crdt";
-    ///
-    /// const doc = new LoroDoc();
-    /// const tree = doc.getTree("tree");
-    /// tree.createNode();
-    /// const { json, cids } = tree.getDeepValueJsonWithIds();
-    /// // json === '[{\"id\":\"...\",\"parent\":null,\"meta\":{},\"index\":0,\"fractional_index\":\"...\",\"children\":[]}]', cids === ["cid:root-tree:Tree"]
-    /// ```
+    /// No schema or value-shape guesses are needed. The positions are a copied
+    /// Uint32Array (four bytes per container), not a view into WASM memory.
+    /// Detached containers throw, except counters which also support reads.
     #[wasm_bindgen(js_name = "getDeepValueJsonWithIds", skip_typescript)]
     pub fn get_deep_value_json_with_ids(&self) -> JsResult<JsValue> {
-        let (json, cids) = self.handler.get_deep_value_json_with_ids()?;
-        deep_value_json_with_ids_to_js(json, cids)
+        deep_value_json_with_ids_to_js(self.handler.get_deep_value_json_with_ids()?)
     }
 
     /// Get all tree nodes of the forest, including deleted nodes.
@@ -6965,22 +6892,24 @@ export type ValueWithContainerID = {
 }
 
 /**
- * The result of `getDeepValueJsonWithIds()`.
+ * Plain JSON plus a sparse index of container identities.
  *
- * `json` is the JSON text of the deep value WITHOUT container ids (it parses
- * to the same content as `getDeepValueJson()`). `cids` lists the container id
- * strings in pre-order DFS of the serialized JSON tree: the ids appear in the
- * same order as the key/item order a consumer sees after `JSON.parse(json)`,
- * so a single JS walk can re-attach ids and reconstruct the
- * `getDeepValueWithID()` shape.
+ * `cids[i]` belongs to value `containerPositions[i]` in a pre-order walk of
+ * JSON.parse(json). Count EVERY value (objects, arrays and scalars), starting
+ * at zero; visit arrays in index order and objects in Object.keys order.
+ * Binary data serializes as an array, so each byte counts as another value.
+ * Document calls count the root object but do not assign it a cid; container
+ * calls mark position zero. Tree metadata is plain deep data, matching the
+ * existing getDeepValueWithID format. Ordinary cid/value objects stay data.
  *
- * Note: a plain object value that has exactly the keys `cid` and `value` with
- * `cid` being a valid container id string is indistinguishable from a
- * container node in this format.
+ * This JSON view follows getDeepValueJson's root visibility and JSON scalar
+ * representation (e.g. binary arrays and non-finite numbers as null).
+ * containerPositions owns its buffer and remains valid after further WASM calls.
  */
 export type DeepValueJsonWithIds = {
     json: string,
     cids: ContainerID[],
+    containerPositions: Uint32Array,
 }
 
 export type IdSpan = {
@@ -7476,14 +7405,7 @@ interface LoroDoc {
      * of crossing the WASM/JS boundary with a large structured value.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the document as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so a single JS walk can
-     * re-attach the ids to reconstruct the `getDeepValueWithID()` shape.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
 }
 
@@ -7495,12 +7417,7 @@ interface LoroCounter {
      * counter, mirroring `toJSON()`.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the counter value as JSON text, plus container ids.
-     *
-     * `json` is the same string `getDeepValueJson()` returns and `cids`
-     * contains only this counter's own id (a counter has no children).
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
 }
 
@@ -7669,17 +7586,7 @@ interface LoroList<T = unknown> {
      * Throws if the container is detached.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the container as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
-     * container's own id. A single JS walk can re-attach the ids to
-     * reconstruct the `getDeepValueWithID()` shape.
-     *
-     * Throws if the container is detached.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get the deep value of the elements in the range `[start, end)`, with
@@ -7796,17 +7703,7 @@ interface LoroMovableList<T = unknown> {
      * Throws if the container is detached.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the container as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
-     * container's own id. A single JS walk can re-attach the ids to
-     * reconstruct the `getDeepValueWithID()` shape.
-     *
-     * Throws if the container is detached.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get the deep value of the elements in the range `[start, end)`, with
@@ -7989,17 +7886,7 @@ interface LoroMap<T extends Record<string, unknown> = Record<string, unknown>> {
      * Throws if the container is detached.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the container as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
-     * container's own id. A single JS walk can re-attach the ids to
-     * reconstruct the `getDeepValueWithID()` shape.
-     *
-     * Throws if the container is detached.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Get or create a regular child container at the given key.
@@ -8139,17 +8026,7 @@ interface LoroText {
      * Throws if the container is detached.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the container as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
-     * container's own id. A single JS walk can re-attach the ids to
-     * reconstruct the `getDeepValueWithID()` shape.
-     *
-     * Throws if the container is detached.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     insert(pos: number, text: string): void;
     delete(pos: number, len: number): void;
@@ -8208,17 +8085,7 @@ interface LoroTree<T extends Record<string, unknown> = Record<string, unknown>> 
      * Throws if the container is detached.
      */
     getDeepValueJson(): string;
-    /**
-     * Get the deep value of the container as JSON text, plus container ids.
-     *
-     * `json` parses to the same content as `getDeepValueJson()` (the deep
-     * value WITHOUT container ids) and `cids` lists the container ids in
-     * pre-order DFS of the serialized JSON tree, so `cids[0]` is this
-     * container's own id. A single JS walk can re-attach the ids to
-     * reconstruct the `getDeepValueWithID()` shape.
-     *
-     * Throws if the container is detached.
-     */
+    /** Read plain JSON and its sparse identity index; see DeepValueJsonWithIds. */
     getDeepValueJsonWithIds(): DeepValueJsonWithIds;
     /**
      * Create a new tree node as the child of parent and return a `LoroTreeNode` instance.

@@ -1618,15 +1618,16 @@ impl LoroDoc {
         self.state.lock().get_deep_value_json()
     }
 
-    /// Returns `(json, cids)` for the document's deep value.
+    /// Read plain JSON with a sparse container-position index.
     ///
-    /// `json` parses to the same content as [`Self::get_deep_value_json`] (the
-    /// deep value WITHOUT container ids; object key order may differ between
-    /// the two strings) and `cids` lists the container id strings in pre-order
-    /// DFS of the serialized JSON tree, so a consumer can re-attach ids in a
-    /// single walk.
+    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
+    /// Count every JSON value in pre-order, starting at zero, using JavaScript
+    /// `Object.keys` order for objects. Plain data never acquires a container id.
+    /// A document object counts as value zero but has no id; a container-level
+    /// result marks position zero. Tree metadata is plain deep data, as in
+    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
     #[inline]
-    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<(String, Vec<String>)> {
+    pub fn get_deep_value_json_with_ids(&self) -> LoroResult<crate::DeepValueJsonWithIds> {
         self.state.lock().get_deep_value_json_with_ids()
     }
 
