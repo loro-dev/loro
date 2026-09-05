@@ -15,10 +15,6 @@ before changing mergeable child behavior.
   bounded and evicted wrappers must stay re-creatable from KV; read
   [../../../../context/container-value-cache.md](../../../../context/container-value-cache.md)
   before changing read/caching paths there.
-- `deep_value_json.rs`: streaming JSON reads and sparse container positions.
-  Identity comes from CRDT edges; positions count every JSON value in JavaScript
-  property order. Never infer containers from scalar types or cid/value objects.
-  See [../../../../context/wasm-bulk-read.md](../../../../context/wasm-bulk-read.md).
 - `map_state.rs`, `list_state.rs`, `richtext_state.rs`, `tree_state.rs`,
   `movable_list_state.rs`, `counter_state.rs`: per-container state and snapshot
   codecs. `richtext_state.rs` also hosts `redact_dead_style_values`, used by
@@ -48,3 +44,7 @@ before changing mergeable child behavior.
 - `cargo test -p loro-internal --test mergeable_cid_encoding`
 - `cargo test -p loro-internal --test mergeable_container`
 - `cargo test -p loro-internal import_atomicity` if import or rollback is involved.
+
+`read_state.rs` traverses ephemeral shallow values into a sink. Container identity
+comes from CRDT edges, including mergeable markers and Tree metadata; ordinary
+values remain opaque. See [bulk reads](../../../../context/wasm-bulk-read.md).

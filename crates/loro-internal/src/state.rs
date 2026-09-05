@@ -1,3 +1,5 @@
+pub mod read_state;
+
 use crate::sync::{AtomicU64, Mutex, RwLock};
 #[cfg(test)]
 use std::cell::Cell;
@@ -35,8 +37,6 @@ pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod dead_containers_cache;
-mod deep_value_json;
-pub use deep_value_json::DeepValueJsonWithIds;
 mod list_state;
 mod map_state;
 mod mergeable;
@@ -94,13 +94,6 @@ fn deleted_root_container_value_is_cleared(kind: ContainerType, value: &LoroValu
 
 fn state_decode_error(message: impl Into<Box<str>>) -> LoroError {
     LoroError::DecodeError(message.into())
-}
-
-/// Serialize a scalar counter value to JSON text.
-#[cfg(feature = "counter")]
-pub(crate) fn deep_value_to_json(value: &LoroValue) -> LoroResult<String> {
-    serde_json::to_string(value)
-        .map_err(|e| state_decode_error(format!("Failed to serialize deep value to JSON: {e}")))
 }
 
 fn decode_peer_table(bytes: &mut &[u8], context: &str) -> LoroResult<Vec<PeerID>> {
@@ -1364,27 +1357,6 @@ impl DocState {
         LoroValue::Map(ans.into())
     }
 
-    /// JSON text of [`Self::get_deep_value`].
-    ///
-    /// The content is identical to serializing `get_deep_value()`, but the JSON
-    /// text is produced in one pass so callers (e.g. the WASM bindings) can
-    /// avoid a structured-clone round trip.
-    pub fn get_deep_value_json(&mut self) -> LoroResult<String> {
-        Ok(self.write_deep_value_json(false)?.json)
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub fn get_deep_value_json_with_ids(&mut self) -> LoroResult<DeepValueJsonWithIds> {
-        self.write_deep_value_json(true)
-    }
-
     pub(crate) fn preferred_root_containers(&mut self) -> Vec<ContainerIdx> {
         let flag = self.store.load_root_containers();
         // Mergeable cids live in a private namespace and are logically children of a regular
@@ -1584,29 +1556,6 @@ impl DocState {
                 .into(),
             ),
         }
-    }
-
-    /// JSON text of [`Self::get_container_deep_value`].
-    pub(crate) fn get_container_deep_value_json(
-        &mut self,
-        container: ContainerIdx,
-    ) -> LoroResult<String> {
-        Ok(self.write_container_deep_value_json(container, false)?.json)
-    }
-
-    /// Read plain JSON with a sparse container-position index.
-    ///
-    /// `cids[i]` belongs to the JSON value at `container_positions[i]`.
-    /// Count every JSON value in pre-order, starting at zero, using JavaScript
-    /// `Object.keys` order for objects. Plain data never acquires a container id.
-    /// A document object counts as value zero but has no id; a container-level
-    /// result marks position zero. Tree metadata is plain deep data, as in
-    /// `get_deep_value_with_id`. Map/list edges stream directly without intermediate deep trees.
-    pub(crate) fn get_container_deep_value_json_with_ids(
-        &mut self,
-        container: ContainerIdx,
-    ) -> LoroResult<DeepValueJsonWithIds> {
-        self.write_container_deep_value_json(container, true)
     }
 
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {

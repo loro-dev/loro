@@ -1,154 +1,101 @@
-# WASM bulk reads and the performance stack
+# Structured WASM reads and the performance stack
 
 Verified against code 2026-09-05.
 
-## Which cost each change removes
+## Responsibility
 
-- #1093 bounds the decoded-value cache used by individual handles. This fixes
-  retained WASM memory growth even for callers that keep their existing reads.
-- #1085 caches wrapper `kind()`; #1086 adds subtree/range deep reads. These
-  reduce per-field JS/WASM calls. A visible history window should use range
-  reads rather than read an entire document just because a bulk API exists.
-- #1087 serializes deep values in Rust and returns JSON text. Both JSON APIs
-  stream ephemeral container values into the output, without first building a
-  deep `LoroValue` tree or a `serde_json::Value` tree. The ID variant adds a
-  sparse position index. Tree metadata still uses its existing deep-value
-  conversion; the streaming improvement primarily targets Map/List/Text reads. Consumers can build their projection/registry in one
-  JS walk, without fetching each container again.
-- #1090 defines the causal boundary for shallow snapshots. #1091 reduces the
-  cost of constructing their root state, with replay cost limits. These are
-  history/bootstrap/export changes, independent of the JSON read format.
+- #1093 bounds retained decoded container state; it benefits existing handle reads.
+- #1085 caches wrapper kind; #1086 supplies legacy subtree/range reads with IDs.
+- #1087 adds `LoroDoc.readState` to construct a consumer-ready JS snapshot directly.
+- #1090/#1091 concern shallow snapshot causal boundaries and constructing their
+  root state. They optimize history import/export, independently of this read API.
 
-A faster bulk read does not automatically accelerate `new Mirror`: its caller
-must adopt it while preserving schema decoding, ignored fields, container
-registration, tree normalization and subscription behavior. The benchmark's
-projection/registry cases model that read work, not the full Mirror constructor.
-
-## APIs
-
-- `getDeepValueWithID()` on documents and Map/List/MovableList/Tree/Text returns
-  `{ cid, value }` nodes for containers, with bare `ContainerID` strings.
-- List/MovableList `getRangeDeepValueWithID(start, end)` and
-  `getRangeValue(start, end)` read a clamped `[start, end)` slice in one call.
-- `getDeepValueJson(): string` returns the plain deep value as JSON text.
-- `getDeepValueJsonWithIds(): DeepValueJsonWithIds` returns:
+## Contract
 
 ```ts
-type DeepValueJsonWithIds = {
-  json: string;
-  cids: ContainerID[];
-  containerPositions: Uint32Array;
-};
+const roots = doc.readState();
+const subtree = doc.readState({container: map.id});
+const window = doc.readState({container: list.id, range: {start: 20, end: 40}});
+const formatted = doc.readState({container: text.id, text: "delta"});
 ```
 
-These JSON APIs exist on the document and all six container classes. Detached
-containers throw, except Counter, which supports detached value reads. JSON
-follows Rust's JSON serialization of the deep value: binary becomes an array,
-non-finite numbers become null, and arbitrary plain objects stay ordinary data.
-Document JSON obeys empty/deleted-root visibility. The older structured
-`getDeepValueWithID()` does not apply those display filters.
+Containers are `{type, cid, value}`. Map values and List/MovableList items are
+nodes. An ordinary value is `{type: "Value", value}`: its contents are opaque,
+including plain objects shaped exactly like container nodes. Text contains a
+string by default, or its formatting delta when requested. Tree contains the
+existing nested tree layout, but each `meta` is an ID-bearing Map node; its
+fields follow the same node contract. Counter contains a number.
 
-## Sparse position contract
+Identity is emitted only at real CRDT edges, including mergeable Map markers
+and Tree metadata edges. No keys, scalar values, paths, traversal positions, or
+user object shapes are used to guess identity. Full-document reads obey root
+visibility. Explicit root IDs can read empty implicit roots. Missing normal or
+mergeable containers and unknown container types return errors. Reads do not
+commit; caller mutations of returned objects/buffers do not mutate the document.
 
-`cids[i]` identifies the value at `containerPositions[i]` in a **pre-order walk
-of every value** in `JSON.parse(json)`:
+Ranges require List/MovableList container IDs and nonnegative u32 integer bounds;
+end is exclusive, bounds clamp, inverted ranges are empty. Only selected child
+subtrees are traversed, though obtaining the parent shallow list is still O(N).
+Read traversal rejects nesting above 256 levels. JS number conversion follows
+existing reads (including i64 rounding, NaN and infinity); Binary is Uint8Array.
+Own `__proto__` and integer keys are ordinary data properties and do not invoke
+inherited setters. Consumers must preserve this when projecting nodes themselves.
 
-- Start at zero. Count each object, array and scalar once; do not count keys.
-- Visit arrays by increasing index and objects in `Object.keys()` order.
-- Binary is a JSON array: its byte values count too.
-- A document's root object counts as zero, but is not a container.
-- A container-level result marks position zero with its own cid.
-- Tree metadata is plain deep data, matching the existing with-id API: count
-  those JSON values, but do not assign them additional cids.
-- Positions increase strictly and have the same length as `cids`. The typed
-  array owns a copied buffer and survives subsequent WASM calls and doc.free().
+## Implementation
 
-For example, these values are distinct even when both fields contain `"same"`:
+`state/read_state.rs` emits a traversal to a sink without constructing a deep
+whole-document LoroValue tree. Each container's shallow value is ephemeral;
+values fetched to determine root visibility are reused. `loro-wasm/src/read_state.rs`
+owns the JS construction stack and uses fixed imported functions for stable
+wrapper shapes, IDs and own-property writes. Keys and peer decimal strings are
+cached only for one read; complete CIDs are constructed in JS. Binary buffers
+are copied once into an owned JS Uint8Array. There is no public transport format,
+codec, path index, JS callback, or document-lifetime cache.
 
-```text
-JSON: {"m":{"a":"same","b":"same"}}
-walk:  0    1    2          3
+Inductive correctness: each ordinary edge emits one opaque Value node preserving
+its value; each container edge emits its actual ID and the recursively transformed
+children; the document enumerates exactly its visible roots. Thus projecting
+wrappers away preserves visible values and walking only node children enumerates
+container occurrences without confusing embedded Map/List data. The proof relies
+on the existing shallow-value/mergeable-edge semantics. Tests separately check
+Tree metadata, deltas, binary ownership, special keys, IDs, ranges, errors and
+root visibility; this is a design argument, not a machine-checked proof.
 
-Text at a: cids = [mapId, textId], positions = [1, 2]
-Text at b: cids = [mapId, textId], positions = [1, 3]
-```
+## Mirror integration
 
-The writer discovers identity from actual container edges, including mergeable
-markers at map edges. It never strips objects that happen to contain `cid` and
-`value`, nor guesses Text/Counter identity from a scalar type. It orders integer
-property keys as JavaScript does (`"2"` before `"10"`; `"01"` and `"4294967295"`
-are ordinary keys), independent of serde_json's `preserve_order` feature.
+Mirror can consume the node tree in its existing schema/registry walk. On a Value
+node it decodes the opaque value; on a container node it registers `cid` and
+recurses by `type`. This removes shallow reads previously needed to distinguish
+legacy `{cid,value}` nodes from user objects. Schema decoding, Ignore fields,
+lazy hydration, Tree normalization, and incremental events remain Mirror's work.
+A bulk API should not force eager traversal of lazy history: use subtree/range
+reads where the schema allows it. Legacy `getDeepValueWithID` remains unchanged.
 
-A consumer can wrap known positions in `{cid, value}`, stamp map `$cid` fields,
-or register identities directly during its own projection walk. Do not repeat
-handle lookups to recover identities that are already present in the result.
-The tests and benchmark contain complete reattachment examples; mutation of an
-existing JSON.parse object preserves own `__proto__` keys without invoking the
-inherited prototype setter.
+## Measured end-to-end cost
 
-## Why positions instead of full paths
+Final Node 22.23.1 and Chromium 152 comparisons used the same newly built Loro
+package and Mirror adapter, an imported local 61.85 MiB snapshot, 10,921 reachable
+containers (10,925 after schema-created roots), and the actual application schema.
+Each fresh process/page measured its first constructor separately, then two warmups
+and five samples; cases ran forward and backward. Import was outside the timed
+constructor. Full state and sorted registered IDs agreed across methods. Private
+snapshots/transcripts are not fixtures and are not committed.
 
-For C containers at average depth D, full paths duplicate O(C*D) key/index
-segments and require one path array per container. The sparse sidecar is O(C),
-exactly 4*C bytes plus one JS typed-array allocation; it reuses the strings
-already present in JSON. It also handles arbitrary keys without path escaping.
+| Full Mirror initialization | Node warm median | Chromium warm median |
+| --- | --- | --- |
+| Per-container handles | 64.5–66.3 ms | 58.8–59.4 ms |
+| Legacy bulk + shallow disambiguation | 79.4–80.5 ms | 73.0–74.2 ms |
+| Fixed constructors + explicit nodes | 51.9–53.1 ms | 47.2–47.3 ms |
 
-The tradeoff is traversal: positions require visiting all JSON values, including
-plain data. Paths allow direct navigation to each container and can have a faster
-JS-only attachment step, especially with large plain subtrees. They still cost
-path construction, serialization/transfer and extra allocations. Benchmark both
-sides of this tradeoff instead of inferring speed from metadata bytes alone.
+First constructor: new path 80–83 ms in Node, 71–73 ms in Chromium; handle path
+89–91 ms and 85–88 ms respectively. JS retained heap was similar (about 37 MiB);
+reuse of already allocated WASM memory must not be described as zero memory cost.
+A synthetic 70,051-container sample measured about 256 ms versus 321 ms for legacy
+bulk; such small-string workloads do not predict the ranking of string transports
+on the large-text application document.
 
-The previous `{json,cids}` API in the unmerged PR did not record positions and
-could not recover mixed primitive/container layouts. Consumers of that preview
-must use the new index; the old shape-based reattachment is not compatible.
-
-## Reproducible measurements
-
-Run `pnpm release-wasm`, then `pnpm bench-deep-value-json`. The benchmark uses a
-synthetic 70,051-container fixture (15,632 Map / 9,956 List / 44,463 Text) and
-validates output before reporting results. No user document is stored.
-
-Each read case runs in a separate process with a newly imported snapshot. It
-reports cold time, warm median (2 warm-ups + 5 measured rounds), and external,
-heap and RSS deltas while retaining the first result. External memory includes
-WASM linear-memory growth and other ArrayBuffers; it is not an exact Rust
-allocation peak. The handle/indexed projection cases both stamp map identities
-and register all containers. Path/position attachment timings isolate only JS
-consumption, excluding path production/transfer; path payload size is also shown.
-
-Set `LORO_BENCH_MODULE=/absolute/path/to/nodejs/index.js` to run the same fixture
-against another release build. A baseline without position support runs the
-existing API cases only. Plain JSON and identity-preserving reads are separate
-contracts and must not be advertised as interchangeable speed comparisons.
-
-## Measurement on this revision
-
-Release WASM, Node 22.23.1, macOS arm64, 2026-09-05; one run of the command above. Timings
-are machine-dependent. The two identity-preserving rows reconstruct the same
-with-id value; the two projection rows produce the same plain value and cid
-registry (without Mirror schema/lifecycle work).
-
-| Read | Cold ms | Warm median ms | External delta MiB |
-| --- | ---: | ---: | ---: |
-| Structured getDeepValueWithID | 279.5 | 236.4 | 41.19 |
-| Indexed JSON + parse + reattach | 248.1 | 204.4 | 19.39 |
-| Per-handle projection + registry | 315.5 | 270.3 | 17.88 |
-| Indexed JSON projection + registry | 249.1 | 207.2 | 19.13 |
-| Plain streaming JSON + parse | 196.1 | 163.2 | 18.00 |
-
-Position metadata: 280,204 bytes. Full-path JSON metadata for the same
-containers: 3,584,299 bytes (716,208 repeated key/index segments), excluding
-cid strings common to both designs. Prebuilt-sidecar JS parse/attachment took
-23.2 ms with positions vs 12.5 ms with paths. The latter excludes generating,
-copying and decoding path metadata, so it is not an end-to-end path benchmark.
-The position design trades a modest full-value JS walk for a 12.8x smaller
-location payload and no per-container path arrays. It is not a claimed 5x
-end-to-end speedup.
-
-The same benchmark against the original PR head (`7e99105a`, using
-`LORO_BENCH_MODULE`) measured its legacy ID JSON producer at 365.3 ms cold /
-234.3 ms warm and 96.06 MiB external growth. The streaming indexed producer
-measured 226.8 ms / 174.3 ms and 19.39 MiB. These producer-only rows exclude
-parse/reattachment, and the legacy result cannot represent all container layouts;
-they are separate from the valid identity-preserving consumer comparison above.
+Moving the entire builder stack to JS did not consistently win and was rejected.
+Pre-creating dense array slots likewise gave no material improvement. The shipped
+builder retains fixed wrapper constructors, per-read peer/key reuse, and safe own
+property writes. These timings describe the tested machines/workload, not a general
+speed guarantee. Mirror's Tree normalization still uses its existing handle path.
