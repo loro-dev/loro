@@ -423,38 +423,44 @@ export interface TreeNodeSnapshot<T extends ContainerTreeTextFormat = ContainerT
 export interface ContainerTreeSlice<T extends ContainerTreeTextFormat = ContainerTreeTextFormat> {
     cid: ContainerID; start: number; totalLength: number; items: ContainerTreeNode<T>[];
 }
+/** Resolve runtime defaults, distributing over optional/union configurations. */
+export type ContainerTreeText<O> = O extends { text: infer T extends ContainerTreeTextFormat }
+    ? T : O extends { text?: infer T } ? Extract<T, ContainerTreeTextFormat> | "plain" : "plain";
+export type DocumentContainerTree<O> = O extends { roots: readonly (infer R extends string)[] }
+    ? Partial<Record<R, ContainerNode<ContainerTreeText<O>>>>
+    : Record<string, ContainerNode<ContainerTreeText<O>>>;
 interface LoroDoc {
     /** Convert visible roots to independent container trees. No commit, live handles or CRDT history.
      * Text defaults to plain strings. Throws for invalid options, unsupported types or nesting >256.
      */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: DocumentContainerTreeOptions<T>): Record<string, ContainerNode<T>>;
+    toContainerTree<A extends [options?: DocumentContainerTreeOptions]>(...args: A): DocumentContainerTree<A[0]>;
 }
 interface LoroMap {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"Map"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"Map"}>;
 }
 interface LoroList {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"List"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"List"}>;
     /** Read [start,end), clamped, with source coordinates; parent shallow list access remains O(N). */
-    toContainerTreeSlice<T extends ContainerTreeTextFormat = "plain">(start:number,end:number,options?:ContainerTreeOptions<T>): ContainerTreeSlice<T>;
+    toContainerTreeSlice<A extends [options?: ContainerTreeOptions]>(start:number,end:number,...args:A): ContainerTreeSlice<ContainerTreeText<A[0]>>;
 }
 interface LoroMovableList {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"MovableList"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"MovableList"}>;
     /** Read [start,end), clamped, with source coordinates; parent shallow list access remains O(N). */
-    toContainerTreeSlice<T extends ContainerTreeTextFormat = "plain">(start:number,end:number,options?:ContainerTreeOptions<T>): ContainerTreeSlice<T>;
+    toContainerTreeSlice<A extends [options?: ContainerTreeOptions]>(start:number,end:number,...args:A): ContainerTreeSlice<ContainerTreeText<A[0]>>;
 }
 interface LoroText {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"Text"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"Text"}>;
 }
 interface LoroTree {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"Tree"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"Tree"}>;
 }
 interface LoroCounter {
     /** Read this attached container and descendants; text format applies recursively. Throws if detached. */
-    toContainerTree<T extends ContainerTreeTextFormat = "plain">(options?: ContainerTreeOptions<T>): Extract<ContainerNode<T>, {type:"Counter"}>;
+    toContainerTree<A extends [options?: ContainerTreeOptions]>(...args: A): Extract<ContainerNode<ContainerTreeText<A[0]>>, {type:"Counter"}>;
 }
 "#;

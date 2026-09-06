@@ -100,3 +100,11 @@ property writes. These timings describe the tested machines/workload, not a gene
 speed guarantee. Mirror's Tree normalization still uses its existing handle path.
 
 Document toContainerTree({roots}) filters before reading root values; the optional text format applies recursively. TypeScript infers both the receiver kind and Text value format. Mirror selects schema roots and, when preserving unknown roots, includes them while excluding explicit Ignore roots.
+
+TypeScript conditional types distinguish a required `text` from an optional format: only
+`{ text: "delta" }` guarantees delta arrays. Optional delta options (or omitted
+options) retain `"plain"` in the result type. Explicit required option types also
+require the argument at the call site.
+Required literal root selections return `Partial<Record<SelectedName, ...>>`,
+because selected roots may be missing or hidden; optional roots can select all
+roots when omitted and therefore do not restrict the result's key names.

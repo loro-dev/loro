@@ -169,7 +169,8 @@ describe("toContainerTree", () => {
     try {
       result = d.toContainerTree();
     } finally {
-      delete (Object.prototype as Record<string, unknown>).__container_tree_probe;
+      delete (Object.prototype as Record<string, unknown>)
+        .__container_tree_probe;
     }
     expect(calls).toBe(0);
     expect(d.version().encode()).toEqual(vv);
@@ -339,3 +340,78 @@ function checkContainerTreeTypes(
   return [plain, delta, mapKind, invalid];
 }
 void checkContainerTreeTypes;
+
+// Optional options must not promise delta when runtime defaults to plain text.
+function checkOptionalTreeTypes(
+  text: LoroText,
+  doc: LoroDoc,
+  map: LoroMap,
+  tree: LoroTree,
+  list: LoroList,
+  movable: LoroMovableList,
+  optional: import("../bundler/index").ContainerTreeOptions<"delta">,
+  maybe: { text: "delta" } | undefined,
+  mode: "plain" | "delta",
+  listUnion: LoroList | LoroMovableList,
+) {
+  type Delta = ReturnType<LoroText["toDelta"]>;
+  const unionList = listUnion.toContainerTree({ text: "delta" });
+  const unionSlice = listUnion.toContainerTreeSlice(0, 1, { text: "delta" });
+  void [unionList, unionSlice];
+  const union: string | Delta = text.toContainerTree(optional).value;
+  const dynamic: string | Delta = text.toContainerTree({ text: mode }).value;
+  // @ts-expect-error Optional text can default to a string.
+  const a: Delta = text.toContainerTree(optional).value;
+  // @ts-expect-error Missing options default to a string.
+  const b: Delta = text.toContainerTree(maybe).value;
+  // @ts-expect-error Explicit type arguments cannot override runtime defaults.
+  const c: Delta = text.toContainerTree<[{ text: "delta" }]>().value;
+  const plain: string = text.toContainerTree({}).value;
+  const delta: Delta = text.toContainerTree({ text: "delta" }).value;
+  const selected = doc.toContainerTree({
+    roots: ["settings"] as const,
+    text: "delta",
+  });
+  // @ts-expect-error Unselected root names are not in the result type.
+  selected.other;
+  // @ts-expect-error A selected root can be missing or hidden.
+  const required: ContainerNode<"delta"> = selected.settings;
+  const selectedNode: ContainerNode<"delta"> | undefined = selected.settings;
+  const absent = doc.toContainerTree({ roots: [] as const });
+  // @ts-expect-error Empty selection has no keys.
+  absent.settings;
+  const child = map.toContainerTree(optional).value.text;
+  if (child.type === "Text") {
+    // @ts-expect-error Optional text applies recursively.
+    const d: Delta = child.value;
+    void d;
+  }
+  const meta = tree.toContainerTree(optional).value[0].meta.value.text;
+  if (meta.type === "Text") {
+    // @ts-expect-error Tree metadata also retains the default plain possibility.
+    const e: Delta = meta.value;
+    void e;
+  }
+  for (const items of [
+    list.toContainerTreeSlice(0, 1, maybe).items,
+    movable.toContainerTreeSlice(0, 1, maybe).items,
+  ]) {
+    const item = items[0];
+    if (item.type === "Text") {
+      // @ts-expect-error Optional slice options can produce strings.
+      const f: Delta = item.value;
+      void f;
+    }
+  }
+  return [union, dynamic, a, b, c, plain, delta, required, selectedNode];
+}
+void checkOptionalTreeTypes;
+
+it("defaults optional delta configurations to plain text when omitted", () => {
+  const text = new LoroDoc().getText("text");
+  text.insert(0, "hello");
+  const options: import("../bundler/index").ContainerTreeOptions<"delta"> = {};
+  expect(text.toContainerTree(options).value).toBe("hello");
+  expect(text.toContainerTree(undefined).value).toBe("hello");
+  expect(text.toContainerTree({ text: "delta" }).value).toEqual(text.toDelta());
+});

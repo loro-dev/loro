@@ -96,3 +96,7 @@ range and Mirror integration contracts.
 Document `roots` filters before reading values; missing roots are omitted. List
 `toContainerTreeSlice` returns coordinates and items under one state lock, never
 a partial ContainerNode. Keep receiver and text-format inference in TypeScript.
+
+Only a required `text` option can exclude the default plain format from the
+return type. Optional options/text must retain plain, including explicit generic
+arguments. Required root selections preserve literal keys as optional properties.
