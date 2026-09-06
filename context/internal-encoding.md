@@ -216,6 +216,11 @@ Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
 history before the shallow root.
 
+Merge semantics of a shallow replica meeting concurrent full-history peers
+(which updates apply, pend, or are rejected, and why a never-synced peer can
+never merge): [docs/shallow-snapshot-concurrency.md](../docs/shallow-snapshot-concurrency.md)
+with tests in `crates/loro/tests/shallow_snapshot_concurrency.rs`.
+
 ## JSON Updates
 
 `json_schema.rs` is not wrapped in the binary `loro` envelope. Its
