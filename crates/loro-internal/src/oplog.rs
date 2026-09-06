@@ -508,6 +508,13 @@ impl OpLog {
         change_iter.flat_map(move |c| RichOp::new_iter_by_cnt_range(c, id_span.counter))
     }
 
+    pub(crate) fn iter_changes(
+        &self,
+        id_span: IdSpan,
+    ) -> impl Iterator<Item = BlockChangeRef> + '_ {
+        self.change_store.iter_changes(id_span)
+    }
+
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id)
             .map(|c| {

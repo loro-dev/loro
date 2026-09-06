@@ -212,6 +212,50 @@ path reuses the root bytes without that check. Containers introduced after the
 root are not checked again and can survive either in retained operations (`E`)
 or as raw/lazy overlay state bytes.
 
+When the source doc is not shallow, its state is already at the latest
+version, and at least `MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE` (65536; 16 in
+unit tests) ops are retained since the root, `export_shallow_snapshot_inner`
+builds the root state by replaying pre-root history forward into a temporary
+doc (`export_fast_updates_in_range` pre-encoded under the oplog lock, then
+imported), not by checking the live doc out backwards: a reverse checkout
+makes the richtext/list diff calculators rebuild a full CRDT tracker from
+empty per touched container (the `should_rebuild` path in
+`RichtextDiffCalculator::calculate_diff`), which dominated shallow export cost
+(~20x slower than forward replay on container-heavy docs). Below the retained-ops
+threshold the checkout path is used instead: it ties in time around ~8k
+retained ops and peaks at ~4x less memory, which matters for lazily imported
+docs (exporting right after import must not materialize the whole state).
+The fast path pays for re-encoding and replaying the ENTIRE pre-root history,
+so the prefix is also gated: `pre_root_ops <= 16 * ops_num`
+(`MAX_PRE_ROOT_TO_RETAINED_OPS_RATIO`; measured crossover — fast wins at
+ratio 9, loses at 19), `pre_root_ops <= 1_000_000`
+(`MAX_PRE_ROOT_OPS_FOR_FORWARD_REPLAY`), and a decoded-byte cap on the prefix
+(`MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY`, 32 MiB) because op counts miss value
+sizes — a Map write is one atom regardless of how large its Binary/String
+value is. The byte leg runs BEFORE encoding: `estimate_ops_content_bytes`
+walks op payloads by reference (arena slices are never copied), recursing into
+nested `LoroValue::List`/`Map` and counting everything the block encoder
+copies: map and style keys, style values, fractional indexes, root container
+names, unknown-op OwnedValue payloads (including MarkStart keys and
+MarkStart/ListSet values), and commit messages, with a budget-aware early
+exit past the cap, while
+`export_fast_updates_in_range` slice-copies values into a fresh store — so the
+cap must be checked before any prefix bytes are copied.
+A huge unrelated prefix with a large tail must stay on the checkout path —
+see the `shallow_export_scalar_prefix` and `shallow_export_byte_prefix`
+benches.
+The replay doc mirrors the live store's root container entries via
+`DocState::existing_retention_roots` (a root-only key scan — never
+`iter_all_container_ids`, which calls `load_all`) so accessed-but-op-less root
+containers still ship, and it receives a copy of the live doc's
+`deleted_root_containers` config so roots deleted before the root are dropped
+at flush instead of being resurrected as empty entries (roots deleted after
+the root keep their at-root content because flush only drops entries whose
+value is empty). Detached or already-shallow sources keep the old checkout
+path (the reuse branch handles cached roots; a shallow source's trimmed
+history cannot be forward-replayed). The forward path never moves the live
+doc, so no state restore is needed.
+
 Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
 history before the shallow root.
