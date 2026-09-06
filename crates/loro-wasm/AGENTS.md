@@ -87,3 +87,20 @@ are documented in
   and Rollup need either the `base64` entry or an explicit asset copy. Keep the
   bundler smoke tests aligned with these expectations.
 - If package output or published behavior changes, add a changeset.
+
+`LoroDoc.toContainerTree` constructs typed nested snapshots with fixed JS helpers. See
+[context/wasm-container-tree.md](../../context/wasm-container-tree.md) for identity, ownership,
+range and Mirror integration contracts.
+
+`toContainerTree` on attached containers recursively applies its text format.
+Document `roots` filters before reading values; missing roots are omitted. List
+`toContainerTreeSlice` returns coordinates and items under one state lock, never
+a partial ContainerNode. Keep receiver and text-format inference in TypeScript.
+
+Only a required `text` option can exclude the default plain format from the
+return type. Optional options/text must retain plain, including explicit generic
+arguments. Required root selections preserve literal keys as optional properties.
+
+The nodejs target must load without Node's `require(esm)` support. Convert
+wasm-bindgen snippets to CommonJS during the build and keep the package test's
+`--no-experimental-require-module` smoke check. Other targets retain ESM snippets.
