@@ -155,11 +155,11 @@ describe("toContainerTree", () => {
   it("does not invoke inherited setters or commit pending changes", () => {
     const d = new LoroDoc();
     const m = d.getMap("root");
-    m.set("__read_state_probe", "data");
+    m.set("__container_tree_probe", "data");
     m.set("array", [1, 2]);
     let calls = 0;
     const vv = d.version().encode();
-    Object.defineProperty(Object.prototype, "__read_state_probe", {
+    Object.defineProperty(Object.prototype, "__container_tree_probe", {
       configurable: true,
       set() {
         calls++;
@@ -169,7 +169,7 @@ describe("toContainerTree", () => {
     try {
       result = d.toContainerTree();
     } finally {
-      delete (Object.prototype as Record<string, unknown>).__read_state_probe;
+      delete (Object.prototype as Record<string, unknown>).__container_tree_probe;
     }
     expect(calls).toBe(0);
     expect(d.version().encode()).toEqual(vv);

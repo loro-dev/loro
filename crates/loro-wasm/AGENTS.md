@@ -89,7 +89,7 @@ are documented in
 - If package output or published behavior changes, add a changeset.
 
 `LoroDoc.toContainerTree` constructs typed nested snapshots with fixed JS helpers. See
-[context/wasm-bulk-read.md](../../context/wasm-bulk-read.md) for identity, ownership,
+[context/wasm-container-tree.md](../../context/wasm-container-tree.md) for identity, ownership,
 range and Mirror integration contracts.
 
 `toContainerTree` on attached containers recursively applies its text format.

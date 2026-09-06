@@ -5,7 +5,7 @@
 #![allow(clippy::doc_lazy_continuation)]
 // #![warn(missing_docs)]
 
-mod read_state;
+mod container_tree;
 
 use convert::{
     import_blob_metadata_to_js, import_status_to_js_value, js_diff_to_inner_diff,

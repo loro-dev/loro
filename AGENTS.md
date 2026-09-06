@@ -98,4 +98,4 @@ History uses short imperative commits, often prefixed by `fix:`, `test:`,
 `chore:`, or `refactor:`. PRs should include summary, rationale, validation, and
 linked issues or traces when relevant.
 - Structured WASM reads, node identity, ranges and performance responsibilities:
-  [context/wasm-bulk-read.md](context/wasm-bulk-read.md).
+  [context/wasm-container-tree.md](context/wasm-container-tree.md).

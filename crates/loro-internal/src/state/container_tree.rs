@@ -26,7 +26,7 @@ pub trait Sink {
     fn value_end(&mut self) -> LoroResult<()>;
 }
 impl DocState {
-    pub fn read_state<S: Sink>(
+    pub fn read_container_tree<S: Sink>(
         &mut self,
         s: &mut S,
         cid: Option<&ContainerID>,
@@ -35,7 +35,7 @@ impl DocState {
     ) -> LoroResult<()> {
         if let Some(id) = cid {
             let idx = self.arena.register_container(id);
-            return self.read_state_container(s, idx, rich, None, None, 0);
+            return self.read_container_node(s, idx, rich, None, None, 0);
         }
         let roots = self.preferred_root_containers();
         let mut visible = Vec::new();
@@ -85,12 +85,12 @@ impl DocState {
         s.emit(Event::Object(visible.len()))?;
         for (key, idx, value) in visible {
             s.emit(Event::Key(&key))?;
-            self.read_state_container(s, idx, rich, None, value, 0)?;
+            self.read_container_node(s, idx, rich, None, value, 0)?;
         }
         s.emit(Event::End)
     }
     /// Read a list window and its coordinates under the same state lock.
-    pub fn read_state_slice<S: Sink>(
+    pub fn read_container_tree_slice<S: Sink>(
         &mut self,
         sink: &mut S,
         cid: &ContainerID,
@@ -112,10 +112,10 @@ impl DocState {
             .ok_or_else(|| err("Expected list value"))?
             .len();
         let start = start.min(total);
-        self.read_state_container(sink, idx, rich, Some((start, end)), Some(value), 0)?;
+        self.read_container_node(sink, idx, rich, Some((start, end)), Some(value), 0)?;
         Ok((start, total))
     }
-    fn read_state_container<S: Sink>(
+    fn read_container_node<S: Sink>(
         &mut self,
         s: &mut S,
         idx: ContainerIdx,
@@ -159,9 +159,9 @@ impl DocState {
                         .map(|t| ContainerID::new_mergeable(&id, k, t));
                     if let Some(c) = merge {
                         let i = self.arena.register_container(&c);
-                        self.read_state_container(s, i, rich, None, None, depth + 1)?;
+                        self.read_container_node(s, i, rich, None, None, depth + 1)?;
                     } else {
-                        self.read_state_edge(s, v, rich, depth + 1)?;
+                        self.read_container_edge(s, v, rich, depth + 1)?;
                     }
                 }
                 s.emit(Event::End)?;
@@ -172,16 +172,16 @@ impl DocState {
                 let end = end.min(l.len()).max(start);
                 s.emit(Event::Array(end - start))?;
                 for v in &l[start..end] {
-                    self.read_state_edge(s, v, rich, depth + 1)?;
+                    self.read_container_edge(s, v, rich, depth + 1)?;
                 }
                 s.emit(Event::End)?;
             }
-            (_, ContainerType::Tree) => self.read_state_tree(s, &v, rich, depth + 1)?,
+            (_, ContainerType::Tree) => self.read_tree_nodes(s, &v, rich, depth + 1)?,
             _ => raw(s, &v, depth + 1)?,
         };
         s.container_end()
     }
-    fn read_state_edge<S: Sink>(
+    fn read_container_edge<S: Sink>(
         &mut self,
         s: &mut S,
         v: &LoroValue,
@@ -190,13 +190,13 @@ impl DocState {
     ) -> LoroResult<()> {
         if let LoroValue::Container(cid) = v {
             let idx = self.arena.register_container(cid);
-            return self.read_state_container(s, idx, rich, None, None, depth);
+            return self.read_container_node(s, idx, rich, None, None, depth);
         }
         s.value_start()?;
         raw(s, v, depth + 1)?;
         s.value_end()
     }
-    fn read_state_tree<S: Sink>(
+    fn read_tree_nodes<S: Sink>(
         &mut self,
         s: &mut S,
         v: &LoroValue,
@@ -213,9 +213,9 @@ impl DocState {
                     for (k, v) in m.iter() {
                         s.emit(Event::Key(k))?;
                         if k == "meta" {
-                            self.read_state_edge(s, v, rich, depth + 1)?;
+                            self.read_container_edge(s, v, rich, depth + 1)?;
                         } else if k == "children" {
-                            self.read_state_tree(s, v, rich, depth + 1)?;
+                            self.read_tree_nodes(s, v, rich, depth + 1)?;
                         } else {
                             raw(s, v, depth + 1)?;
                         }

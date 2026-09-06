@@ -1,4 +1,4 @@
-# Structured WASM reads and the performance stack
+# Container tree API and the performance stack
 
 Verified against code 2026-09-06.
 
@@ -42,9 +42,9 @@ inherited setters. Consumers must preserve this when projecting nodes themselves
 
 ## Implementation
 
-`state/read_state.rs` emits a traversal to a sink without constructing a deep
+`state/container_tree.rs` emits a traversal to a sink without constructing a deep
 whole-document LoroValue tree. Each container's shallow value is ephemeral;
-values fetched to determine root visibility are reused. `loro-wasm/src/read_state.rs`
+values fetched to determine root visibility are reused. `loro-wasm/src/container_tree.rs`
 owns the JS construction stack and uses fixed imported functions for stable
 wrapper shapes, IDs and own-property writes. Keys and peer decimal strings are
 cached only for one read; complete CIDs are constructed in JS. Binary buffers

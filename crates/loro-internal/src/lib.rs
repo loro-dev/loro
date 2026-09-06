@@ -14,7 +14,7 @@ pub mod diff;
 pub mod diff_calc;
 pub mod handler;
 pub mod sync;
-pub use state::read_state;
+pub use state::container_tree;
 
 use crate::sync::{AtomicBool, AtomicUsize};
 use std::sync::Arc;

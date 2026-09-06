@@ -1,6 +1,6 @@
 //! Build JS state with fixed constructors; no callbacks or document-wide intermediary.
 use super::*;
-use loro_internal::read_state::{err, Event, Sink};
+use loro_internal::container_tree::{err, Event, Sink};
 use std::collections::HashMap;
 #[wasm_bindgen(inline_js = "
 const kinds = ['Map', 'List', 'MovableList', 'Text', 'Tree', 'Counter'];
@@ -216,7 +216,7 @@ fn container_tree<H: HandlerTrait>(
         .doc()
         .ok_or_else(|| JsValue::from_str("toContainerTree requires an attached container"))?;
     let mut sink = FixedSink::default();
-    doc.app_state().lock().read_state(
+    doc.app_state().lock().read_container_tree(
         &mut sink,
         Some(&handler.id()),
         matches!(opts.text, TextMode::Delta),
@@ -243,7 +243,7 @@ fn list_slice<H: HandlerTrait>(
         .doc()
         .ok_or_else(|| JsValue::from_str("toContainerTreeSlice requires an attached container"))?;
     let mut sink = FixedSink::default();
-    let (start, total) = doc.app_state().lock().read_state_slice(
+    let (start, total) = doc.app_state().lock().read_container_tree_slice(
         &mut sink,
         &handler.id(),
         matches!(opts.text, TextMode::Delta),
@@ -265,7 +265,7 @@ impl LoroDoc {
     ) -> JsResult<JsDocumentContainerTree> {
         let opts: DocumentOptions = options(opts.map(Into::into), true)?;
         let mut sink = FixedSink::default();
-        self.doc.app_state().lock().read_state(
+        self.doc.app_state().lock().read_container_tree(
             &mut sink,
             None,
             matches!(opts.text, TextMode::Delta),
