@@ -100,3 +100,7 @@ a partial ContainerNode. Keep receiver and text-format inference in TypeScript.
 Only a required `text` option can exclude the default plain format from the
 return type. Optional options/text must retain plain, including explicit generic
 arguments. Required root selections preserve literal keys as optional properties.
+
+The nodejs target must load without Node's `require(esm)` support. Convert
+wasm-bindgen snippets to CommonJS during the build and keep the package test's
+`--no-experimental-require-module` smoke check. Other targets retain ESM snippets.

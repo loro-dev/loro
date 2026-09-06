@@ -43,8 +43,9 @@ inherited setters. Consumers must preserve this when projecting nodes themselves
 ## Implementation
 
 `state/container_tree.rs` emits a traversal to a sink without constructing a deep
-whole-document LoroValue tree. Each container's shallow value is ephemeral;
-values fetched to determine root visibility are reused. `loro-wasm/src/container_tree.rs`
+whole-document LoroValue tree. Plain-mode shallow values are read ephemerally; values fetched to determine
+root visibility are reused. The delta option materializes and retains Text states
+through `get_or_create_mut`, matching the existing `toDelta()` path. `loro-wasm/src/container_tree.rs`
 owns the JS construction stack and uses fixed imported functions for stable
 wrapper shapes, IDs and own-property writes. Keys and peer decimal strings are
 cached only for one read; complete CIDs are constructed in JS. Binary buffers
