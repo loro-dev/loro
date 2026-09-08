@@ -262,7 +262,10 @@ impl TreeDiffCalculator {
             // `checkout_with_low_lamport_concurrent_branch_stays_canonical`
             // in crates/loro/tests/issue.rs. Weakening either the critical
             // version fallback or the ImportGreaterUpdates entry check in
-            // dag.rs breaks this invariant.
+            // dag.rs breaks this invariant. (The oplog's register-only
+            // bypass never reaches this path: it only replays from `from`
+            // when no tree has ops on both sides of the concurrency, and
+            // such trees take the ImportGreaterUpdates branch instead.)
             let base_min_lamport = self.get_min_lamport_by_frontiers(&base_frontiers, oplog);
 
             // retreat for diff

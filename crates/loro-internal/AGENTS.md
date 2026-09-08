@@ -66,6 +66,9 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
   code or docs: the meet of two versions is generally NOT a safe replay
   base. Read `docs/critical-version-spec.md` before touching
   `find_common_ancestor`, diff modes, or `diff_calc/tree.rs` windows.
+  `OpLog::iter_from_replay_base_causally` may bypass the DAG when the
+  concurrency is register-only (`docs/diff_calc.md`, "Register-only
+  concurrency"); keep that check container-granular and history-based.
 - Internal invariant violation should fail fast. Invalid external bytes or JSON
   should return `Err`.
 - Do not silently skip ops, containers, state entries, diffs, or pending changes.

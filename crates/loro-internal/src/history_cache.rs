@@ -627,31 +627,39 @@ impl MapHistoryCache {
         });
     }
 
-    pub fn get_container_latest_op_at_vv(
+    /// Resolve the winning op at `vv` for a restricted set of keys.
+    ///
+    /// Every key whose value can differ between two versions must have been
+    /// written by an op inside the replayed span, so a diff only ever needs the
+    /// candidate keys instead of the whole container. This keeps map diffing
+    /// proportional to the update instead of to the size of the map.
+    pub fn get_container_latest_op_at_vv_for_keys(
         &self,
         container: ContainerIdx,
         vv: &VersionVector,
-        // PERF: utilize this lamport
-        _max_lamport: Lamport,
+        keys: impl Iterator<Item = InternalString>,
         oplog: &OpLog,
     ) -> FxHashMap<InternalString, GroupedMapOpInfo> {
         let mut ans = FxHashMap::default();
-        let mut last_key = u32::MAX;
+        for key in keys {
+            let Some(key_idx) = self.keys.get(&key) else {
+                continue;
+            };
 
-        'outer: loop {
+            let key_idx = key_idx as u32;
             let range = (
                 Bound::Included(MapHistoryCacheEntry {
                     container,
-                    key: 0,
+                    key: key_idx,
                     lamport: 0,
                     peer: 0,
                     counter_or_value: Either::Left(0),
                 }),
-                Bound::Excluded(MapHistoryCacheEntry {
+                Bound::Included(MapHistoryCacheEntry {
                     container,
-                    key: last_key,
-                    lamport: 0,
-                    peer: 0,
+                    key: key_idx,
+                    lamport: Lamport::MAX,
+                    peer: PeerID::MAX,
                     counter_or_value: Either::Left(0),
                 }),
             );
@@ -666,7 +674,7 @@ impl MapHistoryCache {
                             match &op.content {
                                 InnerContent::Map(map) => {
                                     ans.insert(
-                                        self.keys.get_value(entry.key as usize).unwrap().clone(),
+                                        key,
                                         GroupedMapOpInfo {
                                             value: map.value.clone(),
                                             lamport: entry.lamport,
@@ -676,27 +684,22 @@ impl MapHistoryCache {
                                 }
                                 _ => unreachable!(),
                             }
-                            last_key = entry.key;
-                            continue 'outer;
+                            break;
                         }
                     }
                     Either::Right(v) => {
-                        let k = self.keys.get_value(entry.key as usize).unwrap().clone();
                         ans.insert(
-                            k,
+                            key,
                             GroupedMapOpInfo {
                                 value: (**v).clone(),
                                 lamport: entry.lamport,
                                 peer: entry.peer,
                             },
                         );
-                        last_key = entry.key;
-                        continue 'outer;
+                        break;
                     }
                 }
             }
-
-            break;
         }
 
         ans

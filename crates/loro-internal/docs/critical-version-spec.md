@@ -370,6 +370,16 @@ type ∈ {A（红，来自 L）, B（蓝，来自 R）, Shared（紫）}，tips 
 **S4（已强化，2026-08-01）**：mode ≠ Checkout ⟹ 新区每个事件都
 因果晚于 L 的**全部**头（即 L 对并集图 critical）。
 
+> **oplog 层的按容器放宽（2026-09-07）**：本条是对 `find_common_ancestor`
+> 的承诺，不变。但 `OpLog::iter_from_replay_base_causally` 在调用它之前会先
+> 用版本向量做同一个入场检查（`OpLog::uncovered_entry_parents`），并检查
+> "与新区并发的旧历史"和新区各自触及的容器：若二者只在寄存器容器
+> （Map、Counter）上重叠，则直接以 L 为起点、以 IGU 模式重放，不再进入
+> DAG 走查。这不违反 tracker 的要求——每个 Text/List/Tree 容器仍然满足
+> "其重放区内的 op 与其 ancestry(L) 内的 op 不并发"；重叠的 Map 由差量
+> 计算器改用 history cache 逐 key 精确求值。见 `docs/diff_calc.md`
+> "Register-only concurrency"。
+
 历史背景：本条曾是"非目标声明"——旧版只承诺版本级包含
 （vv(R) ⊇ vv(L)），把逐操作并发交给下游守卫兜底。两个反例都会通过：
 
