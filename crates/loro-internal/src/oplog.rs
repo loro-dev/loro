@@ -758,14 +758,14 @@ impl OpLog {
             });
         }
 
-        // Trimmed history is never part of `concurrent_old`: every retained or
-        // imported change causally follows the shallow root
-        // (`import_deps_before_shallow_root` rejects everything else), so the
-        // parents of every entry change cover it.
-        debug_assert!(
-            causal_past.includes_vv(&self.dag.shallow_since_vv().to_vv()),
-            "entry parents must cover the shallow root"
-        );
+        // A shallow snapshot may retain changes that are concurrent with its
+        // root (independent peer chains, for example), and `from` counts the
+        // trimmed ops below the root. If `concurrent_old` would reach into
+        // that trimmed history we cannot see which containers it touched, so
+        // the decision has to stay with the DAG.
+        if !causal_past.includes_vv(&self.dag.shallow_since_vv().to_vv()) {
+            return None;
+        }
 
         let concurrent_old = causal_past.diff(from).forward;
         let old_containers = self.containers_in_spans(

@@ -62,9 +62,12 @@ ops keep the fast path; they are not marked `source_not_in_op_context`.
 
 Anything else (a text, list, movable list, tree or unknown container with ops
 on both sides) falls back to the DAG's conservative answer exactly as before.
-Shallow docs need no special case: trimmed history is causally before every
-retained change (`import_deps_before_shallow_root`), so it can never be
-concurrent with the new region.
+So does a shallow doc whose concurrent old history reaches below the shallow
+root: later imports must causally follow the root
+(`import_deps_before_shallow_root`), but the snapshot itself can retain
+changes concurrent with the root (independent peer chains), and the trimmed
+ops in `from` cannot be scanned for containers. The regression test is
+`shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary`.
 
 Map diffs in `Checkout`/`Import` mode only look up the keys written inside the
 replayed span, and skip replayed ops that both versions already contain, so
