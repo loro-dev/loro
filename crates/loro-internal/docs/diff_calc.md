@@ -32,6 +32,47 @@ This lookup runs only for unmatched branch tips and prunes by visited DAG nodes
 and Lamport time. It does not calculate a causal version for every new peer and
 does not compare each one with the complete `from` version vector.
 
+## Register-only concurrency
+
+`to ⊇ from` does not imply the `ImportGreaterUpdates` contract: the new ops
+may be concurrent with part of `from` (a stale unmerged head is the common
+shape). The DAG alone can only demote such an import to `Checkout` and
+retreat the base to a critical version, which replays the whole branch and
+makes Text/List rebuild trackers from empty on every import.
+
+`OpLog::iter_from_replay_base_causally` therefore checks the concurrency at
+container granularity before consulting the DAG:
+
+1. `OpLog::uncovered_entry_parents` finds the entry changes of the new region
+   whose causal parents do not cover all of `from` (the version-vector form
+   of spec lemma L12; it scans only the new changes). Old history outside
+   `⋂ Events(parents)` may be concurrent with a new op; everything else is
+   causally before the whole new region.
+2. `OpLog::register_only_concurrency` scans the ops in that concurrent old
+   history and in the new region. If every container present on both sides
+   is a register (Map, Counter), the import replays from `from` in
+   `ImportGreaterUpdates` mode.
+
+Registers are harmless because their diffs need no positional context, but the
+overlapping maps must still be resolved from the history cache (the calculator
+is started in `Import` mode for them): persisted state drops the lamport
+metadata of deleted roots and dead containers, so comparing lamports against
+the state is not sound for concurrent ops. Containers with no concurrent old
+ops keep the fast path; they are not marked `source_not_in_op_context`.
+
+Anything else (a text, list, movable list, tree or unknown container with ops
+on both sides) falls back to the DAG's conservative answer exactly as before.
+So does a shallow doc whose concurrent old history reaches below the shallow
+root: later imports must causally follow the root
+(`import_deps_before_shallow_root`), but the snapshot itself can retain
+changes concurrent with the root (independent peer chains), and the trimmed
+ops in `from` cannot be scanned for containers. The regression test is
+`shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary`.
+
+Map diffs in `Checkout`/`Import` mode only look up the keys written inside the
+replayed span, and skip replayed ops that both versions already contain, so
+their cost follows the update instead of the map size.
+
 ## Diff modes
 
 - `Checkout` is the general and slowest mode. It can move in either direction

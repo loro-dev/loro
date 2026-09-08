@@ -101,6 +101,17 @@ impl std::fmt::Debug for LoroDocInner {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many imports took the independent scalar-root fast path.
+    static ISOLATED_FAST_PATH_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn isolated_fast_path_hits_for_test() -> usize {
+    ISOLATED_FAST_PATH_HITS.with(|hits| hits.get())
+}
+
 impl LoroDoc {
     /// Run the provided closure within a commit barrier.
     ///
@@ -827,6 +838,8 @@ impl LoroDoc {
                     })
             });
             let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
+                #[cfg(test)]
+                ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
                 let component_frontiers = oplog.dag.vv_to_frontiers(&component_vv);
                 let (diff, _) = diff.calc_diff_internal(
                     &oplog,
@@ -3287,8 +3300,12 @@ mod test {
         base.get_map("existing").insert("value", "base").unwrap();
         let base_sections = snapshot_sections(&base);
 
+        // The donor's value must lose the register comparison against the real
+        // ops below (same lamport, lower peer), so both the general path and a
+        // wrongly-taken fast path would end with "winner"; the fast-path
+        // counter is what proves the rejection.
         let state_donor = LoroDoc::new_auto_commit();
-        state_donor.set_peer_id(999).unwrap();
+        state_donor.set_peer_id(0).unwrap();
         state_donor
             .get_map("isolated")
             .insert("value", "stale")
@@ -3322,6 +3339,7 @@ mod test {
             .import(&right.export(ExportMode::all_updates()).unwrap())
             .unwrap();
 
+        let hits = super::isolated_fast_path_hits_for_test();
         target
             .import(&aggregate.export(ExportMode::all_updates()).unwrap())
             .unwrap();
@@ -3330,7 +3348,7 @@ mod test {
             target.get_map("isolated").get("value"),
             Some("winner".into())
         );
-        assert!(target.has_history_cache());
+        assert_eq!(super::isolated_fast_path_hits_for_test(), hits);
     }
 
     #[test]
@@ -3377,12 +3395,13 @@ mod test {
         let remote = LoroDoc::new_auto_commit();
         remote.set_peer_id(999).unwrap();
         remote.get_map("shared").insert("value", "remote").unwrap();
+        let hits = super::isolated_fast_path_hits_for_test();
         target
             .import(&remote.export(ExportMode::all_updates()).unwrap())
             .unwrap();
 
         assert_eq!(target.get_map("shared").get("value"), Some("remote".into()));
-        assert!(target.has_history_cache());
+        assert_eq!(super::isolated_fast_path_hits_for_test(), hits);
     }
 
     #[test]
@@ -3402,10 +3421,27 @@ mod test {
         let remote = LoroDoc::new_auto_commit();
         remote.set_peer_id(2).unwrap();
         remote.get_map("deleted").insert("value", "remote").unwrap();
+        let hits = super::isolated_fast_path_hits_for_test();
         target
             .import(&remote.export(ExportMode::all_updates()).unwrap())
             .unwrap();
 
-        assert!(target.has_history_cache());
+        assert_eq!(super::isolated_fast_path_hits_for_test(), hits);
+        // The root's clearing ops outrank the remote write, so the map stays
+        // empty; `deleted_root_containers` only affects root visibility, so
+        // compare the container value with a doc that saw the other order.
+        let reference = LoroDoc::new();
+        reference
+            .import(&remote.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        reference
+            .import(&base.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        use crate::handler::HandlerTrait;
+        assert_eq!(
+            target.get_map("deleted").get_deep_value(),
+            reference.get_map("deleted").get_deep_value()
+        );
+        assert!(target.get_map("deleted").is_empty());
     }
 }
