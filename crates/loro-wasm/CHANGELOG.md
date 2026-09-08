@@ -1,5 +1,76 @@
 # Changelog
 
+## 1.16.0
+
+### Minor Changes
+
+- 98b2ac6: Add bulk deep-read APIs on containers. `LoroMap`/`LoroList`/`LoroMovableList`/`LoroTree`/`LoroText` now expose `getDeepValueWithID()` returning the same `{ cid, value }` node shape as `LoroDoc.getDeepValueWithID()`. `LoroList` and `LoroMovableList` also expose `getRangeDeepValueWithID(start, end)` and `getRangeValue(start, end)` for reading a slice of a list in one WASM call; bounds are clamped (negatives to 0, overflows to the length) and empty or inverted ranges return `[]`. Detached containers throw a readable error instead of trapping.
+
+  Potentially breaking: the `cid` field in `getDeepValueWithID()` results is now the bare container id string (e.g. `cid:92@2311024965712536503:Map`, `cid:root-map:Map`) — exactly what the container's `id` property returns. Previously it was a Debug-style composite like `idx:85, id:cid:92@2311024965712536503:Map`. Update any consumer that parsed or matched the old `idx:N, id:...` shape.
+
+- c594ee0: Add `toContainerTree()` to documents and attached containers. It returns independent recursive `{type, cid, value}` nodes and opaque ordinary `Value` nodes. Documents can select visible roots without creating missing roots. Text formatting applies to all descendants and is inferred in TypeScript. List and MovableList expose `toContainerTreeSlice(start, end)` with explicit `start`, `totalLength`, and `items`. Fixed JS construction, per-read key/peer reuse, and owned binary buffers avoid a public transport protocol.
+
+  Optional text configurations retain the default plain-text possibility in TypeScript. Literal root selections preserve their names as optional result properties.
+
+  Compile Node snippets to CommonJS so the package does not require `require(esm)` support.
+
+### Patch Changes
+
+- fcd039c: Fix wasm memory retention when reading a document container by container
+  (loro-dev/loro#1092).
+
+  Every read through a container handle (`LoroMap.keys()`/`get()`,
+  `LoroList.get()`, `LoroText.toJSON()`, ...) decoded the container's value into
+  an in-memory cache that was pinned for the lifetime of the document — about
+  4 KB per container, released only by `doc.free()`. Walking a large document
+  this way (the pattern loro-mirror's initial state build uses) retained ~4 KB ×
+  containers-ever-read and trapped wasm32 at the 4 GiB limit around one million
+  containers.
+
+  The decoded-value cache is now bounded (2048 entries, second-chance FIFO).
+  Evicted entries are pure caches over the KV store and are re-decoded on the
+  next read, so this only changes memory behavior, not API semantics.
+  `doc.free()` semantics are unchanged.
+
+  Measured on the issue's repro (570-turn document, 188k container handles,
+  release build): the handle walk retains no per-container memory (external
+  memory flat at ~84 MiB vs +641 MiB before) and runs ~10x faster
+  (1.28 s vs 12.5 s) thanks to the smaller working set.
+
+- f03d283: Speed up `export({ mode: "shallow-snapshot" })` by up to ~20x on container-heavy documents with a large retained history.
+
+  Building the state at the shallow root used to check the live document out
+  backwards (latest -> root). That reverse diff makes the richtext/list diff
+  calculators rebuild a full CRDT tracker from empty for every container touched
+  in the range, which dominated the export cost: on a doc with ~66k containers
+  and ~720k streaming-edit ops, shallow export at a mid-history root took ~3.2s
+  versus ~1.5ms for a full snapshot. When at least 64k ops are retained since
+  the root, the root state is now reconstructed by replaying the pre-root
+  history forward into a temporary doc, and the latest state is read from the
+  live store directly without moving the document. The pre-root prefix is bounded
+  both relative to the tail (at most 16x the retained op count) and absolutely
+  (at most 1M ops) and decoded payload size (at most 32 MiB, estimated by
+  walking op payloads — recursing into nested values, style values, and commit
+  messages — before any value is copied; op counts miss value sizes, since a Map
+  write is one atom regardless of payload size), so a document whose
+  pre-root history is huge or byte-heavy and unrelated to the tail keeps the
+  previous checkout path. The same export drops to
+  ~370ms and the produced blob is slightly smaller (~17% on the same fixture).
+  With a small retained range — including a root at the latest version — the
+  previous checkout path is kept: it is then equally fast and peaks at ~4x less
+  memory, so exporting a lazily imported document no longer materializes its
+  whole state. Exported blobs remain logically equivalent; detached or
+  already-shallow source docs also keep the previous code path.
+
+  Also fixes shallow snapshot export resurrecting, as an empty entry, a root
+  container deleted with `deleteRootContainer` before the shallow root.
+
+- 7d26c7e: Reject updates concurrent with the shallow root frontier with
+  ImportUpdatesThatDependsOnOutdatedVersion instead of queuing them and panicking
+  while resolving a dependency that has already been trimmed. Rejected updates do
+  not enter pending storage; subsequent valid post-root updates still apply.
+- 8874574: perf: cache `kind()` results on container wrappers. `kind()` returns a constant string per container class; it is now memoized after the first call, so repeated reads (e.g. tree traversal in loro-mirror) no longer cross into WASM or allocate a fresh JS string. This extends the existing `id` cache to `kind()`.
+
 ## 1.15.1
 
 ### Patch Changes

@@ -1,10 +1,11 @@
 # WASM container id cache
 
-Verified against code 2026-08-29.
+Verified against code 2026-09-04.
 
 `LoroMap`, `LoroList`, `LoroText`, `LoroTree`, `LoroMovableList`, and
 `LoroCounter` expose `id` from Rust through wasm-bindgen. The generated getter
-crosses into WASM and creates a new JS string on every call.
+crosses into WASM and creates a new JS string on every call. The same holds for
+`kind()`, which returns a constant string per container class.
 
 ## Identity and lifetime
 
@@ -25,6 +26,13 @@ non-enumerable, module-private Symbol property on the JS wrapper. It clears the
 property during `__destroy_into_raw()` and bypasses the cache for a zero
 pointer. The cache has exactly the wrapper's lifetime and does not retain the
 wrapper from another object.
+
+`kind()` is memoized once per container class (the value is class-constant, so
+no per-wrapper entry is needed). Both the id cache and the kind memo bypass the
+cache for a zero `__wbg_ptr`, so reads after `free()` keep raising
+wasm-bindgen's null-pointer error. Rust-side `kind()` reads
+(`js_to_container` in `src/convert.rs`) go through the same patched prototype
+method and share the memo.
 
 ## Package targets and checks
 

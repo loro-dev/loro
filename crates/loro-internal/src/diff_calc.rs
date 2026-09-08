@@ -124,34 +124,7 @@ fn changed_containers_between(
     after: &VersionVector,
 ) -> FxHashSet<ContainerIdx> {
     let (retreat, forward) = before.diff_iter(after);
-    let mut containers = FxHashSet::default();
-    // Only `op.container` is needed, so scan the borrowed changes directly
-    // instead of materializing a cloned RichOp per op via `oplog.iter_ops`.
-    let mut last_container = None;
-    for span in retreat.chain(forward) {
-        for change in oplog.change_store().iter_changes(span) {
-            let start_counter = span.counter.min().max(change.id.counter);
-            let end_counter = span.counter.norm_end();
-            let start = change
-                .ops
-                .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
-                .unwrap_or_else(|e| e);
-            for op in &change.ops.vec()[start..] {
-                if op.counter >= end_counter {
-                    break;
-                }
-
-                // Consecutive ops overwhelmingly share a container; skip the
-                // hash probe when it hasn't changed.
-                if last_container != Some(op.container) {
-                    containers.insert(op.container);
-                    last_container = Some(op.container);
-                }
-            }
-        }
-    }
-
-    containers
+    oplog.containers_in_spans(retreat.chain(forward))
 }
 
 impl DiffCalculator {
@@ -204,6 +177,7 @@ impl DiffCalculator {
                 vv: replay_base,
                 diff_mode: origin_diff_mode,
                 is_critical: replay_base_is_critical,
+                concurrent_containers,
             },
             iter,
         ) = oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
@@ -293,10 +267,31 @@ impl DiffCalculator {
 
                     if !started_set.contains(&op.container) {
                         started_set.insert(container);
-                        calculator.start_tracking(oplog, &replay_base, calc_mode);
+                        // A container that also has ops in the concurrent old
+                        // history (a register, or the oplog would not have let
+                        // us replay from `before`) must resolve its values from
+                        // history instead of trusting the state's metadata.
+                        let container_mode = if concurrent_containers
+                            .as_ref()
+                            .is_some_and(|set| set.contains(&container))
+                        {
+                            DiffMode::Import
+                        } else {
+                            calc_mode
+                        };
+                        calculator.start_tracking(oplog, &replay_base, container_mode);
                     }
 
-                    if !vv.includes_vv(before) {
+                    // A change whose version misses part of `before` is being
+                    // applied against a source state it never saw. When the
+                    // oplog proved which containers that missing history
+                    // touches, only those calculators lose their op context;
+                    // the others see exactly the state their ops were made in.
+                    if !vv.includes_vv(before)
+                        && concurrent_containers
+                            .as_ref()
+                            .is_none_or(|set| set.contains(&container))
+                    {
                         calculator.mark_source_not_in_op_context();
                     }
 
@@ -308,6 +303,13 @@ impl DiffCalculator {
                         op.counter,
                         change.peer(),
                     );
+
+                    if calculator.ignores_ops_shared_by_both_versions() {
+                        let op_id = ID::new(change.peer(), op.ctr_last());
+                        if before.includes_id(op_id) && after.includes_id(op_id) {
+                            continue;
+                        }
+                    }
 
                     if visited.contains(&op.container) {
                         // don't checkout if we have already checked out this container in this round
@@ -520,6 +522,17 @@ pub(crate) enum ContainerDiffCalculator {
 }
 
 impl ContainerDiffCalculator {
+    /// Whether ops that both versions already contain can be skipped.
+    ///
+    /// A conservative replay base can be far below `before`, so most replayed
+    /// ops are shared by both versions. Trackers still need them as position
+    /// context, but a register (map) resolves per key from the history cache,
+    /// so a shared op can never change the diff: it only makes the calculator
+    /// look up a key that must resolve to the same value on both sides.
+    fn ignores_ops_shared_by_both_versions(&self) -> bool {
+        matches!(self, Self::Map(_))
+    }
+
     fn mark_source_not_in_op_context(&mut self) {
         match self {
             Self::Richtext(calc) => calc.mark_source_not_in_op_context(),
@@ -581,6 +594,14 @@ fn replay_container_ops_from_empty(
 #[derive(Debug)]
 pub(crate) struct MapDiffCalculator {
     container_idx: ContainerIdx,
+    /// In `ImportGreaterUpdates`/`Linear` this holds the resolved new value per key.
+    ///
+    /// In `Checkout`/`Import` the values come from the history cache instead, so
+    /// only the key set matters (values stay `None`): a key that no op in the
+    /// replayed span writes has the same ops on both sides and therefore the
+    /// same winner, so it cannot appear in the diff. Restricting the history
+    /// cache lookup to these keys keeps map diffing proportional to the update
+    /// instead of to the size of the map.
     changed: FxHashMap<InternalString, Option<MapValue>>,
     current_mode: DiffMode,
 }
@@ -612,12 +633,16 @@ impl DiffCalculatorTrait for MapDiffCalculator {
         op: crate::op::RichOp,
         _vv: Option<&crate::VersionVector>,
     ) {
-        if matches!(self.current_mode, DiffMode::Checkout) {
-            // We need to use history cache anyway
+        let map = op.raw_op().content.as_map().unwrap();
+        if matches!(self.current_mode, DiffMode::Checkout | DiffMode::Import) {
+            // The value is resolved from the history cache; only record which
+            // keys this span could have changed.
+            if !self.changed.contains_key(&map.key) {
+                self.changed.insert(map.key.clone(), None);
+            }
             return;
         }
 
-        let map = op.raw_op().content.as_map().unwrap();
         let new_value = MapValue {
             value: map.value.clone(),
             peer: op.peer,
@@ -647,16 +672,17 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             DiffMode::Checkout | DiffMode::Import => oplog.with_history_cache(|h| {
                 let checkout_index = &h.get_checkout_index().map;
                 let mut changed = Vec::new();
-                let from_map = checkout_index.get_container_latest_op_at_vv(
+                let keys = std::mem::take(&mut self.changed);
+                let from_map = checkout_index.get_container_latest_op_at_vv_for_keys(
                     self.container_idx,
                     from_vv,
-                    Lamport::MAX,
+                    keys.keys().cloned(),
                     oplog,
                 );
-                let mut to_map = checkout_index.get_container_latest_op_at_vv(
+                let mut to_map = checkout_index.get_container_latest_op_at_vv_for_keys(
                     self.container_idx,
                     to_vv,
-                    Lamport::MAX,
+                    keys.into_keys(),
                     oplog,
                 );
 
@@ -2344,11 +2370,15 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     let target = base.fork();
     target.set_peer_id(2).unwrap();
     target.get_map("relay").insert("ready", true).unwrap();
+    // Concurrent edits on the same list are what force the conservative
+    // replay; register-only concurrency would be replayed from `before`.
+    target.get_list("unrelated-list").push("b").unwrap();
     target.commit_then_renew();
 
     let source = base.fork();
     source.set_peer_id(3).unwrap();
     nested_map(&source).insert("value", 1).unwrap();
+    source.get_list("unrelated-list").push("c").unwrap();
     source.commit_then_renew();
 
     let before = target.oplog_vv();
@@ -2361,6 +2391,7 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     let after = target.oplog_vv();
     let after_frontiers = target.oplog_frontiers();
     let expected_idx = nested_map(&target).idx();
+    let list_idx = target.get_list("unrelated-list").idx();
 
     let oplog = target.oplog().lock();
     let (base, _) =
@@ -2372,7 +2403,7 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     assert_eq!(base.diff_mode, DiffMode::Import);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after),
-        [expected_idx].into_iter().collect()
+        [expected_idx, list_idx].into_iter().collect()
     );
 
     let mut calculator = DiffCalculator::new(false);
@@ -2384,9 +2415,15 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
         &after_frontiers,
         None,
     );
-    assert_eq!(calculator.calculators.len(), 1);
+    assert_eq!(calculator.calculators.len(), 2);
     assert!(calculator.get_calc(expected_idx).is_some());
-    assert_single_map_value_diff(&diffs, expected_idx, "value", 1.into());
+    assert!(calculator.get_calc(list_idx).is_some());
+    let map_diffs: Vec<_> = diffs
+        .iter()
+        .filter(|d| d.idx == expected_idx)
+        .cloned()
+        .collect();
+    assert_single_map_value_diff(&map_diffs, expected_idx, "value", 1.into());
 }
 
 #[test]

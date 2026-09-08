@@ -5,8 +5,8 @@ use std::{
 
 use super::gen_action;
 use loro::{
-    cursor::CannotFindRelativePosition, ExpandType, ExportMode, Frontiers, LoroDoc, LoroValue,
-    StyleConfig, StyleConfigMap, ID,
+    cursor::CannotFindRelativePosition, ContainerID, ContainerType, ExpandType, ExportMode,
+    Frontiers, LoroDoc, LoroValue, StyleConfig, StyleConfigMap, ID,
 };
 
 /// Byte-level scan of an exported blob. Only used for *absence* checks, and
@@ -769,5 +769,233 @@ fn shallow_snapshot_redacts_dead_styles_for_all_non_both_expands() -> anyhow::Re
             "expand={expand:?}"
         );
     }
+    Ok(())
+}
+
+/// The forward-replay fast path (attached doc at latest) and the checkout
+/// path (detached doc) must produce shallow snapshots that are semantically
+/// identical: both import to the same state with the same shallow metadata.
+/// They are not required to be byte-identical.
+#[test]
+fn shallow_export_forward_replay_matches_checkout_path() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+
+    // Phase 1 (before the shallow root F): content on every container type,
+    // plus an accessed-but-op-less root container and a text whose content is
+    // deleted before F — these are the cases where the replay doc's store can
+    // diverge from the live store.
+    doc.get_map("map").insert("a", 1)?;
+    doc.get_list("list").insert(0, "l0")?;
+    doc.get_text("text").insert(0, "hello")?;
+    let movable = doc.get_movable_list("movable");
+    movable.insert(0, "m0")?;
+    movable.insert(1, "m1")?;
+    let tree = doc.get_tree("tree");
+    tree.enable_fractional_index(0);
+    let root = tree.create(loro::TreeParentId::Root)?;
+    tree.create(root)?;
+    let _accessed_but_empty = doc.get_text("empty_text");
+    doc.get_text("text").delete(0, 2)?;
+    doc.commit();
+    let f = doc.oplog_frontiers();
+
+    // Phase 2 (after F): one big-atom insert pushes the tail past both the
+    // 256-op overlay threshold and the 65536-op forward-replay gate
+    // (`MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE` in
+    // loro-internal/src/encoding/shallow_snapshot.rs), so the attached export
+    // really exercises the fast path with a latest-state overlay. A big-atom
+    // insert keeps the test cheap: 70k atomic ops in a single change.
+    doc.get_text("text").insert(3, &"y".repeat(70_000))?;
+    doc.get_map("map").insert("b", 2)?;
+    doc.get_list("list").insert(1, "l1")?;
+    doc.get_text("text").insert(3, " world")?;
+    movable.mov(0, 1)?;
+    doc.commit();
+
+    // Fast path: attached, state at latest -> forward replay.
+    let fast = doc.export(ExportMode::shallow_snapshot(&f))?;
+    // Checkout path: detach at an older version so state_frontiers differs
+    // from the latest frontiers.
+    doc.checkout(&Frontiers::default())?;
+    let old = doc.export(ExportMode::shallow_snapshot(&f))?;
+    doc.checkout_to_latest();
+
+    // Full metadata and retained history must match, not just the state.
+    let fast_meta = LoroDoc::decode_import_blob_meta(&fast, false)?;
+    let old_meta = LoroDoc::decode_import_blob_meta(&old, false)?;
+    assert_eq!(fast_meta.mode, old_meta.mode);
+    assert_eq!(fast_meta.start_frontiers, f);
+    assert_eq!(old_meta.start_frontiers, f);
+    assert_eq!(fast_meta.change_num, old_meta.change_num);
+    assert_eq!(
+        format!("{:?}", fast_meta.partial_start_vv),
+        format!("{:?}", old_meta.partial_start_vv)
+    );
+    assert_eq!(
+        format!("{:?}", fast_meta.partial_end_vv),
+        format!("{:?}", old_meta.partial_end_vv)
+    );
+
+    let fast_doc = LoroDoc::new();
+    fast_doc.import(&fast)?;
+    let old_doc = LoroDoc::new();
+    old_doc.import(&old)?;
+
+    assert_eq!(fast_doc.get_deep_value(), doc.get_deep_value(), "forward");
+    assert_eq!(old_doc.get_deep_value(), doc.get_deep_value(), "checkout");
+    assert_eq!(fast_doc.get_deep_value(), old_doc.get_deep_value());
+    assert_eq!(fast_doc.shallow_since_frontiers(), f);
+    assert_eq!(old_doc.shallow_since_frontiers(), f);
+    assert_eq!(fast_doc.len_changes(), old_doc.len_changes());
+    assert_eq!(fast_doc.len_ops(), old_doc.len_ops());
+    assert_eq!(fast_doc.oplog_vv(), old_doc.oplog_vv());
+    assert_eq!(fast_doc.oplog_frontiers(), old_doc.oplog_frontiers());
+
+    let vv_pairs = |d: &LoroDoc| {
+        let mut pairs: Vec<(u64, i32)> = d
+            .shallow_since_vv()
+            .iter()
+            .map(|(peer, counter)| (*peer, *counter))
+            .collect();
+        pairs.sort_unstable();
+        pairs
+    };
+    assert_eq!(vv_pairs(&fast_doc), vv_pairs(&old_doc));
+    assert!(fast_doc.is_shallow() && old_doc.is_shallow());
+    // The accessed-but-op-less root container must survive both paths. Check
+    // existence BEFORE materializing it: `get_text` would create the root on
+    // access and prove nothing.
+    for (name, d) in [("forward", &fast_doc), ("checkout", &old_doc)] {
+        assert!(d.is_shallow(), "{name}");
+        assert!(
+            d.has_container(&ContainerID::new_root("empty_text", ContainerType::Text)),
+            "{name}: op-less root container must survive the shallow export"
+        );
+        assert_eq!(d.get_text("empty_text").to_string(), "", "{name}");
+    }
+
+    Ok(())
+}
+
+/// A root container deleted before the shallow root must stay deleted in the
+/// exported root state: the forward-replay path mirrors the live doc's
+/// deleted-root set, so the replay doc's flush drops the empty entry instead
+/// of resurrecting it.
+///
+/// Covers deleted-before-F and deleted-after-F, each with and without the
+/// latest-state overlay (>256 tail ops).
+#[test]
+fn shallow_export_deleted_root_containers_match_checkout_path() -> anyhow::Result<()> {
+    for with_overlay in [false, true] {
+        // `doomed_before` is deleted before F; `doomed_after` is deleted after
+        // F but has content at F that must survive in the root state.
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        doc.get_text("doomed_before").insert(0, "secret")?;
+        doc.get_text("doomed_after").insert(0, "at-f-content")?;
+        doc.get_map("kept").insert("before", 1)?;
+        doc.commit();
+        doc.delete_root_container(ContainerID::new_root("doomed_before", ContainerType::Text));
+        doc.commit();
+        let f = doc.oplog_frontiers();
+
+        // The forward-replay gate (`MIN_RETAINED_OPS_FOR_FORWARD_ROOT_STATE`
+        // in loro-internal/src/encoding/shallow_snapshot.rs) requires >= 65536
+        // retained ops, which always implies an overlay; the no-overlay case
+        // below therefore exercises the checkout path's absolute semantics,
+        // and the overlay case exercises fast-path vs checkout-path parity.
+        // The big-atom variant keeps the test cheap: 70k atomic ops in a
+        // single change.
+        if with_overlay {
+            doc.get_text("kept_text").insert(0, &"t".repeat(70_000))?;
+        } else {
+            for i in 0..4 {
+                doc.get_map("kept").insert(&format!("k{i}"), i as i64)?;
+            }
+        }
+        doc.commit();
+        doc.delete_root_container(ContainerID::new_root("doomed_after", ContainerType::Text));
+        doc.commit();
+
+        let fast = doc.export(ExportMode::shallow_snapshot(&f))?;
+        doc.checkout(&Frontiers::default())?;
+        let slow = doc.export(ExportMode::shallow_snapshot(&f))?;
+        doc.checkout_to_latest();
+
+        let fast_doc = LoroDoc::from_snapshot(&fast)?;
+        let slow_doc = LoroDoc::from_snapshot(&slow)?;
+        assert_eq!(
+            fast_doc.get_deep_value(),
+            slow_doc.get_deep_value(),
+            "with_overlay={with_overlay}"
+        );
+        // Imported docs don't carry the source's deleted-root display config
+        // (both export paths behave the same here): a root deleted after F
+        // replays to an empty value and shows up as such, while the live doc
+        // hides it. A root deleted before F must not appear at all.
+        let live = doc.get_deep_value();
+        let live_map = live.as_map().unwrap();
+        let fast_latest = fast_doc.get_deep_value();
+        let fast_map = fast_latest.as_map().unwrap();
+        for (k, v) in live_map.iter() {
+            assert_eq!(
+                fast_map.get(k),
+                Some(v),
+                "with_overlay={with_overlay} key {k}"
+            );
+        }
+        assert_eq!(fast_map.len(), live_map.len() + 1);
+        if !with_overlay {
+            // The retained tail replays the deletion's clear ops, so the root
+            // ends up empty at the latest version.
+            assert_eq!(
+                fast_map.get("doomed_after"),
+                Some(&LoroValue::String("".into())),
+            );
+        }
+        assert!(
+            !fast_map.contains_key("doomed_before"),
+            "with_overlay={with_overlay}: root deleted before F must not be resurrected"
+        );
+
+        // The root state at F must still render the after-F-deleted content:
+        // check out both imported docs to F and compare.
+        fast_doc.checkout(&f)?;
+        slow_doc.checkout(&f)?;
+        assert_eq!(fast_doc.get_deep_value(), slow_doc.get_deep_value());
+        if !with_overlay {
+            assert_eq!(
+                fast_doc.get_text("doomed_after").to_string(),
+                "at-f-content",
+                "root state must keep content deleted after F"
+            );
+        }
+        // NOTE: with the overlay, a checkout back to F on the imported doc
+        // doubles the after-F-deleted content on BOTH paths — a pre-existing
+        // overlay/checkout quirk reproduced on the base commit, unrelated to
+        // the forward-replay path.
+        assert!(
+            !fast_doc
+                .get_deep_value()
+                .as_map()
+                .unwrap()
+                .contains_key("doomed_before"),
+            "with_overlay={with_overlay}: root deleted before F must not be resurrected"
+        );
+        fast_doc.checkout_to_latest();
+        slow_doc.checkout_to_latest();
+
+        // Same retained history and shallow metadata.
+        let fast_meta = LoroDoc::decode_import_blob_meta(&fast, false)?;
+        let slow_meta = LoroDoc::decode_import_blob_meta(&slow, false)?;
+        assert_eq!(fast_meta.start_frontiers, slow_meta.start_frontiers);
+        assert_eq!(fast_meta.change_num, slow_meta.change_num);
+        assert_eq!(fast_doc.len_changes(), slow_doc.len_changes());
+        assert_eq!(fast_doc.len_ops(), slow_doc.len_ops());
+        assert_eq!(fast_doc.oplog_vv(), slow_doc.oplog_vv());
+        assert_eq!(fast_doc.oplog_vv(), doc.oplog_vv());
+    }
+
     Ok(())
 }

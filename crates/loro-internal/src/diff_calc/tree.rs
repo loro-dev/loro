@@ -270,6 +270,10 @@ impl TreeDiffCalculator {
             // recomputed here. That only shrinks the replayed region relative
             // to the window, which stays sound; feeding this window the
             // multi-head base instead would require redoing the Q7 proof.
+            // (The oplog's register-only
+            // bypass never reaches this path: it only replays from `from`
+            // when no tree has ops on both sides of the concurrency, and
+            // such trees take the ImportGreaterUpdates branch instead.)
             let base_min_lamport = self.get_min_lamport_by_frontiers(&base_frontiers, oplog);
 
             // retreat for diff

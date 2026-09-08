@@ -41,6 +41,7 @@ impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
         self.vec
     }
 
+    #[allow(unused)]
     pub fn get_value(&self, index: usize) -> Option<&T> {
         self.vec.get(index)
     }

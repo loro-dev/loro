@@ -237,6 +237,19 @@ async function buildTarget(target: string) {
 
   if (target === "nodejs") {
     console.log("🔨  Patching nodejs target");
+    const snippets = await new Deno.Command("node", {
+      args: [
+        path.resolve(__dirname, "nodejs-snippets.cjs"),
+        path.resolve(targetDirPath, "snippets"),
+      ],
+      cwd: LoroWasmDir,
+    }).output();
+    if (!snippets.success) {
+      throw new Error(
+        `CommonJS snippet conversion failed: ${textDecoder.decode(snippets.stderr)}`,
+      );
+    }
+
     const patch = await Deno.readTextFile(
       path.resolve(__dirname, "./nodejs_patch.js"),
     );

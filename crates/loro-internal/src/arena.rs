@@ -519,6 +519,13 @@ impl SharedArena {
         (self.inner.values.lock()[range]).to_vec()
     }
 
+    /// Borrow the values in `range` without cloning them (unlike
+    /// [`Self::get_values`], which clones into a fresh `Vec`).
+    #[inline]
+    pub fn with_values<R>(&self, range: Range<usize>, f: impl FnOnce(&[LoroValue]) -> R) -> R {
+        f(&self.inner.values.lock()[range])
+    }
+
     pub fn convert_single_op(
         &self,
         container: &ContainerID,

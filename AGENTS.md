@@ -36,6 +36,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/wasm-error-reporting.md](context/wasm-error-reporting.md).
 - WASM container id wrapper identity, lazy caching, and benchmark:
   [context/wasm-container-id-cache.md](context/wasm-container-id-cache.md).
+- Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
+  safety contract, loro-dev/loro#1092):
+  [context/container-value-cache.md](context/container-value-cache.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands
@@ -94,3 +97,5 @@ Use narrow checks first. Ask before broad fuzzing or long browser matrices.
 History uses short imperative commits, often prefixed by `fix:`, `test:`,
 `chore:`, or `refactor:`. PRs should include summary, rationale, validation, and
 linked issues or traces when relevant.
+- Structured WASM reads, node identity, ranges and performance responsibilities:
+  [context/wasm-container-tree.md](context/wasm-container-tree.md).

@@ -16,6 +16,7 @@ use self::pending_changes::{PendingChanges, PendingChangesRollback};
 use super::arena::{SharedArena, SharedArenaRollback};
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
+use crate::container::idx::ContainerIdx;
 use crate::container::list::list_op;
 use crate::dag::{Dag, DagUtils, MeetAsBase};
 use crate::diff_calc::DiffMode;
@@ -30,6 +31,7 @@ use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
 use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
@@ -121,6 +123,10 @@ pub(crate) struct ReplayBase {
     /// everything below the base need exactly this property, because such a
     /// span can never be retreated.
     pub is_critical: bool,
+    /// `Some` when the import was proved register-only concurrent with
+    /// `from` and replays from it (see `OpLog::register_only_concurrency`):
+    /// every container with an op in the concurrent old history.
+    pub concurrent_containers: Option<FxHashSet<ContainerIdx>>,
 }
 
 impl OpLog {
@@ -546,6 +552,13 @@ impl OpLog {
         change_iter.flat_map(move |c| RichOp::new_iter_by_cnt_range(c, id_span.counter))
     }
 
+    pub(crate) fn iter_changes(
+        &self,
+        id_span: IdSpan,
+    ) -> impl Iterator<Item = BlockChangeRef> + '_ {
+        self.change_store.iter_changes(id_span)
+    }
+
     pub(crate) fn get_max_lamport_at(&self, id: ID) -> Lamport {
         self.get_change_at(id)
             .map(|c| {
@@ -649,6 +662,181 @@ impl OpLog {
         decode_oplog(self, data)
     }
 
+    /// Containers that have at least one op inside `spans`.
+    ///
+    /// Only `op.container` is needed, so this scans the borrowed changes
+    /// directly instead of materializing a cloned RichOp per op.
+    pub(crate) fn containers_in_spans(
+        &self,
+        spans: impl Iterator<Item = IdSpan>,
+    ) -> FxHashSet<ContainerIdx> {
+        let mut containers = FxHashSet::default();
+        // Consecutive ops overwhelmingly share a container; skip the hash
+        // probe when it hasn't changed.
+        let mut last_container = None;
+        for span in spans {
+            for change in self.change_store.iter_changes(span) {
+                let start_counter = span.counter.min().max(change.id.counter);
+                let end_counter = span.counter.norm_end();
+                let start = change
+                    .ops
+                    .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
+                    .unwrap_or_else(|e| e);
+                for op in &change.ops.vec()[start..] {
+                    if op.counter >= end_counter {
+                        break;
+                    }
+
+                    if last_container != Some(op.container) {
+                        containers.insert(op.container);
+                        last_container = Some(op.container);
+                    }
+                }
+            }
+        }
+
+        containers
+    }
+
+    /// For `to ⊇ from`: the old-parent frontiers of every entry change of the
+    /// new region `to − from` that does not causally cover all of `from`.
+    ///
+    /// An entry change is a new change (or the new suffix of a change that
+    /// straddles `from`) whose causal parents — explicit deps plus the
+    /// implicit same-peer predecessor — are all old. Every new event is a
+    /// descendant of some entry change, so `⋂ Events(parents)` over the
+    /// uncovered entries is causally before the whole new region and only
+    /// `Events(from)` outside it can be concurrent with a new op.
+    ///
+    /// This is the version-vector form of the DAG's
+    /// `new_region_uncovered_entry_parents` (see
+    /// `docs/critical-version-spec.md` L12): it only scans the new changes
+    /// and answers coverage with cached version vectors, so it costs
+    /// `O(|new changes|)` instead of a lamport-pruned ancestor walk. An empty
+    /// vector means the `ImportGreaterUpdates` contract holds outright;
+    /// `None` means trimmed history got in the way.
+    fn uncovered_entry_parents(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+    ) -> Option<Vec<Frontiers>> {
+        let mut uncovered = Vec::new();
+        for (peer, span) in from.diff(to).forward.iter() {
+            let id_span = IdSpan::new(*peer, span.start, span.end);
+            for change in self.change_store.iter_changes(id_span) {
+                let start = change.id.counter.max(span.start);
+                let parents = if start > change.id.counter {
+                    // The change straddles `from`; the new suffix only has
+                    // the implicit predecessor as parent.
+                    Frontiers::from_id(ID::new(*peer, start - 1))
+                } else {
+                    let mut parents = change.deps().clone();
+                    if change.id.counter > 0 {
+                        let prev = ID::new(*peer, change.id.counter - 1);
+                        if !parents.contains(&prev) {
+                            parents.push(prev);
+                        }
+                    }
+                    parents
+                };
+
+                // The everyday shape: the change depends on exactly the
+                // current frontiers. Covered without touching any version vector.
+                if &parents == from_frontiers {
+                    continue;
+                }
+
+                if !parents.iter().all(|id| from.includes_id(id)) {
+                    // Not an entry change; it inherits coverage through its
+                    // new parents.
+                    continue;
+                }
+
+                let parents_vv = self.dag.frontiers_to_vv(&parents)?;
+                if !parents_vv.includes_vv(from) {
+                    uncovered.push(parents);
+                }
+            }
+        }
+
+        Some(uncovered)
+    }
+
+    /// Decide whether an import whose new region `to − from` is concurrent
+    /// with part of `from` can still be replayed from `from`.
+    ///
+    /// `entry_parents` comes from [`OpLog::uncovered_entry_parents`]: the old
+    /// history that is causally before the *whole* new region is
+    /// `⋂ Events(parents)`, so the old ops that may be concurrent with a new op
+    /// are `Events(from) − ⋂ Events(parents)`.
+    ///
+    /// Sequence and tree containers need every concurrent op of the same
+    /// container as context, so a container with ops on both sides forces the
+    /// conservative replay. Map and counter are registers: a counter diff is
+    /// a commutative sum, and a map diff can be resolved per key from the
+    /// history cache without positional context, so concurrency on them is
+    /// harmless. (The map must NOT be resolved by comparing lamports against
+    /// the current state: persisted state drops metadata for deleted roots and
+    /// dead containers, so the diff calculator is told to use the history
+    /// cache for these containers, see `DiffCalculator::calc_diff_internal`.)
+    ///
+    /// Returns the containers touched by the concurrent old history when the
+    /// overlap is register-only, `None` otherwise.
+    fn register_only_concurrency(
+        &self,
+        from: &VersionVector,
+        to: &VersionVector,
+        entry_parents: &[Frontiers],
+    ) -> Option<FxHashSet<ContainerIdx>> {
+        // ⋂ Events(parents) as a version vector: per-peer minimum.
+        let mut causal_past = from.clone();
+        for parents in entry_parents {
+            let parents_vv = self.dag.frontiers_to_vv(parents)?;
+            causal_past.retain(|peer, end| {
+                let bound = parents_vv.get(peer).copied().unwrap_or(0);
+                *end = (*end).min(bound);
+                *end > 0
+            });
+        }
+
+        // A shallow snapshot may retain changes that are concurrent with its
+        // root (independent peer chains, for example), and `from` counts the
+        // trimmed ops below the root. If `concurrent_old` would reach into
+        // that trimmed history we cannot see which containers it touched, so
+        // the decision has to stay with the DAG.
+        if !causal_past.includes_vv(&self.dag.shallow_since_vv().to_vv()) {
+            return None;
+        }
+
+        let concurrent_old = causal_past.diff(from).forward;
+        let old_containers = self.containers_in_spans(
+            concurrent_old
+                .iter()
+                .map(|(peer, span)| IdSpan::new(*peer, span.start, span.end)),
+        );
+        if old_containers.is_empty() {
+            return Some(old_containers);
+        }
+
+        let new_region = from.diff(to).forward;
+        let new_containers = self.containers_in_spans(
+            new_region
+                .iter()
+                .map(|(peer, span)| IdSpan::new(*peer, span.start, span.end)),
+        );
+        let harmless = old_containers
+            .iter()
+            .filter(|idx| new_containers.contains(idx))
+            .all(|idx| match idx.get_type() {
+                ContainerType::Map => true,
+                #[cfg(feature = "counter")]
+                ContainerType::Counter => true,
+                _ => false,
+            });
+        harmless.then_some(old_containers)
+    }
+
     /// The latest critical version below `from ∩ to`: the greatest causally
     /// closed `V ⊆ from ∩ to` such that every op in `(from ∪ to) − V` is
     /// causally after every op in `V`. "Causally after" is measured in the
@@ -731,6 +919,14 @@ impl OpLog {
     /// You can trim it by the provided counter value. It should start with the counter.
     ///
     /// If frontiers are provided, it will be faster (because we don't need to calculate it from version vector
+    ///
+    /// The third item is `Some(containers)` when part of the new region is
+    /// concurrent with `from` but the oplog proved the concurrency
+    /// register-only (see [`OpLog::register_only_concurrency`]); the replay
+    /// then starts at `from` in `ImportGreaterUpdates` mode. The set lists
+    /// every container with an op in the concurrent old history: the diff
+    /// calculator resolves those from history and treats them as "source not
+    /// in op context", and may trust `from` as the base for everything else.
     #[allow(clippy::type_complexity)]
     pub(crate) fn iter_from_replay_base_causally(
         &self,
@@ -751,7 +947,31 @@ impl OpLog {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
-        let (meet, mut diff_mode) = self.dag.find_meet_and_mode(from_frontiers, to_frontiers);
+        let mut concurrent_containers = None;
+        let mut register_only_base = None;
+        if to > from {
+            // `to ⊇ from`, but some new ops may be concurrent with part of
+            // `from`. The DAG walk must then assume the worst and retreat
+            // to a critical version; with container knowledge we can often
+            // prove the concurrency harmless and replay from `from`
+            // without touching the DAG at all.
+            if let Some(entry_parents) = self.uncovered_entry_parents(from, from_frontiers, to) {
+                if !entry_parents.is_empty() {
+                    if let Some(containers) =
+                        self.register_only_concurrency(from, to, &entry_parents)
+                    {
+                        concurrent_containers = Some(containers);
+                        register_only_base = Some(from_frontiers.clone());
+                    }
+                }
+            }
+        }
+
+        let (meet, mut diff_mode) = if let Some(base) = register_only_base {
+            (MeetAsBase::Valid(base), DiffMode::ImportGreaterUpdates)
+        } else {
+            self.dag.find_meet_and_mode(from_frontiers, to_frontiers)
+        };
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
         }
@@ -833,6 +1053,7 @@ impl OpLog {
                 vv: replay_base_vv.clone(),
                 diff_mode,
                 is_critical: replay_base_is_critical,
+                concurrent_containers,
             },
             std::iter::from_fn(move || {
                 if let Some(inner) = &node {

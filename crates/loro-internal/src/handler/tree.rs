@@ -353,6 +353,16 @@ impl TreeHandler {
         }
     }
 
+    /// Get the deep value of the tree with its container id, as a
+    /// `{ cid, value }` map. Each node in `value` carries the deep value of its
+    /// associated meta map under the `meta` field.
+    pub fn get_deep_value_with_id(&self) -> LoroResult<LoroValue> {
+        let inner = self.inner.try_attached_state()?;
+        Ok(inner.with_doc_state(|state| {
+            state.get_container_deep_value_with_id(inner.container_idx, None)
+        }))
+    }
+
     pub fn delete(&self, target: TreeID) -> LoroResult<()> {
         match &self.inner {
             MaybeDetached::Detached(t) => {
