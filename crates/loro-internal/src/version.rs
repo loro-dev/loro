@@ -958,6 +958,20 @@ impl VersionVector {
         ans
     }
 
+    /// In-place [`Self::intersection`]: keeps, per peer, the smaller of the
+    /// two (normalized) counters, dropping peers that end at zero.
+    pub(crate) fn intersect_with(&mut self, other: &VersionVector) {
+        self.retain(|peer, counter| {
+            let other_counter = other
+                .get(peer)
+                .copied()
+                .map(normalize_vv_counter)
+                .unwrap_or(0);
+            *counter = normalize_vv_counter(*counter).min(other_counter);
+            *counter > 0
+        });
+    }
+
     #[inline(always)]
     pub fn encode(&self) -> Vec<u8> {
         postcard::to_allocvec(self).unwrap()

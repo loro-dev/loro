@@ -59,8 +59,28 @@ pub(crate) trait Dag: Debug {
     fn contains(&self, id: ID) -> bool;
 }
 
+/// Whether the meet of two versions can serve as the replay base between them.
+#[derive(Debug)]
+pub(crate) enum MeetAsBase {
+    /// The meet is a valid replay base.
+    Valid(Frontiers),
+    /// A concurrent branch crosses the meet, so replaying from it would
+    /// leave concurrency unadjudicated. The caller must retreat to a critical
+    /// version below it (see `docs/critical-version-spec.md`).
+    NeedsCriticalRetreat,
+}
+
 pub(crate) trait DagUtils: Dag {
     fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
+    /// Like [`Self::find_common_ancestor`], but leaves the conservative
+    /// fallback to the caller: on [`MeetAsBase::NeedsCriticalRetreat`] the
+    /// caller must retreat to a critical version (via
+    /// [`Self::latest_single_head_critical_version`], or a cheaper multi-head
+    /// one it can find itself). Finding the single-head cut walks the whole
+    /// DAG, so callers that usually have a better answer should not pay for
+    /// it up front.
+    fn find_meet_and_mode(&self, a_id: &Frontiers, b_id: &Frontiers) -> (MeetAsBase, DiffMode);
+    fn latest_single_head_critical_version(&self, a_id: &Frontiers, b_id: &Frontiers) -> Frontiers;
     /// Slow, should probably only use on dev
     #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
@@ -87,7 +107,24 @@ impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
     fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode) {
         // TODO: perf: make it also return the spans to reach common_ancestors
-        find_common_ancestor(&|id| self.get(id), a_id, b_id)
+        let (meet, mode) = self.find_meet_and_mode(a_id, b_id);
+        let base = match meet {
+            MeetAsBase::Valid(meet) => meet,
+            MeetAsBase::NeedsCriticalRetreat => {
+                self.latest_single_head_critical_version(a_id, b_id)
+            }
+        };
+        (base, mode)
+    }
+
+    #[inline]
+    fn find_meet_and_mode(&self, a_id: &Frontiers, b_id: &Frontiers) -> (MeetAsBase, DiffMode) {
+        find_meet_and_mode(&|id| self.get(id), a_id, b_id)
+    }
+
+    #[inline]
+    fn latest_single_head_critical_version(&self, a_id: &Frontiers, b_id: &Frontiers) -> Frontiers {
+        latest_single_head_critical_version(&|id| self.get(id), a_id, b_id)
     }
 
     #[inline]
@@ -315,17 +352,17 @@ impl<'a> OrdIdSpan<'a> {
 }
 
 #[inline(always)]
-fn find_common_ancestor<'a, F, D>(
+fn find_meet_and_mode<'a, F, D>(
     get: &'a F,
     a_id: &Frontiers,
     b_id: &Frontiers,
-) -> (Frontiers, DiffMode)
+) -> (MeetAsBase, DiffMode)
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
 {
     if b_id.is_empty() {
-        return (Default::default(), DiffMode::Checkout);
+        return (MeetAsBase::Valid(Default::default()), DiffMode::Checkout);
     }
 
     _find_common_ancestor_new(get, a_id, b_id)
@@ -484,6 +521,117 @@ where
     ans
 }
 
+/// Resolves each frontier id to the span of its containing node, truncated at
+/// that id. Returns `None` when an id is unavailable (trimmed history).
+fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    ids: &Frontiers,
+    get: &'a F,
+) -> Option<Vec<OrdIdSpan<'a>>> {
+    let mut ans = Vec::with_capacity(ids.len());
+    for id in ids.iter() {
+        if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
+            ans.push(node);
+        } else {
+            return None;
+        }
+    }
+
+    Some(ans)
+}
+
+/// The parent set of a span's first op: the node's explicit deps plus the
+/// implicit same-peer predecessor when it is not already covered by one of them.
+fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    node: &OrdIdSpan<'a>,
+    get: &'a F,
+) -> Option<Vec<OrdIdSpan<'a>>> {
+    let mut deps = ids_to_ord_id_spans(node.deps.as_ref(), get)?;
+    if node.id.counter > 0 {
+        let prev = node.id.inc(-1);
+        if let Some(prev) = OrdIdSpan::from_dag_node(prev, get) {
+            if !deps.iter().any(|dep| dep.contains_id(prev.id_last())) {
+                deps.push(prev);
+            }
+        }
+    }
+
+    Some(deps)
+}
+
+/// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
+/// union graph `ancestry(left) ∪ ancestry(right)`: the newest event `v`
+/// such that every other event in the union is an ancestor of `v` or
+/// causally after `v`. Replaying from `{v}` is safe because no concurrency
+/// crosses it, and it skips the fully-synced prefix of common history that
+/// the old `∅` fallback would replay.
+///
+/// Method: a one-colour descent from both frontiers using the same
+/// coalesce/align machinery as the main walk. The pending heap is always a
+/// cut of the unexplored region, so the first moment it narrows to a
+/// single span, that span's `id_last` is the latest such `v`. If a chain
+/// dies at a root or at trimmed history while other chains remain, its
+/// endpoint is concurrent with everything below the current level, so no
+/// later singleton can be valid — bail out to the empty version, which is
+/// the old behaviour.
+fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    get: &'a F,
+    left: &Frontiers,
+    right: &Frontiers,
+) -> Frontiers {
+    let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
+    let Some(spans) = ids_to_ord_id_spans(left, get) else {
+        return Default::default();
+    };
+    queue.extend(spans);
+    let Some(spans) = ids_to_ord_id_spans(right, get) else {
+        return Default::default();
+    };
+    queue.extend(spans);
+
+    while let Some(mut node) = queue.pop() {
+        while let Some(other) = queue.peek() {
+            if node == *other || node.id_last() == other.id_last() {
+                queue.pop();
+            } else {
+                break;
+            }
+        }
+
+        if queue.is_empty() {
+            return node.id_last().into();
+        }
+
+        if let Some(other) = queue.peek() {
+            if node.contains_id(other.id_last()) {
+                node.len = (other.id_last().counter - node.id.counter + 1) as usize;
+                queue.push(node);
+                continue;
+            }
+
+            if node.len > 1 {
+                node.len = if other.lamport_last() >= node.lamport {
+                    (other.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
+                } else {
+                    1
+                };
+                queue.push(node);
+                continue;
+            }
+        }
+
+        match deps_to_ord_id_spans(&node, get) {
+            Some(deps) if !deps.is_empty() => {
+                for dep in deps {
+                    queue.push(dep);
+                }
+            }
+            _ => return Default::default(),
+        }
+    }
+
+    Default::default()
+}
+
 /// Finds the replay base and diff mode for the transition `left -> right`.
 ///
 /// Contract (see `docs/critical-version-spec.md` for definitions and proofs):
@@ -506,13 +654,13 @@ fn _find_common_ancestor_new<'a, F, D>(
     get: &'a F,
     left: &Frontiers,
     right: &Frontiers,
-) -> (Frontiers, DiffMode)
+) -> (MeetAsBase, DiffMode)
 where
     D: DagNode + 'a,
     F: Fn(ID) -> Option<D>,
 {
     if right.is_empty() {
-        return (Default::default(), DiffMode::Checkout);
+        return (MeetAsBase::Valid(Default::default()), DiffMode::Checkout);
     }
 
     if left.is_empty() {
@@ -522,17 +670,23 @@ where
             while node.deps().len() == 1 {
                 node_id = node.deps().as_single().unwrap();
                 let Some(next) = get(node_id) else {
-                    return (Default::default(), DiffMode::ImportGreaterUpdates);
+                    return (
+                        MeetAsBase::Valid(Default::default()),
+                        DiffMode::ImportGreaterUpdates,
+                    );
                 };
                 node = next;
             }
 
             if node.deps().is_empty() {
-                return (Default::default(), DiffMode::Linear);
+                return (MeetAsBase::Valid(Default::default()), DiffMode::Linear);
             }
         }
 
-        return (Default::default(), DiffMode::ImportGreaterUpdates);
+        return (
+            MeetAsBase::Valid(Default::default()),
+            DiffMode::ImportGreaterUpdates,
+        );
     }
 
     if left.len() == 1 && right.len() == 1 {
@@ -543,22 +697,22 @@ where
             let right_span = get(right).unwrap();
             if left_span.id_start() == right_span.id_start() {
                 if left.counter < right.counter {
-                    return (left.into(), DiffMode::Linear);
+                    return (MeetAsBase::Valid(left.into()), DiffMode::Linear);
                 } else {
-                    return (right.into(), DiffMode::Checkout);
+                    return (MeetAsBase::Valid(right.into()), DiffMode::Checkout);
                 }
             }
 
             if left_span.deps().len() == 1
                 && right_span.contains_id(left_span.deps().as_single().unwrap())
             {
-                return (right.into(), DiffMode::Checkout);
+                return (MeetAsBase::Valid(right.into()), DiffMode::Checkout);
             }
 
             if right_span.deps().len() == 1
                 && left_span.contains_id(right_span.deps().as_single().unwrap())
             {
-                return (left.into(), DiffMode::Linear);
+                return (MeetAsBase::Valid(left.into()), DiffMode::Linear);
             }
         }
     }
@@ -568,39 +722,6 @@ where
     let mut unmatched_branches = FxHashSet::default();
     let mut has_unresolved_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
-
-    fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
-        ids: &Frontiers,
-        get: &'a F,
-    ) -> Option<Vec<OrdIdSpan<'a>>> {
-        let mut ans = Vec::with_capacity(ids.len());
-        for id in ids.iter() {
-            if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
-                ans.push(node);
-            } else {
-                return None;
-            }
-        }
-
-        Some(ans)
-    }
-
-    fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
-        node: &OrdIdSpan<'a>,
-        get: &'a F,
-    ) -> Option<Vec<OrdIdSpan<'a>>> {
-        let mut deps = ids_to_ord_id_spans(node.deps.as_ref(), get)?;
-        if node.id.counter > 0 {
-            let prev = node.id.inc(-1);
-            if let Some(prev) = OrdIdSpan::from_dag_node(prev, get) {
-                if !deps.iter().any(|dep| dep.contains_id(prev.id_last())) {
-                    deps.push(prev);
-                }
-            }
-        }
-
-        Some(deps)
-    }
 
     fn shrink_ancestor_frontiers<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
         ids: &Frontiers,
@@ -710,80 +831,6 @@ where
         }
 
         false
-    }
-
-    /// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
-    /// union graph `ancestry(left) ∪ ancestry(right)`: the newest event `v`
-    /// such that every other event in the union is an ancestor of `v` or
-    /// causally after `v`. Replaying from `{v}` is safe because no concurrency
-    /// crosses it, and it skips the fully-synced prefix of common history that
-    /// the old `∅` fallback would replay.
-    ///
-    /// Method: a one-colour descent from both frontiers using the same
-    /// coalesce/align machinery as the main walk. The pending heap is always a
-    /// cut of the unexplored region, so the first moment it narrows to a
-    /// single span, that span's `id_last` is the latest such `v`. If a chain
-    /// dies at a root or at trimmed history while other chains remain, its
-    /// endpoint is concurrent with everything below the current level, so no
-    /// later singleton can be valid — bail out to the empty version, which is
-    /// the old behaviour.
-    fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
-        get: &'a F,
-        left: &Frontiers,
-        right: &Frontiers,
-    ) -> Frontiers {
-        let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
-        let Some(spans) = ids_to_ord_id_spans(left, get) else {
-            return Default::default();
-        };
-        queue.extend(spans);
-        let Some(spans) = ids_to_ord_id_spans(right, get) else {
-            return Default::default();
-        };
-        queue.extend(spans);
-
-        while let Some(mut node) = queue.pop() {
-            while let Some(other) = queue.peek() {
-                if node == *other || node.id_last() == other.id_last() {
-                    queue.pop();
-                } else {
-                    break;
-                }
-            }
-
-            if queue.is_empty() {
-                return node.id_last().into();
-            }
-
-            if let Some(other) = queue.peek() {
-                if node.contains_id(other.id_last()) {
-                    node.len = (other.id_last().counter - node.id.counter + 1) as usize;
-                    queue.push(node);
-                    continue;
-                }
-
-                if node.len > 1 {
-                    node.len = if other.lamport_last() >= node.lamport {
-                        (other.lamport_last() - node.lamport + 1).min(node.len as u32 - 1) as usize
-                    } else {
-                        1
-                    };
-                    queue.push(node);
-                    continue;
-                }
-            }
-
-            match deps_to_ord_id_spans(&node, get) {
-                Some(deps) if !deps.is_empty() => {
-                    for dep in deps {
-                        queue.push(dep);
-                    }
-                }
-                _ => return Default::default(),
-            }
-        }
-
-        Default::default()
     }
 
     /// Verifies the `ImportGreaterUpdates` contract for a multi-head `left`:
@@ -1026,13 +1073,12 @@ where
     // covered by the common ancestors we found.
     let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
         || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
-    if has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get) {
-        // A genuine concurrent branch invalidates the meet as a replay base.
-        // Instead of always retreating to the beginning of history, retreat to
-        // the latest single-head critical version below both sides (empty when
-        // no such cut exists, which matches the old behaviour).
-        ans = latest_single_head_critical_version(get, left, right);
-    }
+    // A genuine concurrent branch invalidates the meet as a replay base. The
+    // caller has to retreat to a critical version; which one is its choice, so
+    // it can try a cheap multi-head cut before paying for the full-DAG
+    // single-head descent.
+    let mut needs_critical_retreat =
+        has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get);
 
     if has_uncovered_unmatched_branch {
         is_right_greater = false;
@@ -1054,7 +1100,7 @@ where
         // conservative mode and retreat the base to a safe cut so the
         // competing branches are replayed together.
         is_right_greater = false;
-        ans = latest_single_head_critical_version(get, left, right);
+        needs_critical_retreat = true;
     }
 
     let mode = if is_right_greater {
@@ -1072,7 +1118,12 @@ where
         DiffMode::Checkout
     };
 
-    (ans, mode)
+    let meet = if needs_critical_retreat {
+        MeetAsBase::NeedsCriticalRetreat
+    } else {
+        MeetAsBase::Valid(ans)
+    };
+    (meet, mode)
 }
 
 pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {

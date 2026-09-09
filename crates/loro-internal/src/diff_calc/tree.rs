@@ -262,7 +262,15 @@ impl TreeDiffCalculator {
             // `checkout_with_low_lamport_concurrent_branch_stays_canonical`
             // in crates/loro/tests/issue.rs. Weakening either the critical
             // version fallback or the ImportGreaterUpdates entry check in
-            // dag.rs breaks this invariant. (The oplog's register-only
+            // dag.rs breaks this invariant.
+            //
+            // The oplog replay base that feeds the calculators may be *later*
+            // than this window's base: `OpLog::latest_critical_version_below_meet`
+            // can find a multi-head critical version above the single-head one
+            // recomputed here. That only shrinks the replayed region relative
+            // to the window, which stays sound; feeding this window the
+            // multi-head base instead would require redoing the Q7 proof.
+            // (The oplog's register-only
             // bypass never reaches this path: it only replays from `from`
             // when no tree has ops on both sides of the concurrency, and
             // such trees take the ImportGreaterUpdates branch instead.)
