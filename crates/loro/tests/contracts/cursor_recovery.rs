@@ -1,6 +1,6 @@
 use loro::{
     cursor::{Cursor, Side},
-    LoroDoc, LoroMap, ToJson,
+    ExportMode, LoroDoc, LoroMap, ToJson,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -133,6 +133,42 @@ fn cursor_encoding_side_values_and_cache_rebuilds_follow_contract() -> anyhow::R
     assert_eq!(doc.get_cursor_pos(&text_cursor)?.current.pos, 2);
     assert_eq!(doc.get_cursor_pos(&list_cursor)?.current.pos, 1);
     assert_eq!(doc.get_cursor_pos(&movable_cursor)?.current.pos, 2);
+
+    Ok(())
+}
+
+#[test]
+fn native_text_cursor_uses_unicode_boundaries_across_peer_atoms() -> anyhow::Result<()> {
+    let first = LoroDoc::new();
+    first.set_peer_id(1)?;
+    first.get_text("text").insert(0, "a")?;
+    first.commit();
+
+    let second = LoroDoc::new();
+    second.set_peer_id(2)?;
+    second.import(&first.export(ExportMode::all_updates())?)?;
+    second.get_text("text").insert(1, "😀")?;
+    second.commit();
+
+    let third = LoroDoc::new();
+    third.set_peer_id(3)?;
+    third.import(&second.export(ExportMode::all_updates())?)?;
+    third.get_text("text").insert(2, "b")?;
+    third.commit();
+
+    let doc = LoroDoc::new();
+    doc.import(&third.export(ExportMode::all_updates())?)?;
+    let text = doc.get_text("text");
+    assert_eq!(text.to_string(), "a😀b");
+
+    for side in [Side::Left, Side::Middle, Side::Right] {
+        let cursor = text
+            .get_cursor(1, side)
+            .expect("emoji starts at native Unicode index 1");
+        let resolved = doc.get_cursor_pos(&cursor)?;
+        assert_eq!(resolved.current.pos, 1);
+        assert_eq!(resolved.current.side, side);
+    }
 
     Ok(())
 }
