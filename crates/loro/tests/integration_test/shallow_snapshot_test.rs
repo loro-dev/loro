@@ -468,62 +468,84 @@ fn test_export_shallow_snapshot_from_shallow_doc() -> anyhow::Result<()> {
 
 /// Regression for a branch-specific import bug on `feat/diff-text-lca-review`.
 ///
-/// Setup: 3 peers each commit a few ops, then sync. Peer 1 then commits enough
-/// post-mid_f ops that `shallow_snapshot(&mid_f)` actually trims peer 1's
-/// pre-mid_f history (`shallow_since_vv = {1: 2}`,
-/// `shallow_since_frontiers = [2@1]`). A second peer commits one cross-peer op
-/// whose deps equal mid_f (`[2@1, 2@2, 2@3]`).
-///
-/// The import preflight should not reuse checkout's conservative
-/// `is_before_shallow_root` semantics here: deps that touch the boundary
-/// together with valid same-or-other-peer post-shallow ids should be
-/// importable.
+/// The incoming change is generated normally after a retained post-root
+/// change, then the public JSON-update fixture adds its shallow-boundary
+/// ancestor as a redundant dependency. This is valid causal history, but ordinary
+/// local commits canonicalize redundant frontier ids and cannot create it.
+/// Import must use its boundary-aware guard: checkout's conservative guard
+/// rejects any mixed dependency set that directly touches the shallow root.
 #[test]
 fn shallow_doc_accepts_cross_peer_op_whose_deps_include_boundary() -> anyhow::Result<()> {
-    let p1 = LoroDoc::new();
-    p1.set_peer_id(1)?;
-    let p2 = LoroDoc::new();
-    p2.set_peer_id(2)?;
-    let p3 = LoroDoc::new();
-    p3.set_peer_id(3)?;
+    let source = LoroDoc::new();
+    source.set_peer_id(9)?;
+    source.get_text("t").insert(0, "r")?;
+    source.commit();
+    source.get_text("t").insert(1, "o")?;
+    source.commit();
+    let shallow_root = source.oplog_frontiers();
+    let boundary = shallow_root
+        .as_single()
+        .expect("fixture must have one shallow-boundary id");
 
-    for _ in 0..3 {
-        p1.get_text("t").insert(0, "1")?;
-        p1.commit();
-        p2.get_text("t").insert(0, "2")?;
-        p2.commit();
-        p3.get_text("t").insert(0, "3")?;
-        p3.commit();
-    }
-    let docs = [&p1, &p2, &p3];
-    for i in 0..3 {
-        for j in 0..3 {
-            if i != j {
-                docs[j].import(&docs[i].export(ExportMode::all_updates())?)?;
-            }
-        }
-    }
+    source.set_peer_id(1)?;
+    source.get_text("t").insert(2, " retained")?;
+    source.commit();
+    let retained = source
+        .oplog_frontiers()
+        .as_single()
+        .expect("fixture must have one retained post-root dependency");
+    let before_incoming = source.oplog_vv();
 
-    let mid_f = p1.oplog_frontiers();
-    for k in 0..5 {
-        p1.get_text("t").insert(0, &format!("{k}"))?;
-        p1.commit();
-    }
-
-    let snap = p1.export(ExportMode::shallow_snapshot(&mid_f))?;
+    let shallow = source.export(ExportMode::shallow_snapshot(&shallow_root))?;
     let s = LoroDoc::new();
-    s.import(&snap)?;
+    s.import(&shallow)?;
     assert!(
         !s.shallow_since_vv().is_empty(),
         "test setup must produce a real shallow trim"
     );
+    assert_eq!(s.shallow_since_frontiers(), shallow_root);
+    assert!(
+        s.get_change(ID::new(9, 0)).is_none(),
+        "trimmed history must be absent"
+    );
+    assert!(
+        s.get_change(retained).is_some(),
+        "additional dependency must be retained"
+    );
 
-    p2.get_text("t").insert(0, "Y")?;
-    p2.commit();
+    let incoming = source.fork();
+    incoming.set_peer_id(2)?;
+    let incoming_text = incoming.get_text("t");
+    incoming_text.insert(incoming_text.len_unicode(), " Y")?;
+    incoming.commit();
+    let incoming_id = incoming
+        .oplog_frontiers()
+        .as_single()
+        .expect("incoming change must have one id");
+    let mut update = incoming
+        .export_json_updates_without_peer_compression(&before_incoming, &incoming.oplog_vv());
+    assert_eq!(update.changes.len(), 1);
+    let actual_deps = &mut update.changes[0].deps;
+    assert_eq!(actual_deps.as_slice(), &[retained]);
+    actual_deps.push(boundary);
 
-    let p2_updates = p2.export(ExportMode::all_updates())?;
-    s.import(&p2_updates)
-        .expect("shallow doc should accept cross-peer op whose deps include the shallow boundary");
+    assert!(actual_deps.contains(&boundary));
+    assert!(actual_deps.contains(&retained));
+    assert!(actual_deps.len() >= 2);
+    assert_ne!(actual_deps.as_slice(), &[boundary]);
+
+    s.import_json_updates(update).expect(
+        "shallow doc should accept an update depending on the boundary and retained history",
+    );
+    let imported = s
+        .get_change(incoming_id)
+        .expect("the incoming change must be added to the oplog");
+    assert_eq!(imported.deps.len(), 2);
+    assert_ne!(imported.deps, shallow_root);
+    assert!(imported.deps.contains(&boundary));
+    assert!(imported.deps.contains(&retained));
+    assert_eq!(s.get_deep_value(), incoming.get_deep_value());
+    assert!(s.get_text("t").to_string().ends_with(" Y"));
 
     Ok(())
 }

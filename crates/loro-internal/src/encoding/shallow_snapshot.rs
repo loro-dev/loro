@@ -804,6 +804,12 @@ fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Fronti
                 let (gca, _) = oplog
                     .dag()
                     .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
+                // Empty is the common-ancestor meet's absorbing value: once any
+                // pair has no common ancestor, an unpaired head in this or a
+                // later round cannot make one exist for the complete frontier.
+                if gca.is_empty() {
+                    return clamp_to_shallow_root(oplog, gca);
+                }
                 for id in gca.iter() {
                     next.push(id);
                 }
