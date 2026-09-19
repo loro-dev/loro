@@ -201,6 +201,23 @@ All three use `FastSnapshot` mode; there is no on-wire subtype field:
   version, but only from a non-shallow source document; a shallow source
   currently returns `NotImplemented`.
 
+`SnapshotAt` MUST retain the encoded state of normal containers whose creating
+operation belongs to the exported version, including deleted descendants.
+Historical checkout reverses operations on those containers; an alive-only
+filter can leave their operation history present while their materialized state
+is absent. `prepare_snapshot_container_state` owns construction of the filtered
+state copy. It combines `alive_indices_to_bytes` with
+`retain_containers_at_version`, which extends the alive set from encoded KV
+keys and checks creation IDs against the target version vector. It excludes normal
+containers created after the target, without decoding their state. Root and
+mergeable-container retention follows the existing alive walk. Shallow and
+state-only exports keep their history-boundary filtering and redaction rules.
+The public `snapshot_at_test` regressions exercise historical diffs, removed
+list/text descendants, later-created containers, and detached-source restoration.
+All recoverable errors after the temporary checkout MUST reach source
+restoration. The saved attachment mode MUST be restored explicitly, including
+a source detached at its current head.
+
 For `ShallowSnapshot`, the requested frontier is reduced to a single valid
 history boundary, moved past a rich-text StyleStart when necessary, and clamped
 to an existing shallow root. The root state carries `fr`; a later state overlay

@@ -860,6 +860,63 @@ fn clamp_to_shallow_root(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontier
     }
 }
 
+/// Retains container state required by the exported version.
+///
+/// The supplied keys retain alive containers and roots. History also needs
+/// deleted normal containers whose creating operations belong to `version`.
+/// The scan reads encoded keys without decoding container state. Validation
+/// completes before the KV store is filtered.
+///
+/// # Errors
+///
+/// Returns an encoding error for malformed keys or unknown normal containers
+/// retained by history.
+fn retain_containers_at_version(
+    state_kv: &KvWrapper,
+    mut retained_containers: BTreeSet<Vec<u8>>,
+    version: &VersionVector,
+) -> Result<(), LoroEncodeError> {
+    for key in state_kv.keys() {
+        let container = ContainerID::try_from_bytes(&key)?;
+        if let ContainerID::Normal { peer, counter, .. } = container {
+            if version.includes_id(ID::new(peer, counter)) {
+                if container.is_unknown() {
+                    return Err(LoroEncodeError::UnknownContainer);
+                }
+                retained_containers.insert(key);
+            }
+        }
+    }
+    state_kv.retain_keys(&retained_containers);
+    Ok(())
+}
+
+/// Builds the container-state copy required by a full-history snapshot.
+///
+/// `state` MUST already represent `version`.
+/// The returned copy retains alive containers and deleted normal containers
+/// required by the retained history.
+///
+/// # Errors
+///
+/// Returns an encoding error for invalid container state, malformed keys,
+/// or unsupported retained containers.
+fn prepare_snapshot_container_state(
+    state: &mut DocState,
+    version: &VersionVector,
+) -> Result<KvWrapper, LoroEncodeError> {
+    let alive_containers = state.ensure_all_alive_containers()?;
+    if has_unknown_container(alive_containers.iter().copied()) {
+        return Err(LoroEncodeError::UnknownContainer);
+    }
+
+    let alive_container_keys = alive_indices_to_bytes(state, &alive_containers);
+    state.store.flush();
+    let state_kv = state.store.get_kv_clone();
+    retain_containers_at_version(&state_kv, alive_container_keys, version)?;
+    Ok(state_kv)
+}
+
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     doc: &LoroDoc,
     frontiers: &Frontiers,
@@ -904,15 +961,16 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             }
         }
 
-        let alive_containers = state.ensure_all_alive_containers()?;
-        if has_unknown_container(alive_containers.iter().copied()) {
-            break 'block Err(LoroEncodeError::UnknownContainer);
-        }
-
-        let alive_c_bytes = alive_indices_to_bytes(&state, &alive_containers);
-        state.store.flush();
-        let state_kv = state.store.get_kv_clone();
-        state_kv.retain_keys(&alive_c_bytes);
+        let Some(version) = oplog.dag.frontiers_to_vv(frontiers) else {
+            break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
+                "frontiers: {:?} when export in SnapshotAt mode",
+                frontiers
+            )));
+        };
+        let state_kv = match prepare_snapshot_container_state(&mut state, &version) {
+            Ok(state_kv) => state_kv,
+            Err(error) => break 'block Err(error),
+        };
         let bytes = state_kv.export();
         _encode_snapshot(
             &Snapshot {
@@ -928,9 +986,7 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     let restore_result = doc
         ._checkout_without_emitting(&version_before_start, false, false)
         .map_err(LoroEncodeError::from);
-    if !was_detached {
-        doc.set_detached(false);
-    }
+    doc.set_detached(was_detached);
     doc.app_state().lock().take_events();
 
     match result {
@@ -972,6 +1028,61 @@ mod tests {
         let checksum = xxhash_rust::xxh32::xxh32(&blob[20..], crate::encoding::XXH_SEED);
         blob[16..20].copy_from_slice(&checksum.to_le_bytes());
         blob
+    }
+
+    #[test]
+    fn snapshot_at_alive_walk_error_restores_source() {
+        let document = LoroDoc::new_auto_commit();
+        document.set_peer_id(42).unwrap();
+        let child = document
+            .get_map("parent-a")
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap();
+        child.insert("value", 1).unwrap();
+        document.commit_then_renew();
+        let target = document.oplog_frontiers();
+        document.get_map("unrelated").insert("later", 2).unwrap();
+        document.commit_then_renew();
+        let head = document.oplog_frontiers();
+        let mut sections = shallow_sections(&document.export(ExportMode::Snapshot).unwrap());
+        let state = crate::utils::kv_wrapper::KvWrapper::new_mem();
+        state.import(sections.state_bytes.take().unwrap()).unwrap();
+
+        let other = LoroDoc::new_auto_commit();
+        other.set_peer_id(42).unwrap();
+        let other_child = other
+            .get_map("parent-b")
+            .insert_container("child", MapHandler::new_detached())
+            .unwrap();
+        other_child.insert("value", 1).unwrap();
+        assert_eq!(child.id(), other_child.id());
+        let other_sections = shallow_sections(&other.export(ExportMode::Snapshot).unwrap());
+        let other_state = crate::utils::kv_wrapper::KvWrapper::new_mem();
+        other_state
+            .import(other_sections.state_bytes.unwrap())
+            .unwrap();
+        let child_key = child.id().to_bytes();
+        state.insert(&child_key, other_state.get(&child_key).unwrap());
+        sections.state_bytes = Some(state.export());
+        let snapshot = assemble_snapshot_blob(&sections);
+
+        for detached in [false, true] {
+            let imported = LoroDoc::new_auto_commit();
+            imported.import(&snapshot).unwrap();
+            if detached {
+                imported.detach();
+            }
+            let unaffected = imported.get_map("unrelated").get_value();
+            let error = imported
+                .export(ExportMode::SnapshotAt {
+                    version: std::borrow::Cow::Borrowed(&target),
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains("snapshot state encodes parent"));
+            assert_eq!(imported.state_frontiers(), head);
+            assert_eq!(imported.is_detached(), detached);
+            assert_eq!(imported.get_map("unrelated").get_value(), unaffected);
+        }
     }
 
     /// Decode the style values of a text container straight out of exported
