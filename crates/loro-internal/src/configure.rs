@@ -115,8 +115,22 @@ static mut TEST_RANDOM: AtomicU64 = AtomicU64::new(0);
 
 impl SecureRandomGenerator for DefaultRandom {
     fn fill_byte(&self, dest: &mut [u8]) {
-        #[cfg(not(test))]
+        #[cfg(all(not(test), not(loom)))]
         getrandom::getrandom(dest).unwrap();
+
+        // Loom requires every execution of a model to be deterministic, so
+        // peer ids come from a counter that loom resets per execution.
+        #[cfg(all(not(test), loom))]
+        {
+            loom::lazy_static! {
+                static ref LOOM_RANDOM: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+            }
+            let bytes = LOOM_RANDOM
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .to_le_bytes();
+            dest.copy_from_slice(&bytes[..dest.len()]);
+        }
 
         #[cfg(test)]
         // SAFETY: this is only used in test
