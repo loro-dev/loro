@@ -62,7 +62,10 @@ pub(crate) trait Dag: Debug {
 /// Whether the meet of two versions can serve as the replay base between them.
 #[derive(Debug)]
 pub(crate) enum MeetAsBase {
-    /// The meet is a valid replay base.
+    /// The meet is a valid replay base for the returned diff mode. That makes
+    /// it a critical version only in non-`Checkout` modes (spec S3). In
+    /// `Checkout` mode it is just the meet, and ops above it may be concurrent
+    /// with one of its heads; checkout consumers accept that (spec Q7).
     Valid(Frontiers),
     /// A concurrent branch crosses the meet, so replaying from it would
     /// leave concurrency unadjudicated. The caller must retreat to a critical
@@ -71,6 +74,15 @@ pub(crate) enum MeetAsBase {
 }
 
 pub(crate) trait DagUtils: Dag {
+    /// The replay base for diffing `a_id` into `b_id`: the meet when it is a
+    /// valid base for the diff mode, else the latest single-head critical
+    /// version.
+    ///
+    /// This is NOT always a critical version: in `DiffMode::Checkout` it may be
+    /// a meet with concurrent ops above it (see [`MeetAsBase::Valid`]). Callers
+    /// that need every other op to be before or after the result, such as the
+    /// shallow snapshot root, must use
+    /// [`Self::latest_single_head_critical_version`] (loro-dev/loro#1095).
     fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
     /// Like [`Self::find_common_ancestor`], but leaves the conservative
     /// fallback to the caller: on [`MeetAsBase::NeedsCriticalRetreat`] the

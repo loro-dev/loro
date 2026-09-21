@@ -201,9 +201,17 @@ All three use `FastSnapshot` mode; there is no on-wire subtype field:
   version, but only from a non-shallow source document; a shallow source
   currently returns `NotImplemented`.
 
-For `ShallowSnapshot`, the requested frontier is reduced to a single valid
-history boundary, moved past a rich-text StyleStart when necessary, and clamped
-to an existing shallow root. The root state carries `fr`; a later state overlay
+For `ShallowSnapshot`, the root is the latest single-head *critical version*
+(`latest_single_head_critical_version`, spec lemma L11) of the requested
+frontier together with the latest version, because every op from the root up
+to the latest version is retained and each one must be causally before or
+after the root, never concurrent with it (loro-dev/loro#1095). A common
+ancestor of the requested heads is not enough: a branch merged later that
+forked below the requested version is concurrent with it. `StateOnly` retains
+history only up to its target, so it uses the target on both sides.
+`crates/loro/tests/shallow_root_critical.rs` checks the property op by op. The
+root is then moved past a rich-text StyleStart when necessary and clamped to
+an existing shallow root. The root state carries `fr`; a later state overlay
 does not. Import loads the root first and then either overlays the later state
 or replays retained changes when the state section is `E`. Unknown handling is
 path-dependent: rebuilding a root, or reusing a cached root to build an

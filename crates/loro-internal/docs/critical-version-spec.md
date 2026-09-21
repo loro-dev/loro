@@ -548,6 +548,15 @@ lamport(v) ≤ lamport(r)，而 r → v 要求严格更大，L0），故 r ∥ v
 {v} 不 critical——必须放弃。裁剪死亡同理（链的延续未知，保守放弃）。
 最晚性：扫描按 lamport 降序推进，首个满足条件的时刻即最高的切口。
 
+*L11 的另一个消费者（2026-09-21）*：浅快照的根选择 `calc_shallow_doc_start`
+（`src/encoding/shallow_snapshot.rs`）直接用 L11 取根。shallow snapshot 保留从根
+一直到最新版本的全部 op，故取 L = 请求版本、R = 最新版本；state-only 只保留到
+目标版本，故 L = R = 目标版本。浅格式只存根处状态和根以上的 op，与根并发的 op
+两边都放不进去，所以这里要的正是 critical 而不是 meet（loro-dev/loro#1095）。
+此前按两两 meet 归约选根，在两种形状上会选出非 critical 的根：奇数个彼此独立的头
+（落单的头被当成了根），以及"过去版本 + 之后才合入、从其下方分叉的分支"。
+`crates/loro/tests/shallow_root_critical.rs` 按定义逐 op 检查这一性质。
+
 **L12（入场检查的正确性）** *新区经由"入场 change"挂到旧历史上；
 入场者看全了 L，其一切后代自动看全。*
 设 IGU 候选成立（ans = L、无 uncovered）。定义入场 change 为新区中
