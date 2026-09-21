@@ -447,6 +447,20 @@ The current writer orders all alive nodes in breadth-first order, followed by
 all deleted nodes in breadth-first order. `node_ids.len()` equals
 `nodes.len()`. Node row `i` describes node ID row `i`.
 
+Precisely, `TreeState::_bfs_all_nodes` writes every child of a parent, then
+recurses into each of those children in order, starting from the root and then
+from the deleted root. A parent's children are written in increasing
+`(fractional_index, last_set_lamport, last_set_peer)` order, the key of the
+reader's children index. Direct children of the deleted root have no position
+in Rust state and are written with the default fractional index `[0x80]`;
+their descendants keep their own positions under their parent node.
+
+The reader does not depend on the row order: it sorts siblings by that key
+before building its children index, so rows from writers that ignore it
+(loro.js 0.1.0/0.2.0 wrote creation order after a tree move,
+loro-dev/loro#1088) decode to the same state. Canonical writers must still use
+the order above.
+
 Canonical peer registration is intentionally not interleaved by row. The
 writer first registers every node-ID peer in alive-BFS then deleted-BFS order.
 Only after that complete pass does it register last-set peers: first all alive
@@ -454,7 +468,7 @@ node rows, then all deleted node rows.
 
 Node schema and ordering:
 [`EncodedTreeNodeId`, `EncodedTreeNode`, `EncodedTree`](../crates/loro-internal/src/state/tree_state.rs#L1556-L1590),
-[`encode`, `TreeState::encode_snapshot_fast`](../crates/loro-internal/src/state/tree_state.rs#L1591-L1690).
+[`encode`, `TreeState::encode_snapshot_fast`](../crates/loro-internal/src/state/tree_state.rs#L1591-L1718).
 
 ### 7.2 Node row semantics
 
@@ -476,10 +490,12 @@ fractional_index = positions[fractional_index_index]
 
 The reader checks both peer indices, parent and position indices, nonnegative
 node counters, Lamport arithmetic, equal node-vector lengths, and errors from
-inserting an invalid node.
+inserting an invalid node. It rejects a repeated node ID and two siblings with
+equal `(fractional_index, last_set_lamport, last_set_peer)`; no valid history
+produces either.
 
 Reader:
-[`TreeState::decode_snapshot_fast`](../crates/loro-internal/src/state/tree_state.rs#L1695-L1773).
+[`siblings_in_order`, `TreeState::decode_snapshot_fast`](../crates/loro-internal/src/state/tree_state.rs#L1663-L1837).
 
 ### 7.3 PositionArena in tree state
 
@@ -511,7 +527,7 @@ Row 0 must have common prefix zero. Later row `i` is reconstructed from
 previous byte length is invalid.
 
 Position collection:
-[`tree_state.rs::encode`](../crates/loro-internal/src/state/tree_state.rs#L1591-L1664).
+[`tree_state.rs::encode`](../crates/loro-internal/src/state/tree_state.rs#L1591-L1661).
 Position ordering:
 [`FractionalIndex`](../crates/fractional_index/src/lib.rs#L15-L18).
 Arena schema, writer, and reader:
@@ -659,8 +675,10 @@ A compatible implementation should keep these independent invariants:
    key, parent, and position index.
 7. Count Text spans in Unicode scalar values, pair style ends with the preceding
    style ID, and consume text and marks exactly.
-8. Keep Tree's absent value prefix, alive-then-deleted node order, sorted unique
-   positions, and non-empty serialization envelope for an empty PositionArena.
+8. Keep Tree's absent value prefix, alive-then-deleted node order, siblings in
+   `(fractional_index, last_set_lamport, last_set_peer)` order, the default
+   position for deleted-root children, sorted unique positions, and non-empty
+   serialization envelope for an empty PositionArena.
 9. Require MovableList's sentinel and exhaust all four metadata streams and the
    visible-value stream.
 10. Emit Counter as eight little-endian bytes; regard its empty-reader form as

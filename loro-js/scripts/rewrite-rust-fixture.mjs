@@ -172,6 +172,47 @@ writeFileSync(
   shallowDoc.export({ mode: "shallow-snapshot", frontiers: shallowRoot }),
 );
 
+// loro-dev/loro#1088: moved, concurrently moved, and deleted tree nodes.
+const treeLeft = new LoroDoc();
+treeLeft.setPeerId(5);
+const leftTree = treeLeft.getTree("tree");
+const treeRoot = leftTree.createNode();
+treeRoot.data.set("title", "root");
+const treeFirst = treeRoot.createNode();
+treeRoot.createNode();
+const treeThird = treeRoot.createNode();
+treeRoot.createNode().move(treeRoot, 0);
+const treeNested = treeFirst.createNode();
+treeNested.createNode();
+treeLeft.commit();
+const treeBaseVersion = treeLeft.oplogVersion();
+const treeRight = new LoroDoc();
+treeRight.setPeerId(6);
+treeRight.import(treeLeft.export({ mode: "update" }));
+treeRight.getTree("tree").move(treeThird.id, treeRoot.id, 0);
+treeRight.getTree("tree").delete(treeFirst.id);
+treeRight.getTree("tree").createNode(treeRoot.id, 1);
+treeRight.commit();
+leftTree.move(treeThird.id, treeNested.id, 0);
+leftTree.createNode(undefined, 0);
+treeLeft.commit();
+treeLeft.import(treeRight.export({ mode: "update", from: treeBaseVersion }));
+const treeShallowRoot = treeLeft.frontiers();
+leftTree.move(treeThird.id, treeRoot.id, 2);
+treeLeft.commit();
+writeFileSync(
+  fixtureUrl("tree-move-updates.ts.blob"),
+  treeLeft.export({ mode: "update" }),
+);
+writeFileSync(
+  fixtureUrl("tree-move-snapshot.ts.blob"),
+  treeLeft.export({ mode: "snapshot" }),
+);
+writeFileSync(
+  fixtureUrl("tree-move-shallow.ts.blob"),
+  treeLeft.export({ mode: "shallow-snapshot", frontiers: treeShallowRoot }),
+);
+
 const cursorDoc = new LoroDoc();
 cursorDoc.setPeerId(99);
 cursorDoc.getText("text").insert(0, "abc");

@@ -296,7 +296,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     start_from: &Frontiers,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, start_from);
+    let start_from = calc_shallow_doc_start(&oplog, start_from, oplog.frontiers());
     // `root_vv` is the version of the state at the shallow root; `start_vv`
     // additionally excludes the frontier ops themselves because the retained
     // history must include them.
@@ -675,7 +675,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, target_frontiers);
+    let start_from = calc_shallow_doc_start(&oplog, target_frontiers, target_frontiers);
     let mut start_vv =
         frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     for id in start_from.iter() {
@@ -787,41 +787,37 @@ fn restore_export_doc_state(
     Ok(())
 }
 
-/// Calculates optimal starting version for the shallow doc
+/// Picks the shallow root for an export at `frontiers`.
 ///
-/// It should be a common ancestor version of the user-given version and the latest version.
-/// Otherwise, users cannot replay the history from the initial version till the latest version.
-fn calc_shallow_doc_start(oplog: &crate::OpLog, frontiers: &Frontiers) -> Frontiers {
-    // Find a common ancestor version of the given frontiers by iterative pairwise reduction.
-    // This converges to a single frontier or empty if there is no common ancestor.
-    let mut current = frontiers.clone();
-    while current.len() > 1 {
-        let ids: Vec<ID> = current.iter().collect();
-        let mut next = Frontiers::new();
-        let mut i = 0;
-        while i < ids.len() {
-            if i + 1 < ids.len() {
-                let (gca, _) = oplog
-                    .dag()
-                    .find_common_ancestor(&Frontiers::from(ids[i]), &Frontiers::from(ids[i + 1]));
-                for id in gca.iter() {
-                    next.push(id);
-                }
-            } else {
-                next.push(ids[i]);
-            }
-            i += 2;
-        }
-        if next == current {
-            // Cannot converge further (pairwise GCAs are the nodes themselves).
-            // Fall back to empty frontiers, meaning export full history.
-            return clamp_to_shallow_root(oplog, Frontiers::default());
-        }
-        current = next;
+/// The root must be a *critical version* of every op the export retains: each
+/// one is causally before the root or causally after it, never concurrent.
+/// The shallow format stores the state at the root plus every op above it, so
+/// an op concurrent with the root belongs to neither side and the snapshot
+/// cannot be imported (loro-dev/loro#1095). The meet of the heads is not
+/// enough.
+///
+/// `retained_to` is where the retained history ends: the latest version for a
+/// shallow snapshot, `frontiers` itself for a state-only snapshot. It matters
+/// because a branch merged after `frontiers` that forked below it is
+/// concurrent with `frontiers`, so a single-head past version is not a valid
+/// root on its own. See `docs/critical-version-spec.md`.
+fn calc_shallow_doc_start(
+    oplog: &crate::OpLog,
+    frontiers: &Frontiers,
+    retained_to: &Frontiers,
+) -> Frontiers {
+    if frontiers.is_empty() {
+        return clamp_to_shallow_root(oplog, Frontiers::default());
     }
 
+    // Single-head or empty: the empty version is the answer when no critical
+    // version exists, e.g. for independent heads with no common history.
+    let root = oplog
+        .dag()
+        .latest_single_head_critical_version(frontiers, retained_to);
+
     let mut ans = Frontiers::new();
-    for id in current.iter() {
+    for id in root.iter() {
         let mut processed = false;
         if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {

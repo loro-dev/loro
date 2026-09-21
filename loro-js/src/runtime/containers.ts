@@ -2413,10 +2413,11 @@ export class LoroTree<
     this._childrenIndex(parent).add(record);
   }
 
-  _deleteRecord(record: TreeNodeRecord, writer: LastWriter): void {
+  _deleteRecord(record: TreeNodeRecord, writer: LastWriter, lastMoveId: CodecId): void {
     if (!record.deleted) this._children.get(treeParentKey(record.parent))?.delete(record);
     record.deleted = true;
     record.writer = writer;
+    record.lastMoveId = lastMoveId;
   }
 
   _removeRecord(record: TreeNodeRecord): void {

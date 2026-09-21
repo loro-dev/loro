@@ -271,7 +271,7 @@ fn test_dag() {
     assert_eq!(b.frontier().len(), 2);
     // println!("{}", b.mermaid());
     assert_eq!(
-        b.find_common_ancestor(&[ID::new(0, 2)].into(), &[ID::new(1, 1)].into())
+        b.find_replay_base(&[ID::new(0, 2)].into(), &[ID::new(1, 1)].into())
             .0
             .len(),
         0
@@ -872,7 +872,7 @@ fn failed_fuzz() {
 //     }
 // }
 
-// mod find_common_ancestors {
+// mod find_replay_base_tests {
 
 //     use super::*;
 
@@ -881,26 +881,26 @@ fn failed_fuzz() {
 //         let mut a = TestDag::new(0);
 //         a.push(5);
 //         let actual = a
-//             .find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)])
+//             .find_replay_base(&[ID::new(0, 2)], &[ID::new(0, 4)])
 //             .0
 //             .first()
 //             .copied();
 //         assert_eq!(actual, Some(ID::new(0, 2)));
 //         assert_eq!(
-//             a.find_common_ancestor(&[ID::new(0, 2)], &[ID::new(0, 4)]).1,
+//             a.find_replay_base(&[ID::new(0, 2)], &[ID::new(0, 4)]).1,
 //             DiffMode::Linear
 //         );
 //     }
 
 //     #[test]
-//     fn no_common_ancestors() {
+//     fn empty_meet() {
 //         let mut a = TestDag::new(0);
 //         let mut b = TestDag::new(1);
 //         a.push(1);
 //         b.push(1);
 //         a.merge(&b);
 //         let actual = a
-//             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+//             .find_replay_base(&[ID::new(0, 0)], &[ID::new(1, 0)])
 //             .0
 //             .first()
 //             .copied();
@@ -913,21 +913,21 @@ fn failed_fuzz() {
 //         b.merge(&c);
 //         b.push(3);
 
-//         // should no exist any common ancestor between a and b
+//         // a and b should share no history, so their meet is empty
 //         let actual = a
-//             .find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)])
+//             .find_replay_base(&[ID::new(0, 0)], &[ID::new(1, 0)])
 //             .0
 //             .first()
 //             .copied();
 //         assert_eq!(actual, None);
 //         assert_eq!(
-//             a.find_common_ancestor(&[ID::new(0, 0)], &[ID::new(1, 0)]).1,
+//             a.find_replay_base(&[ID::new(0, 0)], &[ID::new(1, 0)]).1,
 //             DiffMode::Checkout
 //         )
 //     }
 
 //     #[test]
-//     fn no_common_ancestors_when_there_is_an_redundant_node() {
+//     fn empty_meet_when_there_is_an_redundant_node() {
 //         let mut a = TestDag::new(0);
 //         let mut b = TestDag::new(1);
 //         a.push(1);
@@ -938,13 +938,13 @@ fn failed_fuzz() {
 //         a.merge(&b);
 //         println!("{}", a.mermaid());
 //         let actual = a
-//             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 1)])
+//             .find_replay_base(&[ID::new(0, 4)], &[ID::new(0, 1), ID::new(1, 1)])
 //             .0
 //             .first()
 //             .copied();
 //         assert_eq!(actual, None);
 //         let actual = a
-//             .find_common_ancestor(&[ID::new(0, 4)], &[ID::new(1, 1)])
+//             .find_replay_base(&[ID::new(0, 4)], &[ID::new(1, 1)])
 //             .0
 //             .first()
 //             .copied();
@@ -962,7 +962,7 @@ fn failed_fuzz() {
 //         b.merge(&a);
 //         println!("{}", b.mermaid());
 //         assert_eq!(
-//             b.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 8)])
+//             b.find_replay_base(&[ID::new(0, 3)], &[ID::new(1, 8)])
 //                 .0
 //                 .first()
 //                 .copied(),
@@ -993,14 +993,14 @@ fn failed_fuzz() {
 //         a1.merge(&a0);
 //         println!("{}", a1.mermaid());
 //         assert_eq!(
-//             a1.find_common_ancestor(&[ID::new(0, 3)], &[ID::new(1, 4)])
+//             a1.find_replay_base(&[ID::new(0, 3)], &[ID::new(1, 4)])
 //                 .0
 //                 .first()
 //                 .copied(),
 //             Some(ID::new(0, 2))
 //         );
 //         assert_eq!(
-//             a1.find_common_ancestor(&[ID::new(2, 3)], &[ID::new(1, 3)])
+//             a1.find_replay_base(&[ID::new(2, 3)], &[ID::new(1, 3)])
 //                 .0
 //                 .iter()
 //                 .copied()
@@ -1010,7 +1010,7 @@ fn failed_fuzz() {
 //     }
 // }
 
-// mod find_common_ancestors_proptest {
+// mod find_replay_base_proptest {
 
 //     use crate::{
 //         array_mut_ref,
@@ -1026,7 +1026,7 @@ fn failed_fuzz() {
 //             before_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100 * PROPTEST_FACTOR_10),
 //             after_merged_insertions in prop::collection::vec(gen_interaction(2), 0..100 * PROPTEST_FACTOR_10)
 //         ) {
-//             test_single_common_ancestor(2, before_merged_insertions, after_merged_insertions)?;
+//             test_single_head_meet(2, before_merged_insertions, after_merged_insertions)?;
 //         }
 
 //         #[test]
@@ -1034,7 +1034,7 @@ fn failed_fuzz() {
 //             before_merged_insertions in prop::collection::vec(gen_interaction(4), 0..50 * PROPTEST_FACTOR_10),
 //             after_merged_insertions in prop::collection::vec(gen_interaction(4), 0..50 * PROPTEST_FACTOR_10)
 //         ) {
-//             test_single_common_ancestor(4, before_merged_insertions, after_merged_insertions)?;
+//             test_single_head_meet(4, before_merged_insertions, after_merged_insertions)?;
 //         }
 
 //         #[test]
@@ -1042,7 +1042,7 @@ fn failed_fuzz() {
 //             before_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10),
 //             after_merged_insertions in prop::collection::vec(gen_interaction(10), 0..10 * PROPTEST_FACTOR_10 * PROPTEST_FACTOR_10)
 //         ) {
-//             test_single_common_ancestor(10, before_merged_insertions, after_merged_insertions)?;
+//             test_single_head_meet(10, before_merged_insertions, after_merged_insertions)?;
 //         }
 
 //         #[test]
@@ -1099,7 +1099,7 @@ fn failed_fuzz() {
 
 //     #[test]
 //     fn issue_1() {
-//         test_single_common_ancestor(
+//         test_single_head_meet(
 //             2,
 //             vec![],
 //             vec![
@@ -1118,7 +1118,7 @@ fn failed_fuzz() {
 //         .unwrap();
 //     }
 
-//     fn test_single_common_ancestor(
+//     fn test_single_head_meet(
 //         dag_num: i32,
 //         mut before_merge_insertion: Vec<Interaction>,
 //         mut after_merge_insertion: Vec<Interaction>,
@@ -1163,7 +1163,7 @@ fn failed_fuzz() {
 //         // println!("{}", dag0.mermaid());
 //         let a = dags[0].nodes.get(&0).unwrap().last().unwrap().id_last();
 //         let b = dags[1].nodes.get(&1).unwrap().last().unwrap().id_last();
-//         let actual = dags[0].find_common_ancestor(&[a], &[b]);
+//         let actual = dags[0].find_replay_base(&[a], &[b]);
 //         prop_assert_eq!(&**actual.0, &[expected]);
 //         Ok(())
 //     }
@@ -1264,7 +1264,7 @@ fn failed_fuzz() {
 //             }
 
 //             if dags[interaction.dag_idx].is_first() {
-//                 // need to merge to one of the common ancestors first
+//                 // need to merge to one of the shared-history dags first
 //                 let target = interaction.dag_idx % N;
 //                 let (dag, target) = arref::array_mut_ref!(&mut dags, [interaction.dag_idx, target]);
 //                 dag.merge(target);
@@ -1273,7 +1273,7 @@ fn failed_fuzz() {
 //             apply(*interaction, &mut dags);
 //         }
 
-//         // make common ancestor dags be merged to opposite side (even/odd)
+//         // make the shared-history dags be merged to opposite side (even/odd)
 //         for i in 0..N {
 //             let (odd, even) = if N % 2 == 0 { (N + 1, N) } else { (N, N + 1) };
 //             if !merged_to_even[i] && i % 2 != 0 {
@@ -1312,7 +1312,7 @@ fn failed_fuzz() {
 //         dag_a.merge(dag_b);
 //         let a = dag_a.get_last_node().id;
 //         let b = dag_b.get_last_node().id;
-//         let mut actual = dag_a.find_common_ancestor(&[a], &[b]).0;
+//         let mut actual = dag_a.find_replay_base(&[a], &[b]).0;
 //         actual.sort();
 //         let actual = actual.iter().copied().collect::<Vec<_>>();
 //         if actual != expected {

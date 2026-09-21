@@ -1801,10 +1801,11 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 // (`start_vv` ⊆ base); criticality transfers down, because an
                 // op concurrent with an event in `Events(start_vv)` would be
                 // concurrent with that same event in `Events(base)`.
-                // A base that is merely a common ancestor gives no such
-                // promise (`source_not_in_op_context` then reports replayed
-                // ops whose causal context misses the source state), so fall
-                // back to reconstructing the target state from CRDT ids.
+                // A base only known to lie in the causal past of both sides
+                // gives no such promise (`source_not_in_op_context` then
+                // reports replayed ops whose causal context misses the source
+                // state), so fall back to reconstructing the target state from
+                // CRDT ids.
                 let base_is_trustworthy = info.replay_base_is_critical
                     || (info.replay_base_vv == info.from_vv && !*source_not_in_op_context);
                 let should_rebuild =

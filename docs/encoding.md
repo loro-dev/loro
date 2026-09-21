@@ -154,13 +154,16 @@ State writer:
 
 ### 3.3 Shallow-root selection
 
-Let `F` be the frontiers requested by the caller. The wire root is an actual
-frontier set `S = calc_shallow_doc_start(F)`, which can differ from `F`:
+Let `F` be the frontiers requested by the caller and `E` the end of the
+retained history: the latest version for `ShallowSnapshot`, `F` itself for
+`StateOnly`. The wire root is an actual frontier set
+`S = calc_shallow_doc_start(F, E)`, which can differ from `F`:
 
-1. multiple frontier IDs are reduced by pairwise greatest-common-ancestor
-   calculations until one frontier (or the empty frontier) remains; if a
-   reduction round makes no progress, the algorithm falls back to the empty
-   frontier before the existing-root clamp;
+1. `S` starts as the latest single-head *critical version* of
+   `ancestry(F) ∪ ancestry(E)`: every retained change is causally before or
+   after it, never concurrent with it. It never lies above `F`, and it is the
+   empty frontier when no such version exists, for example when the heads
+   share no history;
 2. if the selected ID is a rich-text `StyleStart`, `S` advances to the adjacent
    `StyleEnd`, so the pair is not split by the shallow boundary; and
 3. an already-shallow document clamps `S` to its existing shallow root, because
