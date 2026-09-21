@@ -297,4 +297,45 @@ mod loom_test {
             }
         });
     }
+
+    #[test]
+    fn subscribe_local_update_while_another_thread_emits() {
+        loom::model(|| {
+            let doc = LoroDoc::new();
+            let first_calls = std::sync::Arc::new(AtomicUsize::new(0));
+            let first_calls_clone = first_calls.clone();
+            let _first = doc.subscribe_local_update(Box::new(move |_| {
+                first_calls_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }));
+
+            let doc1 = doc.clone();
+            let h0 = loom::thread::spawn(move || {
+                doc1.get_text("text").insert(0, "1").unwrap();
+                doc1.commit();
+            });
+            let doc2 = doc.clone();
+            let h1 = loom::thread::spawn(move || {
+                let late_calls = std::sync::Arc::new(AtomicUsize::new(0));
+                let late_calls_clone = late_calls.clone();
+                let _late = doc2.subscribe_local_update(Box::new(move |_| {
+                    late_calls_clone.fetch_add(1, Ordering::SeqCst);
+                    true
+                }));
+                doc2.get_text("text").insert(0, "2").unwrap();
+                doc2.commit();
+                (late_calls, _late)
+            });
+
+            h0.join().unwrap();
+            let (late_calls, _late) = h1.join().unwrap();
+            let late_calls = late_calls.load(Ordering::SeqCst);
+            assert!(
+                late_calls >= 1,
+                "late subscriber missed an update committed after it subscribed"
+            );
+            assert!(first_calls.load(Ordering::SeqCst) >= late_calls);
+            assert_eq!(doc.get_text("text").len_utf8(), 2);
+        });
+    }
 }
