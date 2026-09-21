@@ -3920,6 +3920,33 @@ mod hegel_pbt {
         assert_docs_agree(&once, &target);
     }
 
+    #[hegel::test]
+    fn test_checkout_reproduces_recorded_states(tc: TestCase) {
+        let doc = tc.draw(random_doc(1).print_with(print_deep_value));
+        // Materialise roots before the first checkpoint: containers are never
+        // removed from state, so earlier checkpoints must already include them.
+        touch_roots(&doc);
+        doc.commit();
+        let mut checkpoints = vec![(doc.state_frontiers(), doc.get_deep_value())];
+        let n_edits = tc.draw(gs::integers::<usize>().min_value(1).max_value(15));
+        for _ in 0..n_edits {
+            apply_random_edit(&tc, &doc);
+            doc.commit();
+            checkpoints.push((doc.state_frontiers(), doc.get_deep_value()));
+        }
+        let latest = doc.get_deep_value();
+
+        let order: Vec<usize> = (0..checkpoints.len()).collect();
+        for idx in tc.draw(gs::permutations(order)) {
+            let (frontiers, expected) = &checkpoints[idx];
+            doc.checkout(frontiers).unwrap();
+            assert_eq!(*expected, doc.get_deep_value());
+        }
+        doc.checkout_to_latest();
+        assert_eq!(latest, doc.get_deep_value());
+        assert!(!doc.is_detached());
+    }
+
     #[ignore = "Being discussed in #1112"]
     #[hegel::test]
     fn test_counter_zero_sum_import_batching_diverges_known_bug(tc: TestCase) {
