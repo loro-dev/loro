@@ -3853,4 +3853,28 @@ mod hegel_pbt {
         docs.into_iter().next().unwrap()
     }
 
+    #[hegel::test]
+    fn test_import_is_idempotent(tc: TestCase) {
+        let source = tc.draw(random_doc(1).print_with(print_deep_value));
+        source.commit();
+        let bytes = if tc.draw(gs::booleans()) {
+            source.export(ExportMode::all_updates()).unwrap()
+        } else {
+            source.export(ExportMode::Snapshot).unwrap()
+        };
+        // target may already have disjoint-peer history
+        let target = if tc.draw(gs::booleans()) {
+            tc.draw(random_doc(100).print_with(print_deep_value))
+        } else {
+            LoroDoc::new()
+        };
+        target.import(&bytes).unwrap();
+        // state after the first import
+        let once = target.fork();
+        let n_extra = tc.draw(gs::integers::<usize>().min_value(1).max_value(10));
+        for _ in 0..n_extra {
+            target.import(&bytes).unwrap();
+        }
+        assert_docs_agree(&once, &target);
+    }
 }
