@@ -42,7 +42,7 @@ pub use change_store::{BlockChangeRef, ChangeStore};
 /// So you can derive different versions of the state from the [OpLog].
 /// It allows us to build a version control system.
 ///
-/// The causal graph should always be a DAG and complete. So we can always find a common ancestor version.
+/// The causal graph should always be a DAG and complete, so two versions always have a replay base (at worst the empty version).
 /// If deps are missing, we can't import the change. It will be put into the `pending_changes`.
 pub struct OpLog {
     pub(crate) dag: AppDag,
@@ -906,9 +906,9 @@ impl OpLog {
         Found(v)
     }
 
-    /// Iterates causally over all changes between the replay base (a common
-    /// ancestor version chosen by `find_common_ancestor`; ideally the latest
-    /// critical version in the Eg-walker sense, see
+    /// Iterates causally over all changes between the replay base (the meet
+    /// from `find_meet_and_mode` when it is valid for the diff mode, else a
+    /// critical version below it in the Eg-walker sense, see
     /// `docs/critical-version-spec.md`) and the merged version of `from`/`to`.
     ///
     /// Tht iterator will include a version vector when the change is applied

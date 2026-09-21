@@ -165,7 +165,7 @@ The relay may already contain that predecessor. In that case the second path can
 reach the end of the queue without meeting the other side even though it is not
 concurrent.
 
-To distinguish those cases, `_find_common_ancestor_new` carries the dependency
+To distinguish those cases, `_find_meet_and_mode` carries the dependency
 tip where each path split. When a path remains unmatched, it checks only that tip
 against the ancestors of the candidate common frontiers. A covered tip is a
 redundant route and does not lower the replay base; an uncovered tip is a real
@@ -205,8 +205,8 @@ For `ShallowSnapshot`, the root is the latest single-head *critical version*
 (`latest_single_head_critical_version`, spec lemma L11) of the requested
 frontier together with the latest version, because every op from the root up
 to the latest version is retained and each one must be causally before or
-after the root, never concurrent with it (loro-dev/loro#1095). A common
-ancestor of the requested heads is not enough: a branch merged later that
+after the root, never concurrent with it (loro-dev/loro#1095). The meet of
+the requested heads is not enough: a branch merged later that
 forked below the requested version is concurrent with it. `StateOnly` retains
 history only up to its target, so it uses the target on both sides.
 `crates/loro/tests/shallow_root_critical.rs` checks the property op by op. The

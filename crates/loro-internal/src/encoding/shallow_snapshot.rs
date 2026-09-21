@@ -793,8 +793,8 @@ fn restore_export_doc_state(
 /// one is causally before the root or causally after it, never concurrent.
 /// The shallow format stores the state at the root plus every op above it, so
 /// an op concurrent with the root belongs to neither side and the snapshot
-/// cannot be imported (loro-dev/loro#1095). A common ancestor of the heads is
-/// not enough.
+/// cannot be imported (loro-dev/loro#1095). The meet of the heads is not
+/// enough.
 ///
 /// `retained_to` is where the retained history ends: the latest version for a
 /// shallow snapshot, `frontiers` itself for a state-only snapshot. It matters

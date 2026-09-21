@@ -4,7 +4,7 @@
 //!
 //! The shallow format stores one state snapshot at the root and every op after
 //! it. An op concurrent with the root belongs to neither side, so a root that
-//! is merely a common ancestor of the frontier heads is not enough — see
+//! is merely the meet of the frontier heads is not enough — see
 //! `crates/loro-internal/docs/critical-version-spec.md` and loro-dev/loro#1095,
 //! where an unpaired frontier head was used as the root and the resulting
 //! snapshot could not be imported.
@@ -180,8 +180,8 @@ fn shallow_root_is_critical_on_random_histories() {
     }
 }
 
-/// The shape from loro-dev/loro#1095: independent heads have no common
-/// ancestor at all, so no critical version exists below them and the export
+/// The shape from loro-dev/loro#1095: independent heads share no history at
+/// all, so no critical version exists below them and the export
 /// must fall back to full history.
 #[test]
 fn independent_heads_have_no_critical_root() {

@@ -83,8 +83,8 @@ pub(crate) trait DagUtils: Dag {
     /// that need every other op to be before or after the result, such as the
     /// shallow snapshot root, must use
     /// [`Self::latest_single_head_critical_version`] (loro-dev/loro#1095).
-    fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
-    /// Like [`Self::find_common_ancestor`], but leaves the conservative
+    fn find_replay_base(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
+    /// Like [`Self::find_replay_base`], but leaves the conservative
     /// fallback to the caller: on [`MeetAsBase::NeedsCriticalRetreat`] the
     /// caller must retreat to a critical version (via
     /// [`Self::latest_single_head_critical_version`], or a cheaper multi-head
@@ -117,8 +117,8 @@ pub(crate) trait DagUtils: Dag {
 
 impl<T: Dag + ?Sized> DagUtils for T {
     #[inline]
-    fn find_common_ancestor(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode) {
-        // TODO: perf: make it also return the spans to reach common_ancestors
+    fn find_replay_base(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode) {
+        // TODO: perf: make it also return the spans to reach the replay base
         let (meet, mode) = self.find_meet_and_mode(a_id, b_id);
         let base = match meet {
             MeetAsBase::Valid(meet) => meet,
@@ -193,7 +193,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
             }
         }
 
-        _find_common_ancestor(
+        _walk_to_meet(
             &|v| self.get(v),
             from,
             to,
@@ -321,7 +321,7 @@ impl Ord for OrdIdSpan<'_> {
             .cmp(&other.lamport_last())
             .then(self.id.peer.cmp(&other.id.peer))
             // If they have the same last id, we want the shorter one to be greater;
-            // Otherwise, find_common_ancestor won't work correctly. Because we may
+            // Otherwise, find_replay_base won't work correctly. Because we may
             // lazily load the dag node, so sometimes the longer one should be broken
             // into smaller pieces but it's already pushed to the queue.
             .then(other.len.cmp(&self.len))
@@ -377,11 +377,11 @@ where
         return (MeetAsBase::Valid(Default::default()), DiffMode::Checkout);
     }
 
-    _find_common_ancestor_new(get, a_id, b_id)
+    _find_meet_and_mode(get, a_id, b_id)
 }
 
 /// - deep whether keep searching until the min of non-shared node is found
-fn _find_common_ancestor<'a, F, D, G>(
+fn _walk_to_meet<'a, F, D, G>(
     get: &'a F,
     a_ids: &Frontiers,
     b_ids: &Frontiers,
@@ -408,7 +408,7 @@ where
     // - visited's node type reflecting whether we found the shared node of this client
     // - ans's client id never repeat
     // - nodes with the same id will only be visited once
-    // - we may visit nodes that are before the common ancestors
+    // - we may visit nodes that are before the meet
 
     // type count in the queue. if both are zero, we can stop
     let mut a_count = a_ids.len();
@@ -647,7 +647,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<
 /// Finds the replay base and diff mode for the transition `left -> right`.
 ///
 /// Contract (see `docs/critical-version-spec.md` for definitions and proofs):
-/// - S1: every id in the returned frontier is a common ancestor of both sides;
+/// - S1: every id in the returned frontier is in the causal past of both sides;
 /// - S2: the returned frontier is an antichain;
 /// - S3: a non-`Checkout` mode additionally guarantees that the base equals
 ///   `left` and that EVERY newly imported event is causally after every head
@@ -662,7 +662,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<
 /// Downstream consumers rely on these guarantees to skip CRDT adjudication
 /// (tree/map fast paths) and to bound their replay windows (tree checkout);
 /// see the comment in `diff_calc/tree.rs::checkout_diff`.
-fn _find_common_ancestor_new<'a, F, D>(
+fn _find_meet_and_mode<'a, F, D>(
     get: &'a F,
     left: &Frontiers,
     right: &Frontiers,
@@ -743,7 +743,7 @@ where
             return ids.clone();
         }
 
-        let mut ids = ids_to_ord_id_spans(ids, get).expect("common ancestors should be in dag");
+        let mut ids = ids_to_ord_id_spans(ids, get).expect("meet candidates should be in dag");
         ids.sort_unstable();
         let mut frontiers = Vec::with_capacity(ids.len());
         for id in ids.iter().rev() {
@@ -1066,8 +1066,8 @@ where
         {
             // Some checkout calculators still require replaying from a base that
             // includes every branch whose operation positions may affect the diff.
-            // In non-linear checkout mode, an earlier common ancestor is a valid
-            // conservative base even when it is not the meet of the two versions.
+            // In non-linear checkout mode, an earlier version in the causal past of
+            // both sides is a valid conservative base even when it is not the meet.
             if branch_tips.is_empty() {
                 unmatched_branches.insert(node.id_last());
             } else {
@@ -1082,7 +1082,7 @@ where
     // and was therefore not expanded. In that case another queued path may still
     // walk into one of the shared node's ancestors. That path is redundant, not a
     // concurrent branch. Only fall back when an unmatched tip is not causally
-    // covered by the common ancestors we found.
+    // covered by the meet candidates we found.
     let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
         || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
     // A genuine concurrent branch invalidates the meet as a replay base. The
@@ -1326,7 +1326,7 @@ mod tests {
         frontiers.into_iter().collect()
     }
 
-    fn oracle_common_ancestor(dag: &TestDag, left: &Frontiers, right: &Frontiers) -> Frontiers {
+    fn oracle_meet(dag: &TestDag, left: &Frontiers, right: &Frontiers) -> Frontiers {
         let left_ancestors = ancestors_of_frontiers(dag, left);
         let right_ancestors = ancestors_of_frontiers(dag, right);
         maximal_frontiers(
@@ -1337,13 +1337,9 @@ mod tests {
         )
     }
 
-    fn assert_common_ancestor_valid_against_oracle(
-        dag: &TestDag,
-        left: &Frontiers,
-        right: &Frontiers,
-    ) {
-        let (actual, mode) = dag.find_common_ancestor(left, right);
-        let expected = oracle_common_ancestor(dag, left, right);
+    fn assert_replay_base_valid_against_oracle(dag: &TestDag, left: &Frontiers, right: &Frontiers) {
+        let (actual, mode) = dag.find_replay_base(left, right);
+        let expected = oracle_meet(dag, left, right);
         let left_ancestors = ancestors_of_frontiers(dag, left);
         let right_ancestors = ancestors_of_frontiers(dag, right);
         for id in actual.iter() {
@@ -1367,7 +1363,7 @@ mod tests {
         if !matches!(mode, DiffMode::Checkout) {
             assert_eq!(
                 actual, expected,
-                "non-checkout mode should use the maximal common ancestor: left={left:?} right={right:?} mode={mode:?}\ndag={dag:?}",
+                "non-checkout mode should use the meet: left={left:?} right={right:?} mode={mode:?}\ndag={dag:?}",
             );
             assert_eq!(
                 &actual, left,
@@ -1479,46 +1475,46 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_handles_empty_linear_same_span_and_parent_child_cases() {
+    fn replay_base_handles_empty_linear_same_span_and_parent_child_cases() {
         let first = node(1, 0, 2, 0, Frontiers::default());
         let second = node(1, 2, 2, 2, ID::new(1, 1).into());
         let dag = TestDag::new(vec![first, second], ID::new(1, 3).into());
 
         assert_eq!(
-            dag.find_common_ancestor(&Frontiers::default(), &ID::new(1, 3).into()),
+            dag.find_replay_base(&Frontiers::default(), &ID::new(1, 3).into()),
             (Frontiers::default(), DiffMode::Linear)
         );
         assert_eq!(
-            dag.find_common_ancestor(&ID::new(1, 3).into(), &Frontiers::default()),
+            dag.find_replay_base(&ID::new(1, 3).into(), &Frontiers::default()),
             (Frontiers::default(), DiffMode::Checkout)
         );
         assert_eq!(
-            dag.find_common_ancestor(&ID::new(1, 0).into(), &ID::new(1, 1).into()),
+            dag.find_replay_base(&ID::new(1, 0).into(), &ID::new(1, 1).into()),
             (ID::new(1, 0).into(), DiffMode::Linear)
         );
         assert_eq!(
-            dag.find_common_ancestor(&ID::new(1, 1).into(), &ID::new(1, 0).into()),
+            dag.find_replay_base(&ID::new(1, 1).into(), &ID::new(1, 0).into()),
             (ID::new(1, 0).into(), DiffMode::Checkout)
         );
         assert_eq!(
-            dag.find_common_ancestor(&ID::new(1, 1).into(), &ID::new(1, 3).into()),
+            dag.find_replay_base(&ID::new(1, 1).into(), &ID::new(1, 3).into()),
             (ID::new(1, 1).into(), DiffMode::Linear)
         );
     }
 
     #[test]
-    fn common_ancestor_left_empty_stops_linear_scan_at_missing_shallow_dependency() {
+    fn replay_base_left_empty_stops_linear_scan_at_missing_shallow_dependency() {
         let visible = node(1, 1, 1, 1, ID::new(1, 0).into());
         let dag = TestDag::new(vec![visible], ID::new(1, 1).into());
 
         assert_eq!(
-            dag.find_common_ancestor(&Frontiers::default(), &ID::new(1, 1).into()),
+            dag.find_replay_base(&Frontiers::default(), &ID::new(1, 1).into()),
             (Frontiers::default(), DiffMode::ImportGreaterUpdates)
         );
     }
 
     #[test]
-    fn common_ancestor_of_parallel_branches_is_shared_dependency() {
+    fn replay_base_of_parallel_branches_is_shared_dependency() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let left = node(2, 0, 1, 1, root.id.into());
         let right = node(3, 0, 1, 2, root.id.into());
@@ -1528,16 +1524,16 @@ mod tests {
             merge.id.into(),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &right.id.into());
         assert_eq!(ancestor, root.id.into());
         assert_eq!(mode, DiffMode::Checkout);
 
-        let (ancestor, _) = dag.find_common_ancestor(&root.id.into(), &merge.id.into());
+        let (ancestor, _) = dag.find_replay_base(&root.id.into(), &merge.id.into());
         assert_eq!(ancestor, root.id.into());
     }
 
     #[test]
-    fn common_ancestor_falls_back_before_independent_branch() {
+    fn replay_base_falls_back_before_independent_branch() {
         let left = node(1, 0, 1, 0, Frontiers::default());
         let independent = node(2, 0, 1, 1, Frontiers::default());
         let merge = node(3, 0, 1, 2, Frontiers::from([left.id, independent.id]));
@@ -1546,13 +1542,13 @@ mod tests {
             merge.id.into(),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &merge.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
     }
 
     #[test]
-    fn common_ancestor_falls_back_before_unmatched_branch_with_multiple_left_frontiers() {
+    fn replay_base_falls_back_before_unmatched_branch_with_multiple_left_frontiers() {
         let left_a = node(1, 0, 1, 0, Frontiers::default());
         let left_b = node(2, 0, 1, 1, Frontiers::default());
         let independent = node(3, 0, 1, 2, Frontiers::default());
@@ -1569,24 +1565,24 @@ mod tests {
             merge.id.into(),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left_frontiers, &merge.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left_frontiers, &merge.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
     }
 
     #[test]
-    fn common_ancestor_marks_cross_peer_direct_dependency_as_greater_update() {
+    fn replay_base_marks_cross_peer_direct_dependency_as_greater_update() {
         let left = node(1, 0, 1, 0, Frontiers::default());
         let right = node(2, 0, 1, 1, left.id.into());
         let dag = TestDag::new(vec![left.clone(), right.clone()], right.id.into());
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &right.id.into());
         assert_eq!(ancestor, left.id.into());
         assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     }
 
     #[test]
-    fn common_ancestor_ignores_implicit_predecessor_covered_by_explicit_dependency() {
+    fn replay_base_ignores_implicit_predecessor_covered_by_explicit_dependency() {
         let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
         let relay = node(2, 0, 1, 1, peer_one_previous.id.into());
         // This is peer 1's next change, so it implicitly depends on
@@ -1598,13 +1594,13 @@ mod tests {
             peer_one_next.id.into(),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(&relay.id.into(), &peer_one_next.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&relay.id.into(), &peer_one_next.id.into());
         assert_eq!(ancestor, relay.id.into());
         assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     }
 
     #[test]
-    fn common_ancestor_ignores_implicit_predecessor_covered_transitively() {
+    fn replay_base_ignores_implicit_predecessor_covered_transitively() {
         let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
         let first_relay = node(2, 0, 1, 1, peer_one_previous.id.into());
         let current_frontier = node(3, 0, 1, 2, first_relay.id.into());
@@ -1620,13 +1616,13 @@ mod tests {
         );
 
         let (ancestor, mode) =
-            dag.find_common_ancestor(&current_frontier.id.into(), &peer_one_next.id.into());
+            dag.find_replay_base(&current_frontier.id.into(), &peer_one_next.id.into());
         assert_eq!(ancestor, current_frontier.id.into());
         assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     }
 
     #[test]
-    fn common_ancestor_keeps_uncovered_implicit_predecessor_conservative() {
+    fn replay_base_keeps_uncovered_implicit_predecessor_conservative() {
         let peer_one_previous = node(1, 0, 1, 0, Frontiers::default());
         let concurrent = node(2, 0, 1, 1, Frontiers::default());
         let peer_one_next = node(1, 1, 1, 2, concurrent.id.into());
@@ -1636,13 +1632,13 @@ mod tests {
         );
 
         let (ancestor, mode) =
-            dag.find_common_ancestor(&concurrent.id.into(), &peer_one_next.id.into());
+            dag.find_replay_base(&concurrent.id.into(), &peer_one_next.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
     }
 
     #[test]
-    fn common_ancestor_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
+    fn replay_base_falls_back_when_right_adds_concurrent_branch_from_shared_root() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let root_id = root.id;
         let left = node(2, 0, 1, 1, root.id.into());
@@ -1653,7 +1649,7 @@ mod tests {
             merge.id.into(),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &merge.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &merge.id.into());
         // The conservative base retreats to the latest single-head critical
         // version below both sides — here the shared root — instead of the
         // beginning of history.
@@ -1662,14 +1658,14 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_falls_back_when_right_frontiers_add_concurrent_branch() {
+    fn replay_base_falls_back_when_right_frontiers_add_concurrent_branch() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let left = node(2, 0, 1, 1, root.id.into());
         let concurrent = node(3, 0, 1, 2, root.id.into());
         let right = Frontiers::from([left.id, concurrent.id]);
         let dag = TestDag::new(vec![root, left.clone(), concurrent], right.clone());
 
-        let (ancestor, mode) = dag.find_common_ancestor(&left.id.into(), &right);
+        let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &right);
         // Conservative base = the shared root (latest single-head critical
         // version), not the beginning of history.
         assert_eq!(ancestor, ID::new(1, 0).into());
@@ -1677,7 +1673,7 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_falls_back_when_left_frontiers_add_concurrent_branch() {
+    fn replay_base_falls_back_when_left_frontiers_add_concurrent_branch() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let shared = node(2, 0, 1, 1, root.id.into());
         let concurrent = node(3, 0, 1, 2, root.id.into());
@@ -1687,7 +1683,7 @@ mod tests {
         // The concurrent left head walks below `shared` without ever meeting the
         // right side. Only the tip seeded for the multi-element left frontier can
         // prove it uncovered; the deep node it dies at is itself covered.
-        let (ancestor, mode) = dag.find_common_ancestor(&left, &shared.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&left, &shared.id.into());
         // Conservative base = the shared root (latest single-head critical
         // version), not the beginning of history.
         assert_eq!(ancestor, ID::new(1, 0).into());
@@ -1695,7 +1691,7 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_falls_back_when_walk_reaches_trimmed_history() {
+    fn replay_base_falls_back_when_walk_reaches_trimmed_history() {
         // Peer 9's changes are not present in the DAG, as after shallow trimming.
         // Both sides die at the missing dependency inside the main walk, which
         // must force the conservative empty base regardless of tip coverage.
@@ -1703,7 +1699,7 @@ mod tests {
         let b = node(2, 0, 1, 6, ID::new(9, 7).into());
         let dag = TestDag::new(vec![a.clone(), b.clone()], Frontiers::from([a.id, b.id]));
 
-        let (ancestor, mode) = dag.find_common_ancestor(&a.id.into(), &b.id.into());
+        let (ancestor, mode) = dag.find_replay_base(&a.id.into(), &b.id.into());
         assert_eq!(ancestor, Frontiers::default());
         assert_eq!(mode, DiffMode::Checkout);
     }
@@ -1727,7 +1723,7 @@ mod tests {
 
         let left = Frontiers::from([ID::new(1, 0), ID::new(2, 6)]);
         let right = Frontiers::from([ID::new(1, 3), ID::new(2, 6)]);
-        let (ancestor, mode) = dag.find_common_ancestor(&left, &right);
+        let (ancestor, mode) = dag.find_replay_base(&left, &right);
         assert_eq!(ancestor, ID::new(2, 3).into());
         assert_eq!(mode, DiffMode::Checkout);
     }
@@ -1750,13 +1746,13 @@ mod tests {
         let dag = TestDag::new(vec![root, x, y, merge], ID::new(4, 0).into());
 
         let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
-        let (ancestor, mode) = dag.find_common_ancestor(&left, &ID::new(4, 0).into());
+        let (ancestor, mode) = dag.find_replay_base(&left, &ID::new(4, 0).into());
         assert_eq!(ancestor, left);
         assert_eq!(mode, DiffMode::ImportGreaterUpdates);
     }
 
     #[test]
-    fn common_ancestor_criss_cross_ladder_stays_linear() {
+    fn replay_base_criss_cross_ladder_stays_linear() {
         // Two peers that each merge both previous heads every round — the shape
         // ordinary bidirectional sync produces. Branch tips re-merge at every
         // rung; without deduplication in the tip union the walk is O(2^rounds)
@@ -1780,7 +1776,7 @@ mod tests {
         let dag = TestDag::new(nodes, frontier.clone());
 
         let start = std::time::Instant::now();
-        let (ancestor, mode) = dag.find_common_ancestor(&root.id.into(), &frontier);
+        let (ancestor, mode) = dag.find_replay_base(&root.id.into(), &frontier);
         assert_eq!(ancestor, root.id.into());
         assert_eq!(mode, DiffMode::ImportGreaterUpdates);
         // Generous 4-orders-of-magnitude margin over the fixed cost; the broken
@@ -1793,7 +1789,7 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_keeps_target_when_checking_out_to_ancestor_with_extra_branch() {
+    fn replay_base_keeps_target_when_checking_out_to_ancestor_with_extra_branch() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let left = node(2, 0, 2, 1, root.id.into());
         let right = node(3, 0, 2, 3, root.id.into());
@@ -1811,13 +1807,13 @@ mod tests {
         let target = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
         let current = Frontiers::from([extra.id, left.id_last(), right.id_last()]);
 
-        let (ancestor, mode) = dag.find_common_ancestor(&current, &target);
+        let (ancestor, mode) = dag.find_replay_base(&current, &target);
         assert_eq!(ancestor, target);
         assert_eq!(mode, DiffMode::Checkout);
     }
 
     #[test]
-    fn common_ancestor_does_not_keep_ancestor_of_shared_descendant() {
+    fn replay_base_does_not_keep_ancestor_of_shared_descendant() {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let shared = node(2, 0, 1, 1, root.id.into());
         let left_only = node(3, 0, 1, 2, root.id.into());
@@ -1827,7 +1823,7 @@ mod tests {
             Frontiers::from([shared.id, left_only.id, right_only.id]),
         );
 
-        let (ancestor, mode) = dag.find_common_ancestor(
+        let (ancestor, mode) = dag.find_replay_base(
             &Frontiers::from([shared.id, left_only.id]),
             &Frontiers::from([shared.id, right_only.id]),
         );
@@ -1836,7 +1832,7 @@ mod tests {
     }
 
     #[test]
-    fn common_ancestor_valid_against_slow_oracle_on_random_dags() {
+    fn replay_base_valid_against_slow_oracle_on_random_dags() {
         for seed in 0..128 {
             let mut rng = StdRng::seed_from_u64(seed);
             let dag = random_dag(seed, rng.gen_range(1..=18));
@@ -1844,13 +1840,13 @@ mod tests {
             for _ in 0..64 {
                 let left = random_frontiers(&dag, &ids, &mut rng);
                 let right = random_frontiers(&dag, &ids, &mut rng);
-                assert_common_ancestor_valid_against_oracle(&dag, &left, &right);
+                assert_replay_base_valid_against_oracle(&dag, &left, &right);
             }
         }
     }
 
     #[test]
-    fn common_ancestor_valid_against_slow_oracle_on_all_pairs_in_small_random_dags() {
+    fn replay_base_valid_against_slow_oracle_on_all_pairs_in_small_random_dags() {
         for seed in 1000..1020 {
             let dag = random_dag(seed, 8);
             let ids = all_ids(&dag);
@@ -1862,14 +1858,14 @@ mod tests {
 
             for left in frontiers.iter() {
                 for right in frontiers.iter() {
-                    assert_common_ancestor_valid_against_oracle(&dag, left, right);
+                    assert_replay_base_valid_against_oracle(&dag, left, right);
                 }
             }
         }
     }
 
     #[test]
-    fn common_ancestor_valid_against_slow_oracle_on_layered_merge_dag() {
+    fn replay_base_valid_against_slow_oracle_on_layered_merge_dag() {
         let dag = layered_merge_dag();
         let ids = all_ids(&dag);
         let mut frontiers = vec![Frontiers::default(), dag.frontier().clone()];
@@ -1883,13 +1879,13 @@ mod tests {
 
         for left in frontiers.iter() {
             for right in frontiers.iter() {
-                assert_common_ancestor_valid_against_oracle(&dag, left, right);
+                assert_replay_base_valid_against_oracle(&dag, left, right);
             }
         }
     }
 
     #[test]
-    fn common_ancestor_valid_against_slow_oracle_on_branchy_random_dags() {
+    fn replay_base_valid_against_slow_oracle_on_branchy_random_dags() {
         for seed in 2000..2064 {
             let mut rng = StdRng::seed_from_u64(seed);
             let dag = random_dag(seed, rng.gen_range(20..=36));
@@ -1897,7 +1893,7 @@ mod tests {
             for _ in 0..96 {
                 let left = random_frontiers(&dag, &ids, &mut rng);
                 let right = random_frontiers(&dag, &ids, &mut rng);
-                assert_common_ancestor_valid_against_oracle(&dag, &left, &right);
+                assert_replay_base_valid_against_oracle(&dag, &left, &right);
             }
         }
     }
