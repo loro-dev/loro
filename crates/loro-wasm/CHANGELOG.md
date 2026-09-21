@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.3
+
+### Patch Changes
+
+- a99b911: Reject inserting a container attached to another `LoroDoc` (directly or nested inside a detached container) with a recoverable error instead of trapping the WASM instance. The target doc is left unchanged.
+
 ## 1.16.2
 
 ### Patch Changes
