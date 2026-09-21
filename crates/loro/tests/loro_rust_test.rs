@@ -3854,6 +3854,48 @@ mod hegel_pbt {
     }
 
     #[hegel::test]
+    fn test_export_modes_preserve_state(tc: TestCase) {
+        let doc = tc.draw(random_doc(1).print_with(print_deep_value));
+        doc.commit();
+        let frontiers = doc.oplog_frontiers();
+        let mode = tc.draw(
+            gs::sampled_from(vec![
+                ExportMode::Snapshot,
+                ExportMode::shallow_snapshot(&frontiers),
+                ExportMode::state_only(None),
+                ExportMode::snapshot_at(&frontiers),
+                ExportMode::all_updates(),
+            ])
+            .print_as_debug(),
+        );
+        let is_snapshot = matches!(mode, ExportMode::Snapshot);
+        let full_history = matches!(
+            mode,
+            ExportMode::Snapshot | ExportMode::SnapshotAt { .. } | ExportMode::Updates { .. }
+        );
+        let bytes = doc.export(mode).unwrap();
+
+        // exercise both `from_snapshot` and `import`
+        let restored = if is_snapshot && tc.draw(gs::booleans()) {
+            LoroDoc::from_snapshot(&bytes).unwrap()
+        } else {
+            let d = LoroDoc::new();
+            d.import(&bytes).unwrap();
+            d
+        };
+
+        // normalise empty roots on both sides
+        touch_roots(&doc);
+        touch_roots(&restored);
+        // full-oplog modes must reproduce version info; shallow modes only the value
+        if full_history {
+            assert_docs_agree(&doc, &restored);
+        } else {
+            assert_eq!(doc.get_deep_value(), restored.get_deep_value());
+        }
+    }
+
+    #[hegel::test]
     fn test_import_is_idempotent(tc: TestCase) {
         let source = tc.draw(random_doc(1).print_with(print_deep_value));
         source.commit();
