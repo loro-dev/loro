@@ -742,37 +742,52 @@ mod test {
     /// subscribes to the same emitter.
     #[test]
     fn concurrent_insert_and_emit_do_not_panic() {
-        use std::sync::Barrier;
+        use std::sync::{atomic::AtomicUsize, mpsc};
         let set = SubscriberSet::<i32, Box<dyn Fn(&i32) -> bool + Send + Sync>>::new();
-        let barrier = Arc::new(Barrier::new(2));
 
-        let in_callback = Arc::new(Barrier::new(2));
-        let gate = in_callback.clone();
+        // The first emit parks inside the callback until released, which
+        // keeps the emitter checked out for as long as the test needs.
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let entered_tx = std::sync::Mutex::new(Some(entered_tx));
+        let release_rx = std::sync::Mutex::new(release_rx);
         let (_sub, activate) = set.insert(
             1,
             Box::new(move |_: &i32| {
-                // Hold the emitter checked out until the other thread
-                // has had its turn to subscribe.
-                gate.wait();
+                if let Some(tx) = entered_tx.lock().unwrap().take() {
+                    tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
                 true
             }),
         );
         activate();
 
         let emitter = set.clone();
-        let b1 = barrier.clone();
         let t = std::thread::spawn(move || {
-            b1.wait();
             emitter.retain(&1, &mut |callback| callback(&1)).unwrap();
         });
 
-        barrier.wait();
-        // The emitting thread is parked inside the callback with the
-        // emitter checked out; this insert lands in that window.
-        let (sub, activate) = set.insert(1, Box::new(move |_: &i32| true));
+        // Only subscribe once the emitting thread is inside the callback,
+        // so this insert is guaranteed to land while the emitter is
+        // checked out.
+        entered_rx.recv().unwrap();
+        let late_calls = Arc::new(AtomicUsize::new(0));
+        let late_calls_clone = late_calls.clone();
+        let (sub, activate) = set.insert(
+            1,
+            Box::new(move |_: &i32| {
+                late_calls_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        );
         activate();
-        in_callback.wait();
+        release_tx.send(()).unwrap();
         t.join().unwrap();
+        assert_eq!(late_calls.load(Ordering::SeqCst), 0);
+
+        set.retain(&1, &mut |callback| callback(&1)).unwrap();
+        assert_eq!(late_calls.load(Ordering::SeqCst), 1);
         drop(sub);
     }
 
