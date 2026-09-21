@@ -258,6 +258,17 @@ impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
 
 struct SubscriberSetState<EmitterKey, Callback> {
     subscribers: BTreeMap<EmitterKey, Either<BTreeMap<usize, Subscriber<Callback>>, ThreadId>>,
+    /// Subscribers added while their emitter was mid-emit.
+    ///
+    /// `retain` swaps an emitter's map out for a `ThreadId` marker
+    /// while it invokes callbacks, so during that window there is no
+    /// map to insert into. The marker cannot simply be replaced: it is
+    /// what makes a concurrent `retain` wait instead of emitting the
+    /// same emitter twice, and what lets `is_recursive_calling` spot a
+    /// re-entrant emit. Parking the new subscriber here keeps the
+    /// marker intact, and `retain` folds these back in when it
+    /// restores the map.
+    pending_subscribers: BTreeMap<EmitterKey, BTreeMap<usize, Subscriber<Callback>>>,
     dropped_subscribers: BTreeSet<(EmitterKey, usize)>,
     next_subscriber_id: usize,
 }
@@ -277,6 +288,7 @@ where
     pub fn new() -> Self {
         Self(Arc::new(Mutex::new(SubscriberSetState {
             subscribers: Default::default(),
+            pending_subscribers: Default::default(),
             dropped_subscribers: Default::default(),
             next_subscriber_id: 0,
         })))
@@ -329,19 +341,30 @@ where
             unsubscribe: Arc::downgrade(&inner_sub.unsubscribe),
         };
 
-        lock.subscribers
-            .entry(emitter_key_1)
-            .or_insert_with(|| Either::Left(BTreeMap::new()))
-            .as_mut()
-            .unwrap_left()
-            .insert(
-                subscriber_id,
-                Subscriber {
-                    active: active.clone(),
-                    callback,
-                    _sub: inner_sub,
-                },
-            );
+        let subscriber = Subscriber {
+            active: active.clone(),
+            callback,
+            _sub: inner_sub,
+        };
+        // Subscribing to an emitter that is mid-emit is legal and
+        // happens whenever one thread adds a listener while another is
+        // delivering events for the same key (or a callback subscribes
+        // re-entrantly). The map is checked out by `retain` in that
+        // window, so park the subscriber instead of unwrapping a
+        // `Left` that is not there.
+        if matches!(lock.subscribers.get(&emitter_key_1), Some(Either::Right(_))) {
+            lock.pending_subscribers
+                .entry(emitter_key_1)
+                .or_default()
+                .insert(subscriber_id, subscriber);
+        } else {
+            lock.subscribers
+                .entry(emitter_key_1)
+                .or_insert_with(|| Either::Left(BTreeMap::new()))
+                .as_mut()
+                .unwrap_left()
+                .insert(subscriber_id, subscriber);
+        }
         (subscription, move || active.store(true, Ordering::Relaxed))
     }
 
@@ -349,6 +372,9 @@ where
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
         let mut lock = self.0.lock();
         let subscribers = lock.subscribers.remove(emitter);
+        // A subscriber parked mid-emit belongs to the emitter being
+        // removed; it never became visible, so it goes with it.
+        lock.pending_subscribers.remove(emitter);
         subscribers
             .and_then(|x| x.left().map(|s| s.into_values()))
             .into_iter()
@@ -418,6 +444,12 @@ where
         // Add any new subscribers that were added while invoking the callback.
         if let Some(Either::Left(new_subscribers)) = lock.subscribers.remove(emitter) {
             subscribers.extend(new_subscribers);
+        }
+        // …including those parked because this emitter was checked
+        // out. Folded in BEFORE the dropped sweep below, so one that
+        // was unsubscribed again mid-emit is still dropped.
+        if let Some(parked) = lock.pending_subscribers.remove(emitter) {
+            subscribers.extend(parked);
         }
 
         // Remove any dropped subscriptions that were dropped while invoking the callback.
@@ -653,6 +685,110 @@ mod test {
         activate();
         drop(subscriber_set);
         assert!(subscription.unsubscribe.upgrade().is_none());
+    }
+
+    /// Subscribing while the same emitter is mid-emit must not panic.
+    /// `retain` checks the emitter's map out and leaves a `ThreadId`
+    /// marker in its place, so an `insert` landing in that window used
+    /// to `unwrap_left()` the marker and take the process down with
+    /// `called Either::unwrap_left() on a Right value`. The new
+    /// subscriber is parked and folded in when `retain` restores the
+    /// map — so it is registered, but does not fire for the event
+    /// already being delivered.
+    #[test]
+    fn insert_during_emit_does_not_panic() {
+        let set = SubscriberSet::<i32, Box<dyn Fn(&i32) -> bool + Send + Sync>>::new();
+        let late_fired = Arc::new(AtomicBool::new(false));
+
+        // The first subscriber subscribes AGAIN from inside its own
+        // callback: the emitter is checked out at that moment, which
+        // is exactly the state that used to panic.
+        let set_inner = set.clone();
+        let flag = late_fired.clone();
+        let (_sub, activate) = set.insert(
+            1,
+            Box::new(move |_: &i32| {
+                let flag = flag.clone();
+                let (sub, activate) = set_inner.insert(
+                    1,
+                    Box::new(move |_: &i32| {
+                        flag.store(true, Ordering::Relaxed);
+                        true
+                    }),
+                );
+                activate();
+                std::mem::forget(sub);
+                true
+            }),
+        );
+        activate();
+
+        set.retain(&1, &mut |callback| callback(&1)).unwrap();
+        assert!(
+            !late_fired.load(Ordering::Relaxed),
+            "a subscriber added mid-emit must not receive the event being delivered"
+        );
+
+        // The parked subscriber was folded back in, so the NEXT emit
+        // reaches it.
+        set.retain(&1, &mut |callback| callback(&1)).unwrap();
+        assert!(
+            late_fired.load(Ordering::Relaxed),
+            "a subscriber added mid-emit must be registered for later events"
+        );
+    }
+
+    /// The cross-thread flavour: one thread emits while another
+    /// subscribes to the same emitter.
+    #[test]
+    fn concurrent_insert_and_emit_do_not_panic() {
+        use std::sync::{atomic::AtomicUsize, mpsc};
+        let set = SubscriberSet::<i32, Box<dyn Fn(&i32) -> bool + Send + Sync>>::new();
+
+        // The first emit parks inside the callback until released, which
+        // keeps the emitter checked out for as long as the test needs.
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let entered_tx = std::sync::Mutex::new(Some(entered_tx));
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let (_sub, activate) = set.insert(
+            1,
+            Box::new(move |_: &i32| {
+                if let Some(tx) = entered_tx.lock().unwrap().take() {
+                    tx.send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
+                true
+            }),
+        );
+        activate();
+
+        let emitter = set.clone();
+        let t = std::thread::spawn(move || {
+            emitter.retain(&1, &mut |callback| callback(&1)).unwrap();
+        });
+
+        // Only subscribe once the emitting thread is inside the callback,
+        // so this insert is guaranteed to land while the emitter is
+        // checked out.
+        entered_rx.recv().unwrap();
+        let late_calls = Arc::new(AtomicUsize::new(0));
+        let late_calls_clone = late_calls.clone();
+        let (sub, activate) = set.insert(
+            1,
+            Box::new(move |_: &i32| {
+                late_calls_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        );
+        activate();
+        release_tx.send(()).unwrap();
+        t.join().unwrap();
+        assert_eq!(late_calls.load(Ordering::SeqCst), 0);
+
+        set.retain(&1, &mut |callback| callback(&1)).unwrap();
+        assert_eq!(late_calls.load(Ordering::SeqCst), 1);
+        drop(sub);
     }
 
     #[test]
