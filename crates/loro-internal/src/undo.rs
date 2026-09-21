@@ -432,7 +432,7 @@ impl Stack {
     }
 
     pub fn transform_based_on_this_delta(&mut self, diff: &DiffBatch) {
-        if self.is_empty() {
+        if self.stack.is_empty() {
             return;
         }
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
