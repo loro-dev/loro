@@ -3854,6 +3854,48 @@ mod hegel_pbt {
     }
 
     #[hegel::test]
+    fn test_concurrent_replicas_converge(tc: TestCase) {
+        let n_peers = tc.draw(gs::integers::<usize>().min_value(2).max_value(4));
+
+        // Initialise `n_peers` docs
+        let docs: Vec<LoroDoc> = (0..n_peers)
+            .map(|i| {
+                let d = LoroDoc::new();
+                d.set_peer_id(i as u64 + 1).unwrap();
+                touch_roots(&d);
+                d
+            })
+            .collect();
+
+        let n_actions = tc.draw(gs::integers::<usize>().min_value(1).max_value(40));
+        for _ in 0..n_actions {
+            let i = tc.draw(gs::integers::<usize>().max_value(n_peers - 1));
+            if tc.draw(gs::weighted_booleans(0.2)) {
+                // partial sync i -> j leaves replicas divergent
+                let others: Vec<usize> = (0..n_peers).filter(|&j| j != i).collect();
+                let j = tc.draw(gs::sampled_from(others));
+                sync_one_way(&tc, &docs[i], &docs[j]);
+            } else {
+                apply_random_edit(&tc, &docs[i]);
+            }
+        }
+
+        // Full mesh exchange in a drawn order
+        let pairs: Vec<(usize, usize)> = (0..n_peers)
+            .flat_map(|a| (0..n_peers).map(move |b| (a, b)))
+            .filter(|(a, b)| a != b)
+            .collect();
+        for (a, b) in tc.draw(gs::permutations(pairs)) {
+            sync_one_way(&tc, &docs[a], &docs[b]);
+        }
+
+        // Check that all docs agree
+        for doc in docs.iter().skip(1) {
+            assert_docs_agree(&docs[0], doc);
+        }
+    }
+
+    #[hegel::test]
     fn test_export_modes_preserve_state(tc: TestCase) {
         let doc = tc.draw(random_doc(1).print_with(print_deep_value));
         doc.commit();
