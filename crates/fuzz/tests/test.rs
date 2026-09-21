@@ -9625,11 +9625,14 @@ fn failed_shallow_snapshot_import_keeps_text_subscription_recording() {
         .detach();
     let _ = target.get_text("text");
 
-    let bytes = c
-        .export(ExportMode::shallow_snapshot(&c.oplog_frontiers()))
-        .unwrap();
+    // A shallow snapshot recorded from a build without this PR's fix. Its root
+    // is the unpaired head `19@1` rather than a critical version, so replaying
+    // to the latest version trips the checkout guard (loro-dev/loro#1095).
+    // Well-formed exports can no longer produce such a root, but stored blobs
+    // still can, and importing one must fail without corrupting the target.
+    let bytes: &[u8] = include_bytes!("legacy_bad_shallow_snapshot.bin");
     assert!(matches!(
-        target.import(&bytes),
+        target.import(bytes),
         Err(LoroError::SwitchToVersionBeforeShallowRoot)
     ));
 

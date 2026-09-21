@@ -64,9 +64,11 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
   `ImportGreaterUpdates` entry check and, on conservative retreat, the
   multi-head fixpoint `OpLog::latest_critical_version_below_meet`, with
   the `latest_single_head_critical_version` descent as fallback. Do not
-  use "LCA" in new code or docs: the meet of two versions is generally NOT a safe replay
-  base. Read `docs/critical-version-spec.md` before touching
-  `find_common_ancestor`, diff modes, or `diff_calc/tree.rs` windows.
+  use "LCA" or "common ancestor" in new code or docs: the meet of two
+  versions is generally NOT a safe replay base, and a caller that needs a
+  critical version must ask for one (loro-dev/loro#1095). Read
+  `docs/critical-version-spec.md` before touching `find_replay_base`, diff
+  modes, or `diff_calc/tree.rs` windows.
   `OpLog::iter_from_replay_base_causally` may bypass the DAG when the
   concurrency is register-only (`docs/diff_calc.md`, "Register-only
   concurrency"); keep that check container-granular and history-based.

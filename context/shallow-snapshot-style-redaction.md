@@ -72,9 +72,10 @@ a content-redaction mechanism).
   from #504, which also nulls mark values rather than dropping ops.
 - Dead both-expand pair values (see invariant 2).
 - Anything in the retained op tail: marks created after the shallow root are
-  ordinary history. With a multi-head frontier the root walks back to a common
-  ancestor and the tail can contain far more than expected — the redaction
-  promise only covers state before a single-head root.
+  ordinary history. The root is the latest single-head critical version of the
+  retained history, which can sit well below a multi-head or past requested
+  version, so the tail can contain far more than expected — the redaction
+  promise only covers state before that root.
 
 ## Tests
 

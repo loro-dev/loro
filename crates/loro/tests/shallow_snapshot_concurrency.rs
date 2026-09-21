@@ -15,6 +15,56 @@
 
 use loro::{ExportMode, Frontiers, IdSpan, LoroDoc, LoroError, TreeParentId, VersionVector};
 
+fn doc_with_independent_text_heads(peer_order: &[u64]) -> LoroDoc {
+    let doc = LoroDoc::new();
+    let Some((&first_peer, remaining_peers)) = peer_order.split_first() else {
+        return doc;
+    };
+    doc.set_peer_id(first_peer).unwrap();
+    let first_value = char::from_u32(0x40 + first_peer as u32)
+        .unwrap()
+        .to_string();
+    doc.get_text("text").insert(0, &first_value).unwrap();
+    doc.commit();
+    for &peer in remaining_peers {
+        let other = LoroDoc::new();
+        other.set_peer_id(peer).unwrap();
+        let value = char::from_u32(0x40 + peer as u32).unwrap().to_string();
+        other.get_text("text").insert(0, &value).unwrap();
+        other.commit();
+        doc.import(&other.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+    }
+    doc
+}
+
+fn doc_with_shared_root(peer_order: &[u64]) -> (LoroDoc, Frontiers, Frontiers) {
+    let base = LoroDoc::new();
+    base.set_peer_id(100).unwrap();
+    base.get_text("text").insert(0, "before").unwrap();
+    base.commit();
+    let before_root = base.oplog_frontiers();
+    base.get_text("text").insert(6, " root").unwrap();
+    base.commit();
+    let root = base.oplog_frontiers();
+    let base_snapshot = base.export(ExportMode::Snapshot).unwrap();
+
+    let aggregate = LoroDoc::from_snapshot(&base_snapshot).unwrap();
+    for &peer in peer_order {
+        let branch = LoroDoc::from_snapshot(&base_snapshot).unwrap();
+        branch.set_peer_id(peer).unwrap();
+        let text = branch.get_text("text");
+        text.insert(text.len_unicode(), &format!(" [{peer}]"))
+            .unwrap();
+        branch.commit();
+        aggregate
+            .import(&branch.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+    }
+
+    (aggregate, root, before_root)
+}
+
 /// Build the shared fixture: doc A (peer 1) with map/list/text/movable-list/
 /// tree content, edited in three phases. Returns the doc plus the version
 /// vectors and frontiers at V (after phase 1), F (after phase 2, the shallow
@@ -351,5 +401,173 @@ fn update_concurrent_with_root_frontier_is_rejected() -> anyhow::Result<()> {
     let status = b.import(&a.export(ExportMode::updates(&b.oplog_vv()))?)?;
     assert!(status.pending.is_none());
     assert_eq!(b.get_deep_value(), a.get_deep_value());
+    Ok(())
+}
+
+#[test]
+fn shallow_snapshot_with_multiple_heads_imports_into_empty_doc() -> anyhow::Result<()> {
+    for peers in 1..=12 {
+        let peer_order: Vec<u64> = (1..=peers).collect();
+        let source = doc_with_independent_text_heads(&peer_order);
+        let frontiers = source.oplog_frontiers();
+        assert_eq!(frontiers.len(), peers as usize);
+        let expected = source.get_text("text").to_string();
+        let shallow = source.export(ExportMode::shallow_snapshot(&frontiers))?;
+        let state_only = source.export(ExportMode::state_only(Some(&frontiers)))?;
+
+        let meta = LoroDoc::decode_import_blob_meta(&shallow, false)?;
+        if peers == 1 {
+            assert_eq!(meta.start_frontiers, frontiers);
+        } else {
+            assert!(meta.start_frontiers.is_empty());
+        }
+        assert_eq!(meta.partial_end_vv, source.oplog_vv());
+
+        let nonempty = LoroDoc::new();
+        nonempty.set_peer_id(100)?;
+        nonempty.get_text("other").insert(0, "z")?;
+        nonempty.commit();
+        nonempty.import(&shallow)?;
+        assert_eq!(nonempty.get_text("text").to_string(), expected);
+
+        let state_only_target = LoroDoc::new();
+        state_only_target.import(&state_only)?;
+        assert_eq!(state_only_target.get_text("text").to_string(), expected);
+
+        let empty = LoroDoc::new();
+        let result = empty.import(&shallow);
+        assert!(
+            result.is_ok(),
+            "{peers} independent heads should import into an empty doc, got {result:?}"
+        );
+        assert_eq!(empty.get_text("text").to_string(), expected);
+        assert_eq!(empty.oplog_frontiers(), source.oplog_frontiers());
+        assert_eq!(empty.state_frontiers(), source.state_frontiers());
+        assert_eq!(empty.oplog_vv(), source.oplog_vv());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn shallow_snapshot_multi_head_root_is_order_independent_and_syncable() -> anyhow::Result<()> {
+    let (source, root, before_root) = doc_with_shared_root(&[1, 2, 3, 4, 5]);
+    let (reverse, reverse_root, _) = doc_with_shared_root(&[5, 4, 3, 2, 1]);
+    assert_eq!(source.oplog_frontiers().len(), 5);
+    assert_eq!(source.oplog_frontiers(), reverse.oplog_frontiers());
+    assert_eq!(source.get_deep_value(), reverse.get_deep_value());
+    assert_eq!(root, reverse_root);
+
+    let shallow = source.export(ExportMode::shallow_snapshot(&source.oplog_frontiers()))?;
+    let reverse_shallow =
+        reverse.export(ExportMode::shallow_snapshot(&reverse.oplog_frontiers()))?;
+    let meta = LoroDoc::decode_import_blob_meta(&shallow, false)?;
+    let reverse_meta = LoroDoc::decode_import_blob_meta(&reverse_shallow, false)?;
+    assert_eq!(meta.start_frontiers, root);
+    assert_eq!(reverse_meta.start_frontiers, root);
+    assert_eq!(meta.partial_end_vv, source.oplog_vv());
+    assert_eq!(reverse_meta.partial_end_vv, source.oplog_vv());
+
+    let imported = LoroDoc::from_snapshot(&shallow)?;
+    assert!(imported.is_shallow());
+    assert_eq!(imported.shallow_since_frontiers(), root);
+    assert_eq!(imported.oplog_frontiers(), source.oplog_frontiers());
+    assert_eq!(imported.oplog_vv(), source.oplog_vv());
+    assert_eq!(imported.get_deep_value(), source.get_deep_value());
+    assert_eq!(
+        imported.checkout(&before_root).unwrap_err(),
+        LoroError::SwitchToVersionBeforeShallowRoot
+    );
+
+    imported.set_peer_id(200)?;
+    let imported_text = imported.get_text("text");
+    imported_text.insert(imported_text.len_unicode(), " shallow")?;
+    imported.commit();
+    source.import(&imported.export(ExportMode::updates(&source.oplog_vv()))?)?;
+
+    source.set_peer_id(201)?;
+    let source_text = source.get_text("text");
+    source_text.insert(source_text.len_unicode(), " full")?;
+    source.commit();
+    imported.import(&source.export(ExportMode::updates(&imported.oplog_vv()))?)?;
+    assert_eq!(imported.get_deep_value(), source.get_deep_value());
+    assert_eq!(imported.oplog_frontiers(), source.oplog_frontiers());
+    assert_eq!(imported.oplog_vv(), source.oplog_vv());
+    assert_eq!(imported.shallow_since_frontiers(), root);
+
+    Ok(())
+}
+
+#[test]
+fn shallow_snapshot_handles_partially_shared_and_merged_heads() -> anyhow::Result<()> {
+    let base = LoroDoc::new();
+    base.set_peer_id(300)?;
+    base.get_text("text").insert(0, "before")?;
+    base.commit();
+    base.get_text("text").insert(6, " root")?;
+    base.commit();
+    let root = base.oplog_frontiers();
+    let base_snapshot = base.export(ExportMode::Snapshot)?;
+
+    let shared = LoroDoc::from_snapshot(&base_snapshot)?;
+    shared.set_peer_id(301)?;
+    shared.get_text("text").insert(11, " shared")?;
+    shared.commit();
+    let shared_snapshot = shared.export(ExportMode::Snapshot)?;
+
+    let left = LoroDoc::from_snapshot(&shared_snapshot)?;
+    left.set_peer_id(302)?;
+    let left_text = left.get_text("text");
+    left_text.insert(left_text.len_unicode(), " left")?;
+    left.commit();
+    let right = LoroDoc::from_snapshot(&shared_snapshot)?;
+    right.set_peer_id(303)?;
+    let right_text = right.get_text("text");
+    right_text.insert(right_text.len_unicode(), " right")?;
+    right.commit();
+
+    let outside = LoroDoc::from_snapshot(&base_snapshot)?;
+    outside.set_peer_id(304)?;
+    outside.get_text("text").insert(11, " outside")?;
+    outside.commit();
+
+    let partial = LoroDoc::from_snapshot(&base_snapshot)?;
+    partial.import(&left.export(ExportMode::all_updates())?)?;
+    partial.import(&right.export(ExportMode::all_updates())?)?;
+    partial.import(&outside.export(ExportMode::all_updates())?)?;
+    assert_eq!(partial.oplog_frontiers().len(), 3);
+    let partial_blob = partial.export(ExportMode::shallow_snapshot(&partial.oplog_frontiers()))?;
+    let partial_meta = LoroDoc::decode_import_blob_meta(&partial_blob, false)?;
+    assert_eq!(partial_meta.start_frontiers, root);
+    let partial_import = LoroDoc::from_snapshot(&partial_blob)?;
+    assert_eq!(partial_import.shallow_since_frontiers(), root);
+    assert_eq!(partial_import.get_deep_value(), partial.get_deep_value());
+    assert_eq!(partial_import.oplog_vv(), partial.oplog_vv());
+
+    let merged = LoroDoc::from_snapshot(&base_snapshot)?;
+    merged.import(&left.export(ExportMode::all_updates())?)?;
+    merged.import(&right.export(ExportMode::all_updates())?)?;
+    merged.set_peer_id(305)?;
+    let merged_text = merged.get_text("text");
+    merged_text.insert(merged_text.len_unicode(), " merged")?;
+    merged.commit();
+
+    let merged_with_outside = LoroDoc::from_snapshot(&base_snapshot)?;
+    merged_with_outside.import(&merged.export(ExportMode::all_updates())?)?;
+    merged_with_outside.import(&outside.export(ExportMode::all_updates())?)?;
+    assert_eq!(merged_with_outside.oplog_frontiers().len(), 2);
+    let merged_blob = merged_with_outside.export(ExportMode::shallow_snapshot(
+        &merged_with_outside.oplog_frontiers(),
+    ))?;
+    let merged_meta = LoroDoc::decode_import_blob_meta(&merged_blob, false)?;
+    assert_eq!(merged_meta.start_frontiers, root);
+    let merged_import = LoroDoc::from_snapshot(&merged_blob)?;
+    assert_eq!(merged_import.shallow_since_frontiers(), root);
+    assert_eq!(
+        merged_import.get_deep_value(),
+        merged_with_outside.get_deep_value()
+    );
+    assert_eq!(merged_import.oplog_vv(), merged_with_outside.oplog_vv());
+
     Ok(())
 }

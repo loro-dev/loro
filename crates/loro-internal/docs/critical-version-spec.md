@@ -1,7 +1,7 @@
-# 找共同祖先：Loro 历史图遍历算法的规格与证明骨架
+# 重放基准与 critical version：Loro 历史图遍历算法的规格与证明骨架
 
 状态：草稿 v3，2026-09-01（新增多头回退：L13、公理 A6）。对应 `crates/loro-internal/src/dag.rs` 中的
-`_find_common_ancestor_new`（含 PR #1058 与 tips 去重修复之后的版本）；多头回退 L13 的实现在
+`_find_meet_and_mode`（含 PR #1058 与 tips 去重修复之后的版本）；多头回退 L13 的实现在
 `crates/loro-internal/src/oplog.rs`。
 
 这份文档是自包含的：读者不需要了解 Loro、CRDT 或本仓库的代码。
@@ -129,7 +129,7 @@ peer 1 做完 0@1 后，peer 2 基于它做了 0@2；然后 peer 1 看到 0@2 �
 历史可以有百万级操作。遍历的开销必须只和"两个版本附近的区域"成正比，
 不能做全图搜索。手段是给每个操作配一个 **lamport 时间戳**（2.1 节），
 永远从"时间戳最大"的未处理条目开始处理——像水面从高处向低处退去，
-两个版本的探索会在共同祖先附近自然会合，不必触碰更深的历史。
+两个版本的探索会在 meet 附近自然会合，不必触碰更深的历史。
 
 ---
 
@@ -206,7 +206,13 @@ Version(G′) = { e₁ ∈ G′ ∣ ∄e₂ ∈ G′: e₁ → e₂ }（没有�
 `critical-version-spec.md`。理由：经典 LCA 是图上两个**节点**的最深公共
 祖先（单点），而这里的对象是两个**版本**在格上的最大下界；更重要的是，
 meet 只是算法的**候选**，不是算法真正要交付的东西（见 D8b 与 4.1 节）。
-`find_common_ancestor` 这个名字保留——它返回的确实是公共祖先版本。
+2026-09-21 起，剩下沿用“公共祖先”的名字也全部改掉：`find_common_ancestor` 改名
+`find_replay_base`，`_find_common_ancestor_new` 改名 `_find_meet_and_mode`，
+旧版 `_find_common_ancestor` 改名 `_walk_to_meet`。它们在 Checkout 模式下交付的
+只是 meet，不一定是 critical version（见 S3、Q7）；浅快照选根就曾因为
+“公共祖先”这个名字误用了它（loro-dev/loro#1095）。所以新名字只说明它是重放基准，
+是否 critical 取决于 diff 模式（`DiffMode`），需要 critical version 的调用者应直接用
+`latest_single_head_critical_version`（L11）。
 
 1.1 节例子中：L = {A2}，R = {B0}，C = {A0, A1}，meet = {A1}。
 
@@ -259,7 +265,7 @@ change）。本公理的作用是让两种祖先关系重合：DAG 的隐式同 
   给右版本 R 派一支**蓝队**，从 R 的端点出发。
 - 所有队员放进同一个**优先队列**，永远先处理**海拔最高**的那个队员。
   队员每一步沿依赖边往山下走（一个队员分出几条依赖就分裂成几个队员）。
-- **红蓝两队在同一个操作上相遇 → 该点染紫**：它是公共祖先，收进候选集 ans，
+- **红蓝两队在同一个操作上相遇 → 该点染紫**：它同时在两侧的因果历史中，收进候选集 ans，
   并且**不再继续往下走**（紫点以下全是更老的公共历史，无需探索——
   这是性能的关键，也是后面一切微妙性的来源）。
 - 某个队员**走到了死路**——走到没有依赖的根，或者队列里已经没有别人了——
@@ -383,7 +389,7 @@ type ∈ {A（红，来自 L）, B（蓝，来自 R）, Shared（紫）}，tips 
 **S4（已强化，2026-08-01）**：mode ≠ Checkout ⟹ 新区每个事件都
 因果晚于 L 的**全部**头（即 L 对并集图 critical）。
 
-> **oplog 层的按容器放宽（2026-09-07）**：本条是对 `find_common_ancestor`
+> **oplog 层的按容器放宽（2026-09-07）**：本条是对 `find_replay_base`
 > 的承诺，不变。但 `OpLog::iter_from_replay_base_causally` 在调用它之前会先
 > 用版本向量做同一个入场检查（`OpLog::uncovered_entry_parents`），并检查
 > "与新区并发的旧历史"和新区各自触及的容器：若二者只在寄存器容器
@@ -548,6 +554,15 @@ lamport(v) ≤ lamport(r)，而 r → v 要求严格更大，L0），故 r ∥ v
 {v} 不 critical——必须放弃。裁剪死亡同理（链的延续未知，保守放弃）。
 最晚性：扫描按 lamport 降序推进，首个满足条件的时刻即最高的切口。
 
+*L11 的另一个消费者（2026-09-21）*：浅快照的根选择 `calc_shallow_doc_start`
+（`src/encoding/shallow_snapshot.rs`）直接用 L11 取根。shallow snapshot 保留从根
+一直到最新版本的全部 op，故取 L = 请求版本、R = 最新版本；state-only 只保留到
+目标版本，故 L = R = 目标版本。浅格式只存根处状态和根以上的 op，与根并发的 op
+两边都放不进去，所以这里要的正是 critical 而不是 meet（loro-dev/loro#1095）。
+此前按两两 meet 归约选根，在两种形状上会选出非 critical 的根：奇数个彼此独立的头
+（落单的头被当成了根），以及"过去版本 + 之后才合入、从其下方分叉的分支"。
+`crates/loro/tests/shallow_root_critical.rs` 按定义逐 op 检查这一性质。
+
 **L12（入场检查的正确性）** *新区经由"入场 change"挂到旧历史上；
 入场者看全了 L，其一切后代自动看全。*
 设 IGU 候选成立（ans = L、无 uncovered）。定义入场 change 为新区中
@@ -619,7 +634,7 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   化留给 Q7。
 - **Q7**（已核查，2026-08-01：安全）Checkout 模式下 meet 非 critical 时
   Tree 的 checkout_diff 是否一致？机制审计发现 Tree 的 Checkout 路径是
-  **相对**计算（retreat/forward 都按 lca 前沿的 change 起点 lamport 开窗，
+  **相对**计算（retreat/forward 都按 meet 前沿的 change 起点 lamport 开窗，
   窗外 op 静默跳过）——窗口隐含 critical 假设。但可证明修复后恒安全：
   区域内经会合进入公共历史的 op 必 ≥ 某 meet 头（在窗口内）；与 meet 头
   并发的 op 必产生 uncovered 死路 → L11 扫描 → critical 基准 → 窗口从
@@ -643,7 +658,7 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   Persist 降级后亦然），`need_check`/`need_compare` 消费的是它，配套一致。
   风险只在"易混淆"，已修：`calc_diff_internal` 内部局部量改名
   `calc_mode`，两处消费点各加不变式注释。
-- **Q9**（新，维护性）`find_path` 使用独立的旧版 `_find_common_ancestor`
+- **Q9**（新，维护性）`find_path` 使用独立的旧版 `_walk_to_meet`
   实现（仅服务诊断 API `find_id_spans_between`，不参与状态变更；
   relay 形状实证输出精确）。双实现存在漂移风险，建议择机合并或改为
   vv 差集直接计算。

@@ -238,17 +238,16 @@ impl TreeDiffCalculator {
             let _e = s.enter();
             let to_frontiers = info.to_frontiers;
             let from_frontiers = info.from_frontiers;
-            let (common_ancestors, _mode) =
-                oplog.dag.find_common_ancestor(from_frontiers, to_frontiers);
-            let base_vv = oplog.dag.frontiers_to_vv(&common_ancestors).unwrap();
-            let base_frontiers = common_ancestors;
+            let (replay_base, _mode) = oplog.dag.find_replay_base(from_frontiers, to_frontiers);
+            let base_vv = oplog.dag.frontiers_to_vv(&replay_base).unwrap();
+            let base_frontiers = replay_base;
             let to_max_lamport = self.get_max_lamport_by_frontiers(to_frontiers, oplog);
             // CORRECTNESS: the retreat/forward passes below only look at ops
             // with lamport >= `base_min_lamport` (the minimum change-start
             // lamport of the base frontiers). Ops outside the window are
             // silently skipped, which is only sound if no op of the diff
             // region sits below the window. That holds because of how
-            // `find_common_ancestor` picks the base:
+            // `find_replay_base` picks the base:
             // - a region op that reaches the base through causal edges is a
             //   descendant of some base head, so its lamport is strictly
             //   greater than that head's change-start lamport, which is >= the
