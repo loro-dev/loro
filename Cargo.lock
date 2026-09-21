@@ -822,7 +822,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.16.0",
+ "loro 1.16.2",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -928,7 +928,7 @@ dependencies = [
  "enum_dispatch",
  "itertools 0.12.1",
  "loro 0.16.12",
- "loro 1.16.0",
+ "loro 1.16.2",
  "loro 1.8.1",
  "num_cpus",
  "pretty_assertions",
@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.16.0"
+version = "1.16.2"
 dependencies = [
  "anyhow",
  "base64",
@@ -1526,7 +1526,7 @@ dependencies = [
  "loom",
  "loro-common 1.16.0",
  "loro-delta 1.13.0",
- "loro-internal 1.16.0",
+ "loro-internal 1.16.2",
  "loro-kv-store 1.16.0",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.16.0"
+version = "1.16.2"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1863,12 +1863,12 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.16.1"
+version = "1.16.2"
 dependencies = [
  "js-sys",
  "loro-common 1.16.0",
  "loro-delta 1.13.0",
- "loro-internal 1.16.0",
+ "loro-internal 1.16.2",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",
@@ -1880,7 +1880,7 @@ dependencies = [
 
 [[package]]
 name = "loro-wasm-tools"
-version = "1.16.0"
+version = "1.16.2"
 dependencies = [
  "anyhow",
  "clap 4.5.47",
