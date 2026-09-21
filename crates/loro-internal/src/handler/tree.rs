@@ -353,6 +353,14 @@ impl TreeHandler {
         }
     }
 
+    /// Meta maps of a detached tree's nodes; empty when the tree is attached.
+    pub(super) fn detached_meta_maps(&self) -> Vec<MapHandler> {
+        match &self.inner {
+            MaybeDetached::Detached(t) => t.lock().value.map.values().cloned().collect(),
+            MaybeDetached::Attached(_) => Vec::new(),
+        }
+    }
+
     /// Get the deep value of the tree with its container id, as a
     /// `{ cid, value }` map. Each node in `value` carries the deep value of its
     /// associated meta map under the `meta` field.
