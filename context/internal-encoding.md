@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-07-31.
+Verified against code 2026-09-21.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
