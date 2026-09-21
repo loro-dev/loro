@@ -1994,8 +1994,79 @@ it("throws when inserting an attached text from another doc", () => {
 
   const docB = new LoroDoc();
   const listB = docB.getList("list");
+  const lastPanic = (globalThis as any).__LORO_WASM_LAST_PANIC__;
 
-  expect(() => listB.insertContainer(0, textA)).toThrow();
+  // A WASM trap would also satisfy `toThrow()`, so pin the recoverable error.
+  expect(() => listB.insertContainer(0, textA)).toThrow(/another LoroDoc/);
+  expect((globalThis as any).__LORO_WASM_LAST_PANIC__).toBe(lastPanic);
+  expect(docB.toJSON()).toEqual({ list: [] });
+  docB.getText("still-usable").insert(0, "ok");
+  expect(docB.toJSON()).toEqual({ list: [], "still-usable": "ok" });
+  expect(docA.toJSON()).toEqual({ text: "cross" });
+});
+
+it("rejects every attached container kind from another doc atomically", () => {
+  const docA = new LoroDoc();
+  docA.getText("text").insert(0, "cross");
+  docA.getMap("map").set("k", 1);
+  docA.getList("list").push(1);
+  docA.getMovableList("movable").push(1);
+  docA.getTree("tree").createNode().data.set("name", "n");
+  docA.getCounter("counter").increment(2);
+  docA.commit();
+
+  const foreignChildren = [
+    docA.getText("text"),
+    docA.getMap("map"),
+    docA.getList("list"),
+    docA.getMovableList("movable"),
+    docA.getTree("tree"),
+    docA.getCounter("counter"),
+  ];
+  // A detached container holding a foreign child is rejected as well.
+  const detached = new LoroMap();
+  detached.set("v", 1);
+  detached.setContainer("t", docA.getText("text"));
+  foreignChildren.push(detached as any);
+
+  const lastPanic = (globalThis as any).__LORO_WASM_LAST_PANIC__;
+  for (const child of foreignChildren) {
+    const docB = new LoroDoc();
+    docB.getList("list").push(0);
+    docB.getMovableList("movable").push(0);
+    docB.getMap("map").set("x", 0);
+    docB.commit();
+    const before = docB.toJSON();
+    const version = docB.oplogVersion().toJSON();
+
+    expect(() => docB.getList("list").insertContainer(0, child)).toThrow(
+      /another LoroDoc/,
+    );
+    expect(() => docB.getList("list").pushContainer(child)).toThrow(
+      /another LoroDoc/,
+    );
+    expect(() =>
+      docB.getMovableList("movable").insertContainer(0, child),
+    ).toThrow(/another LoroDoc/);
+    expect(() => docB.getMovableList("movable").setContainer(0, child)).toThrow(
+      /another LoroDoc/,
+    );
+    expect(() => docB.getMap("map").setContainer("c", child)).toThrow(
+      /another LoroDoc/,
+    );
+
+    docB.commit();
+    expect(docB.toJSON()).toEqual(before);
+    expect(docB.oplogVersion().toJSON()).toEqual(version);
+    docB.getText("still-usable").insert(0, "ok");
+    docB.commit();
+    expect(docB.getText("still-usable").toString()).toBe("ok");
+  }
+
+  expect((globalThis as any).__LORO_WASM_LAST_PANIC__).toBe(lastPanic);
+  // Finalizers must not observe a corrupted instance after the rejections.
+  (globalThis as any).gc?.();
+  expect(docA.getText("text").toString()).toBe("cross");
 });
 
 it("apply empty delta", () => {
