@@ -242,6 +242,91 @@ describe("richtext", () => {
     }
   });
 
+  it("Get cursor only at valid UTF-16 boundaries", () => {
+    for (const value of ["😀a", "a😀b", "ab😀", "😀e\u0301🚀"]) {
+      const doc = new LoroDoc();
+      const text = doc.getText("text");
+      text.insert(0, value);
+      doc.commit();
+
+      const boundaries = new Set<number>();
+      let offset = 0;
+      for (const scalar of value) {
+        boundaries.add(offset);
+        offset += scalar.length;
+      }
+
+      for (let pos = 0; pos < text.length; pos++) {
+        const cursor = text.getCursor(pos);
+        if (boundaries.has(pos)) {
+          expect(cursor, `${JSON.stringify(value)} at ${pos}`).toBeDefined();
+          expect(doc.getCursorPos(cursor!)?.offset).toBe(pos);
+        } else {
+          expect(cursor, `${JSON.stringify(value)} at ${pos}`).toBeUndefined();
+        }
+      }
+
+      const end = text.getCursor(text.length);
+      expect(doc.getCursorPos(end!)?.offset).toBe(text.length);
+      expect(end?.side()).toBe(1);
+      const pastEnd = text.getCursor(text.length + 10);
+      expect(doc.getCursorPos(pastEnd!)?.offset).toBe(text.length);
+      expect(pastEnd?.side()).toBe(1);
+    }
+
+    const emptyDoc = new LoroDoc();
+    const emptyCursor = emptyDoc.getText("text").getCursor(0);
+    expect(emptyDoc.getCursorPos(emptyCursor!)?.offset).toBe(0);
+  });
+
+  it("Get cursor for a non-BMP atom across peers and remote edits", () => {
+    const first = new LoroDoc();
+    first.setPeerId("1");
+    first.getText("text").insert(0, "a");
+    first.commit();
+
+    const second = new LoroDoc();
+    second.setPeerId("2");
+    second.import(first.export({ mode: "update" }));
+    second.getText("text").insert(1, "😀");
+    second.commit();
+
+    const third = new LoroDoc();
+    third.setPeerId("3");
+    third.import(second.export({ mode: "update" }));
+    third.getText("text").insert(3, "b");
+    third.commit();
+
+    const doc = new LoroDoc();
+    doc.setPeerId("4");
+    doc.import(third.export({ mode: "update" }));
+    const text = doc.getText("text");
+    expect(text.toString()).toBe("a😀b");
+
+    const cursors = [-1, 0, 1].map((side) => {
+      const cursor = text.getCursor(1, side as -1 | 0 | 1);
+      expect(cursor).toBeDefined();
+      expect(cursor?.side()).toBe(side);
+      expect(doc.getCursorPos(cursor!)?.offset).toBe(1);
+      return cursor!;
+    });
+    expect(text.getCursor(2)).toBeUndefined();
+
+    const remote = new LoroDoc();
+    remote.setPeerId("5");
+    remote.import(doc.export({ mode: "update" }));
+    remote.getText("text").insert(1, "x");
+    remote.commit();
+    doc.import(remote.export({ mode: "update" }));
+
+    expect(text.toString()).toBe("ax😀b");
+    for (const [index, cursor] of cursors.entries()) {
+      const resolved = doc.getCursorPos(cursor);
+      expect(resolved?.offset).toBe(2);
+      expect(resolved?.side).toBe(index - 1);
+    }
+  });
+
   it("Get and query cursor", () => {
     const doc = new LoroDoc();
     const text = doc.getText("text");

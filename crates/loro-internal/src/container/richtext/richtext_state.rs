@@ -2848,7 +2848,29 @@ impl RichtextState {
     ) -> Option<ID> {
         self.check_cache();
         let result = {
-            let v = &self.get_text_entity_ranges(pos, 1, kind).unwrap();
+            if pos >= self.len(kind) {
+                return None;
+            }
+
+            let cursor = match kind {
+                PosType::Event => self.tree.query::<EventIndexQuery>(&pos)?,
+                PosType::Unicode => self.tree.query::<UnicodeQuery>(&pos)?,
+                _ => unreachable!("stable text positions use event or Unicode indices"),
+            };
+
+            // A WASM event index is a UTF-16 offset. The tree query rounds an
+            // offset inside a surrogate pair down to the scalar's start, so
+            // compare it back to reject non-boundaries before selecting an ID.
+            if self.get_index_from_cursor(cursor.cursor, kind)? != pos {
+                return None;
+            }
+
+            let range_len = if kind == PosType::Event && cfg!(feature = "wasm") {
+                self.get_char_by_event_index(pos).ok()?.len_utf16()
+            } else {
+                1
+            };
+            let v = &self.get_text_entity_ranges(pos, range_len, kind).unwrap();
             let a = v.first()?;
             Some(a.id_start)
         };
