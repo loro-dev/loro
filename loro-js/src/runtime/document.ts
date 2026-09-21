@@ -1,6 +1,6 @@
 import packageMetadata from "../../package.json" with { type: "json" };
 
-import { bytesEqual, bytesToHex, hexToBytes } from "../codec/bytes";
+import { bytesEqual, bytesToHex, compareBytes, hexToBytes } from "../codec/bytes";
 import {
   decodeChangeBlock,
   encodeChangeBlock,
@@ -3460,7 +3460,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       case "tree-delete": {
         const record = (container as LoroTree)._nodes.get(formatTreeId(content.subject));
         if (record !== undefined && compareWriter(record.writer, writer) <= 0) {
-          (container as LoroTree)._deleteRecord(record, writer);
+          (container as LoroTree)._deleteRecord(record, writer, operationId);
         }
         return;
       }
@@ -4365,7 +4365,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           );
         }
         if (winnerContent.type === "tree-delete") {
-          tree._deleteRecord(record, winner.writer);
+          tree._deleteRecord(record, winner.writer, {
+            peer: winner.record.change.id.peer,
+            counter: winner.operation.counter,
+          });
         }
       }
     }
@@ -5611,9 +5614,36 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       };
     }
     if (container instanceof LoroTree) {
-      const records = [...container._nodes.values()].sort(
-        (left, right) => Number(left.deleted) - Number(right.deleted),
+      // Match Rust's `TreeState::_bfs_all_nodes`: emit a parent's children in
+      // (fractional index, lamport, peer) order, then recurse into each child;
+      // alive nodes first, then the deleted root. Rust's decoder requires each
+      // parent's children in that order (loro-dev/loro#1088).
+      const records: TreeNodeRecord[] = [];
+      const pushSubtrees = (top: readonly TreeNodeRecord[]): void => {
+        // Iterative so deep trees cannot overflow the JS stack.
+        for (const record of top) records.push(record);
+        const stack = [{ children: top, next: 0 }];
+        while (stack.length > 0) {
+          const frame = stack[stack.length - 1]!;
+          if (frame.next === frame.children.length) {
+            stack.pop();
+            continue;
+          }
+          const children = container._childrenOf(frame.children[frame.next++]!.id);
+          if (children.length === 0) continue;
+          for (const record of children) records.push(record);
+          stack.push({ children, next: 0 });
+        }
+      };
+      pushSubtrees(container._childrenOf(undefined));
+      pushSubtrees(
+        [...container._nodes.values()]
+          .filter((record) => record.deleted)
+          .sort((left, right) => compareWriter(left.writer, right.writer)),
       );
+      if (records.length !== container._nodes.size) {
+        throw new Error("tree snapshot found nodes unreachable from the root");
+      }
       const peers: bigint[] = [];
       const peerIndices = new Map<bigint, number>();
       const peerIndex = (peer: bigint): bigint => {
@@ -5625,38 +5655,40 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
         return BigInt(index);
       };
-      const positions: Uint8Array[] = [];
+      // Rust registers every node ID peer before any last-move peer, and stores
+      // the fractional-index table sorted.
+      for (const record of records) peerIndex(record.id.peer);
+      // A deleted node has no position in Rust; it encodes the default index.
+      const recordPositions = records.map((record) =>
+        record.deleted ? DEFAULT_TREE_POSITION : record.position,
+      );
       const positionIndices = new Map<string, number>();
+      const positions: Uint8Array[] = [];
+      for (const position of [...recordPositions].sort(compareBytes)) {
+        const key = bytesToHex(position);
+        if (positionIndices.has(key)) continue;
+        positionIndices.set(key, positions.length);
+        positions.push(position.slice());
+      }
       const recordIndices = new Map(
         records.map((record, index) => [idKey(record.id), index] as const),
       );
       return {
         kind: CodecContainerType.Tree,
         peers,
-        nodes: records.map((record) => {
-          const positionKey = bytesToHex(record.position);
-          let positionIndex = positionIndices.get(positionKey);
-          if (positionIndex === undefined) {
-            positionIndex = positions.length;
-            positions.push(record.position.slice());
-            positionIndices.set(positionKey, positionIndex);
-          }
-          const parentIndex =
-            record.parent === undefined
+        nodes: records.map((record, index) => ({
+          peerIndex: peerIndex(record.id.peer),
+          counter: record.id.counter,
+          parentIndexPlusTwo: record.deleted
+            ? 1n
+            : record.parent === undefined
               ? 0n
-              : record.deleted
-                ? 1n
-                : BigInt((recordIndices.get(idKey(record.parent)) ?? -2) + 2);
-          return {
-            peerIndex: peerIndex(record.id.peer),
-            counter: record.id.counter,
-            parentIndexPlusTwo: parentIndex,
-            lastSetPeerIndex: peerIndex(record.writer.peer),
-            lastSetCounter: record.id.counter,
-            lastSetLamportSub: record.writer.lamport - record.id.counter,
-            fractionalIndexIndex: positionIndex,
-          };
-        }),
+              : BigInt(recordIndices.get(idKey(record.parent))! + 2),
+          lastSetPeerIndex: peerIndex(record.lastMoveId.peer),
+          lastSetCounter: record.lastMoveId.counter,
+          lastSetLamportSub: record.writer.lamport - record.lastMoveId.counter,
+          fractionalIndexIndex: positionIndices.get(bytesToHex(recordPositions[index]!))!,
+        })),
         positions,
         reserved: new Uint8Array(),
       };
@@ -7567,6 +7599,9 @@ function unicodeScalarLength(value: string): number {
   for (const _scalar of value) length += 1;
   return length;
 }
+
+/** Rust's `FractionalIndex::default()`, encoded for nodes under the deleted root. */
+const DEFAULT_TREE_POSITION = new Uint8Array([0x80]);
 
 function compareWriter(left: LastWriter, right: LastWriter): number {
   return (

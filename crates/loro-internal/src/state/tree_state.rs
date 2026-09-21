@@ -1538,7 +1538,7 @@ mod snapshot {
 
     use fractional_index::FractionalIndex;
     use loro_common::{IdFull, PeerID, TreeID};
-    use rustc_hash::FxHashMap;
+    use rustc_hash::{FxHashMap, FxHashSet};
 
     use serde_columnar::columnar;
 
@@ -1550,7 +1550,7 @@ mod snapshot {
         },
     };
 
-    use super::{TreeNode, TreeParentId, TreeState};
+    use super::{NodePosition, TreeNode, TreeParentId, TreeState};
     #[columnar(vec, ser, de, iterable)]
     #[derive(Debug, Clone)]
     struct EncodedTreeNodeId {
@@ -1660,6 +1660,35 @@ mod snapshot {
         )
     }
 
+    struct DecodedTreeNode {
+        id: TreeID,
+        parent: TreeParentId,
+        last_move_op: IdFull,
+        node_position: NodePosition,
+    }
+
+    /// Returns whether every parent's children appear in strictly increasing
+    /// [`NodePosition`] order. Two siblings with the same position and idlp cannot
+    /// be produced by any valid history, so they are rejected.
+    fn siblings_in_order(nodes: &[DecodedTreeNode]) -> loro_common::LoroResult<bool> {
+        let mut last_child: FxHashMap<TreeParentId, &NodePosition> = FxHashMap::default();
+        let mut in_order = true;
+        for node in nodes {
+            if let Some(prev) = last_child.insert(node.parent, &node.node_position) {
+                match prev.cmp(&node.node_position) {
+                    std::cmp::Ordering::Less => {}
+                    std::cmp::Ordering::Equal => {
+                        return Err(state_decode_error(
+                            "Decode tree state failed: duplicate sibling position",
+                        ));
+                    }
+                    std::cmp::Ordering::Greater => in_order = false,
+                }
+            }
+        }
+        Ok(in_order)
+    }
+
     impl FastStateSnapshot for TreeState {
         /// Encodes the TreeState into a compact binary format for efficient serialization.
         ///
@@ -1723,52 +1752,87 @@ mod snapshot {
                     ))
                 })
                 .collect::<loro_common::LoroResult<Vec<_>>>()?;
+            let mut decoded = Vec::with_capacity(node_ids.len());
+            let mut seen_ids =
+                FxHashSet::with_capacity_and_hasher(node_ids.len(), Default::default());
             for (node_id, node) in node_ids.iter().zip(encoded.nodes) {
-                // PERF: we don't need to mov the deleted node, instead we can cache them
-                // If the parent is TreeParentId::Deleted, then all the nodes afterwards are deleted
-                tree._init_push_tree_node_in_order(
-                    *node_id,
-                    match node.parent_idx_plus_two {
-                        0 => TreeParentId::Root,
-                        1 => TreeParentId::Deleted,
-                        n => {
-                            let id = *node_ids.get(n - 2).ok_or_else(|| {
-                                state_decode_error(
-                                    "Decode tree state failed: parent index out of range",
-                                )
-                            })?;
-                            TreeParentId::from(Some(id))
-                        }
-                    },
-                    IdFull::new(
-                        decode_peer_from_table(
-                            &peers,
-                            node.last_set_peer_idx,
-                            "Decode tree state failed",
-                        )?,
+                if !seen_ids.insert(*node_id) {
+                    return Err(state_decode_error(
+                        "Decode tree state failed: duplicate node id",
+                    ));
+                }
+                let parent = match node.parent_idx_plus_two {
+                    0 => TreeParentId::Root,
+                    1 => TreeParentId::Deleted,
+                    n => {
+                        let id = *node_ids.get(n - 2).ok_or_else(|| {
+                            state_decode_error(
+                                "Decode tree state failed: parent index out of range",
+                            )
+                        })?;
+                        TreeParentId::from(Some(id))
+                    }
+                };
+                let last_move_op = IdFull::new(
+                    decode_peer_from_table(
+                        &peers,
+                        node.last_set_peer_idx,
+                        "Decode tree state failed",
+                    )?,
+                    node.last_set_counter,
+                    decode_lamport_from_delta(
                         node.last_set_counter,
-                        decode_lamport_from_delta(
-                            node.last_set_counter,
-                            node.last_set_lamport_sub_counter,
-                            "Decode tree state failed",
-                        )?,
-                    ),
-                    Some(FractionalIndex::from_bytes(
-                        fractional_indexes
-                            .get(node.fractional_index_idx)
-                            .ok_or_else(|| {
-                                state_decode_error(
-                                    "Decode tree state failed: fractional index out of range",
-                                )
-                            })?
-                            .clone(),
-                    )),
+                        node.last_set_lamport_sub_counter,
+                        "Decode tree state failed",
+                    )?,
+                );
+                let position = FractionalIndex::from_bytes(
+                    fractional_indexes
+                        .get(node.fractional_index_idx)
+                        .ok_or_else(|| {
+                            state_decode_error(
+                                "Decode tree state failed: fractional index out of range",
+                            )
+                        })?
+                        .clone(),
+                );
+                decoded.push(DecodedTreeNode {
+                    id: *node_id,
+                    parent,
+                    last_move_op,
+                    node_position: NodePosition::new(position, last_move_op.idlp()),
+                });
+            }
+
+            // Sibling order is fully determined by each node's (fractional index, idlp),
+            // so the encoded order carries no information. Rust always writes siblings in
+            // that order, but other encoders (loro.js <= 0.2.0, loro-dev/loro#1088) may
+            // not; sort instead of tripping `push_child_in_order` on the first read.
+            if !siblings_in_order(&decoded)? {
+                decoded.sort_by(|a, b| a.node_position.cmp(&b.node_position));
+                // Out-of-order duplicates only become adjacent after sorting.
+                let sorted = siblings_in_order(&decoded)?;
+                debug_assert!(sorted);
+            }
+
+            for node in decoded {
+                let DecodedTreeNode {
+                    id,
+                    parent,
+                    last_move_op,
+                    node_position,
+                } = node;
+                // PERF: we don't need to mov the deleted node, instead we can cache them
+                tree._init_push_tree_node_in_order(
+                    id,
+                    parent,
+                    last_move_op,
+                    Some(node_position.position),
                 )
                 .map_err(|err| {
                     state_decode_error(format!("Decode tree state failed: invalid node: {err}"))
                 })?;
             }
-
             Ok(tree)
         }
     }
@@ -1826,6 +1890,121 @@ mod snapshot {
             bytes.extend_from_slice(&serde_columnar::to_vec(&encoded).unwrap());
 
             assert!(TreeState::decode_snapshot_fast(idx, (LoroValue::Null, &bytes), ctx).is_err());
+        }
+
+        /// Encodes `(counter, parent_idx_plus_two, last_set_counter, position_idx)` nodes of
+        /// peer 1, with lamport == counter for every last-set op.
+        fn encode_nodes(
+            nodes: &[(i32, usize, i32, usize)],
+            positions: &[FractionalIndex],
+        ) -> Vec<u8> {
+            let arena = PositionArena::from_positions(positions.iter().map(|p| p.as_bytes()));
+            let encoded = EncodedTree {
+                node_ids: nodes
+                    .iter()
+                    .map(|&(counter, ..)| EncodedTreeNodeId {
+                        peer_idx: 0,
+                        counter,
+                    })
+                    .collect(),
+                nodes: nodes
+                    .iter()
+                    .map(
+                        |&(_, parent_idx_plus_two, last_set_counter, fractional_index_idx)| {
+                            EncodedTreeNode {
+                                parent_idx_plus_two,
+                                last_set_peer_idx: 0,
+                                last_set_counter,
+                                last_set_lamport_sub_counter: 0,
+                                fractional_index_idx,
+                            }
+                        },
+                    )
+                    .collect(),
+                fractional_indexes: arena.encode().into(),
+                reserved_has_effect_bool_rle: vec![].into(),
+            };
+            let mut bytes = Vec::new();
+            leb128::write::unsigned(&mut bytes, 1).unwrap();
+            bytes.extend_from_slice(&1_u64.to_le_bytes());
+            bytes.extend_from_slice(&serde_columnar::to_vec(&encoded).unwrap());
+            bytes
+        }
+
+        fn decode(bytes: &[u8]) -> loro_common::LoroResult<TreeState> {
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+            TreeState::decode_snapshot_fast(idx, (LoroValue::Null, bytes), ctx)
+        }
+
+        fn children_of(tree: &TreeState, parent: TreeParentId) -> Vec<i32> {
+            tree.get_children(&parent)
+                .unwrap()
+                .map(|id| id.counter)
+                .collect()
+        }
+
+        /// loro-dev/loro#1088: loro.js <= 0.2.0 wrote siblings in creation order.
+        #[test]
+        fn tree_fast_snapshot_sorts_unordered_siblings() {
+            // Cover both the Vec and the BTree representation of `NodeChildren`.
+            for n in [3, super::super::NodeChildren::MAX_SIZE_FOR_ARRAY as i32 + 5] {
+                let positions = FractionalIndex::generate_n_evenly(None, None, n as usize).unwrap();
+                // Root node 0 has children 1..=n. Child i takes the (n - i)th position, so
+                // the encoded order is exactly the reverse of the sibling order. Node n + 1
+                // is a child of node 1, and the deleted node n + 2 is encoded between alive
+                // nodes instead of after them.
+                let mut nodes = vec![(0, 0, 0, 0)];
+                nodes.push((n + 2, 1, n + 2, 0));
+                for i in 1..=n {
+                    nodes.push((i, 2, i, (n - i) as usize));
+                }
+                nodes.push((n + 1, 4, n + 1, 0));
+                let tree = decode(&encode_nodes(&nodes, &positions)).unwrap();
+
+                assert_eq!(children_of(&tree, TreeParentId::Root), vec![0]);
+                let root = TreeID::new(1, 0);
+                assert_eq!(
+                    children_of(&tree, TreeParentId::Node(root)),
+                    (1..=n).rev().collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    children_of(&tree, TreeParentId::Node(TreeID::new(1, 1))),
+                    vec![n + 1]
+                );
+                assert_eq!(children_of(&tree, TreeParentId::Deleted), vec![n + 2]);
+                assert_eq!(tree.is_node_deleted(&TreeID::new(1, n + 2)), Some(true));
+            }
+        }
+
+        #[test]
+        fn tree_fast_snapshot_orders_same_position_siblings_by_idlp() {
+            let positions = vec![FractionalIndex::default()];
+            // Same fractional index: lamport (== last-set counter here) breaks the tie.
+            let nodes = [(0, 0, 0, 0), (1, 2, 5, 0), (2, 2, 3, 0), (3, 2, 4, 0)];
+            let tree = decode(&encode_nodes(&nodes, &positions)).unwrap();
+            assert_eq!(
+                children_of(&tree, TreeParentId::Node(TreeID::new(1, 0))),
+                vec![2, 3, 1]
+            );
+        }
+
+        #[test]
+        fn tree_fast_snapshot_rejects_duplicate_nodes_and_sibling_positions() {
+            let positions = FractionalIndex::generate_n_evenly(None, None, 2).unwrap();
+            // The same node id twice.
+            let duplicate_id = [(0, 0, 0, 0), (0, 0, 1, 1)];
+            assert!(decode(&encode_nodes(&duplicate_id, &positions)).is_err());
+            // Two siblings with the same position and last-set idlp, adjacent in the input.
+            let adjacent = [(0, 0, 0, 0), (1, 0, 0, 0)];
+            assert!(decode(&encode_nodes(&adjacent, &positions)).is_err());
+            // ... and only adjacent once the out-of-order input is sorted.
+            let unordered = [(0, 0, 0, 1), (1, 0, 3, 0), (2, 0, 0, 1)];
+            assert!(decode(&encode_nodes(&unordered, &positions)).is_err());
         }
     }
 }
