@@ -3877,4 +3877,35 @@ mod hegel_pbt {
         }
         assert_docs_agree(&once, &target);
     }
+
+    #[ignore = "Being discussed in #1112"]
+    #[hegel::test]
+    fn test_counter_zero_sum_import_batching_diverges_known_bug(tc: TestCase) {
+        let x = tc.draw(gs::integers::<i32>().min_value(1).max_value(1000)) as f64;
+        let origin = LoroDoc::new();
+        origin.set_peer_id(1).unwrap();
+        let counter = origin.get_counter("counter");
+        counter.increment(x).unwrap();
+        origin.commit();
+        let mid_vv = origin.oplog_vv();
+        counter.decrement(x).unwrap();
+        origin.commit();
+
+        let two_batches = LoroDoc::new();
+        two_batches.set_peer_id(2).unwrap();
+        two_batches
+            .import(&origin.export(ExportMode::updates_till(&mid_vv)).unwrap())
+            .unwrap();
+        two_batches
+            .import(&origin.export(ExportMode::updates(&mid_vv)).unwrap())
+            .unwrap();
+
+        let one_batch = LoroDoc::new();
+        one_batch.set_peer_id(3).unwrap();
+        one_batch
+            .import(&origin.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+
+        assert_docs_agree(&two_batches, &one_batch);
+    }
 }
