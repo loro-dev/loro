@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.16.2
+
+### Patch Changes
+
+- 5a80c15: Fix shallow snapshots that exported successfully but could not be imported into an empty document. The shallow root is now always a critical version of the retained history. Previously two shapes picked a root that other retained changes were concurrent with: a version with an odd number of independent heads, and a past version when a branch that forked below it was merged later.
+- c7bd1c3: Preserve deleted-container state required by the history retained in `forkAt`
+  and snapshot-at exports. Historical diffs and checkouts can traverse deleted
+  list and text descendants without a missing-state panic. Containers created
+  after the requested frontier remain excluded.
+
+  Restore the source frontier after snapshot-at validation errors and preserve
+  explicit detached mode when exporting a document at its head.
+
+- c3ffde6: Fix a panic followed by a deadlock when subscribing to an event source while
+  it is emitting, e.g. calling `subscribeLocalUpdates` or `subscribe` from inside
+  a callback, or subscribing on one thread while another thread commits or
+  imports. A subscriber added during an emit is now registered for later events;
+  it does not receive the event that is already being delivered.
+- e2e41a3: Fix `LoroText.getCursor` at UTF-16 boundaries around non-BMP characters.
+- be0e1ac: Accept tree snapshot state whose sibling nodes are not in fractional index
+  order, such as `snapshot`/`shallow-snapshot` exports from loro.js 0.1.0/0.2.0
+  after a tree `move()` (loro-dev/loro#1088). The decoder now sorts siblings by
+  their (fractional index, idlp) position instead of panicking with
+  `assertion failed: last.0 < pos` on the first read. Tree state with duplicate
+  node ids or duplicate sibling positions is rejected as a decode error.
+
 ## 1.16.1
 
 ### Patch Changes
