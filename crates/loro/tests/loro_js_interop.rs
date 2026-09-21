@@ -1,7 +1,7 @@
 use loro::{
     awareness::{Awareness, EphemeralStore},
     cursor::{Cursor, Side},
-    LoroDoc, LoroValue, ToJson, ID,
+    ExportMode, LoroDoc, LoroValue, ToJson, TreeID, ID,
 };
 
 const EXPECTED_JSON: &[u8] =
@@ -29,6 +29,16 @@ const TS_FUGUE_RIGHT: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/fugue-right.ts.blob");
 const TS_SHALLOW_SNAPSHOT: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/shallow.ts.blob");
+const TS_TREE_MOVE_UPDATES: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/tree-move-updates.ts.blob");
+const TS_TREE_MOVE_SNAPSHOT: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/tree-move-snapshot.ts.blob");
+const TS_TREE_MOVE_SHALLOW_SNAPSHOT: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/tree-move-shallow.ts.blob");
+const TS_LEGACY_TREE_MOVE_SNAPSHOT: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/legacy-tree-move-snapshot.ts.blob");
+const TS_LEGACY_TREE_MOVE_SHALLOW_SNAPSHOT: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/legacy-tree-move-shallow.ts.blob");
 const TS_CURSOR: &[u8] = include_bytes!("../../../loro-js/tests/fixtures/rust/cursor.ts.blob");
 const TS_AWARENESS: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/awareness.ts.blob");
@@ -178,4 +188,96 @@ fn imports_typescript_ephemeral_state_with_rust() {
         .apply(TS_EPHEMERAL)
         .expect("Rust should decode TypeScript ephemeral data");
     assert_eq!(store.get("cursor"), Some(LoroValue::from(7)));
+}
+
+fn assert_same_tree_state(actual: &LoroDoc, expected: &LoroDoc) {
+    assert_eq!(
+        actual.get_deep_value().to_json_value(),
+        expected.get_deep_value().to_json_value()
+    );
+    let actual = actual.get_tree("tree");
+    let expected = expected.get_tree("tree");
+    let nodes = expected.get_nodes(true);
+    assert_eq!(
+        format!("{:?}", actual.get_nodes(true)),
+        format!("{nodes:?}")
+    );
+    for node in nodes {
+        assert_eq!(
+            actual.is_node_deleted(&node.id).unwrap(),
+            expected.is_node_deleted(&node.id).unwrap()
+        );
+        assert_eq!(
+            actual.get_last_move_id(&node.id),
+            expected.get_last_move_id(&node.id),
+            "last move id of {:?}",
+            node.id
+        );
+    }
+}
+
+#[test]
+fn imports_typescript_tree_snapshots_after_moves() {
+    let expected = LoroDoc::new();
+    expected.import(TS_TREE_MOVE_UPDATES).unwrap();
+
+    let snapshot = LoroDoc::new();
+    snapshot
+        .import(TS_TREE_MOVE_SNAPSHOT)
+        .expect("Rust should import a TypeScript snapshot with moved tree nodes");
+    assert_same_tree_state(&snapshot, &expected);
+    let reencoded = LoroDoc::new();
+    reencoded
+        .import(&snapshot.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert_same_tree_state(&reencoded, &expected);
+
+    let shallow = LoroDoc::new();
+    shallow
+        .import(TS_TREE_MOVE_SHALLOW_SNAPSHOT)
+        .expect("Rust should import a TypeScript shallow snapshot with moved tree nodes");
+    assert!(shallow.is_shallow());
+    assert_same_tree_state(&shallow, &expected);
+    let root = shallow.shallow_since_frontiers();
+    shallow.checkout(&root).unwrap();
+    expected.checkout(&root).unwrap();
+    assert_same_tree_state(&shallow, &expected);
+}
+
+/// loro.js <= 0.2.0 wrote tree siblings in creation order (loro-dev/loro#1088).
+#[test]
+fn imports_legacy_typescript_tree_snapshots_with_unordered_siblings() {
+    for bytes in [
+        TS_LEGACY_TREE_MOVE_SNAPSHOT,
+        TS_LEGACY_TREE_MOVE_SHALLOW_SNAPSHOT,
+    ] {
+        let doc = LoroDoc::new();
+        doc.import(bytes).unwrap();
+        let tree = doc.get_tree("x");
+        let root = tree.roots()[0];
+        assert_eq!(
+            tree.children(root).unwrap(),
+            vec![TreeID::new(1, 2), TreeID::new(1, 1)]
+        );
+        assert_eq!(
+            doc.get_deep_value().to_json_value(),
+            serde_json::json!({ "x": [{
+                "id": "0@1", "parent": null, "index": 0, "fractional_index": "80", "meta": {},
+                "children": [
+                    { "id": "2@1", "parent": "0@1", "index": 0, "fractional_index": "7F80",
+                      "meta": {}, "children": [] },
+                    { "id": "1@1", "parent": "0@1", "index": 1, "fractional_index": "80",
+                      "meta": {}, "children": [] },
+                ],
+            }] })
+        );
+        let reencoded = LoroDoc::new();
+        reencoded
+            .import(&doc.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert_eq!(
+            reencoded.get_deep_value().to_json_value(),
+            doc.get_deep_value().to_json_value()
+        );
+    }
 }

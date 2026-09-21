@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { assert, describe, expect, it } from "vitest";
 import { LoroDoc, LoroTree, LoroTreeNode, TreeDiff } from "../bundler/index";
 
@@ -272,3 +273,63 @@ describe("loro tree node", () => {
 function one_ms(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 1));
 }
+
+describe("loro.js tree snapshots (loro-dev/loro#1088)", () => {
+  const fixture = (name: string) =>
+    new Uint8Array(
+      readFileSync(
+        new URL(`../../../loro-js/tests/fixtures/rust/${name}`, import.meta.url),
+      ),
+    );
+
+  it("reads loro.js <= 0.2.0 snapshots whose moved siblings are out of order", () => {
+    for (const name of [
+      "legacy-tree-move-snapshot.ts.blob",
+      "legacy-tree-move-shallow.ts.blob",
+    ]) {
+      const doc = new LoroDoc();
+      doc.import(fixture(name));
+      const root = doc.getTree("x").roots()[0]!;
+      expect(root.children()!.map((node) => node.id)).toEqual(["2@1", "1@1"]);
+      expect(doc.toJSON()).toEqual({
+        x: [
+          {
+            id: "0@1",
+            parent: null,
+            index: 0,
+            fractional_index: "80",
+            meta: {},
+            children: [
+              {
+                id: "2@1",
+                parent: "0@1",
+                index: 0,
+                fractional_index: "7F80",
+                meta: {},
+                children: [],
+              },
+              {
+                id: "1@1",
+                parent: "0@1",
+                index: 1,
+                fractional_index: "80",
+                meta: {},
+                children: [],
+              },
+            ],
+          },
+        ],
+      });
+    }
+  });
+
+  it("matches the update import for loro.js snapshots with moves and deletes", () => {
+    const expected = new LoroDoc();
+    expected.import(fixture("tree-move-updates.ts.blob"));
+    for (const name of ["tree-move-snapshot.ts.blob", "tree-move-shallow.ts.blob"]) {
+      const doc = new LoroDoc();
+      doc.import(fixture(name));
+      expect(doc.toJSON()).toEqual(expected.toJSON());
+    }
+  });
+});
