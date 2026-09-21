@@ -35,6 +35,7 @@ pretty_assertions = "1.4.0"
 loom = "0.7"
 base64 = "0.22.1"
 serial_test = "3"
+hegeltest = "0.44.1"
 
 [features]
 default = ["counter"]

@@ -1135,6 +1135,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hegeltest"
+version = "0.44.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee49859cd835afca97cd73a5972f72cd49895a20e0a946d00d83bce4e7634f1c"
+dependencies = [
+ "hegeltest-macros",
+ "parking_lot",
+]
+
+[[package]]
+name = "hegeltest-macros"
+version = "0.44.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5dbb92ef7b9931930035f85e8a28a317b8b9d1168845b8a10c8241b5c3206bbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1523,6 +1544,7 @@ dependencies = [
  "dev-utils",
  "enum-as-inner 0.6.1",
  "generic-btree",
+ "hegeltest",
  "loom",
  "loro-common 1.16.0",
  "loro-delta 1.13.0",
