@@ -91,7 +91,11 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let tmp = std::env::temp_dir().join(format!("loro-moon-transcode-{}-{ts}-{}", std::process::id(), next_tmp_id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-transcode-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
+    ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
     let out_path = tmp.join("out.blob");
