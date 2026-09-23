@@ -2118,24 +2118,176 @@ fn test_fork_at_should_return_error_for_invalid_frontiers() {
     assert!(matches!(err, LoroError::NotFoundError(..)));
 }
 
-#[test]
-#[parallel]
-fn test_fork_at_should_return_error_for_shallow_doc() {
+fn shallow_doc_with_tail() -> (LoroDoc, Frontiers) {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     doc.get_text("text").insert(0, "Hello").unwrap();
     doc.commit();
-    let shallow_bytes = doc
-        .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
-        .unwrap();
-
+    let root = doc.oplog_frontiers();
     let shallow_doc = LoroDoc::new();
-    shallow_doc.import(&shallow_bytes).unwrap();
+    shallow_doc
+        .import(&doc.export(ExportMode::shallow_snapshot(&root)).unwrap())
+        .unwrap();
+    assert!(shallow_doc.is_shallow());
 
+    shallow_doc.set_peer_id(2).unwrap();
+    shallow_doc.get_text("text").insert(5, "!").unwrap();
+    shallow_doc.commit();
+    shallow_doc.get_text("text").insert(6, "?").unwrap();
+    shallow_doc.commit();
+    (shallow_doc, root)
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_should_return_error_before_shallow_root() {
+    let (shallow_doc, _) = shallow_doc_with_tail();
     let err = shallow_doc
-        .fork_at(&shallow_doc.oplog_frontiers())
+        .fork_at(&Frontiers::from_id(ID::new(1, 0)))
         .unwrap_err();
-    assert!(matches!(err, LoroError::Unknown(..)));
+    assert!(matches!(err, LoroError::NotFoundError(..)), "{err:?}");
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_shallow_root() {
+    let (shallow_doc, root) = shallow_doc_with_tail();
+    let forked = shallow_doc.fork_at(&root).unwrap();
+    assert!(forked.is_shallow());
+    assert_eq!(forked.shallow_since_frontiers(), root);
+    assert_eq!(forked.state_frontiers(), root);
+    assert_eq!(
+        forked.get_deep_value().to_json_value(),
+        json!({ "text": "Hello" })
+    );
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_after_shallow_root() {
+    let (shallow_doc, root) = shallow_doc_with_tail();
+    let after_first_edit = Frontiers::from_id(ID::new(2, 0));
+    let forked = shallow_doc.fork_at(&after_first_edit).unwrap();
+    assert_eq!(forked.shallow_since_frontiers(), root);
+    assert_eq!(forked.state_frontiers(), after_first_edit);
+    assert_eq!(
+        forked.get_deep_value().to_json_value(),
+        json!({ "text": "Hello!" })
+    );
+
+    let forked = shallow_doc.fork_at(&shallow_doc.oplog_frontiers()).unwrap();
+    assert_eq!(
+        forked.get_deep_value().to_json_value(),
+        json!({ "text": "Hello!?" })
+    );
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_shallow_doc_with_long_tail() {
+    let (shallow_doc, root) = shallow_doc_with_tail();
+    let text = shallow_doc.get_text("text");
+    text.insert(7, &"a".repeat(300)).unwrap();
+    shallow_doc.commit();
+    let frontiers = shallow_doc.oplog_frontiers();
+    text.insert(0, "b").unwrap();
+    shallow_doc.commit();
+
+    let forked = shallow_doc.fork_at(&frontiers).unwrap();
+    assert_eq!(forked.shallow_since_frontiers(), root);
+    assert_eq!(
+        forked.get_text("text").to_string(),
+        format!("Hello!?{}", "a".repeat(300))
+    );
+}
+
+#[test]
+#[parallel]
+fn test_fork_at_shallow_doc_matches_checkout_around_overlay_threshold() {
+    for tail_ops in 254..=258 {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        doc.get_text("text").insert(0, "Hello").unwrap();
+        doc.commit();
+        let root = doc.oplog_frontiers();
+        let shallow_doc = LoroDoc::new();
+        shallow_doc
+            .import(&doc.export(ExportMode::shallow_snapshot(&root)).unwrap())
+            .unwrap();
+        shallow_doc.set_peer_id(2).unwrap();
+        shallow_doc.get_list("empty");
+        let filler = shallow_doc.get_list("filler");
+        for i in 0..tail_ops {
+            filler.push(i).unwrap();
+        }
+        shallow_doc.commit();
+        let target = shallow_doc.oplog_frontiers();
+        filler.push(-1).unwrap();
+        shallow_doc.commit();
+
+        shallow_doc.checkout(&target).unwrap();
+        let expected = shallow_doc.get_deep_value();
+        shallow_doc.checkout_to_latest();
+        let forked = shallow_doc.fork_at(&target).unwrap();
+        assert_eq!(forked.get_deep_value(), expected, "tail_ops={tail_ops}");
+    }
+}
+
+#[test]
+#[parallel]
+fn test_fork_of_shallow_doc_at_earlier_frontier_syncs_both_ways() {
+    let (shallow_doc, _) = shallow_doc_with_tail();
+    let forked = shallow_doc
+        .fork_at(&Frontiers::from_id(ID::new(2, 0)))
+        .unwrap();
+    forked.set_peer_id(3).unwrap();
+    forked.get_text("text").insert(0, "F").unwrap();
+    forked.commit();
+    shallow_doc.get_text("text").insert(7, ".").unwrap();
+    shallow_doc.commit();
+
+    forked
+        .import(
+            &shallow_doc
+                .export(ExportMode::updates(&forked.oplog_vv()))
+                .unwrap(),
+        )
+        .unwrap();
+    shallow_doc
+        .import(
+            &forked
+                .export(ExportMode::updates(&shallow_doc.oplog_vv()))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(forked.get_deep_value(), shallow_doc.get_deep_value());
+    assert_eq!(shallow_doc.get_text("text").to_string(), "FHello!?.");
+}
+
+#[test]
+#[parallel]
+fn test_fork_of_shallow_doc_syncs_with_source() {
+    let (shallow_doc, _) = shallow_doc_with_tail();
+    let forked = shallow_doc.fork_at(&shallow_doc.oplog_frontiers()).unwrap();
+    let reloaded = LoroDoc::new();
+    reloaded
+        .import(&forked.export(ExportMode::snapshot()).unwrap())
+        .unwrap();
+    assert_eq!(
+        reloaded.get_deep_value().to_json_value(),
+        json!({ "text": "Hello!?" })
+    );
+
+    forked.set_peer_id(3).unwrap();
+    forked.get_text("text").insert(7, ".").unwrap();
+    forked.commit();
+    shallow_doc
+        .import(&forked.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(
+        shallow_doc.get_deep_value().to_json_value(),
+        json!({ "text": "Hello!?." })
+    );
 }
 
 #[test]

@@ -900,6 +900,35 @@ fn shallow_export_forward_replay_matches_checkout_path() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn shallow_reexport_at_the_root_keeps_empty_root_containers() -> anyhow::Result<()> {
+    for tail_ops in [1, 300] {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        doc.get_text("text").insert(0, "root")?;
+        doc.commit();
+        let shallow = LoroDoc::new();
+        shallow.import(&doc.export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))?)?;
+        shallow.get_list("empty");
+        let filler = shallow.get_map("filler");
+        for i in 0..tail_ops {
+            filler.insert(&i.to_string(), i)?;
+        }
+        shallow.commit();
+
+        let reimported = LoroDoc::new();
+        reimported.import(&shallow.export(ExportMode::shallow_snapshot(
+            &shallow.shallow_since_frontiers(),
+        ))?)?;
+        assert_eq!(
+            reimported.get_deep_value(),
+            shallow.get_deep_value(),
+            "tail_ops={tail_ops}"
+        );
+    }
+    Ok(())
+}
+
 /// A root container deleted before the shallow root must stay deleted in the
 /// exported root state: the forward-replay path mirrors the live doc's
 /// deleted-root set, so the replay doc's flush drops the empty entry instead

@@ -3,7 +3,7 @@ use rle::HasLength;
 use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
-use loro_common::{ContainerID, ContainerType, IdSpan, LoroEncodeError, LoroError, ID};
+use loro_common::{ContainerID, ContainerType, IdSpan, LoroEncodeError, ID};
 
 use crate::{
     container::{idx::ContainerIdx, list::list_op::InnerListOp},
@@ -378,60 +378,10 @@ pub(crate) fn export_shallow_snapshot_inner(
     .flatten();
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
-        if let Some((shallow_root_state_bytes, shallow_root_kv)) =
-            state.store.shallow_root_state_for_export()
+        if let Some(snapshot) =
+            reuse_shallow_root_state(&mut state, &start_from, oplog_bytes.clone(), ops_num)?
         {
-            // Ops since the root are few enough to replay on import; otherwise
-            // also ship the encoded latest state as an overlay.
-            let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-                let mut alive_c_bytes = shallow_root_kv.keys();
-                if has_unknown_container_key(alive_c_bytes.iter()) {
-                    return Err(LoroEncodeError::UnknownContainer);
-                }
-
-                state.ensure_all_alive_containers()?;
-                state.store.flush();
-
-                // All the containers that are created after start_from need to be encoded.
-                for cid in state.store.iter_all_container_ids() {
-                    if let ContainerID::Normal { peer, counter, .. } = cid {
-                        let temp_id = ID::new(peer, counter);
-                        if !start_from.contains(&temp_id) {
-                            alive_c_bytes.insert(cid.to_bytes());
-                        }
-                    } else {
-                        alive_c_bytes.insert(cid.to_bytes());
-                    }
-                }
-
-                let new_kv = state.store.get_kv_clone();
-                new_kv.remove_same(&shallow_root_kv);
-                new_kv.retain_keys(&alive_c_bytes);
-                Some(new_kv)
-            } else {
-                None
-            };
-
-            // The stored shallow-root bytes may predate dead-style redaction
-            // (e.g. imported from an older export), so re-run it before reuse.
-            let shallow_root_state_bytes =
-                if redact_export_states(&shallow_root_kv, overlay_kv.as_ref())? {
-                    // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
-                    // strips it on import); restore it before export.
-                    shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-                    shallow_root_kv.export()
-                } else {
-                    shallow_root_state_bytes
-                };
-
-            return Ok((
-                Snapshot {
-                    oplog_bytes,
-                    state_bytes: overlay_kv.map(|kv| kv.export()),
-                    shallow_root_state_bytes,
-                },
-                start_from,
-            ));
+            return Ok((snapshot, start_from));
         }
     }
     drop(oplog);
@@ -536,6 +486,91 @@ pub(crate) fn export_shallow_snapshot_inner(
     restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
     Ok((result?, start_from))
+}
+
+/// Encodes the stored shallow-root state of a shallow doc together with the
+/// retained ops in `oplog_bytes`. `state` MUST be at the version the ops end at.
+///
+/// Returns `None` when the doc has no stored shallow-root state.
+fn reuse_shallow_root_state(
+    state: &mut DocState,
+    start_from: &Frontiers,
+    oplog_bytes: Bytes,
+    ops_num: usize,
+) -> Result<Option<Snapshot>, LoroEncodeError> {
+    let Some((shallow_root_state_bytes, shallow_root_kv)) =
+        state.store.shallow_root_state_for_export()
+    else {
+        return Ok(None);
+    };
+
+    // Ops since the root are few enough to replay on import; otherwise
+    // also ship the encoded state as an overlay.
+    let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let mut alive_c_bytes = shallow_root_kv.keys();
+        if has_unknown_container_key(alive_c_bytes.iter()) {
+            return Err(LoroEncodeError::UnknownContainer);
+        }
+
+        state.ensure_all_alive_containers()?;
+        state.store.flush();
+
+        // All the containers that are created after start_from need to be encoded.
+        for cid in state.store.iter_all_container_ids() {
+            if let ContainerID::Normal { peer, counter, .. } = cid {
+                let temp_id = ID::new(peer, counter);
+                if !start_from.contains(&temp_id) {
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            } else {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        }
+
+        let new_kv = state.store.get_kv_clone();
+        new_kv.remove_same(&shallow_root_kv);
+        new_kv.retain_keys(&alive_c_bytes);
+        Some(new_kv)
+    } else {
+        None
+    };
+
+    let added_roots = add_missing_empty_roots(state, &shallow_root_kv);
+    // The stored shallow-root bytes may predate dead-style redaction
+    // (e.g. imported from an older export), so re-run it before reuse.
+    let redacted = redact_export_states(&shallow_root_kv, overlay_kv.as_ref())?;
+    let shallow_root_state_bytes = if added_roots || redacted {
+        // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
+        // strips it on import); restore it before export.
+        shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+        shallow_root_kv.export()
+    } else {
+        shallow_root_state_bytes
+    };
+
+    Ok(Some(Snapshot {
+        oplog_bytes,
+        state_bytes: overlay_kv.map(|kv| kv.export()),
+        shallow_root_state_bytes,
+    }))
+}
+
+/// Adds an empty entry to `root_kv` for each live root container it lacks, since
+/// replaying ops on import never creates an empty root. Returns whether any was added.
+fn add_missing_empty_roots(state: &mut DocState, root_kv: &KvWrapper) -> bool {
+    let deleted = state.config.deleted_root_containers.lock().clone();
+    let mut added = false;
+    for idx in state.existing_retention_roots() {
+        let cid = state.arena.get_container_id(idx).unwrap();
+        let key = cid.to_bytes();
+        if deleted.contains(&cid) || root_kv.contains_key(&key) {
+            continue;
+        }
+        let mut empty = ContainerWrapper::new(state.create_state(idx), &state.arena);
+        root_kv.insert(&key, empty.encode());
+        added = true;
+    }
+    added
 }
 
 /// Compute the encoded latest-state overlay shipped alongside the shallow root
@@ -925,24 +960,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     let result = 'block: {
         let oplog = doc.oplog().lock();
         let mut state = doc.app_state().lock();
-        let is_shallow = state.store.shallow_root_store().is_some();
-        if is_shallow {
-            break 'block Err(LoroEncodeError::from(LoroError::NotImplemented(
-                "fork_at on shallow docs",
-            )));
-        }
-
         if state.is_in_txn() {
             break 'block Err(LoroEncodeError::internal(
                 "encode_snapshot_at: state is unexpectedly still in a transaction",
             ));
         }
-        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
-            break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
-                "frontiers: {:?} when export in SnapshotAt mode",
-                frontiers
-            )));
-        };
 
         if oplog.is_shallow() {
             let Some(shallow_root_frontiers) = state.store.shallow_root_frontiers() else {
@@ -957,25 +979,58 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             }
         }
 
-        let Some(version) = oplog.dag.frontiers_to_vv(frontiers) else {
-            break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
-                "frontiers: {:?} when export in SnapshotAt mode",
-                frontiers
-            )));
-        };
-        let state_kv = match prepare_snapshot_container_state(&mut state, &version) {
-            Ok(state_kv) => state_kv,
-            Err(error) => break 'block Err(error),
-        };
-        let bytes = state_kv.export();
-        _encode_snapshot(
-            &Snapshot {
+        let snapshot = if oplog.is_shallow() {
+            // `export_snapshot_at` has checked that `frontiers` is reachable,
+            // so it is at or after the shallow root.
+            let start_from = oplog.shallow_since_frontiers().clone();
+            let mut start_vv =
+                match frontiers_to_vv_for_export(&oplog, &start_from, "encode_snapshot_at") {
+                    Ok(vv) => vv,
+                    Err(error) => break 'block Err(error),
+                };
+            for id in start_from.iter() {
+                start_vv.insert(id.peer, id.counter);
+            }
+            let to_vv = match frontiers_to_vv_for_export(&oplog, frontiers, "encode_snapshot_at") {
+                Ok(vv) => vv,
+                Err(error) => break 'block Err(error),
+            };
+            let oplog_bytes =
+                oplog.export_change_store_in_range(&start_vv, &start_from, &to_vv, frontiers);
+            let ops_num = to_vv.sub_iter(&start_vv).map(|span| span.atom_len()).sum();
+            match reuse_shallow_root_state(&mut state, &start_from, oplog_bytes, ops_num) {
+                Ok(Some(snapshot)) => snapshot,
+                Ok(None) => {
+                    break 'block Err(LoroEncodeError::internal(
+                        "encode_snapshot_at: shallow doc has no shallow root state",
+                    ))
+                }
+                Err(error) => break 'block Err(error),
+            }
+        } else {
+            let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+                break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
+                    "frontiers: {:?} when export in SnapshotAt mode",
+                    frontiers
+                )));
+            };
+            let Some(version) = oplog.dag.frontiers_to_vv(frontiers) else {
+                break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
+                    "frontiers: {:?} when export in SnapshotAt mode",
+                    frontiers
+                )));
+            };
+            let state_kv = match prepare_snapshot_container_state(&mut state, &version) {
+                Ok(state_kv) => state_kv,
+                Err(error) => break 'block Err(error),
+            };
+            Snapshot {
                 oplog_bytes,
-                state_bytes: Some(bytes),
+                state_bytes: Some(state_kv.export()),
                 shallow_root_state_bytes: Bytes::new(),
-            },
-            w,
-        );
+            }
+        };
+        _encode_snapshot(&snapshot, w);
 
         Ok(())
     };
@@ -1272,6 +1327,63 @@ mod tests {
             text_style_values(&resections.shallow_root_state_bytes, &cid)[0].1,
             LoroValue::Null
         );
+    }
+
+    #[test]
+    fn legacy_unredacted_shallow_blob_is_cleaned_on_snapshot_at() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        text.insert(0, "abc", PosType::Unicode).unwrap();
+        text.mark(0, 3, "comment", "legacy-secret".into(), PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+        text.delete(0, 3, PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        let root = doc.oplog_frontiers();
+
+        let mut sections =
+            shallow_sections(&doc.export(ExportMode::shallow_snapshot(&root)).unwrap());
+        sections.shallow_root_state_bytes = {
+            let mut state = doc.app_state().lock();
+            state.store.flush();
+            let kv = state.store.get_kv_clone();
+            drop(state);
+            kv.insert(FRONTIERS_KEY, root.encode().into());
+            kv.export()
+        };
+        let cid = root_text_cid();
+        assert_eq!(
+            text_style_values(&sections.shallow_root_state_bytes, &cid)[0].1,
+            LoroValue::String("legacy-secret".into()),
+            "test setup must produce an unredacted legacy root"
+        );
+
+        let legacy_doc = LoroDoc::new_auto_commit();
+        legacy_doc
+            .import(&assemble_snapshot_blob(&sections))
+            .unwrap();
+        legacy_doc
+            .get_text("text")
+            .insert(0, "later", PosType::Unicode)
+            .unwrap();
+        legacy_doc.commit_then_renew();
+
+        for target in [root, legacy_doc.oplog_frontiers()] {
+            let blob = legacy_doc.export(ExportMode::snapshot_at(&target)).unwrap();
+            let sections = shallow_sections(&blob);
+            assert_eq!(
+                text_style_values(&sections.shallow_root_state_bytes, &cid)[0].1,
+                LoroValue::Null,
+                "snapshot_at {target:?}"
+            );
+            assert!(
+                !blob
+                    .windows("legacy-secret".len())
+                    .any(|w| w == b"legacy-secret"),
+                "snapshot_at {target:?} carries the dead style value"
+            );
+        }
     }
 
     /// Regression test for the P1 found in review of the bounded container
