@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-21.
+Verified against code 2026-09-23.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -198,8 +198,12 @@ All three use `FastSnapshot` mode; there is no on-wire subtype field:
 - `ShallowSnapshot` retains history since a calculated shallow start frontier.
 - `StateOnly` is a shallow snapshot with minimal history at the target version.
 - `SnapshotAt` exports full history up to target frontiers plus state at that
-  version, but only from a non-shallow source document; a shallow source
-  currently returns `NotImplemented`.
+  version. From a shallow source it exports a shallow snapshot with the
+  source's shallow root: the stored root state, the ops from the root up to the
+  target, and the target state as an overlay once those ops exceed
+  `MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE`. Targets before the shallow root
+  fail. `reuse_shallow_root_state` builds these sections for both this path and
+  `ShallowSnapshot` re-exports at the source's own root.
 
 `SnapshotAt` MUST retain the encoded state of normal containers whose creating
 operation belongs to the exported version, including deleted descendants.

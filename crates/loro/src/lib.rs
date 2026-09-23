@@ -156,6 +156,9 @@ impl LoroDoc {
     /// Fork the document at the given frontiers.
     ///
     /// The created doc will only contain the history before the specified frontiers.
+    ///
+    /// Forking a shallow doc yields a shallow doc with the same shallow root.
+    /// Frontiers before the shallow root return an error.
     pub fn fork_at(&self, frontiers: &Frontiers) -> LoroResult<LoroDoc> {
         let new_doc = self.doc.fork_at(frontiers)?;
         new_doc.start_auto_commit();

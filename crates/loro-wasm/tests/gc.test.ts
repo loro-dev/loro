@@ -68,4 +68,28 @@ describe("gc", () => {
         const docC = docB.fork();
         expect(docC.toJSON()).toEqual(docB.toJSON());
     });
+
+    it("can forkAt a shallow doc at or after its shallow root", () => {
+        const docA = new LoroDoc();
+        docA.setPeerId(1);
+        docA.getText("text").insert(0, "Hello");
+        docA.commit();
+        const root = docA.oplogFrontiers();
+
+        const docB = new LoroDoc();
+        docB.import(docA.export({ mode: "shallow-snapshot", frontiers: root }));
+        docB.setPeerId(2);
+        docB.getText("text").insert(5, "!");
+        docB.commit();
+        const afterRoot = docB.oplogFrontiers();
+        docB.getText("text").insert(6, "?");
+        docB.commit();
+
+        const atRoot = docB.forkAt(root);
+        expect(atRoot.isShallow()).toBe(true);
+        expect(atRoot.shallowSinceFrontiers()).toEqual(root);
+        expect(atRoot.toJSON()).toEqual({ text: "Hello" });
+        expect(docB.forkAt(afterRoot).toJSON()).toEqual({ text: "Hello!" });
+        expect(() => docB.forkAt([{ peer: "1", counter: 0 }])).toThrow();
+    });
 });
