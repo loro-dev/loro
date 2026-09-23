@@ -378,60 +378,10 @@ pub(crate) fn export_shallow_snapshot_inner(
     .flatten();
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
-        if let Some((shallow_root_state_bytes, shallow_root_kv)) =
-            state.store.shallow_root_state_for_export()
+        if let Some(snapshot) =
+            reuse_shallow_root_state(&mut state, &start_from, oplog_bytes.clone(), ops_num)?
         {
-            // Ops since the root are few enough to replay on import; otherwise
-            // also ship the encoded latest state as an overlay.
-            let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-                let mut alive_c_bytes = shallow_root_kv.keys();
-                if has_unknown_container_key(alive_c_bytes.iter()) {
-                    return Err(LoroEncodeError::UnknownContainer);
-                }
-
-                state.ensure_all_alive_containers()?;
-                state.store.flush();
-
-                // All the containers that are created after start_from need to be encoded.
-                for cid in state.store.iter_all_container_ids() {
-                    if let ContainerID::Normal { peer, counter, .. } = cid {
-                        let temp_id = ID::new(peer, counter);
-                        if !start_from.contains(&temp_id) {
-                            alive_c_bytes.insert(cid.to_bytes());
-                        }
-                    } else {
-                        alive_c_bytes.insert(cid.to_bytes());
-                    }
-                }
-
-                let new_kv = state.store.get_kv_clone();
-                new_kv.remove_same(&shallow_root_kv);
-                new_kv.retain_keys(&alive_c_bytes);
-                Some(new_kv)
-            } else {
-                None
-            };
-
-            // The stored shallow-root bytes may predate dead-style redaction
-            // (e.g. imported from an older export), so re-run it before reuse.
-            let shallow_root_state_bytes =
-                if redact_export_states(&shallow_root_kv, overlay_kv.as_ref())? {
-                    // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
-                    // strips it on import); restore it before export.
-                    shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-                    shallow_root_kv.export()
-                } else {
-                    shallow_root_state_bytes
-                };
-
-            return Ok((
-                Snapshot {
-                    oplog_bytes,
-                    state_bytes: overlay_kv.map(|kv| kv.export()),
-                    shallow_root_state_bytes,
-                },
-                start_from,
-            ));
+            return Ok((snapshot, start_from));
         }
     }
     drop(oplog);
@@ -536,6 +486,71 @@ pub(crate) fn export_shallow_snapshot_inner(
     restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
     Ok((result?, start_from))
+}
+
+/// Encodes the stored shallow-root state of a shallow doc together with the
+/// retained ops in `oplog_bytes`. `state` MUST be at the version the ops end at.
+///
+/// Returns `None` when the doc has no stored shallow-root state.
+fn reuse_shallow_root_state(
+    state: &mut DocState,
+    start_from: &Frontiers,
+    oplog_bytes: Bytes,
+    ops_num: usize,
+) -> Result<Option<Snapshot>, LoroEncodeError> {
+    let Some((shallow_root_state_bytes, shallow_root_kv)) =
+        state.store.shallow_root_state_for_export()
+    else {
+        return Ok(None);
+    };
+
+    // Ops since the root are few enough to replay on import; otherwise
+    // also ship the encoded state as an overlay.
+    let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
+        let mut alive_c_bytes = shallow_root_kv.keys();
+        if has_unknown_container_key(alive_c_bytes.iter()) {
+            return Err(LoroEncodeError::UnknownContainer);
+        }
+
+        state.ensure_all_alive_containers()?;
+        state.store.flush();
+
+        // All the containers that are created after start_from need to be encoded.
+        for cid in state.store.iter_all_container_ids() {
+            if let ContainerID::Normal { peer, counter, .. } = cid {
+                let temp_id = ID::new(peer, counter);
+                if !start_from.contains(&temp_id) {
+                    alive_c_bytes.insert(cid.to_bytes());
+                }
+            } else {
+                alive_c_bytes.insert(cid.to_bytes());
+            }
+        }
+
+        let new_kv = state.store.get_kv_clone();
+        new_kv.remove_same(&shallow_root_kv);
+        new_kv.retain_keys(&alive_c_bytes);
+        Some(new_kv)
+    } else {
+        None
+    };
+
+    // The stored shallow-root bytes may predate dead-style redaction
+    // (e.g. imported from an older export), so re-run it before reuse.
+    let shallow_root_state_bytes = if redact_export_states(&shallow_root_kv, overlay_kv.as_ref())? {
+        // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
+        // strips it on import); restore it before export.
+        shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+        shallow_root_kv.export()
+    } else {
+        shallow_root_state_bytes
+    };
+
+    Ok(Some(Snapshot {
+        oplog_bytes,
+        state_bytes: overlay_kv.map(|kv| kv.export()),
+        shallow_root_state_bytes,
+    }))
 }
 
 /// Compute the encoded latest-state overlay shipped alongside the shallow root
