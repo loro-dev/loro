@@ -1496,6 +1496,19 @@ impl Handler {
             Handler::Unknown(_unknown_handler) => Ok(()),
         }
     }
+
+    pub(crate) fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        match self {
+            Handler::Text(text_handler) => text_handler.clear_with_txn(txn),
+            Handler::Map(map_handler) => map_handler.clear_with_txn(txn),
+            Handler::List(list_handler) => list_handler.clear_with_txn(txn),
+            Handler::MovableList(movable_list_handler) => movable_list_handler.clear_with_txn(txn),
+            Handler::Tree(tree_handler) => tree_handler.clear_with_txn(txn),
+            #[cfg(feature = "counter")]
+            Handler::Counter(counter_handler) => counter_handler.clear_with_txn(txn),
+            Handler::Unknown(_unknown_handler) => Ok(()),
+        }
+    }
 }
 
 #[derive(Clone, EnumAsInner, Debug)]
@@ -2890,11 +2903,16 @@ impl TextHandler {
                 }
                 Ok(())
             }
-            MaybeDetached::Attached(a) => a.with_txn(|txn| {
-                let len = a.with_state(|s| s.as_richtext_state_mut().unwrap().len_unicode());
-                self.delete_with_txn_inline(txn, 0, len, PosType::Unicode)
-            }),
+            MaybeDetached::Attached(a) => a.with_txn(|txn| self.clear_with_txn(txn)),
         }
+    }
+
+    pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+        let len = self
+            .inner
+            .try_attached_state()?
+            .with_state(|s| s.as_richtext_state_mut().unwrap().len_unicode());
+        self.delete_with_txn_inline(txn, 0, len, PosType::Unicode)
     }
 
     /// Convert a position `index` from one coordinate system to another.
@@ -4881,7 +4899,10 @@ impl MapHandler {
     }
 }
 
-fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>) -> LoroResult<R> {
+pub(crate) fn with_txn<R>(
+    doc: &LoroDoc,
+    f: impl FnOnce(&mut Transaction) -> LoroResult<R>,
+) -> LoroResult<R> {
     let txn = &doc.txn;
     let mut txn = txn.lock();
     loop {
@@ -4964,6 +4985,10 @@ pub mod counter {
 
         pub fn clear(&self) -> LoroResult<()> {
             self.decrement(self.get_value().into_double().unwrap())
+        }
+
+        pub(crate) fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
+            self.increment_with_txn(txn, -self.get_value().into_double().unwrap())
         }
     }
 

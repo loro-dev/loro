@@ -918,7 +918,7 @@ fn shallow_export_deleted_root_containers_match_checkout_path() -> anyhow::Resul
         doc.get_text("doomed_after").insert(0, "at-f-content")?;
         doc.get_map("kept").insert("before", 1)?;
         doc.commit();
-        doc.delete_root_container(ContainerID::new_root("doomed_before", ContainerType::Text));
+        doc.delete_root_container(ContainerID::new_root("doomed_before", ContainerType::Text))?;
         doc.commit();
         let f = doc.oplog_frontiers();
 
@@ -937,7 +937,7 @@ fn shallow_export_deleted_root_containers_match_checkout_path() -> anyhow::Resul
             }
         }
         doc.commit();
-        doc.delete_root_container(ContainerID::new_root("doomed_after", ContainerType::Text));
+        doc.delete_root_container(ContainerID::new_root("doomed_after", ContainerType::Text))?;
         doc.commit();
 
         let fast = doc.export(ExportMode::shallow_snapshot(&f))?;

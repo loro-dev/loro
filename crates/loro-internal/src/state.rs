@@ -1674,6 +1674,48 @@ impl DocState {
         LoroValue::List(ans.into())
     }
 
+    /// `idx` and every container nested in it: children in its current state, the
+    /// metadata maps of all tree nodes (deleted ones too), and every stored mergeable
+    /// container whose id encodes a parent in the result, also when the parent map no
+    /// longer holds its marker. Parents come before their children.
+    pub(crate) fn container_and_descendants(&mut self, idx: ContainerIdx) -> Vec<ContainerIdx> {
+        // Only maps own mergeables, so a purge that visits no map skips the O(roots) scan.
+        let mut mergeables_by_parent: Option<FxHashMap<ContainerID, Vec<ContainerIdx>>> = None;
+        let mut ans = vec![idx];
+        let mut next = 0;
+        while next < ans.len() {
+            let id = self.arena.idx_to_id(ans[next]).unwrap();
+            let children = self
+                .store
+                .get_container(ans[next])
+                .map(|state| state.get_child_containers())
+                .unwrap_or_default();
+            ans.extend(
+                children
+                    .iter()
+                    .map(|child| self.arena.register_container(child)),
+            );
+            if ans[next].get_type() == ContainerType::Map {
+                let by_parent =
+                    mergeables_by_parent.get_or_insert_with(|| self.mergeables_by_parent());
+                ans.extend(by_parent.remove(&id).unwrap_or_default());
+            }
+            next += 1;
+        }
+        ans
+    }
+
+    fn mergeables_by_parent(&mut self) -> FxHashMap<ContainerID, Vec<ContainerIdx>> {
+        let mut ans: FxHashMap<ContainerID, Vec<ContainerIdx>> = FxHashMap::default();
+        for root in self.existing_retention_roots() {
+            let root_id = self.arena.idx_to_id(root).unwrap();
+            if let Some((parent_id, _, _)) = root_id.parse_mergeable() {
+                ans.entry(parent_id).or_default().push(root);
+            }
+        }
+        ans
+    }
+
     pub(crate) fn get_all_alive_containers(&mut self) -> LoroResult<FxHashSet<ContainerID>> {
         Ok(self
             .get_all_alive_container_indices()?

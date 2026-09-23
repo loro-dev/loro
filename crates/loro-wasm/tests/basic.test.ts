@@ -1844,6 +1844,17 @@ it("deleteRootContainers", () => {
   });
 });
 
+it("deleteRootContainer throws for a non-root or unknown container", () => {
+  const doc = new LoroDoc();
+  const inner = doc.getMap("map").setContainer("inner", new LoroText());
+  expect(() => doc.deleteRootContainer(inner.id)).toThrow();
+  const unknownMergeable = doc
+    .getMap("records")
+    .ensureMergeableMap("note")
+    .id.replace("note", "phantom");
+  expect(() => doc.deleteRootContainer(unknownMergeable as ContainerID)).toThrow();
+});
+
 it("hideEmptyRootContainers", () => {
   const doc = new LoroDoc();
   const map = doc.getMap("map");

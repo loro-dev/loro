@@ -223,7 +223,8 @@ fn deleted_root_tombstone_beats_concurrent_write_after_snapshot() {
     base.delete_root_container(loro::ContainerID::new_root(
         "gone",
         loro::ContainerType::Map,
-    ));
+    ))
+    .unwrap();
     base.commit();
 
     let target = LoroDoc::new();
