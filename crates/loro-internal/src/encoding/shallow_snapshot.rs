@@ -535,9 +535,11 @@ fn reuse_shallow_root_state(
         None
     };
 
+    let added_roots = add_missing_empty_roots(state, &shallow_root_kv);
     // The stored shallow-root bytes may predate dead-style redaction
     // (e.g. imported from an older export), so re-run it before reuse.
-    let shallow_root_state_bytes = if redact_export_states(&shallow_root_kv, overlay_kv.as_ref())? {
+    let redacted = redact_export_states(&shallow_root_kv, overlay_kv.as_ref())?;
+    let shallow_root_state_bytes = if added_roots || redacted {
         // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
         // strips it on import); restore it before export.
         shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
@@ -551,6 +553,24 @@ fn reuse_shallow_root_state(
         state_bytes: overlay_kv.map(|kv| kv.export()),
         shallow_root_state_bytes,
     }))
+}
+
+/// Adds an empty entry to `root_kv` for each live root container it lacks, since
+/// replaying ops on import never creates an empty root. Returns whether any was added.
+fn add_missing_empty_roots(state: &mut DocState, root_kv: &KvWrapper) -> bool {
+    let deleted = state.config.deleted_root_containers.lock().clone();
+    let mut added = false;
+    for idx in state.existing_retention_roots() {
+        let cid = state.arena.get_container_id(idx).unwrap();
+        let key = cid.to_bytes();
+        if deleted.contains(&cid) || root_kv.contains_key(&key) {
+            continue;
+        }
+        let mut empty = ContainerWrapper::new(state.create_state(idx), &state.arena);
+        root_kv.insert(&key, empty.encode());
+        added = true;
+    }
+    added
 }
 
 /// Compute the encoded latest-state overlay shipped alongside the shallow root
