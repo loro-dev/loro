@@ -1736,13 +1736,7 @@ mod tests {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let x = node(2, 0, 1, 1, ID::new(1, 0).into());
         let y = node(3, 0, 1, 1, ID::new(1, 0).into());
-        let merge = node(
-            4,
-            0,
-            1,
-            2,
-            Frontiers::from([ID::new(2, 0), ID::new(3, 0)]),
-        );
+        let merge = node(4, 0, 1, 2, Frontiers::from([ID::new(2, 0), ID::new(3, 0)]));
         let dag = TestDag::new(vec![root, x, y, merge], ID::new(4, 0).into());
 
         let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
