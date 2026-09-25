@@ -99,7 +99,11 @@ of truth and `has_container` must stop resolving them when the marker is
 removed (`loro_get_container_for_deleted_mergeable_children`).
 
 Shallow snapshot export still needs the complete alive set for its
-`retain_keys` filter. The alive walk in `DocState::ensure_all_alive_containers`
+`retain_keys` filter. When the export also ships a latest-state overlay, it adds containers
+created after the root: a normal container counts as created after the root when
+the root's start version vector does not include its creation id
+(`!start_vv.includes_id(..)`), never by matching the root frontiers, so
+containers deleted before the root stay out of the root state. The alive walk in `DocState::ensure_all_alive_containers`
 registers root keys, reads snapshot-backed values ephemerally (via
 `try_get_value_ephemeral`, which never caches the decoded value or retains a
 probe-only wrapper), and only inserts a wrapper when an alive container has no

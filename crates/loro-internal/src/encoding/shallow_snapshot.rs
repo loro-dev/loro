@@ -396,7 +396,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                 for cid in state.store.iter_all_container_ids() {
                     if let ContainerID::Normal { peer, counter, .. } = cid {
                         let temp_id = ID::new(peer, counter);
-                        if !start_from.contains(&temp_id) {
+                        if !start_vv.includes_id(temp_id) {
                             alive_c_bytes.insert(cid.to_bytes());
                         }
                     } else {
@@ -487,7 +487,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                 latest_state_overlay_kv(
                     &mut state,
                     ops_num,
-                    &start_from,
+                    &start_vv,
                     &shallow_root_state_kv,
                     &mut alive_c_bytes,
                 )?
@@ -519,7 +519,7 @@ pub(crate) fn export_shallow_snapshot_inner(
             latest_state_overlay_kv(
                 &mut state,
                 ops_num,
-                &start_from,
+                &start_vv,
                 &shallow_root_state_kv,
                 &mut alive_c_bytes,
             )?
@@ -545,7 +545,7 @@ pub(crate) fn export_shallow_snapshot_inner(
 fn latest_state_overlay_kv(
     state: &mut DocState,
     ops_num: usize,
-    start_from: &Frontiers,
+    start_vv: &VersionVector,
     shallow_root_state_kv: &KvWrapper,
     alive_c_bytes: &mut BTreeSet<Vec<u8>>,
 ) -> Result<Option<KvWrapper>, LoroEncodeError> {
@@ -559,7 +559,7 @@ fn latest_state_overlay_kv(
     for cid in state.store.iter_all_container_ids() {
         if let ContainerID::Normal { peer, counter, .. } = cid {
             let temp_id = ID::new(peer, counter);
-            if !start_from.contains(&temp_id) {
+            if !start_vv.includes_id(temp_id) {
                 alive_c_bytes.insert(cid.to_bytes());
             }
         } else {
@@ -716,7 +716,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         for cid in state.store.iter_all_container_ids() {
             if let ContainerID::Normal { peer, counter, .. } = cid {
                 let temp_id = ID::new(peer, counter);
-                if !start_from.contains(&temp_id) {
+                if !start_vv.includes_id(temp_id) {
                     alive_c_bytes.insert(cid.to_bytes());
                 }
             } else {
