@@ -670,6 +670,7 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         match self.current_mode {
             DiffMode::Checkout | DiffMode::Import => oplog.with_history_cache(|h| {
+                h.ensure_shallow_map_seeded(self.container_idx);
                 let checkout_index = &h.get_checkout_index().map;
                 let mut changed = Vec::new();
                 let keys = std::mem::take(&mut self.changed);

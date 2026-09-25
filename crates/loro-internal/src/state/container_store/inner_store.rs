@@ -7,7 +7,8 @@ use crate::{
     version::Frontiers,
 };
 use bytes::Bytes;
-use loro_common::{ContainerID, LoroResult, LoroValue};
+use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
+use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
 use super::ContainerWrapper;
@@ -364,6 +365,39 @@ impl InnerStore {
 
         let key = id.to_bytes();
         self.kv.contains_key(&key)
+    }
+
+    /// Tree and MovableList containers, found without decoding any other
+    /// container. A kv key starts with the container type byte, with the high
+    /// bit set for root ids (see `ContainerID::encode`), so each type is a key range.
+    pub(crate) fn tree_and_movable_list_idxs(&mut self) -> Vec<ContainerIdx> {
+        let mut keys: Vec<Bytes> = Vec::new();
+        for ty in [ContainerType::Tree, ContainerType::MovableList] {
+            for root_bit in [0u8, 0b1000_0000] {
+                let lo = ty.to_u8() | root_bit;
+                keys.extend(
+                    self.kv
+                        .scan_range_entries(&[lo], &[lo + 1])
+                        .into_iter()
+                        .map(|(k, _)| k),
+                );
+            }
+        }
+        let mut out: FxHashSet<ContainerIdx> = FxHashSet::default();
+        self.arena.with_guards(|guards| {
+            for k in keys {
+                out.insert(guards.register_container(&ContainerID::from_bytes(&k)));
+            }
+        });
+        // Loaded entries can be newer than kv or absent from it.
+        for (slot, entry) in self.store.iter().enumerate() {
+            if let Some(c) = entry {
+                if matches!(c.kind(), ContainerType::Tree | ContainerType::MovableList) {
+                    out.insert(ContainerIdx::from_index_and_type(slot as u32, c.kind()));
+                }
+            }
+        }
+        out.into_iter().collect()
     }
 
     pub(crate) fn iter_all_containers_mut(
