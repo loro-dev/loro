@@ -14,7 +14,7 @@ use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
 };
 use rle::HasLength;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     change::{Change, Lamport},
@@ -44,6 +44,10 @@ pub(crate) struct ContainerHistoryCache {
     shallow_root_state: Option<Arc<GcStore>>,
     for_checkout: Option<ForCheckout>,
     for_importing: Option<FxHashMap<ContainerIdx, HistoryCacheForImporting>>,
+    /// Maps whose shallow-root entries are already in the checkout index.
+    /// Map entries are seeded per container on first use; see
+    /// [`Self::ensure_shallow_map_seeded`].
+    shallow_maps_seeded: FxHashSet<ContainerIdx>,
 }
 
 #[derive(Debug, Default)]
@@ -74,6 +78,7 @@ impl ContainerHistoryCache {
             for_checkout: Default::default(),
             for_importing: Default::default(),
             shallow_root_state: gc,
+            shallow_maps_seeded: Default::default(),
         }
     }
 
@@ -204,14 +209,20 @@ impl ContainerHistoryCache {
                 "loro_internal::history_cache::init_cache_by_visit_all_change_slow::visit_gc",
             );
             let mut store = state.store.lock();
-            for (idx, c) in store.iter_all_containers_mut() {
+            // Maps are seeded per container on first use, so only movable lists
+            // and trees are loaded here; decoding every container of a large
+            // shallow root dominated the first concurrent map import.
+            for idx in store.tree_and_movable_list_idxs() {
+                let Some(c) = store.get_mut(idx) else {
+                    continue;
+                };
                 match idx.get_type() {
                     ContainerType::Text | ContainerType::List | ContainerType::Unknown(_) => {
                         continue
                     }
                     #[cfg(feature = "counter")]
                     ContainerType::Counter => continue,
-                    ContainerType::Map => {}
+                    ContainerType::Map => continue,
                     ContainerType::MovableList => {}
                     ContainerType::Tree => {}
                 }
@@ -297,15 +308,47 @@ impl ContainerHistoryCache {
 
     pub(crate) fn free(&mut self) {
         self.for_checkout = None;
+        self.shallow_maps_seeded.clear();
     }
 
     pub(crate) fn free_all(&mut self) {
         self.for_checkout = None;
         self.for_importing = None;
+        self.shallow_maps_seeded.clear();
     }
 
     pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {
         self.shallow_root_state = shallow_root_store;
+        self.shallow_maps_seeded.clear();
+    }
+
+    /// Ensure the checkout index exists and holds `idx`'s shallow-root map entries.
+    ///
+    /// Map entries are only read per container (`MapDiffCalculator` asks for its
+    /// own container's changed keys), so each map is seeded the first time a
+    /// diff needs it instead of seeding every map in the shallow root up front.
+    pub(crate) fn ensure_shallow_map_seeded(&mut self, idx: ContainerIdx) {
+        self.ensure_all_caches_exist();
+        if !self.shallow_maps_seeded.insert(idx) {
+            return;
+        }
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return;
+        };
+        let default_ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
+        let mut store = state.store.lock();
+        let Some(c) = store.get_mut(idx) else {
+            return;
+        };
+        if let crate::state::State::MapState(m) = c.get_state_mut(idx, default_ctx) {
+            let cache = self.for_checkout.as_mut().unwrap();
+            for (k, v) in m.iter() {
+                cache.map.record_shallow_root_state_entry(idx, k, v);
+            }
+        }
     }
 
     pub(crate) fn find_text_chunks_in(
