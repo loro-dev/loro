@@ -423,6 +423,53 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     });
   }
 
+  /** Visits elements in physical order from `start` until `visit` returns false. */
+  forEachPhysicalFrom(
+    start: number,
+    visit: (element: T, index: number) => boolean | void,
+  ): void {
+    if (!Number.isSafeInteger(start) || start < 0 || start >= this.allLength) return;
+    const stack: SequenceNode<T>[] = [];
+    let node = this.#root;
+    let base = 0;
+    let current: SequenceNode<T> | undefined;
+    let offset = 0;
+    while (node !== undefined) {
+      const leftCount = allCount(node.left);
+      if (start < base + leftCount) {
+        stack.push(node);
+        node = node.left;
+        continue;
+      }
+      const ownStart = base + leftCount;
+      if (start < ownStart + nodeLength(node)) {
+        current = node;
+        offset = start - ownStart;
+        break;
+      }
+      base = ownStart + nodeLength(node);
+      node = node.right;
+    }
+    let index = start;
+    while (current !== undefined) {
+      for (; offset < nodeLength(current); offset += 1) {
+        if (visit(nodeElement(current, offset), index) === false) return;
+        index += 1;
+      }
+      let next = current.right;
+      if (next === undefined) {
+        current = stack.pop();
+      } else {
+        while (next.left !== undefined) {
+          stack.push(next);
+          next = next.left;
+        }
+        current = next;
+      }
+      offset = 0;
+    }
+  }
+
   findNextIncludedPhysical(
     start: number,
     version: ReadonlyMap<bigint, number>,

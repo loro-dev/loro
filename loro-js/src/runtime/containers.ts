@@ -1722,19 +1722,25 @@ export class LoroText extends LoroContainer {
     return this._sequence.metricOffsetAtVisibleIndex(unicodeIndex, to);
   }
 
+  /**
+   * Matches Rust: an empty text or a position at the end yields an ID-less
+   * cursor (left side when empty, right side at the end); otherwise the cursor
+   * names the scalar that starts at the UTF-16 position. The encoded origin is
+   * Rust's too: the Unicode position, or the UTF-16 length at the end.
+   */
   getCursor(pos: number, side: Side = 0): Cursor | undefined {
     if (!Number.isSafeInteger(pos) || pos < 0) return undefined;
-    if (pos >= this.length) {
-      return new Cursor(
-        this.id,
-        this._sequence.atVisible(this._sequence.visibleLength - 1)?.id,
-        1,
-        this.length,
-      );
-    }
+    const length = this.length;
+    if (length === 0) return new Cursor(this.id, undefined, side === 0 ? -1 : side, 0);
+    if (pos >= length) return new Cursor(this.id, undefined, 1, length);
     const unicodePosition = this.convertPos(pos, "utf16", "unicode");
     if (unicodePosition === undefined) return undefined;
-    return new Cursor(this.id, this._sequence.atVisible(unicodePosition)!.id, side, pos);
+    return new Cursor(
+      this.id,
+      this._sequence.atVisible(unicodePosition)!.id,
+      side,
+      unicodePosition,
+    );
   }
 
   getEditorOf(pos: number): string | undefined {
@@ -1876,6 +1882,64 @@ export class LoroText extends LoroContainer {
       return;
     }
     this._sequence.deleteIdSpan(startId, length, deletedBy);
+  }
+
+  /**
+   * Resolves the elements a delete operation removes. Rust's tracker deletes the
+   * visible elements at `position` in the operation's causal view and uses
+   * `startId` only to name them, so the position wins when the two disagree
+   * (Rust's WASM build can record a `startId` that is off by the UTF-16 length
+   * of astral characters). The recorded IDs are used only when the position
+   * range does not fit the causal view.
+   */
+  _deleteTargets(
+    position: number,
+    length: number,
+    startId: CodecId,
+    causalVersion: CausalVersion,
+  ): SequenceIdRun[] {
+    const recorded = [{ start: startId, length }];
+    const current = this._sequence.isFullyIncluded(causalVersion);
+    if (current && length === 1) {
+      const element = this._sequence.atVisible(position);
+      if (
+        element === undefined ||
+        (element.id.peer === startId.peer && element.id.counter === startId.counter)
+      ) {
+        return recorded;
+      }
+      return [{ start: element.id, length: 1 }];
+    }
+    const runs = current
+      ? this._sequence.visibleIdRuns(position, position + length)
+      : this._sequence.causalView(causalVersion).idRuns(position, position + length);
+    let resolved = 0;
+    for (const run of runs) resolved += run.length;
+    return resolved === length ? runs : recorded;
+  }
+
+  /**
+   * Deletes resolved target runs. Operation counters follow Rust: a forward
+   * delete's k-th counter removes the k-th target, a reversed delete's k-th
+   * counter removes the k-th target from the right.
+   */
+  _deleteTargetRuns(
+    runs: readonly SequenceIdRun[],
+    reversed: boolean,
+    deletedBy: CodecId,
+  ): void {
+    const total = runs.reduce((sum, run) => sum + run.length, 0);
+    let offset = 0;
+    for (const run of runs) {
+      const counter = reversed
+        ? deletedBy.counter + total - offset - run.length
+        : deletedBy.counter + offset;
+      this._deleteIdSpan(run.start, reversed ? -run.length : run.length, {
+        peer: deletedBy.peer,
+        counter,
+      });
+      offset += run.length;
+    }
   }
 
   _applyMark(
@@ -3054,7 +3118,9 @@ function indexedFugueInsertion<T extends SequenceElement>(
     }
 
     if (!scanning) {
-      insertIndex = candidates[childIndex + 1]?.index ?? originRightIndex;
+      insertIndex =
+        candidates[childIndex + 1]?.index ??
+        fugueSubtreeEnd(sequence, candidates[childIndex]!.index, originRightIndex);
     }
   }
 
@@ -3064,6 +3130,39 @@ function indexedFugueInsertion<T extends SequenceElement>(
     originRight,
     indexUpdate: originIndex,
   };
+}
+
+/**
+ * Returns the physical index right after the Fugue subtree rooted at
+ * `rootIndex`, bounded by `limit`. Elements between the last sibling and the
+ * origin-right bound need not descend from that sibling: when the bound is only
+ * the next causally included element, later concurrent elements that belong to
+ * an ancestor's subtree can sit before it. An element is a descendant exactly
+ * when its origin-left lies inside the scanned subtree.
+ */
+function fugueSubtreeEnd<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  rootIndex: number,
+  limit: number,
+): number {
+  let end = rootIndex + 1;
+  if (end >= limit) return limit;
+  let previous = sequence.atPhysicalRaw(rootIndex)!.id;
+  sequence.forEachPhysicalFrom(end, (element, index) => {
+    if (index >= limit) return false;
+    const left = element.originLeft;
+    if (left === undefined) return false;
+    if (left.peer !== previous.peer || left.counter !== previous.counter) {
+      const leftElement = sequence.findByIdRaw(left);
+      const leftIndex =
+        leftElement === undefined ? undefined : sequence.physicalIndexOf(leftElement);
+      if (leftIndex === undefined || leftIndex < rootIndex) return false;
+    }
+    previous = element.id;
+    end = index + 1;
+    return undefined;
+  });
+  return end;
 }
 
 function getFugueOriginIndex<T extends SequenceElement>(

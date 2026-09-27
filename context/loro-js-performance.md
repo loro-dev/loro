@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-22.
+Verified against code 2026-09-28.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -103,7 +103,16 @@ JavaScript constant factor.
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
   future ID run while finding the next causally included element. Ordinary local
   edits keep the smaller unindexed path. MovableList continues to use the scan
-  because moves break the origin-tree physical preorder.
+  because moves break the origin-tree physical preorder. After the last sibling
+  the new element goes after that sibling's subtree (`fugueSubtreeEnd`), not at
+  the origin-right bound: when that bound is only the next causally included
+  element, later concurrent elements of an ancestor's subtree can sit before it.
+  The walk stops at the first element whose origin-left precedes the sibling.
+- An imported Text delete is resolved by its position in the op's causal view,
+  like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
+  `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
+  fallback, because Rust's WASM build can record one that is off by the UTF-16
+  length of astral text. Local deletes skip the lookup.
 - Merging adjacent changes appends only the new operations and key-table entries
   to the retained record. The cached operation length, peer end, frontier set,
   operation indexes, and subscriber update slice are updated incrementally, so

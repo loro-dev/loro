@@ -94,6 +94,9 @@ The following paths are checked against the Rust implementation:
 - JSON update import/export and the postcard Awareness/EphemeralStore protocols.
 - Rust-produced fixtures imported by TypeScript and TypeScript-produced fixtures
   imported by Rust.
+- Randomized multi-peer text edits run side by side with the `loro-crdt` WASM build
+  (`tests/richtext-differential.test.ts`): positions, deletes, concurrency, checkout,
+  snapshots, cursors, events, and `revertTo`.
 
 This is not yet a claim of complete behavioral equivalence with every `loro-crdt`
 edge case. Important current limits are:

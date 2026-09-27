@@ -1951,6 +1951,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (!(container instanceof LoroList || container instanceof LoroText))
       return undefined;
     const publicLength = container.length;
+    if (container instanceof LoroText) return this.#textCursorPos(container, cursor);
     if (id === undefined) {
       return {
         offset: Math.min(cursor._originPositionValue(), publicLength),
@@ -2003,6 +2004,36 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       side: 0,
       update: new Cursor(container.id, undefined, 0, 0),
     };
+  }
+
+  /**
+   * Resolves a Text cursor like Rust's `LoroDoc::query_pos`: a visible target
+   * reports its own UTF-16 offset for every side; a deleted target reports the
+   * UTF-16 length of the text before it, on the left side; an ID-less cursor
+   * sits at the start for the left side and at the end otherwise. A target that
+   * was never deleted but is not visible (a detached document before its
+   * insertion) or is unknown has no position.
+   */
+  #textCursorPos(
+    text: LoroText,
+    cursor: Cursor,
+  ): { update?: Cursor; offset: number; side: Side } | undefined {
+    const id = cursor._idValue();
+    if (id === undefined) {
+      return { offset: cursor.side() === -1 ? 0 : text.length, side: cursor.side() };
+    }
+    const target = text._sequence.findById(id);
+    if (target === undefined) return undefined;
+    if (!target.deleted) {
+      return {
+        offset: text._sequence.visibleMetricOffsetOf(target, "utf16") ?? 0,
+        side: cursor.side(),
+      };
+    }
+    if (!text._sequence.someDeletion(target, () => true)) return undefined;
+    const offset = text._sequence.visibleMetricOffsetOf(target, "utf16") ?? 0;
+    const update = text.getCursor(offset, -1);
+    return update === undefined ? { offset, side: -1 } : { offset, side: -1, update };
   }
 
   _subscribeContainer(
@@ -2086,7 +2117,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (!(container instanceof LoroText || container instanceof LoroList)) {
         return cursor;
       }
-      const position = Math.min(cursor._originPositionValue(), container.length);
+      const origin = cursor._originPositionValue();
+      // A Text cursor with a target records its Unicode position, as in Rust.
+      const position = Math.min(
+        container instanceof LoroText && cursor._idValue() !== undefined
+          ? (container.convertPos(origin, "unicode", "utf16") ?? container.length)
+          : origin,
+        container.length,
+      );
       return container.getCursor(position, cursor.side()) ?? cursor;
     });
   }
@@ -2778,6 +2816,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       pending.lamport,
       causalVersion,
       container,
+      true,
     );
     this.#dirtySnapshotContainers.add(container.id);
     finishEvent?.();
@@ -2818,8 +2857,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (content.type === "text-delete") {
         for (const range of this.#sequenceEventDeletionRanges(
           container,
-          content.startId,
-          Math.abs(Number(content.length)),
+          this.#textDeleteTargets(container, content, causalVersion),
         ).reverse()) {
           state.diff.delete(range.position, range.length);
         }
@@ -2867,11 +2905,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         };
       }
       if (content.type === "list-delete" || content.type === "movable-list-delete") {
-        for (const range of this.#sequenceEventDeletionRanges(
-          container,
-          content.startId,
-          Math.abs(Number(content.length)),
-        ).reverse()) {
+        for (const range of this.#sequenceEventDeletionRanges(container, [
+          { start: content.startId, length: Math.abs(Number(content.length)) },
+        ]).reverse()) {
           state.diff.delete(range.position, range.length);
         }
         return undefined;
@@ -3032,15 +3068,26 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #sequenceEventDeletionRanges(
     container: LoroText | LoroList,
-    startId: CodecId,
-    length: number,
+    runs: readonly SequenceIdRun[],
   ): { position: number; length: number }[] {
     return container._sequence
-      .visibleMetricRangesForIdRuns(
-        [{ start: { peer: startId.peer, counter: startId.counter }, length }],
-        "utf16",
-      )
+      .visibleMetricRangesForIdRuns(runs, "utf16")
       .map(({ start, end }) => ({ position: start, length: end - start }));
+  }
+
+  #textDeleteTargets(
+    text: LoroText,
+    content: Extract<DecodedOperationContent, { type: "text-delete" }>,
+    causalVersion: CausalVersion,
+  ): SequenceIdRun[] {
+    const length = Number(content.length);
+    // A reversed (backspace) span stores its rightmost position.
+    return text._deleteTargets(
+      length < 0 ? content.position + length + 1 : content.position,
+      Math.abs(length),
+      content.startId,
+      causalVersion,
+    );
   }
 
   #recordedEventDiffs(
@@ -3132,12 +3179,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #deleteTextRuns(container: LoroText, position: number, length: number): void {
-    for (const run of container._sequence.visibleIdRuns(position, position + length)) {
+    // Like Rust, delete the last run first so every recorded position is still
+    // the run's position in the unchanged prefix.
+    const runs = container._sequence.visibleIdRuns(position, position + length);
+    let end = position + length;
+    for (let index = runs.length - 1; index >= 0; index -= 1) {
+      const run = runs[index]!;
+      end -= run.length;
       this.#appendAndApply(
         container,
         {
           type: "text-delete",
-          position,
+          position: end,
           length: BigInt(run.length),
           startId: run.start,
         },
@@ -3288,6 +3341,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     changeLamport: number,
     causalVersion: CausalVersion,
     knownContainer?: LoroContainer,
+    local = false,
   ): void {
     const container = knownContainer ?? this.#getOrCreateContainer(operation.container);
     const operationId = { peer: changeId.peer, counter: operation.counter };
@@ -3354,13 +3408,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         );
         return;
       }
-      case "text-delete":
-        (container as LoroText)._deleteIdSpan(
-          content.startId,
-          Number(content.length),
-          operationId,
-        );
+      case "text-delete": {
+        const length = Number(content.length);
+        const text = container as LoroText;
+        const runs = local
+          ? [{ start: content.startId, length: Math.abs(length) }]
+          : this.#textDeleteTargets(text, content, causalVersion);
+        text._deleteTargetRuns(runs, length < 0, operationId);
         return;
+      }
       case "text-mark":
         {
           const value = this.#decodeRuntimeValue(
@@ -3866,7 +3922,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     recording?: EventRecording,
     movableMoveMode: MovableMoveTransitionMode = "anchors",
   ): void {
-    const sequences = new Map<LoroList | LoroText, Set<SequenceElement>>();
+    // Keyed by ID: packed text spans hand out a fresh element view per lookup,
+    // so an element deleted by two concurrent ops must not be collected twice.
+    const sequences = new Map<LoroList | LoroText, SequenceElementSet>();
     const bulkSequenceRemovals = new Map<LoroList | LoroText, SequenceIdRun[]>();
     const bulkSequenceRestorations = new Map<LoroList | LoroText, SequenceIdRun[]>();
     const textAttributeRuns = new Map<LoroText, Map<string, SequenceIdRun[]>>();
@@ -3875,10 +3933,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const mapKeys = new Map<LoroMap, Set<string>>();
     const treeSubjects = new Map<LoroTree, Map<string, CodecId>>();
     const counters = new Map<LoroCounter, number>();
-    const sequenceElements = (container: LoroList | LoroText): Set<SequenceElement> => {
+    const sequenceElements = (container: LoroList | LoroText): SequenceElementSet => {
       let elements = sequences.get(container);
       if (elements === undefined) {
-        elements = new Set();
+        elements = new SequenceElementSet();
         sequences.set(container, elements);
       }
       return elements;
@@ -6533,6 +6591,26 @@ function appendToTrailingListInsert(
   operation: DecodedOperation,
 ): boolean {
   const content = operation.content;
+  if (content.type === "text-insert") {
+    // Rust merges a text insert that continues the previous one in the change.
+    const previousIndex = operations.length - 1;
+    const previous = operations[previousIndex];
+    if (
+      previous === undefined ||
+      previous.content.type !== "text-insert" ||
+      !containerIdsEqual(previous.container, operation.container) ||
+      previous.counter + previous.length !== operation.counter ||
+      previous.content.position + previous.length !== content.position
+    ) {
+      return false;
+    }
+    operations[previousIndex] = {
+      ...previous,
+      length: previous.length + operation.length,
+      content: { ...previous.content, value: previous.content.value + content.value },
+    };
+    return true;
+  }
   if (content.type !== "list-insert" && content.type !== "movable-list-insert") {
     return false;
   }
@@ -8126,6 +8204,20 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     );
   }
   return false;
+}
+
+/** A set of sequence elements keyed by ID rather than by element identity. */
+class SequenceElementSet implements Iterable<SequenceElement> {
+  readonly #elements = new Map<string, SequenceElement>();
+
+  add(element: SequenceElement): void {
+    const key = idKey(element.id);
+    if (!this.#elements.has(key)) this.#elements.set(key, element);
+  }
+
+  [Symbol.iterator](): Iterator<SequenceElement> {
+    return this.#elements.values();
+  }
 }
 
 function subtractSequenceIdRuns(
