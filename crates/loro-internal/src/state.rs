@@ -10,7 +10,7 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
+use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID, ID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -28,7 +28,7 @@ use crate::{
     id::PeerID,
     lock::{LoroLockGroup, LoroMutex},
     op::{Op, RawOp},
-    version::Frontiers,
+    version::{Frontiers, VersionVector},
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };
 
@@ -1777,6 +1777,133 @@ impl DocState {
         }
 
         Ok(ans)
+    }
+
+    /// Keys of stored normal containers, created at or before `root_vv`, that the retention
+    /// walk ([`AliveWalk::Retention`] from every stored root) may not reach. A fast filter: an
+    /// empty result means filtering by the walk would remove nothing; otherwise the full walk
+    /// must decide, and only keys in both sets may be removed.
+    ///
+    /// Every stored container's parent is read from its encoded header, and only containers
+    /// that are the header parent of another stored container are decoded to list their
+    /// children; leaf containers (a big text, childless maps, tree metas) are never decoded.
+    /// A container counts as reached only through its header parent, so a header that lies
+    /// about the parent makes the container a candidate, and the full walk then rejects the
+    /// inconsistency instead of dropping the container. A child referenced by a container
+    /// other than its header parent is rejected here directly.
+    ///
+    /// Two kinds of entries are never candidates:
+    /// - Containers created after `root_vv`. A root state written with an overlay keeps an
+    ///   empty entry for them, which nothing at the root references yet.
+    /// - Stored children of a reached container of an unknown (newer) type. Its value decodes
+    ///   to `Null`, so neither this filter nor the full walk can list its children; they are
+    ///   kept. An unknown type claimed only by a header parent that is not stored, or an
+    ///   unreferenced unknown entry, gets no such protection.
+    pub(crate) fn unreached_stored_containers(
+        &mut self,
+        root_vv: &VersionVector,
+    ) -> LoroResult<Vec<bytes::Bytes>> {
+        let entries = self.store.get_kv_clone().scan_all_entries();
+        // Stored normal containers: id -> (key, header parent).
+        let mut stored: FxHashMap<ContainerID, (bytes::Bytes, Option<ContainerID>)> =
+            FxHashMap::default();
+        let mut stored_roots = Vec::new();
+        let mut has_stored_children: FxHashSet<ContainerID> = FxHashSet::default();
+        // Header children of unknown-type parents, whose references cannot be decoded.
+        let mut unknown_children: FxHashMap<ContainerID, Vec<ContainerID>> = FxHashMap::default();
+        for (key, value) in entries {
+            let id = ContainerID::try_from_bytes(&key)?;
+            let (peer, counter) = match &id {
+                ContainerID::Root { .. } => {
+                    stored_roots.push(id);
+                    continue;
+                }
+                ContainerID::Normal { peer, counter, .. } => (*peer, *counter),
+            };
+            if !root_vv.includes_id(ID::new(peer, counter)) {
+                continue;
+            }
+            let parent = ContainerWrapper::try_decode_parent(&value)?;
+            if let Some(parent) = &parent {
+                if parent.is_unknown() {
+                    unknown_children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+                has_stored_children.insert(parent.clone());
+            }
+            stored.insert(id, (key, parent));
+        }
+
+        // Roots are always retained; only those parenting a stored container need a visit.
+        let mut to_visit: Vec<ContainerID> = stored_roots
+            .into_iter()
+            .filter(|id| has_stored_children.contains(id))
+            .collect();
+        let mut retained: FxHashSet<ContainerID> = FxHashSet::default();
+        while let Some(parent_id) = to_visit.pop() {
+            let children = if parent_id.is_unknown() {
+                unknown_children.remove(&parent_id).unwrap_or_default()
+            } else {
+                self.retained_child_refs(&parent_id)?
+            };
+            for child_id in children {
+                let Some((_, header_parent)) = stored.get(&child_id) else {
+                    // A root (always retained), a container created after the root, or an
+                    // unstored, hence empty, child.
+                    continue;
+                };
+                if header_parent.as_ref() != Some(&parent_id) {
+                    return Err(LoroError::DecodeError(
+                        format!(
+                            "container {child_id:?} is referenced by {parent_id:?}, but its snapshot state encodes parent {header_parent:?}"
+                        )
+                        .into_boxed_str(),
+                    ));
+                }
+                if has_stored_children.contains(&child_id) && !retained.contains(&child_id) {
+                    to_visit.push(child_id.clone());
+                }
+                retained.insert(child_id);
+            }
+        }
+
+        Ok(stored
+            .into_iter()
+            .filter(|(id, _)| !retained.contains(id))
+            .map(|(_, (key, _))| key)
+            .collect())
+    }
+
+    /// Normal-container children the retention walk follows from `id`: every node meta of a
+    /// tree (deleted nodes included, see [`AliveWalk::Retention`]) and the container values of
+    /// a map or list. Mergeable children are root containers, which are always retained, so
+    /// their markers are not resolved. Unlike `get_alive_children_of`, children are not
+    /// registered in the arena.
+    fn retained_child_refs(&mut self, id: &ContainerID) -> LoroResult<Vec<ContainerID>> {
+        let idx = self.arena.register_container(id);
+        if idx.get_type() == ContainerType::Tree {
+            return Ok(self
+                .store
+                .try_get_parent_and_tree_meta_ids_ephemeral(idx)?
+                .map(|(_, ids)| ids)
+                .unwrap_or_default());
+        }
+
+        let Some((_, value)) = self.store.try_get_parent_and_value_ephemeral(idx)? else {
+            return Ok(Vec::new());
+        };
+        let containers = |values: &mut dyn Iterator<Item = &LoroValue>| {
+            values
+                .filter_map(|v| v.as_container().cloned())
+                .collect::<Vec<_>>()
+        };
+        Ok(match &value {
+            LoroValue::Map(map) => containers(&mut map.values()),
+            LoroValue::List(list) => containers(&mut list.iter()),
+            _ => Vec::new(),
+        })
     }
 
     fn validate_alive_parent(

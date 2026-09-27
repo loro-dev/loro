@@ -131,8 +131,9 @@ JavaScript constant factor.
   shallow root) has no tombstones, deletion index, or style, value, and move
   history for the snapshot's operations. `LoroDoc.#snapshotSequences` records
   each such container with its snapshot version. Before `checkout`,
-  `checkoutToLatest`, or `diff` transitions,
-  `#prepareSnapshotTransition` looks only at the containers the transition
+  `checkoutToLatest`, `diff`, or a detached snapshot export
+  (`#encodeLatestState`) transitions, `#prepareSnapshotTransition` looks only
+  at the containers the transition
   touches: it hydrates lazily encoded ones (an untouched lazy container still
   holds its latest state, which is its state at the current version) and, when
   the transition crosses a snapshot operation, rebuilds that one container from

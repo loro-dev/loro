@@ -171,7 +171,7 @@ impl LoroDoc {
         }
 
         let snapshot = self
-            .with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner(self))
+            .with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner_for_fork(self))
             .expect("forking a valid document should encode a snapshot");
         let doc = Self::new();
         doc.with_barrier(|| {
