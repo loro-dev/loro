@@ -35,6 +35,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    // The differential suite needs a WASM build of the Rust implementation; run it
+    // with `pnpm test:differential` after `pnpm build:reference`.
+    include:
+      process.env["LORO_JS_DIFFERENTIAL"] === "1"
+        ? ["tests/differential/**/*.test.ts"]
+        : ["tests/**/*.test.ts"],
+    exclude:
+      process.env["LORO_JS_DIFFERENTIAL"] === "1"
+        ? ["**/node_modules/**"]
+        : ["**/node_modules/**", "tests/differential/**"],
   },
 });

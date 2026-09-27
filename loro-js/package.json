@@ -50,6 +50,7 @@
     "bench:subscribers": "pnpm build && node --expose-gc benchmarks/container-subscriber.mjs",
     "bench:text-buffer": "pnpm build && node --expose-gc benchmarks/text-buffer.mjs",
     "build": "vp pack",
+    "build:reference": "node scripts/build-reference.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "clean": "rm -rf dist",
     "format": "vp fmt",
@@ -57,6 +58,7 @@
     "fixtures:rewrite": "pnpm build && node scripts/rewrite-rust-fixture.mjs",
     "lint": "vp lint",
     "test": "vp test run",
+    "test:differential": "LORO_JS_DIFFERENTIAL=1 vp test run",
     "typecheck": "tsgo -p tsconfig.json --noEmit"
   },
   "devDependencies": {
