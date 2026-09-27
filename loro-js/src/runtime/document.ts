@@ -4645,7 +4645,38 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           winnerContent.type === "tree-create" || winnerContent.type === "tree-move"
             ? winner
             : latestIncludedTreePlacement(operations, target, winner.writer);
-        if (placement === undefined) continue;
+        if (placement === undefined) {
+          // A retained delete whose placement was trimmed from a shallow history.
+          const rootNode = this.#shallowRootTreeNode(tree, nodeKey);
+          if (rootNode === undefined || winnerContent.type !== "tree-delete") continue;
+          const deleteId = {
+            peer: winner.record.change.id.peer,
+            counter: winner.operation.counter,
+          };
+          if (existing === undefined) {
+            tree._setRecord({
+              ...rootNode,
+              position: rootNode.position.slice(),
+              deleted: true,
+              writer: winner.writer,
+              lastMoveId: deleteId,
+              data: this.#getOrCreateContainer(
+                { kind: "normal", ...rootNode.id, containerType: CodecContainerType.Map },
+                tree,
+              ) as LoroMap,
+            });
+          } else {
+            tree._updateRecord(
+              existing,
+              rootNode.parent,
+              rootNode.position.slice(),
+              rootNode.writer,
+              rootNode.lastMoveId,
+            );
+            tree._deleteRecord(existing, winner.writer, deleteId);
+          }
+          continue;
+        }
         const placementContent = placement.operation.content;
         if (
           placementContent.type !== "tree-create" &&

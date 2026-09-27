@@ -159,6 +159,40 @@ describe("shallow checkout of a value rewritten after the root", () => {
     }
   });
 
+  test("keeps a node deleted by a retained delete whose placement was trimmed", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const first = tree.createNode().id;
+    const second = tree.createNode().id;
+    doc.commit();
+    const root = doc.frontiers();
+    tree.delete(first);
+    doc.commit();
+    const deleted = doc.frontiers();
+
+    const shallow = importBytes(
+      doc.export({ mode: "shallow-snapshot", frontiers: root }),
+    );
+    for (let round = 0; round < 2; round += 1) {
+      shallow.checkout(root);
+      expect(
+        shallow
+          .getTree("tree")
+          .roots()
+          .map((node) => node.id),
+      ).toEqual([first, second]);
+      shallow.checkout(deleted);
+      expect(
+        shallow
+          .getTree("tree")
+          .roots()
+          .map((node) => node.id),
+      ).toEqual([second]);
+      expect(shallow.getTree("tree").isNodeDeleted(first)).toBe(true);
+    }
+  });
+
   for (const pad of PADS) {
     for (const revert of [false, true]) {
       test(`matches full history (pad=${pad}, revert=${revert})`, () => {

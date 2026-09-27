@@ -164,11 +164,14 @@ JavaScript constant factor.
   placements (the root commit's other ops). When a Map or Tree retreat finds no
   retained winner at or below the target, it uses the shallow root state entry
   (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
-  or node. The root store entry for a container comes from
+  or node; a retained Tree delete whose placement was trimmed takes the root
+  placement and stays deleted. The root store entry for a container comes from
   `#shallowRootEntryIndex`, the key index the import already builds to merge
   the root and latest states, and each container's key/node index is built on
-  first lookup, so a retreat touches only the maps and trees it changes, as in
-  Rust's per-map checkout index seeding (loro-dev/loro#1120, #1124).
+  first lookup. A retreat therefore touches only the maps and trees it changes,
+  as in Rust's per-map checkout index seeding (loro-dev/loro#1120, #1124): the
+  first such retreat in a shallow doc with 32,768 child Maps takes about 0.45
+  ms, flat from 1,024 Maps, and later ones about 0.017 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
