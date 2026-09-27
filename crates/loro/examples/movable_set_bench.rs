@@ -9,7 +9,8 @@
 //! `cold` builds a fresh document per sample (push 20k items + commit) and
 //! times only the first pass of 20k `set` calls plus the commit; the document
 //! is dropped after the timer stops. `seq` times 20 consecutive passes of 100k
-//! `set` calls on one document and skips the first 2. Prints
+//! `set` calls on one document and skips the first 2 (`BENCH_ROUNDS=<n>`
+//! overrides the pass count, e.g. to profile). Prints
 //! `scenario,median_ms,samples...`.
 
 use loro::LoroDoc;
@@ -52,8 +53,11 @@ fn cold() {
 
 fn seq() {
     const N: usize = 100_000;
-    const ROUNDS: usize = 20;
     const SKIP: usize = 2;
+    let rounds: usize = std::env::var("BENCH_ROUNDS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(20);
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     let list = doc.get_movable_list("l");
@@ -61,8 +65,8 @@ fn seq() {
         list.push(0).unwrap();
     }
     doc.commit();
-    let mut samples = Vec::with_capacity(ROUNDS);
-    for round in 0..ROUNDS {
+    let mut samples = Vec::with_capacity(rounds);
+    for round in 0..rounds {
         let start = Instant::now();
         for i in 0..N {
             list.set(i, round as i64 + 1).unwrap();
