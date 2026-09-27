@@ -26,6 +26,9 @@ over graceful degradation.
   before changing mergeable containers.
 - `src/handler.rs`: typed container handlers, local operation creation, and
   `MapHandler::ensure_mergeable_*`.
+  `src/handler/movable_list_apply_delta.rs` applies movable-list diffs for
+  `apply_diff` and undo:
+  [../../context/movable-list-apply-diff.md](../../context/movable-list-apply-diff.md).
 - `src/diff_calc/`: diff calculation when moving between versions.
 - `docs/diff_calc.md`: design notes for diff calculation.
 - `docs/critical-version-spec.md`: specification and proof skeleton for
