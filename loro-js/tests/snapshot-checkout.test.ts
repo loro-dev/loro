@@ -212,6 +212,21 @@ describe("checkout after a Rust rich-text snapshot import", () => {
     expect(doc.getText("after").toDelta()).toEqual(latest.after);
   });
 
+  test("exports the latest state from every detached checkout", () => {
+    const { bytes, versions } = styledText();
+    const latest = versions.at(-1)!;
+    const doc = new LoroDoc();
+    doc.import(bytes);
+    for (const version of [...versions].reverse()) {
+      doc.checkout(version.frontiers);
+      const again = new LoroDoc();
+      again.import(doc.export({ mode: "snapshot" }));
+      expect(again.getText("both").toDelta()).toEqual(latest.both);
+      expect(again.getText("after").toDelta()).toEqual(latest.after);
+      expect(doc.getText("both").toDelta()).toEqual(version.both);
+    }
+  });
+
   test("keeps the snapshot state through a shallow export", () => {
     const { bytes, versions } = styledText();
     const latest = versions.at(-1)!;
