@@ -3,9 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ContainerType,
+  EncodeMode,
   decodeFastSnapshot,
   decodePostcardVersionVector,
   decodeSstable,
+  encodeChangeBlock,
+  encodeDocument,
+  encodeFastUpdatesBody,
   encodeFastSnapshot,
   encodePostcardVersionVector,
   encodeSstable,
@@ -843,6 +848,102 @@ describe("loro-wasm-compatible runtime", () => {
     const fromLegacy = new LoroDoc();
     fromLegacy.importJsonUpdates(legacy);
     expect(withoutBinary(fromLegacy)).toEqual(withoutBinary(fromBinary));
+  });
+
+  test("writes counter, binary, and mergeable-marker JSON values like Rust", () => {
+    // Exported by loro-crdt from the same edits (tests/fixtures/rust/json-values.json).
+    const rust = JSON.parse(
+      readFileSync(new URL("./fixtures/rust/json-values.json", import.meta.url), "utf8"),
+    );
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getCounter("c").increment(2.5);
+    doc.getMap("m").set("b", Uint8Array.of(0, 255));
+    doc.getMap("m").ensureMergeableText("s").insert(0, "hello");
+    doc.commit();
+    const exported = doc.exportJsonUpdates();
+    expect(JSON.parse(JSON.stringify(exported))).toEqual(rust);
+    const ops = exported.changes[0]!.ops;
+    expect(ops[0]!.content).toEqual({
+      type: "counter",
+      value_type: "f64",
+      value: 2.5,
+      prop: 0,
+    });
+    expect(Array.isArray((ops[1]!.content as { value: unknown }).value)).toBe(true);
+
+    // The JSON schema has no binary type: Rust imports byte arrays, including
+    // mergeable markers, as number lists. loro.js reads them the same way.
+    const imported = new LoroDoc();
+    imported.importJsonUpdates(rust);
+    expect(imported.toJSON()).toEqual({
+      c: 2.5,
+      m: { b: [0, 255], s: [0, 76, 77, 1, 2, 220, 22, 216] },
+    });
+  });
+
+  test("round-trips i64 counter values through JSON like Rust", () => {
+    const counterJson = (value: string): string =>
+      `{"schema_version":1,"start_version":{},"peers":["1"],"changes":[{"id":"0@0","timestamp":0,"deps":[],"lamport":0,"msg":null,"ops":[{"container":"cid:root-c:Counter","counter":0,"content":{"type":"counter","value_type":"i64","value":${value},"prop":0}}]}]}`;
+    // Rust's counter is an f64: it reads an i64 tag with `c as f64`.
+    for (const [text, expected] of [
+      ["9007199254740992", 2 ** 53],
+      ["9223372036854775807", 2 ** 63],
+      ["-9223372036854775808", -(2 ** 63)],
+      ["3", 3],
+    ] as const) {
+      const doc = new LoroDoc();
+      doc.importJsonUpdates(counterJson(text));
+      expect(doc.toJSON()).toEqual({ c: expected });
+      const again = new LoroDoc();
+      again.importJsonUpdates(JSON.stringify(doc.exportJsonUpdates()));
+      expect(again.toJSON()).toEqual({ c: expected });
+    }
+
+    // A binary update may carry an i64 counter value at either i64 endpoint.
+    for (const value of [9007199254740992n, 2n ** 63n - 1n, -(2n ** 63n)]) {
+      const block = encodeChangeBlock({
+        peers: [1n],
+        keys: [],
+        containers: [],
+        positions: [],
+        changes: [
+          {
+            id: { peer: 1n, counter: 0 },
+            timestamp: 0n,
+            dependencies: [],
+            lamport: 0,
+            message: undefined,
+            operations: [
+              {
+                container: {
+                  kind: "root",
+                  name: "c",
+                  containerType: ContainerType.Counter,
+                },
+                counter: 0,
+                length: 1,
+                content: { type: "future", property: 0, value: { type: "i64", value } },
+              },
+            ],
+          },
+        ],
+      });
+      const doc = new LoroDoc();
+      doc.import(encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody([block])));
+      const json = doc.exportJsonUpdates();
+      expect(json.changes[0]!.ops[0]!.content).toEqual({
+        type: "counter",
+        value_type: "f64",
+        value: Number(value),
+        prop: 0,
+      });
+      for (const input of [json, JSON.stringify(json)]) {
+        const again = new LoroDoc();
+        again.importJsonUpdates(input);
+        expect(again.toJSON()).toEqual(doc.toJSON());
+      }
+    }
   });
 
   test("redacts JSON update content while preserving child-container structure", () => {
