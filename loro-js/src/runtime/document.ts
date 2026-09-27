@@ -6510,9 +6510,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     snapshotVersion: VersionVector | undefined,
   ): void {
     if (store.kind !== "sstable") return;
-    for (const { id } of store.containers) {
-      this.#getOrCreateContainer(id, undefined, false);
+    // The root store keys are formatted here anyway; keep them for the shallow
+    // root fallbacks (#shallowRootEntryIndex).
+    const rootEntries =
+      store === this.#shallowRootStore && this.#shallowRootEntries === undefined
+        ? new Map<string, StateSnapshotContainerEntry>()
+        : undefined;
+    for (const entry of store.containers) {
+      rootEntries?.set(this.#getOrCreateContainer(entry.id, undefined, false).id, entry);
     }
+    if (rootEntries !== undefined) this.#shallowRootEntries = rootEntries;
     for (const { id, wrapper } of store.containers) {
       const container = this.#getOrCreateContainer(id, undefined, false);
       const parent =

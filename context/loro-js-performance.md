@@ -183,12 +183,14 @@ JavaScript constant factor.
   (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
   or node; a retained Tree delete whose placement was trimmed takes the root
   placement and stays deleted. The root store entry for a container comes from
-  `#shallowRootEntryIndex`, the key index the import already builds to merge
-  the root and latest states, and each container's key/node index is built on
-  first lookup. A retreat therefore touches only the maps and trees it changes,
-  as in Rust's per-map checkout index seeding (loro-dev/loro#1120, #1124): the
-  first such retreat in a shallow doc with 32,768 child Maps takes about 0.45
-  ms, flat from 1,024 Maps, and later ones about 0.017 ms.
+  `#shallowRootEntryIndex`: the key index the import builds to merge the root
+  and latest states, or while hydrating the root store for a replay (Rust omits
+  the latest state for a short retained tail). Each container's key/node index
+  is built on first lookup. A retreat therefore touches only the maps and trees
+  it changes, as in Rust's per-map checkout index seeding (loro-dev/loro#1120,
+  #1124): the first such retreat in a shallow doc with 32,768 child Maps takes
+  under 1 ms for both loro.js- and Rust-written snapshots, flat from 1,024
+  Maps, and later ones about 0.02–0.03 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
