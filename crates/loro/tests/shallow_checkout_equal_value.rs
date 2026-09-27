@@ -307,3 +307,66 @@ fn checkout_reports_root_time_winner_of_equal_value() {
         }
     }
 }
+
+/// Refreshing the winner of an equal value is a state-only update: checkout,
+/// `diff` and import must not report it as a change.
+#[test]
+fn equal_value_winner_change_emits_no_events() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let map = doc.get_map("map");
+    let list = doc.get_movable_list("mlist");
+    map.insert("x", "same").unwrap();
+    map.insert("y", "old").unwrap();
+    list.push("same").unwrap();
+    doc.commit();
+    let a = doc.oplog_frontiers();
+    let a_vv = doc.oplog_vv();
+    let base = doc.export(ExportMode::Snapshot).unwrap();
+    map.insert("x", "later").unwrap();
+    list.set(0, "later").unwrap();
+    doc.commit();
+    map.insert("x", "same").unwrap();
+    map.insert("y", "new").unwrap();
+    list.set(0, "same").unwrap();
+    doc.commit();
+    let c = doc.oplog_frontiers();
+
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let _sub = doc.subscribe_root(std::sync::Arc::new(move |e| {
+        for ev in e.events {
+            sink.lock().unwrap().push(format!("{:?}", ev.diff));
+        }
+    }));
+    let changed_only = |events: &[String]| {
+        assert!(events.iter().all(|e| !e.contains("same")), "{events:?}");
+        assert!(events.iter().any(|e| e.contains("new") || e.contains("old")));
+    };
+    doc.checkout(&a).unwrap();
+    doc.checkout(&c).unwrap();
+    changed_only(&events.lock().unwrap());
+    let diff = format!("{:?}", doc.diff(&a, &c).unwrap());
+    assert!(!diff.contains("same") && diff.contains("new"), "{diff}");
+
+    let receiver = import(&base);
+    receiver.set_peer_id(2).unwrap();
+    receiver.get_map("map").insert("unrelated", 1).unwrap();
+    receiver.commit();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = received.clone();
+    let _sub = receiver.subscribe_root(std::sync::Arc::new(move |e| {
+        for ev in e.events {
+            sink.lock().unwrap().push(format!("{:?}", ev.diff));
+        }
+    }));
+    receiver
+        .import(&doc.export(ExportMode::updates(&a_vv)).unwrap())
+        .unwrap();
+    changed_only(&received.lock().unwrap());
+    assert_eq!(receiver.get_map("map").get_last_editor("x"), Some(1));
+    assert_eq!(
+        receiver.get_map("map").get("x").unwrap().into_value().unwrap(),
+        LoroValue::from("same")
+    );
+}
