@@ -2569,13 +2569,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (parent !== undefined && !tree.has(parent)) {
       throw new RangeError(`tree parent ${parent} does not exist`);
     }
-    const position = tree._positionFor(parentId, index);
+    const { position, rearranged } = tree._positionFor(parentId, index);
     this.#appendAndApply(
       tree,
       { type: "tree-create", subject, parent: parentId, position },
       1,
     );
+    this.#moveRearrangedTreeNodes(tree, parentId, rearranged);
     return new LoroTreeNode(tree, subject);
+  }
+
+  /** Moves the siblings that `_positionFor` gave new positions, like Rust. */
+  #moveRearrangedTreeNodes(
+    tree: LoroTree,
+    parent: CodecId | undefined,
+    rearranged: readonly { id: CodecId; position: Uint8Array }[],
+  ): void {
+    for (const { id, position } of rearranged) {
+      this.#appendAndApply(tree, { type: "tree-move", subject: id, parent, position }, 1);
+    }
   }
 
   _treeMove(tree: LoroTree, target: TreeID, parent?: TreeID, index?: number): void {
@@ -2592,12 +2604,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
       ancestor = tree._nodes.get(formatTreeId(ancestor))?.parent;
     }
-    const position = tree._positionFor(parentId, index, subject);
+    // Rust's mov_with_txn: moving a node to where it already is records nothing.
+    const record = tree._nodes.get(target)!;
+    if (!record.deleted && sameOptionalCodecId(record.parent, parentId)) {
+      const current = tree._indexOf(record);
+      const siblings = tree._childrenOf(parentId).length;
+      if (current === (index ?? siblings - 1)) return;
+    }
+    const { position, rearranged } = tree._positionFor(parentId, index, subject);
     this.#appendAndApply(
       tree,
       { type: "tree-move", subject, parent: parentId, position },
       1,
     );
+    this.#moveRearrangedTreeNodes(tree, parentId, rearranged);
   }
 
   _treeDelete(tree: LoroTree, target: TreeID): void {
@@ -8308,4 +8328,13 @@ function treeNodeAtPath(
   if (part.includes("@")) return tree.getNodeByID(part as TreeID);
   const index = parseOptionalPathIndex(part);
   return index === undefined ? undefined : tree._nodeAt(undefined, index);
+}
+
+function sameOptionalCodecId(
+  left: CodecId | undefined,
+  right: CodecId | undefined,
+): boolean {
+  return left === undefined || right === undefined
+    ? left === right
+    : idsEqual(left, right);
 }
