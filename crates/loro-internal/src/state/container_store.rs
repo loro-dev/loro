@@ -131,6 +131,14 @@ impl ContainerStore {
             .try_get_parent_and_value_ephemeral(idx, ctx!(self))
     }
 
+    pub(crate) fn try_get_parent_and_tree_meta_ids_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<Option<(Option<ContainerID>, Vec<ContainerID>)>> {
+        self.store
+            .try_get_parent_and_tree_meta_ids_ephemeral(idx, ctx!(self))
+    }
+
     pub(crate) fn get_parent_ephemeral(
         &mut self,
         idx: ContainerIdx,

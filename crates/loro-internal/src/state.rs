@@ -182,6 +182,24 @@ struct AliveContainersCache {
     indices: Arc<FxHashSet<ContainerIdx>>,
 }
 
+/// Which containers an alive-container walk follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AliveWalk {
+    /// Containers reachable through the current value (`get_deep_value` view).
+    Visible,
+    /// `Visible` plus the meta maps of deleted tree nodes and everything they reach.
+    ///
+    /// Shallow/state-only export filters the root state with this set. A tree node deleted
+    /// before the root can still be revived by a retained op: a node that is only dead because
+    /// an ancestor was deleted can be moved out locally, and a peer's `Move` op revives even a
+    /// directly deleted node (the local handler refuses that, and undo/`revert_to` allocate a
+    /// new `TreeID`, but the tree CRDT applies such an op). The revived node keeps its old meta map,
+    /// so that map must stay in the root state for the latest state and every checkout in the
+    /// retained range. Map/list children deleted before the root cannot be re-attached (a
+    /// re-insert creates a new container id) and are still dropped.
+    Retention,
+}
+
 const ALIVE_CONTAINERS_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 fn estimated_alive_containers_cache_bytes(
@@ -696,6 +714,7 @@ impl DocState {
         // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
         // we should process each level alternately.
 
+        self.register_meta_parents_of_created_tree_nodes(&diffs);
         // We need to ensure diff is processed in order
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
@@ -854,6 +873,32 @@ impl DocState {
             self.record_diff(diff)
         }
         Ok(())
+    }
+
+    /// Registers the tree as the parent of the meta map of every node a tree diff in this batch
+    /// (re)creates, before the batch is sorted by depth.
+    ///
+    /// Normally the node's `Create` op or the snapshot state registered it already. A node
+    /// deleted before a shallow root and revived by a retained op has neither when the root state
+    /// lacks its meta (blobs from exporters before loro-dev/loro#1119). Without a parent the meta
+    /// has no depth: `ensure_container` panicked with "Parent is not registered", and the meta's
+    /// own diff in the same batch was skipped as a dangling container.
+    fn register_meta_parents_of_created_tree_nodes(&mut self, diffs: &[InternalContainerDiff]) {
+        for diff in diffs {
+            let crate::event::DiffVariant::Internal(InternalDiff::Tree(delta)) = &diff.diff else {
+                continue;
+            };
+            for item in delta.diff.iter() {
+                if matches!(item.action, crate::delta::TreeInternalDiff::Create { .. }) {
+                    let meta_idx = self
+                        .arena
+                        .register_container(&item.target.associated_meta_container());
+                    if self.arena.get_registered_parent(meta_idx).is_none() {
+                        self.arena.set_parent(meta_idx, Some(diff.idx));
+                    }
+                }
+            }
+        }
     }
 
     /// Create store entries for every container this diff brings alive.
@@ -1018,7 +1063,9 @@ impl DocState {
     /// `encode` call, and return the alive set.
     ///
     /// Only shallow snapshot export needs this now (its `retain_keys` filter requires the alive
-    /// set). Full snapshot export relies on the write-time invariant maintained by
+    /// set). The set is a *retention* set: it also contains the meta maps (and what they reach)
+    /// of deleted tree nodes, because a later op can revive such a node with its old meta. See
+    /// [`AliveWalk::Retention`]. Full snapshot export relies on the write-time invariant maintained by
     /// `ensure_containers_created_by_op` / `ensure_containers_created_by_internal_diff` instead
     /// of walking the graph.
     ///
@@ -1038,7 +1085,9 @@ impl DocState {
         // Do not hold the previous version's set while constructing its replacement.
         self.alive_containers_cache = None;
 
-        let indices = Arc::new(self.get_all_alive_container_indices_from_roots(&roots)?);
+        let indices = Arc::new(
+            self.get_all_alive_container_indices_from_roots(&roots, AliveWalk::Retention)?,
+        );
         for idx in indices.iter() {
             let id = self.arena.get_container_id(*idx).unwrap();
             if !self.store.contains_id(&id) {
@@ -1684,7 +1733,7 @@ impl DocState {
 
     fn get_all_alive_container_indices(&mut self) -> LoroResult<FxHashSet<ContainerIdx>> {
         let roots = self.existing_retention_roots();
-        self.get_all_alive_container_indices_from_roots(&roots)
+        self.get_all_alive_container_indices_from_roots(&roots, AliveWalk::Visible)
     }
 
     /// Root containers that currently have a store entry. Uses a root-only
@@ -1704,6 +1753,7 @@ impl DocState {
     fn get_all_alive_container_indices_from_roots(
         &mut self,
         roots: &[ContainerIdx],
+        walk: AliveWalk,
     ) -> LoroResult<FxHashSet<ContainerIdx>> {
         let mut ans = FxHashSet::default();
         let mut to_visit = Vec::new();
@@ -1723,7 +1773,7 @@ impl DocState {
                 self.validate_alive_parent(idx, expected_parent)?;
                 continue;
             }
-            self.get_alive_children_of(idx, expected_parent, &mut to_visit)?;
+            self.get_alive_children_of(idx, expected_parent, walk, &mut to_visit)?;
         }
 
         Ok(ans)
@@ -1789,8 +1839,23 @@ impl DocState {
         &mut self,
         idx: ContainerIdx,
         expected_parent: Option<ContainerIdx>,
+        walk: AliveWalk,
         ans: &mut Vec<(ContainerIdx, Option<ContainerIdx>)>,
     ) -> LoroResult<()> {
+        if walk == AliveWalk::Retention && idx.get_type() == ContainerType::Tree {
+            let Some((encoded_parent, meta_ids)) =
+                self.store.try_get_parent_and_tree_meta_ids_ephemeral(idx)?
+            else {
+                self.validate_alive_parent_with_encoded(idx, expected_parent, None)?;
+                return Ok(());
+            };
+            self.validate_alive_parent_with_encoded(idx, expected_parent, Some(encoded_parent))?;
+            for id in meta_ids.iter() {
+                self.register_alive_child(idx, id, ans);
+            }
+            return Ok(());
+        }
+
         let Some((encoded_parent, value)) = self.store.try_get_parent_and_value_ephemeral(idx)?
         else {
             self.validate_alive_parent_with_encoded(idx, expected_parent, None)?;

@@ -782,8 +782,7 @@ impl TreeState {
         self.get_all_tree_nodes_under(TreeParentId::Root)
     }
 
-    // Get all flat deleted nodes
-    #[allow(unused)]
+    // Get all flat deleted nodes: directly deleted ones (parent `Deleted`) and their descendants.
     pub(crate) fn deleted_tree_nodes(&self) -> Vec<TreeNode> {
         self.get_all_tree_nodes_under(TreeParentId::Deleted)
     }

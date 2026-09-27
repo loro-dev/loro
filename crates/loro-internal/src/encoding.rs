@@ -15,7 +15,7 @@ use crate::change::Change;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
-use loro_common::{HasIdSpan, IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
+use loro_common::{IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::borrow::Cow;
 
