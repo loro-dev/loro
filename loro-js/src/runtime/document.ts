@@ -1141,20 +1141,56 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             });
           return isEmptyContainerDiff(diff) ? [] : [[container.id, diff] as const];
         });
-      // A child without ops in the range can still be (re)attached by it, for
-      // example a map key set back to an older child. As in Rust, its whole
-      // state is part of the diff; otherwise applyDiff recreates it empty.
-      const emitted = new Set<ContainerID>(entries.map(([id]) => id));
-      for (let index = 0; index < entries.length; index += 1) {
-        for (const childId of attachedChildIds(entries[index]![1])) {
-          if (emitted.has(childId)) continue;
-          emitted.add(childId);
-          const child = this.#containers.get(childId);
-          if (child === undefined) continue;
-          const diff = containerDiff(child, undefined);
-          if (!isEmptyContainerDiff(diff)) entries.push([childId, diff]);
+      // A container that is unreachable at `from` and reachable at `to` (a map
+      // key set back to an older child, a revived list element or tree node,
+      // or anything under such a container) carries its whole state, as in
+      // Rust; applyDiff recreates it under a new ID. A container that stays
+      // reachable, for example a moved movable-list element, keeps only its
+      // own ops. So does a mergeable child of such a container: re-ensuring
+      // it resurfaces its preserved state.
+      const diffs = new Map<ContainerID, LoroEvent["diff"]>(entries);
+      const created = new Set<ContainerID>();
+      const byDepth = new Map<number, LoroContainer[]>();
+      const schedule = (container: LoroContainer): void => {
+        const depth = containerDepth(container);
+        const bucket = byDepth.get(depth);
+        if (bucket === undefined) byDepth.set(depth, [container]);
+        else bucket.push(container);
+      };
+      for (const [id] of entries) schedule(this.#containers.get(id)!);
+      for (let depth = 0; byDepth.size > 0; depth += 1) {
+        const bucket = byDepth.get(depth);
+        if (bucket === undefined) continue;
+        byDepth.delete(depth);
+        for (const parent of bucket) {
+          const diff = diffs.get(parent.id);
+          if (diff === undefined) continue;
+          const parentCreated = created.has(parent.id);
+          for (const child of this.#attachedChildren(parent, diff)) {
+            if (created.has(child.id)) continue;
+            if (
+              !parentCreated &&
+              (isMergeableContainerId(child._codecId!) ||
+                this.#reachableThroughParentAt(child, parent, fromVersion))
+            ) {
+              continue;
+            }
+            created.add(child.id);
+            if (!diffs.has(child.id)) schedule(child);
+            diffs.set(child.id, containerDiff(child, undefined));
+          }
         }
       }
+      const ordered = [...diffs]
+        .filter(([, diff]) => !isEmptyContainerDiff(diff))
+        .map(([id, diff]) => ({
+          id,
+          diff,
+          depth: containerDepth(this.#containers.get(id)!),
+        }))
+        .sort((left, right) => left.depth - right.depth);
+      entries.length = 0;
+      for (const { id, diff } of ordered) entries.push([id, diff]);
       return entries.map(
         ([id, diff]) =>
           [id, forJson ? diffForJson(diff) : diff] as [ContainerID, Diff | JsonDiff],
@@ -1191,6 +1227,147 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
       }
     }
+  }
+
+  /**
+   * A movable-list delta reports a moved child container as a delete at its
+   * old position plus an insert of the same container. Applying it literally
+   * would drop the live child and create an empty copy, so such pairs become a
+   * move of the existing element, as in Rust. Returns false, leaving the
+   * O(delta) path to the caller, when the delta moves no existing child.
+   */
+  #applyMovableListMoves(
+    list: LoroMovableList,
+    delta: readonly Delta<unknown[]>[],
+    containerRemap: Map<ContainerID, Container>,
+  ): boolean {
+    const inserted = new Set<ContainerID>();
+    for (const operation of delta) {
+      if (!("insert" in operation)) continue;
+      for (const value of operation.insert) {
+        const id = diffContainerId(value);
+        if (id !== undefined) inserted.add(id);
+      }
+    }
+    if (inserted.size === 0) return false;
+    const current = list._visibleElements();
+    const moved = new Map<ContainerID, SequenceElement>();
+    const deleted: SequenceElement[] = [];
+    let cursor = 0;
+    for (const operation of delta) {
+      if ("retain" in operation) {
+        cursor += operation.retain;
+      } else if ("delete" in operation) {
+        for (const element of current.slice(cursor, cursor + operation.delete)) {
+          const value = element.value;
+          if (value instanceof LoroContainer && inserted.has(value.id)) {
+            moved.set(value.id, element);
+          } else {
+            deleted.push(element);
+          }
+        }
+        cursor += operation.delete;
+      }
+    }
+    if (moved.size === 0) return false;
+
+    const target: ({ element: SequenceElement } | { value: unknown })[] = [];
+    cursor = 0;
+    for (const operation of delta) {
+      if ("retain" in operation) {
+        for (const element of current.slice(cursor, cursor + operation.retain)) {
+          target.push({ element });
+        }
+        cursor += operation.retain;
+      } else if ("delete" in operation) {
+        cursor += operation.delete;
+      } else {
+        for (const value of operation.insert) {
+          const id = diffContainerId(value);
+          const element = id === undefined ? undefined : moved.get(id);
+          if (element === undefined) target.push({ value });
+          else {
+            moved.delete(id!);
+            target.push({ element });
+          }
+        }
+      }
+    }
+    for (const element of current.slice(cursor)) target.push({ element });
+    // A deleted child that the delta never re-inserts is still deleted.
+    deleted.push(...moved.values());
+
+    for (const element of deleted) {
+      list.delete(list._sequence.visibleIndexOf(element)!, 1);
+    }
+    for (const [index, item] of target.entries()) {
+      if ("element" in item) {
+        const from = list._sequence.visibleIndexOf(item.element)!;
+        if (from !== index) list.move(from, index);
+        continue;
+      }
+      const sourceChildId = diffContainerId(item.value);
+      if (sourceChildId === undefined) {
+        list.insert(index, item.value);
+        continue;
+      }
+      const parsed = parseContainerId(sourceChildId);
+      if (parsed.kind === "root") {
+        throw new TypeError("a root container cannot be inserted as a child");
+      }
+      const child = createContainer(codecTypeToPublic(parsed.containerType)) as Container;
+      containerRemap.set(sourceChildId, list.insertContainer(index, child));
+    }
+    return true;
+  }
+
+  /** Child containers that a map, list, or tree diff of `parent` attaches. */
+  #attachedChildren(parent: LoroContainer, diff: LoroEvent["diff"]): LoroContainer[] {
+    const children: LoroContainer[] = [];
+    const add = (id: ContainerID | undefined): void => {
+      const child = id === undefined ? undefined : this.#containers.get(id);
+      if (child !== undefined) children.push(child);
+    };
+    if (diff.type === "map") {
+      for (const value of Object.values(diff.updated)) add(diffContainerId(value));
+    } else if (diff.type === "list") {
+      for (const delta of diff.diff) {
+        if (!("insert" in delta)) continue;
+        for (const value of delta.insert) add(diffContainerId(value));
+      }
+    } else if (diff.type === "tree" && parent instanceof LoroTree) {
+      for (const item of diff.diff) {
+        if (item.action !== "create") continue;
+        const record = parent._nodes.get(item.target);
+        if (record !== undefined) children.push(record.data);
+      }
+    }
+    return children;
+  }
+
+  /**
+   * Whether `child` already occupied its slot in `parent` at `version`. Only
+   * a sequence can attach a child that was reachable before: a movable-list
+   * move reports the moved child as an insert. A map attach always replaces
+   * the key's value, and a tree `create` always revives a node.
+   */
+  #reachableThroughParentAt(
+    child: LoroContainer,
+    parent: LoroContainer,
+    version: VersionVector,
+  ): boolean {
+    if (!(parent instanceof LoroList)) return false;
+    const binding = child._parentLink?.binding ?? recoverParentBinding(child, parent);
+    if (binding?.kind !== "sequence") return false;
+    const element = binding.element;
+    const included = (id: CodecId): boolean => id.counter < (version.get(id.peer) ?? 0);
+    if (!included(element.id)) return false;
+    if (parent._sequence.someDeletion(element, included)) return false;
+    const childId = child._codecId!;
+    if (childId.kind !== "normal") return false;
+    const value = latestIncludedSequenceValue(element.valueHistory, version);
+    const valueId = value === undefined ? element.id : value.id;
+    return valueId.peer === childId.peer && valueId.counter === childId.counter;
   }
 
   applyDiff(diffBatch: readonly (readonly [ContainerID, Diff | JsonDiff])[]): void {
@@ -1284,6 +1461,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
 
     if (!(container instanceof LoroList)) throw diffKindMismatch(container, diff.type);
+    if (
+      container instanceof LoroMovableList &&
+      this.#applyMovableListMoves(container, diff.diff, containerRemap)
+    ) {
+      return;
+    }
     let position = 0;
     for (const operation of diff.diff) {
       if ("retain" in operation) {
@@ -8150,26 +8333,6 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
-}
-
-/** Child containers a map or list diff attaches. */
-function attachedChildIds(diff: LoroEvent["diff"]): ContainerID[] {
-  const ids: ContainerID[] = [];
-  if (diff.type === "map") {
-    for (const value of Object.values(diff.updated)) {
-      const id = diffContainerId(value);
-      if (id !== undefined) ids.push(id);
-    }
-  } else if (diff.type === "list") {
-    for (const delta of diff.diff) {
-      if (!("insert" in delta)) continue;
-      for (const value of delta.insert) {
-        const id = diffContainerId(value);
-        if (id !== undefined) ids.push(id);
-      }
-    }
-  }
-  return ids;
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {
