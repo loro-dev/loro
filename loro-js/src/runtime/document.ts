@@ -4140,7 +4140,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       container._sequence.setIdRunsVisible(runs);
     }
 
-    for (const [container, elements] of sequences) {
+    for (const [container, collected] of sequences) {
       const state =
         recording === undefined
           ? undefined
@@ -4149,7 +4149,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               container,
               container instanceof LoroText ? "text" : "list",
             );
-      const removals = [...elements]
+      // Packed text spans return a new scalar view per lookup, so two delete
+      // ops of the same element can collect it twice.
+      const unique = new Map<string, SequenceElement>();
+      for (const element of collected) unique.set(idKey(element.id), element);
+      const elements = [...unique.values()];
+      const removals = elements
         .filter((element) => !element.deleted && targetDeleted(container, element))
         .map((element) => ({
           element,
@@ -4170,7 +4175,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         container._sequence.setDeleted(element as never, true);
       }
 
-      const insertions = [...elements]
+      const insertions = elements
         .filter((element) => element.deleted && !targetDeleted(container, element))
         .sort(
           (left, right) =>

@@ -240,6 +240,81 @@ describe("incremental event diffs", () => {
   });
 });
 
+describe("checkout events for concurrent deletes of the same text", () => {
+  const peers = (count: number): LoroDoc[] =>
+    Array.from({ length: count }, (_, index) => {
+      const doc = new LoroDoc();
+      doc.setPeerId(index + 1);
+      return doc;
+    });
+
+  // Two peers delete the same characters. A packed text span returns a new
+  // scalar view per lookup, so the transition collected each character once
+  // per delete op and emitted it twice.
+  // The second value is the counter of the last inserted Unicode scalar.
+  test.each([
+    ["bc", 1],
+    ["a😀b", 2],
+  ] as const)("restores %s once when both deletes are undone", (text, lastCounter) => {
+    const [p1, p2] = peers(2) as [LoroDoc, LoroDoc];
+    p1.getText("text").insert(0, text);
+    p1.commit();
+    p2.import(p1.export({ mode: "update" }));
+    const length = p1.getText("text").length;
+    p1.getText("text").delete(0, length);
+    p1.commit();
+    p2.getText("text").delete(0, length);
+    p2.commit();
+
+    const doc = new LoroDoc();
+    doc.import(p1.export({ mode: "update" }));
+    doc.import(p2.export({ mode: "update" }));
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((batch) => batches.push(batch));
+    doc.checkout([{ peer: "1", counter: lastCounter }]);
+
+    expect(doc.getText("text").toString()).toBe(text);
+    // loro-crdt emits the same single insert.
+    expect(batches.map((batch) => batch.events.map((event) => event.diff))).toEqual([
+      [{ type: "text", diff: [{ insert: text }] }],
+    ]);
+  });
+
+  test("removes a character deleted by two peers once while restoring another", () => {
+    const [p1, p2, p3, p4] = peers(4) as [LoroDoc, LoroDoc, LoroDoc, LoroDoc];
+    p1.getText("text").insert(0, "ab");
+    p1.commit();
+    for (const peer of [p2, p3, p4]) peer.import(p1.export({ mode: "update" }));
+    p4.getText("text").delete(0, 1);
+    p4.commit();
+    p2.getText("text").delete(1, 1);
+    p2.commit();
+    p3.getText("text").delete(1, 1);
+    p3.commit();
+
+    const doc = new LoroDoc();
+    for (const peer of [p1, p2, p3, p4]) doc.import(peer.export({ mode: "update" }));
+    const diffs: unknown[] = [];
+    doc.subscribe((batch) => diffs.push(...batch.events.map((event) => event.diff)));
+    doc.checkout([
+      { peer: "1", counter: 1 },
+      { peer: "4", counter: 0 },
+    ]);
+    expect(doc.getText("text").toString()).toBe("b");
+    // This used to throw "event diff position 1 is out of range".
+    doc.checkout([
+      { peer: "2", counter: 0 },
+      { peer: "3", counter: 0 },
+    ]);
+    expect(doc.getText("text").toString()).toBe("a");
+    // Same events as loro-crdt.
+    expect(diffs).toEqual([
+      { type: "text", diff: [{ insert: "b" }] },
+      { type: "text", diff: [{ delete: 1 }, { insert: "a" }] },
+    ]);
+  });
+});
+
 function applyTextDelta(original: string, delta: readonly Delta<string>[]): string {
   let cursor = 0;
   let output = "";
