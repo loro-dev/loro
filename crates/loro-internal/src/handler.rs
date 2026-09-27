@@ -173,6 +173,61 @@ fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrH
     }
 }
 
+/// Reject inserting a container that is attached to another doc, either directly
+/// or nested inside a detached container.
+///
+/// Attaching copies an attached container through its own doc, so a foreign
+/// child would mix the source doc's arena with the target doc's transaction.
+/// Callers must run this before applying any op so the target doc is untouched.
+fn ensure_not_attached_to_other_doc<H: HandlerTrait>(child: &H, doc: &LoroDoc) -> LoroResult<()> {
+    ensure_handler_not_attached_to_other_doc(&child.to_handler(), doc)
+}
+
+fn ensure_handler_not_attached_to_other_doc(handler: &Handler, doc: &LoroDoc) -> LoroResult<()> {
+    if let Some(a) = handler.attached_handler() {
+        if Arc::ptr_eq(&a.doc.inner, &doc.inner) {
+            return Ok(());
+        }
+
+        return Err(LoroError::ArgErr(
+            "Cannot insert a container attached to another LoroDoc".into(),
+        ));
+    }
+
+    let check_values = |values: &mut dyn Iterator<Item = &ValueOrHandler>| {
+        for v in values {
+            if let ValueOrHandler::Handler(h) = v {
+                ensure_handler_not_attached_to_other_doc(h, doc)?;
+            }
+        }
+        Ok(())
+    };
+
+    match handler {
+        Handler::Map(m) => match &m.inner {
+            MaybeDetached::Detached(d) => check_values(&mut d.lock().value.values()),
+            MaybeDetached::Attached(_) => Ok(()),
+        },
+        Handler::List(l) => match &l.inner {
+            MaybeDetached::Detached(d) => check_values(&mut d.lock().value.iter()),
+            MaybeDetached::Attached(_) => Ok(()),
+        },
+        Handler::MovableList(l) => match &l.inner {
+            MaybeDetached::Detached(d) => check_values(&mut d.lock().value.iter()),
+            MaybeDetached::Attached(_) => Ok(()),
+        },
+        Handler::Tree(t) => {
+            for meta in t.detached_meta_maps() {
+                ensure_handler_not_attached_to_other_doc(&Handler::Map(meta), doc)?;
+            }
+            Ok(())
+        }
+        Handler::Text(_) | Handler::Unknown(_) => Ok(()),
+        #[cfg(feature = "counter")]
+        Handler::Counter(_) => Ok(()),
+    }
+}
+
 /// Flatten attributes that allow overlap
 #[derive(Clone, Debug)]
 pub struct BasicHandler {
@@ -3244,6 +3299,7 @@ impl ListHandler {
         }
 
         let inner = self.inner.try_attached_state()?;
+        ensure_not_attached_to_other_doc(&child, &inner.doc)?;
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
@@ -3819,10 +3875,11 @@ impl MovableListHandler {
                 .unwrap())
         })?;
 
+        let inner = self.inner.try_attached_state()?;
+        ensure_not_attached_to_other_doc(&child, &inner.doc)?;
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
-        let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Insert {
@@ -3916,6 +3973,8 @@ impl MovableListHandler {
         pos: usize,
         child: H,
     ) -> LoroResult<H> {
+        let inner = self.inner.try_attached_state()?;
+        ensure_not_attached_to_other_doc(&child, &inner.doc)?;
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         let v = LoroValue::Container(container_id.clone());
@@ -3935,7 +3994,6 @@ impl MovableListHandler {
                 unreachable!()
             }
         };
-        let inner = self.inner.try_attached_state()?;
         txn.apply_local_op(
             inner.container_idx,
             crate::op::RawOpContent::List(crate::container::list::list_op::ListOp::Set {
@@ -4397,6 +4455,7 @@ impl MapHandler {
         child: H,
     ) -> LoroResult<H> {
         let inner = self.inner.try_attached_state()?;
+        ensure_not_attached_to_other_doc(&child, &inner.doc)?;
         let id = txn.next_id();
         let container_id = ContainerID::new_normal(id, child.kind());
         txn.apply_local_op(
