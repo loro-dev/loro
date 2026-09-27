@@ -9,7 +9,11 @@ import {
   type DecodedOperationContent,
 } from "../codec/change-block-codec";
 import type { ChangeLoroValue, ChangeValue } from "../codec/change-value";
-import { containerTypeFromRawByte, containerTypeToRawByte } from "../codec/container-id";
+import {
+  containerTypeFromRawByte,
+  containerTypeToRawByte,
+  decodeContainerId,
+} from "../codec/container-id";
 import {
   decodeDocument,
   decodeFastSnapshotBody,
@@ -801,7 +805,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           ? undefined
           : decodeStateSnapshotStore(snapshot.state);
       const rootEntries =
-        rootStore === undefined ? undefined : stateStoreEntriesByKey(rootStore);
+        rootStore !== undefined && stateStore?.kind === "sstable"
+          ? stateStoreEntriesByKey(rootStore)
+          : undefined;
       const hydratedStore =
         stateStore === undefined
           ? undefined
@@ -4965,6 +4971,21 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    */
   #rebuildFromHistory(version?: VersionVector, previousVersion?: VersionVector): void {
     const target = version ?? this.#historyVersion();
+    const lazy = this.#deferredSnapshotState;
+    if (previousVersion !== undefined && lazy !== undefined) {
+      // Hydrate the unread sequences too, so their snapshot state is stashed.
+      for (const { key } of lazy.store.table.entries()) {
+        if (bytesEqual(key, FRONTIERS_KEY)) continue;
+        const id = decodeContainerId(key);
+        if (
+          id.containerType === CodecContainerType.Text ||
+          id.containerType === CodecContainerType.List ||
+          id.containerType === CodecContainerType.MovableList
+        ) {
+          this.#getOrCreateContainer(id);
+        }
+      }
+    }
     for (const [key, entry] of this.#snapshotSequences) {
       if (entry.kind === "replayed") continue;
       const container = this.#containers.get(key) as LoroList | LoroText | undefined;
@@ -6015,12 +6036,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const latestFrontiers = this.#frontiersForVersion(latestVersion);
     const restoreVersion = this.version();
 
-    this.#rebuildFromHistory(rootVersion);
+    this.#rebuildFromHistory(rootVersion, restoreVersion);
     const rootStore = this.#buildStateStore(startFrontiers);
-    this.#rebuildFromHistory(latestVersion);
+    this.#rebuildFromHistory(latestVersion, rootVersion);
     const latestStore = this.#buildStateStore();
     if (restoreVersion.compare(latestVersion) !== 0) {
-      this.#rebuildFromHistory(restoreVersion);
+      this.#rebuildFromHistory(restoreVersion, latestVersion);
     }
 
     const historyEntries = this.#recordsInVersionRange(startVersion, latestVersion).map(

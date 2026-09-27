@@ -212,6 +212,24 @@ describe("checkout after a Rust rich-text snapshot import", () => {
     expect(doc.getText("after").toDelta()).toEqual(latest.after);
   });
 
+  test("keeps the snapshot state through a shallow export", () => {
+    const { bytes, versions } = styledText();
+    const latest = versions.at(-1)!;
+    for (const read of [false, true]) {
+      const doc = new LoroDoc();
+      doc.import(bytes);
+      if (read) doc.toJSON();
+      const shallow = new LoroDoc();
+      shallow.import(
+        doc.export({ mode: "shallow-snapshot", frontiers: versions[3]!.frontiers }),
+      );
+      for (const replica of [doc, shallow]) {
+        expect(replica.getText("both").toDelta()).toEqual(latest.both);
+        expect(replica.getText("after").toDelta()).toEqual(latest.after);
+      }
+    }
+  });
+
   test("diffs a Rust snapshot like a full-history document", () => {
     const { bytes, versions } = styledText();
     const doc = new LoroDoc();
