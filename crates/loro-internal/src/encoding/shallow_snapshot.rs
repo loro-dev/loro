@@ -378,30 +378,29 @@ pub(crate) fn export_shallow_snapshot_inner(
     .flatten();
     if &start_from == oplog.shallow_since_frontiers() && state_frontiers == latest_frontiers {
         let mut state = doc.app_state().lock();
-        if let Some((shallow_root_state_bytes, shallow_root_kv)) =
-            state.store.shallow_root_state_for_export()
-        {
+        if let Some(shallow_root) = state.store.shallow_root_store().cloned() {
+            let (shallow_root_state_bytes, shallow_root_kv) =
+                state.store.shallow_root_state_for_export().unwrap();
             // The cached root may come from an older exporter that kept
             // containers deleted before the root, so filter it with the same
-            // retention set the other paths compute instead of trusting its
-            // key set.
-            let root_retained = cached_root_retention_keys(&shallow_root_state_bytes)?;
-            let root_pruned = shallow_root_kv
-                .keys()
-                .iter()
-                .any(|key| !root_retained.contains(key));
-            if root_pruned {
-                shallow_root_kv.retain_keys(&root_retained);
+            // retention rule the other paths use instead of trusting its key
+            // set. The root never changes, so the check runs once per root.
+            let unretained = shallow_root
+                .unretained_keys
+                .get_or_try_init(|| cached_root_unretained_keys(&shallow_root_state_bytes))?;
+            let root_pruned = !unretained.is_empty();
+            for key in unretained {
+                shallow_root_kv.remove(key);
             }
 
             // Ops since the root are few enough to replay on import; otherwise
             // also ship the encoded latest state as an overlay.
             let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-                if has_unknown_container_key(shallow_root_kv.keys().iter()) {
+                let mut alive_c_bytes = shallow_root_kv.keys();
+                if has_unknown_container_key(alive_c_bytes.iter()) {
                     return Err(LoroEncodeError::UnknownContainer);
                 }
 
-                let mut alive_c_bytes = root_retained;
                 state.ensure_all_alive_containers()?;
                 state.store.flush();
 
@@ -591,21 +590,39 @@ fn retain_created_after_root(
     }
 }
 
-/// Retention set (see `DocState::ensure_all_alive_containers`) of a cached
-/// shallow root state, computed on a scratch doc so the live doc's arena and
-/// store are untouched. The root state is decoded lazily and read
-/// ephemerally, like the walk over a checked-out state.
-fn cached_root_retention_keys(
-    root_state_bytes: &Bytes,
-) -> Result<BTreeSet<Vec<u8>>, LoroEncodeError> {
+/// Keys of the containers stored in a cached shallow root state that the
+/// retention walk does not reach (see
+/// `DocState::unretained_stored_container_keys`). Runs on a scratch doc so the
+/// live doc's arena and store are untouched; the root KV is imported lazily
+/// and only containers that parent another stored container are decoded.
+fn cached_root_unretained_keys(root_state_bytes: &Bytes) -> Result<Vec<Bytes>, LoroEncodeError> {
     let root_doc = LoroDoc::new();
     let mut root_state = root_doc.app_state().lock();
     root_state
         .store
         .decode(root_state_bytes.clone())
         .map_err(LoroEncodeError::from)?;
-    let alive_containers = root_state.ensure_all_alive_containers()?;
-    Ok(alive_indices_to_bytes(&root_state, &alive_containers))
+    let unretained = root_state.unretained_stored_container_keys()?;
+    #[cfg(debug_assertions)]
+    {
+        // Cross-check against the full retention walk on a second scratch doc.
+        let check_doc = LoroDoc::new();
+        let mut check_state = check_doc.app_state().lock();
+        check_state.store.decode(root_state_bytes.clone()).unwrap();
+        if let Ok(alive) = check_state.ensure_all_alive_containers() {
+            let retained = alive_indices_to_bytes(&check_state, &alive);
+            let expected: BTreeSet<Vec<u8>> = root_state
+                .store
+                .get_kv_clone()
+                .keys()
+                .into_iter()
+                .filter(|key| !retained.contains(key))
+                .collect();
+            let actual: BTreeSet<Vec<u8>> = unretained.iter().map(|key| key.to_vec()).collect();
+            assert_eq!(actual, expected, "targeted retention walk diverged");
+        }
+    }
+    Ok(unretained)
 }
 
 fn encode_shallow_sections(

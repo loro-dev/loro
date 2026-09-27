@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-27.
+Verified against code 2026-09-28.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -116,14 +116,26 @@ before the root" is safe to drop only for non-tree children; see
 checkout into the retained range against a full-history replica.
 
 The cached-root reuse branch (a shallow doc re-exported at its own root, which
-also serves `ExportMode::Snapshot` on a shallow doc) applies the same rule:
-`cached_root_retention_keys` decodes the cached root bytes into a scratch doc
-and runs the retention walk there, and the root state is re-encoded only when
-that drops keys or redaction changes it. The cached keys cannot be trusted as
-the retention set: exporters before #1119 kept containers deleted before the
-root whenever they shipped an overlay, and a re-export was the only way to
-scrub them. `legacy_*.bin` fixtures in the same test file pin both the dead-map
-drop and tree-meta revival for such blobs.
+also serves `ExportMode::Snapshot` on a shallow doc) applies the same rule. The
+cached keys cannot be trusted as the retention set: exporters before #1119 kept
+containers deleted before the root whenever they shipped an overlay, and a
+re-export was the only way to scrub them. `cached_root_unretained_keys` finds
+the stored keys the retention walk would not reach, with
+`DocState::unretained_stored_container_keys` running on a scratch doc. That
+function reads each stored container's parent from its encoded header, and it
+decodes only the containers that are the header parent of another stored
+container. Leaf maps, texts and tree metas are never decoded; a tree that
+parents stored metas is decoded for its node list. Debug builds cross-check it
+against the full `ensure_all_alive_containers` walk. The result, usually empty,
+is memoized in `GcStore::unretained_keys` because the cached root never changes,
+so only the first re-export of a cached root pays for the check. Repeated
+re-exports cost the same as before the fix, and import is unaffected. The root
+bytes are re-encoded only when keys are dropped or redaction changes them. Do
+not replace the check with the latest state's alive set: tree metas that are
+dead at the latest version but alive inside the retained range would be lost.
+`legacy_*.bin` fixtures in the same test file pin both the dead-map drop and
+tree-meta revival for such blobs. `crates/loro/tests/perf_shallow_reexport.rs`
+is the ignored release benchmark for first and repeated re-export and import.
 
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as

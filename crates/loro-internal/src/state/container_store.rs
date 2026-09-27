@@ -8,6 +8,7 @@ use crate::{
 use bytes::Bytes;
 use inner_store::InnerStore;
 use loro_common::{ContainerID, InternalString, LoroResult, LoroValue};
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 
 pub(crate) use container_wrapper::ContainerWrapper;
@@ -59,6 +60,12 @@ pub(crate) struct GcStore {
     pub shallow_root_frontiers: Frontiers,
     pub encoded_state_bytes: Bytes,
     pub store: Mutex<InnerStore>,
+    /// Keys of stored containers the retention walk does not reach, computed
+    /// once on the first export that reuses this root (see
+    /// `shallow_snapshot::cached_root_unretained_keys`). The root state never
+    /// changes, so neither does this set; it is empty unless the root came
+    /// from an exporter that kept containers deleted before the root.
+    pub unretained_keys: OnceCell<Vec<Bytes>>,
 }
 
 macro_rules! ctx {
@@ -250,6 +257,7 @@ impl ContainerStore {
             shallow_root_frontiers: start_frontiers,
             encoded_state_bytes,
             store: Mutex::new(inner),
+            unretained_keys: OnceCell::new(),
         }));
         Ok(f)
     }
