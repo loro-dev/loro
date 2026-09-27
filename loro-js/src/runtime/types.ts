@@ -108,7 +108,13 @@ export type JsonOpContent =
       readonly fractional_index?: string;
     }
   | { readonly type: "delete"; readonly target: TreeID }
-  | { readonly type: "counter"; readonly value: number; readonly prop: number }
+  | {
+      readonly type: "counter";
+      /** Rust's `OwnedValue` tag. Written on export; import treats a missing tag as `f64`. */
+      readonly value_type?: "f64" | "i64" | "delta_int";
+      readonly value: number;
+      readonly prop: number;
+    }
   | {
       readonly type: "unknown";
       readonly prop: number;

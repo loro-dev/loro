@@ -7142,13 +7142,21 @@ function decodedOperationToJson(
     case "future": {
       const value = content.value;
       if (value.type === "double" || value.type === "i64") {
+        // Rust tags the counter value (`OwnedValue`, serde `value_type`) and
+        // rejects an untagged number.
         json = {
           type: "counter",
+          value_type: value.type === "double" ? "f64" : "i64",
           value: value.type === "double" ? value.value : Number(value.value),
           prop: content.property,
         };
       } else if (value.type === "delta-int") {
-        json = { type: "counter", value: value.value, prop: content.property };
+        json = {
+          type: "counter",
+          value_type: "delta_int",
+          value: value.value,
+          prop: content.property,
+        };
       } else {
         json = {
           type: "unknown",
@@ -7182,7 +7190,8 @@ function changeLoroValueToJson(
     case "i64":
       return Number(value.value);
     case "binary":
-      return value.value.slice();
+      // The JSON schema has no binary type; Rust writes a byte array as numbers.
+      return [...value.value];
     case "list":
       return value.value.map((item, index) =>
         changeLoroValueToJson(
@@ -7514,6 +7523,13 @@ function jsonOperationToDecoded(
           ? content.value
           : Number.NaN;
     if (!Number.isFinite(value)) throw new TypeError("counter JSON value must be finite");
+    const valueType =
+      typeof content === "object" && content !== null && "value_type" in content
+        ? content.value_type
+        : "f64";
+    if (valueType === "i64" && !Number.isSafeInteger(value)) {
+      throw new TypeError("i64 counter JSON value must be a safe integer");
+    }
     return {
       container,
       counter: operation.counter,
@@ -7524,7 +7540,10 @@ function jsonOperationToDecoded(
           typeof content === "object" && content !== null && "prop" in content
             ? requireJsonInteger(content.prop, "counter property")
             : 0,
-        value: { type: "double", value },
+        value:
+          valueType === "i64"
+            ? { type: "i64", value: BigInt(value) }
+            : { type: "double", value },
       },
     };
   }
