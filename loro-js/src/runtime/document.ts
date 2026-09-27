@@ -255,6 +255,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #pendingHistory = new Map<string, HistoryRecord>();
   #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
   #deferredSnapshotState: DeferredSnapshotState | undefined;
+  // Latest-state snapshot entries carry no tombstones, winner history, or move
+  // history, so incremental version transitions cannot retreat them. The first
+  // checkout replays history instead; see context/loro-js-performance.md.
+  #stateFromSnapshot = false;
   #hydratedSnapshotContainers = new Set<string>();
   #hydratingSnapshotContainers = new Set<string>();
   #snapshotContainerDepths = new Map<string, bigint>();
@@ -787,6 +791,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         installStagedShallowRoot();
         if (lazyStateStore?.kind === "sstable") {
           this.#deferredSnapshotState = { store: lazyStateStore };
+          this.#stateFromSnapshot = true;
           deferredChanged = new Set(lazyStateStore.roots.map(formatContainerId));
           for (const root of lazyStateStore.roots) this.#getOrCreateContainer(root);
         } else {
@@ -2685,6 +2690,21 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
+  /**
+   * Drops the lazily decoded latest-state SSTable before a full replay. Replay
+   * rebuilds every container from history (or the shallow root); an entry left
+   * in the lazy store would later be hydrated on top of the replayed ops.
+   */
+  #discardDeferredSnapshotState(): void {
+    if (this.#deferredSnapshotState === undefined) return;
+    this.#materializeDeferredHistory();
+    this.#deferredSnapshotState = undefined;
+    this.#hydratedSnapshotContainers.clear();
+    this.#snapshotContainerDepths.clear();
+    this.#dirtySnapshotContainers.clear();
+    this.#deletedSnapshotContainers.clear();
+  }
+
   #containerKey(id: CodecContainerId): string {
     let key = this.#containerKeys.get(id);
     if (key === undefined) {
@@ -3690,6 +3710,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     records: readonly HistoryRecord[],
     movableMoveMode: MovableMoveTransitionMode = "anchors",
   ): boolean {
+    if (this.#stateFromSnapshot) return false;
     const replayedMoveContainers = new Set<string>();
     if (movableMoveMode === "replay") {
       for (const { change } of records) {
@@ -3823,6 +3844,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (!(container instanceof LoroList || container instanceof LoroText)) {
             return false;
           }
+          // A transition only toggles deletions recorded while applying this op.
+          // After a replay to an earlier version the op was never applied here.
+          let recorded = 0;
+          for (const run of container._sequence.idRunsDeletedBy(
+            change.id.peer,
+            operation.counter,
+            operation.counter + operation.length,
+          )) {
+            recorded += run.length;
+          }
+          if (recorded < operation.length) return false;
         } else if (content.type === "map-insert" || content.type === "map-delete") {
           if (!(container instanceof LoroMap)) return false;
         } else if (
@@ -4604,17 +4636,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #rebuildFromHistory(version?: VersionVector): void {
+    this.#discardDeferredSnapshotState();
     for (const container of this.#containers.values()) container._reset();
     if (this.#shallowRootStore !== undefined) {
       this.#hydrateState(this.#shallowRootStore);
       const target = version ?? this.#historyVersion();
       this.#assertVersionNotBeforeShallowRoot(target);
       this.#applyRecords(this.#recordsInVersionRange(this.#shallowRootVersion, target));
+      this.#stateFromSnapshot = false;
       return;
     }
     this.#applyRecords(
       version === undefined ? this.#sortedHistory() : this.#recordsAtVersion(version),
     );
+    this.#stateFromSnapshot = false;
   }
 
   #setHistoryRecord(key: string, record: HistoryRecord, appended: HistoryRecord): void {
@@ -5785,6 +5820,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #hydrateState(store: StateSnapshotStore): void {
     if (store.kind !== "sstable") return;
+    this.#stateFromSnapshot = true;
     for (const { id } of store.containers) {
       this.#getOrCreateContainer(id, undefined, false);
     }

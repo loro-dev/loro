@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-07-22.
+Verified against code 2026-09-28.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -127,6 +127,17 @@ JavaScript constant factor.
   staging document before installing them. Import subscribers retain eager
   state hydration because their import event must describe every changed
   container.
+- State hydrated from a latest-state snapshot (eager or lazy) has no
+  tombstones, winner history, or move history, so incremental version
+  transitions cannot retreat it. `LoroDoc.#stateFromSnapshot` makes
+  `#canTransitionRecords` refuse, and the first checkout or `diff` after such an
+  import replays history once through `#rebuildFromHistory` (about 34 ms for a
+  64k-operation Text on an Apple M5 Pro; later checkouts stay around 0.3–0.7
+  ms). The replay first discards the lazy latest-state SSTable
+  (`#discardDeferredSnapshotState`); otherwise replayed containers would later
+  hydrate their latest encoded state on top of the replayed operations. A
+  delete transition is also refused unless the deletion index recorded that
+  delete operation, since a replay to an earlier version never applied it.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
