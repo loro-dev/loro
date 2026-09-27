@@ -119,23 +119,43 @@ The cached-root reuse branch (a shallow doc re-exported at its own root, which
 also serves `ExportMode::Snapshot` on a shallow doc) applies the same rule. The
 cached keys cannot be trusted as the retention set: exporters before #1119 kept
 containers deleted before the root whenever they shipped an overlay, and a
-re-export was the only way to scrub them. `cached_root_unretained_keys` finds
-the stored keys the retention walk would not reach, with
-`DocState::unretained_stored_container_keys` running on a scratch doc. That
-function reads each stored container's parent from its encoded header, and it
-decodes only the containers that are the header parent of another stored
-container. Leaf maps, texts and tree metas are never decoded; a tree that
-parents stored metas is decoded for its node list. Debug builds cross-check it
-against the full `ensure_all_alive_containers` walk. The result, usually empty,
-is memoized in `GcStore::unretained_keys` because the cached root never changes,
-so only the first re-export of a cached root pays for the check. Repeated
-re-exports cost the same as before the fix, and import is unaffected. The root
-bytes are re-encoded only when keys are dropped or redaction changes them. Do
-not replace the check with the latest state's alive set: tree metas that are
-dead at the latest version but alive inside the retained range would be lost.
+re-export was the only way to scrub them. `prune_cached_root` runs on a scratch
+doc in two steps:
+
+1. `DocState::stored_container_retention` is a cheap filter. It reads each
+   stored container's parent from its encoded header, and it decodes only the
+   containers that are the header parent of another stored container. Leaf
+   maps, texts and tree metas are never decoded; a tree that parents stored
+   metas is decoded for its node list. `AllReached`, the case for every root
+   written since #1119, means the root is reused as-is. Debug builds assert
+   that the full walk agrees.
+2. On `SomeUnreached`, the full `ensure_all_alive_containers` walk decides. A
+   container counts as reached in step 1 only through its header parent, so a
+   forged header shows up as unreached; the full walk then rejects the
+   inconsistency with `Err` instead of dropping a container that is still
+   referenced. Never drop keys on the filter's word alone.
+
+`UnknownContainers` (a container of a type this version does not know is
+stored, or parents a stored container) keeps the root as-is. Unknown states
+decode to `Null`, so neither step can see their child references, and even
+the full walk would drop their children. Such a root comes from a newer
+exporter, which already filtered it. The overlay (>256 ops) branch still
+rejects unknown root keys, as before.
+
+The result (`None`, or the pruned bytes plus the removed keys) is memoized in
+`GcStore::pruned_root` because the cached root never changes. Only the first
+re-export of a root pays for the check. Repeated re-exports cost the same as
+before the fix, legacy roots are not re-encoded every time, and import is
+unaffected. `LoroDoc::fork` uses `encode_snapshot_inner_for_fork`
+(`CachedShallowRoot::Verbatim`): a fork copies the cached root verbatim, so it
+never fails the check or panics on an inconsistent root. Do not replace the
+check with the latest state's alive set: tree metas that are dead at the latest
+version but alive inside the retained range would be lost.
 `legacy_*.bin` fixtures in the same test file pin both the dead-map drop and
-tree-meta revival for such blobs. `crates/loro/tests/perf_shallow_reexport.rs`
-is the ignored release benchmark for first and repeated re-export and import.
+tree-meta revival for such blobs. The forged-header and unknown-container
+regressions are `cached_root_*` unit tests in `shallow_snapshot.rs`.
+`crates/loro/tests/perf_shallow_reexport.rs` is the ignored release benchmark
+for first and repeated re-export and import.
 
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as

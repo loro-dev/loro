@@ -569,6 +569,13 @@ fn legacy_shallow_reexport_drops_dead_map() {
                 "{name}, {mode} re-export"
             );
         }
+        // The pruned root is memoized: later re-exports reuse the same bytes.
+        let root = legacy.shallow_since_frontiers();
+        assert_eq!(
+            legacy.export(ExportMode::shallow_snapshot(&root)).unwrap(),
+            legacy.export(ExportMode::shallow_snapshot(&root)).unwrap(),
+            "{name}"
+        );
     }
 }
 

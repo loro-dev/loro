@@ -60,12 +60,21 @@ pub(crate) struct GcStore {
     pub shallow_root_frontiers: Frontiers,
     pub encoded_state_bytes: Bytes,
     pub store: Mutex<InnerStore>,
-    /// Keys of stored containers the retention walk does not reach, computed
-    /// once on the first export that reuses this root (see
-    /// `shallow_snapshot::cached_root_unretained_keys`). The root state never
-    /// changes, so neither does this set; it is empty unless the root came
-    /// from an exporter that kept containers deleted before the root.
-    pub unretained_keys: OnceCell<Vec<Bytes>>,
+    /// This root with the containers the retention walk does not reach removed,
+    /// computed on the first export that reuses the root (see
+    /// `shallow_snapshot::prune_cached_root`). `None` means nothing is removed,
+    /// which holds unless the root came from an exporter that kept containers
+    /// deleted before the root. The root never changes, so neither does this.
+    pub pruned_root: OnceCell<Option<PrunedRootState>>,
+}
+
+/// A cached shallow root state with unretained containers removed.
+#[derive(Debug)]
+pub(crate) struct PrunedRootState {
+    /// Encoded pruned root state, including the frontiers key.
+    pub state_bytes: Bytes,
+    /// Keys removed from the cached root.
+    pub removed: Vec<Bytes>,
 }
 
 macro_rules! ctx {
@@ -257,7 +266,7 @@ impl ContainerStore {
             shallow_root_frontiers: start_frontiers,
             encoded_state_bytes,
             store: Mutex::new(inner),
-            unretained_keys: OnceCell::new(),
+            pruned_root: OnceCell::new(),
         }));
         Ok(f)
     }

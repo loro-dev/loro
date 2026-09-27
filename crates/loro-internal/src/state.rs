@@ -182,6 +182,17 @@ struct AliveContainersCache {
     indices: Arc<FxHashSet<ContainerIdx>>,
 }
 
+/// Result of [`DocState::stored_container_retention`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StoredRetention {
+    /// Every stored container is reached; filtering would remove nothing.
+    AllReached,
+    /// Some stored container is not reached through its header parent.
+    SomeUnreached,
+    /// A container of an unknown type is stored or parents a stored container.
+    UnknownContainers,
+}
+
 /// Which containers an alive-container walk follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AliveWalk {
@@ -1779,35 +1790,47 @@ impl DocState {
         Ok(ans)
     }
 
-    /// KV keys of stored normal containers that the retention walk
-    /// ([`AliveWalk::Retention`] from every stored root) does not reach.
+    /// Whether the retention walk ([`AliveWalk::Retention`] from every stored root) may leave
+    /// some stored normal container unreached. A fast filter for the common case:
+    /// [`StoredRetention::AllReached`] means filtering by the walk would remove nothing;
+    /// [`StoredRetention::SomeUnreached`] means the full walk must decide.
     ///
-    /// Same answer as diffing [`Self::ensure_all_alive_containers`] against the stored keys, at
-    /// a fraction of the cost: every stored container's parent is read from its encoded header,
-    /// and only containers that are the header parent of another stored container are decoded
-    /// to list their children. Leaf containers (a big text, childless maps, tree metas) are
-    /// never decoded. Normal container parents never change, so a stored container is retained
-    /// iff its header parent is retained and still references it. Structural inconsistencies
-    /// the full walk would reject (a child referenced by a container other than its header
-    /// parent) are rejected here too.
-    pub(crate) fn unretained_stored_container_keys(&mut self) -> LoroResult<Vec<bytes::Bytes>> {
+    /// Every stored container's parent is read from its encoded header, and only containers
+    /// that are the header parent of another stored container are decoded to list their
+    /// children; leaf containers (a big text, childless maps, tree metas) are never decoded.
+    /// A container counts as reached only through its header parent, so a header that lies
+    /// about the parent makes the container a candidate, and the full walk then rejects the
+    /// inconsistency instead of dropping the container. A child referenced by a container
+    /// other than its header parent is rejected here directly.
+    ///
+    /// Containers of an unknown (newer) type have no readable child references (their value
+    /// is `Null`), so neither this check nor the full walk can tell which of their children
+    /// are alive; a root holding any of them yields [`StoredRetention::UnknownContainers`] and
+    /// must be kept as-is. Such a root was written by a newer exporter, which already
+    /// filters it.
+    pub(crate) fn stored_container_retention(&mut self) -> LoroResult<StoredRetention> {
         let entries = self.store.get_kv_clone().scan_all_entries();
-        // Stored normal containers: id -> (key, header parent).
-        let mut stored: FxHashMap<ContainerID, (bytes::Bytes, Option<ContainerID>)> =
-            FxHashMap::default();
+        // Stored normal containers: id -> header parent.
+        let mut stored: FxHashMap<ContainerID, Option<ContainerID>> = FxHashMap::default();
         let mut stored_roots = Vec::new();
         let mut has_stored_children: FxHashSet<ContainerID> = FxHashSet::default();
         for (key, value) in entries {
             let id = ContainerID::try_from_bytes(&key)?;
+            if id.is_unknown() {
+                return Ok(StoredRetention::UnknownContainers);
+            }
             if matches!(id, ContainerID::Root { .. }) {
                 stored_roots.push(id);
                 continue;
             }
             let parent = ContainerWrapper::try_decode_parent(&value)?;
             if let Some(parent) = &parent {
+                if parent.is_unknown() {
+                    return Ok(StoredRetention::UnknownContainers);
+                }
                 has_stored_children.insert(parent.clone());
             }
-            stored.insert(id, (key, parent));
+            stored.insert(id, parent);
         }
 
         // Roots are always retained; only those parenting a stored container need a visit.
@@ -1818,7 +1841,7 @@ impl DocState {
         let mut retained: FxHashSet<ContainerID> = FxHashSet::default();
         while let Some(parent_id) = to_visit.pop() {
             for child_id in self.retained_child_refs(&parent_id)? {
-                let Some((_, header_parent)) = stored.get(&child_id) else {
+                let Some(header_parent) = stored.get(&child_id) else {
                     // A root (always retained) or an unstored, hence empty, child.
                     continue;
                 };
@@ -1837,11 +1860,11 @@ impl DocState {
             }
         }
 
-        Ok(stored
-            .into_iter()
-            .filter(|(id, _)| !retained.contains(id))
-            .map(|(_, (key, _))| key)
-            .collect())
+        Ok(if retained.len() < stored.len() {
+            StoredRetention::SomeUnreached
+        } else {
+            StoredRetention::AllReached
+        })
     }
 
     /// Normal-container children the retention walk follows from `id`: every node meta of a
