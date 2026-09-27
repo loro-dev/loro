@@ -1366,6 +1366,14 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
+        // There is no rollback for the local ops applied below, so reject the
+        // diff before touching the doc if it needs an unknown container.
+        self.check_apply_diff_creates_no_unknown_container(
+            &diff,
+            container_remap,
+            skip_unreachable,
+        )?;
+
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
         for (mut id, diff) in diff.into_iter() {
@@ -1407,6 +1415,148 @@ impl LoroDoc {
         }
 
         ans
+    }
+
+    /// `_apply_diff` recreates the containers inserted by a diff, but this
+    /// version cannot create a container whose type it doesn't know
+    /// ([ContainerType::Unknown], e.g. `cid:0@1:Unknown(9)`). Such containers
+    /// may only appear where no container is created: mergeable map children
+    /// (the id is deterministic, only the marker is written), and MovableList
+    /// moves of an element already in the list.
+    ///
+    /// This mirrors how `_apply_diff` resolves and skips targets, without
+    /// applying anything.
+    fn check_apply_diff_creates_no_unknown_container(
+        &self,
+        diff: &DiffBatch,
+        container_remap: &FxHashMap<ContainerID, ContainerID>,
+        skip_unreachable: bool,
+    ) -> LoroResult<()> {
+        fn resolve(
+            mut id: ContainerID,
+            container_remap: &FxHashMap<ContainerID, ContainerID>,
+        ) -> (ContainerID, bool) {
+            let mut remapped = false;
+            while let Some(rid) = container_remap.get(&id) {
+                remapped = true;
+                id = rid.clone();
+            }
+            (id, remapped)
+        }
+
+        fn unknown_container_err(id: &ContainerID) -> LoroError {
+            LoroError::ArgErr(
+                format!(
+                    "Cannot create container {id}: its type {} is unknown to this version of Loro",
+                    id.container_type()
+                )
+                .into_boxed_str(),
+            )
+        }
+
+        fn container_id(v: &ValueOrHandler) -> Option<ContainerID> {
+            match v {
+                ValueOrHandler::Value(LoroValue::Container(id)) => Some(id.clone()),
+                ValueOrHandler::Handler(h) => Some(h.id()),
+                ValueOrHandler::Value(_) => None,
+            }
+        }
+
+        for (id, diff) in diff.iter() {
+            let has_unknown = match diff {
+                crate::event::Diff::Map(map) => map.updated.values().any(|v| {
+                    v.value
+                        .as_ref()
+                        .and_then(container_id)
+                        .is_some_and(|c| c.is_unknown())
+                }),
+                crate::event::Diff::List(delta) => delta.iter().any(|item| match item {
+                    loro_delta::DeltaItem::Replace { value, .. } => value
+                        .iter()
+                        .any(|v| container_id(v).is_some_and(|c| c.is_unknown())),
+                    loro_delta::DeltaItem::Retain { .. } => false,
+                }),
+                _ => false,
+            };
+            if !has_unknown {
+                continue;
+            }
+
+            let (target, remapped) = resolve(id.clone(), container_remap);
+            let exists = self.has_container(&target);
+            if exists && skip_unreachable && !remapped && !self.state.lock().get_reachable(&target)
+            {
+                // `_apply_diff` skips this diff
+                continue;
+            }
+
+            match diff {
+                crate::event::Diff::Map(map) => {
+                    for v in map.updated.values() {
+                        if let Some(child) = v.value.as_ref().and_then(container_id) {
+                            if child.is_unknown() && !child.is_mergeable() {
+                                return Err(unknown_container_err(&child));
+                            }
+                        }
+                    }
+                }
+                crate::event::Diff::List(delta) => {
+                    // Only an existing MovableList can move one of its elements
+                    // instead of creating a container: either an element this delta
+                    // deletes, or (`from_move`) an element still in the list.
+                    let list = if exists && target.container_type() == ContainerType::MovableList {
+                        self.get_handler(target)
+                            .and_then(|h| h.into_movable_list().ok())
+                    } else {
+                        None
+                    };
+                    let mut deleted = FxHashSet::default();
+                    let mut current = FxHashSet::default();
+                    if let Some(list) = &list {
+                        let mut index = 0;
+                        for item in delta.iter() {
+                            match item {
+                                loro_delta::DeltaItem::Retain { len, .. } => index += len,
+                                loro_delta::DeltaItem::Replace { delete, .. } => {
+                                    for i in index..index + delete {
+                                        if let Some(LoroValue::Container(c)) = list.get(i) {
+                                            deleted.insert(c);
+                                        }
+                                    }
+                                    index += delete;
+                                }
+                            }
+                        }
+                        for i in 0..list.len() {
+                            if let Some(LoroValue::Container(c)) = list.get(i) {
+                                current.insert(c);
+                            }
+                        }
+                    }
+
+                    for item in delta.iter() {
+                        let loro_delta::DeltaItem::Replace { value, attr, .. } = item else {
+                            continue;
+                        };
+                        for child in value.iter().filter_map(container_id) {
+                            if !child.is_unknown() {
+                                continue;
+                            }
+                            let (resolved, _) = resolve(child.clone(), container_remap);
+                            let moved = deleted.contains(&child)
+                                || deleted.contains(&resolved)
+                                || (attr.from_move && current.contains(&resolved));
+                            if !moved {
+                                return Err(unknown_container_err(&child));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -1939,6 +2089,14 @@ impl LoroDoc {
         ret_event_index: bool,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         if !self.has_container(&pos.container) {
+            return Err(CannotFindRelativePosition::IdNotFound);
+        }
+
+        // Cursors can only point into sequence containers
+        if !matches!(
+            pos.container.container_type(),
+            ContainerType::Text | ContainerType::List | ContainerType::MovableList
+        ) {
             return Err(CannotFindRelativePosition::IdNotFound);
         }
 

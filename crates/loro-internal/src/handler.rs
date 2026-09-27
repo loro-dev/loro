@@ -174,7 +174,8 @@ fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrH
 }
 
 /// Reject inserting a container that is attached to another doc, either directly
-/// or nested inside a detached container.
+/// or nested inside a detached container, or a copy that would need to create an
+/// unknown container.
 ///
 /// Attaching copies an attached container through its own doc, so a foreign
 /// child would mix the source doc's arena with the target doc's transaction.
@@ -186,7 +187,8 @@ fn ensure_not_attached_to_other_doc<H: HandlerTrait>(child: &H, doc: &LoroDoc) -
 fn ensure_handler_not_attached_to_other_doc(handler: &Handler, doc: &LoroDoc) -> LoroResult<()> {
     if let Some(a) = handler.attached_handler() {
         if Arc::ptr_eq(&a.doc.inner, &doc.inner) {
-            return Ok(());
+            // Attaching a container of the same doc copies it
+            return ensure_no_unknown_container_in_attached(handler);
         }
 
         return Err(LoroError::ArgErr(
@@ -223,6 +225,61 @@ fn ensure_handler_not_attached_to_other_doc(handler: &Handler, doc: &LoroDoc) ->
             Ok(())
         }
         Handler::Text(_) | Handler::Unknown(_) => Ok(()),
+        #[cfg(feature = "counter")]
+        Handler::Counter(_) => Ok(()),
+    }
+}
+
+fn unknown_container_arg_err(id: &ContainerID) -> LoroError {
+    LoroError::ArgErr(
+        format!(
+            "Cannot create a copy of container {id}: its type {} is unknown to this version of Loro",
+            id.container_type()
+        )
+        .into_boxed_str(),
+    )
+}
+
+/// Attaching an attached container copies its content, which is impossible for
+/// a container whose type this version doesn't know (created by a newer Loro).
+fn ensure_no_unknown_container_in_attached(handler: &Handler) -> LoroResult<()> {
+    let check_children = |value: LoroValue| -> LoroResult<()> {
+        let children: Vec<ContainerID> = match value {
+            LoroValue::Map(m) => m
+                .values()
+                .filter_map(|v| v.as_container().cloned())
+                .collect(),
+            LoroValue::List(l) => l.iter().filter_map(|v| v.as_container().cloned()).collect(),
+            _ => Vec::new(),
+        };
+        let Some(doc) = handler.attached_handler().map(|a| a.doc()) else {
+            return Ok(());
+        };
+        for id in children {
+            ensure_no_unknown_container_in_attached(&Handler::new_attached(id, doc.clone()))?;
+        }
+        Ok(())
+    };
+
+    match handler {
+        Handler::Unknown(u) => Err(unknown_container_arg_err(&u.id())),
+        Handler::Map(m) => check_children(m.get_value()),
+        Handler::List(l) => check_children(l.get_value()),
+        Handler::MovableList(l) => check_children(l.get_value()),
+        Handler::Tree(t) => {
+            fn check_nodes(
+                t: &TreeHandler,
+                nodes: Vec<crate::TreeNodeWithChildren>,
+            ) -> LoroResult<()> {
+                for node in nodes {
+                    ensure_no_unknown_container_in_attached(&Handler::Map(t.get_meta(node.id)?))?;
+                    check_nodes(t, node.children)?;
+                }
+                Ok(())
+            }
+            check_nodes(t, t.get_all_hierarchy_nodes_under(TreeParentId::Root))
+        }
+        Handler::Text(_) => Ok(()),
         #[cfg(feature = "counter")]
         Handler::Counter(_) => Ok(()),
     }
@@ -350,7 +407,8 @@ impl BasicHandler {
                 ContainerType::Counter => Handler::Counter(counter::CounterHandler {
                     inner: handler.into(),
                 }),
-                ContainerType::Unknown(_) => unreachable!(),
+                // Snapshots from a newer Loro may store children of an unknown container
+                ContainerType::Unknown(_) => Handler::Unknown(UnknownHandler { inner: handler }),
             })
         }
     }
@@ -1178,7 +1236,7 @@ impl Handler {
             return Ok(());
         }
 
-        let new_h = map.insert_container(key, Handler::new_unattached(old_id.container_type()))?;
+        let new_h = map.insert_container(key, Handler::new_unattached(old_id.container_type())?)?;
         let new_id = new_h.id();
         on_container_remap(old_id, new_id);
         Ok(())
@@ -1216,9 +1274,10 @@ impl Handler {
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn new_unattached(kind: ContainerType) -> Self {
-        match kind {
+    /// Errors on [ContainerType::Unknown]: this version cannot create a
+    /// container of a type it doesn't know.
+    pub(crate) fn new_unattached(kind: ContainerType) -> LoroResult<Self> {
+        Ok(match kind {
             ContainerType::Text => Self::Text(TextHandler::new_detached()),
             ContainerType::Map => Self::Map(MapHandler::new_detached()),
             ContainerType::List => Self::List(ListHandler::new_detached()),
@@ -1226,8 +1285,12 @@ impl Handler {
             ContainerType::MovableList => Self::MovableList(MovableListHandler::new_detached()),
             #[cfg(feature = "counter")]
             ContainerType::Counter => Self::Counter(counter::CounterHandler::new_detached()),
-            ContainerType::Unknown(_) => unreachable!(),
-        }
+            ContainerType::Unknown(_) => {
+                return Err(LoroError::ArgErr(
+                    format!("Cannot create a container of unknown type {kind}").into_boxed_str(),
+                ));
+            }
+        })
     }
 
     pub fn id(&self) -> ContainerID {
@@ -3567,7 +3630,7 @@ impl ListHandler {
                                     ValueOrHandler::Value(LoroValue::Container(old_id)) => {
                                         let new_h = self.insert_container(
                                             index,
-                                            Handler::new_unattached(old_id.container_type()),
+                                            Handler::new_unattached(old_id.container_type())?,
                                         )?;
                                         let new_id = new_h.id();
                                         on_container_remap(old_id.clone(), new_id);
@@ -3576,7 +3639,7 @@ impl ListHandler {
                                         let old_id = h.id();
                                         let new_h = self.insert_container(
                                             index,
-                                            Handler::new_unattached(old_id.container_type()),
+                                            Handler::new_unattached(old_id.container_type())?,
                                         )?;
                                         let new_id = new_h.id();
                                         on_container_remap(old_id, new_id);
@@ -5744,23 +5807,23 @@ mod test {
     fn handler_trait_dispatch_reports_detached_container_identity() {
         let handlers = [
             (
-                Handler::new_unattached(ContainerType::Text),
+                Handler::new_unattached(ContainerType::Text).unwrap(),
                 ContainerType::Text,
             ),
             (
-                Handler::new_unattached(ContainerType::Map),
+                Handler::new_unattached(ContainerType::Map).unwrap(),
                 ContainerType::Map,
             ),
             (
-                Handler::new_unattached(ContainerType::List),
+                Handler::new_unattached(ContainerType::List).unwrap(),
                 ContainerType::List,
             ),
             (
-                Handler::new_unattached(ContainerType::MovableList),
+                Handler::new_unattached(ContainerType::MovableList).unwrap(),
                 ContainerType::MovableList,
             ),
             (
-                Handler::new_unattached(ContainerType::Tree),
+                Handler::new_unattached(ContainerType::Tree).unwrap(),
                 ContainerType::Tree,
             ),
         ];
@@ -5845,7 +5908,19 @@ mod test {
         assert!(!unknown.is_deleted());
         assert_eq!(format!("{unknown:?}"), "UnknownHandler");
         assert!(unknown.get_attached().is_some());
-        assert!(super::UnknownHandler::from_handler(handler).is_some());
+        assert!(super::UnknownHandler::from_handler(handler.clone()).is_some());
+
+        // This version cannot create or copy a container of an unknown type
+        assert!(matches!(
+            Handler::new_unattached(ContainerType::Unknown(7)),
+            Err(LoroError::ArgErr(_))
+        ));
+        let map = loro.get_map("map");
+        assert!(matches!(
+            map.insert_container("k", handler),
+            Err(LoroError::ArgErr(_))
+        ));
+        assert!(map.is_empty());
     }
 
     #[test]

@@ -113,8 +113,7 @@ impl MovableListHandler {
                                 next_deleted: &mut next_deleted,
                             };
 
-                            self.process_replacements(value, attr, &mut context)
-                                .unwrap();
+                            self.process_replacements(value, attr, &mut context)?;
                             delta_change.push(value.len() as isize);
                         }
                     }
@@ -271,7 +270,7 @@ impl MovableListHandler {
             // Insert a new container if not moved.
             let new_handler = self.insert_container(
                 *context.index,
-                Handler::new_unattached(old_id.container_type()),
+                Handler::new_unattached(old_id.container_type())?,
             )?;
             let new_id = new_handler.id();
             context.container_remap.insert(old_id, new_id);

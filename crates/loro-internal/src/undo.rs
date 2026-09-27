@@ -120,7 +120,11 @@ fn transform_cursor(
     };
 
     let new_pos = cursor_with_pos.pos.pos;
-    match doc.get_handler(cid.clone()).unwrap() {
+    // Cursors come from the user's `on_push` and may name a missing container
+    let Some(handler) = doc.get_handler(cid.clone()) else {
+        return;
+    };
+    match handler {
         crate::handler::Handler::Text(h) => {
             let Some(new_cursor) = h.get_cursor_internal(new_pos, cursor_with_pos.pos.side, false)
             else {
