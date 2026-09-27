@@ -6664,15 +6664,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     preparedDiffs: ReadonlyMap<string, Diff> = new Map(),
   ): void {
     if (changed.size === 0 || !this.#hasEventSubscribers()) return;
-    const events: LoroEvent[] = [...changed].flatMap((id) => {
+    const diffs = new Map<string, LoroEvent["diff"]>();
+    for (const id of changed) {
       const container = this.#containers.get(id);
-      if (container === undefined) return [];
-      const diff =
-        preparedDiffs.get(id) ?? containerDiff(container, beforeValues.get(id));
-      return isEmptyContainerDiff(diff)
-        ? []
-        : [{ target: id as ContainerID, diff, path: containerPath(container) }];
-    });
+      if (container === undefined) continue;
+      diffs.set(
+        id,
+        preparedDiffs.get(id) ?? containerDiff(container, beforeValues.get(id)),
+      );
+    }
+    const events: LoroEvent[] = this.#reviveAttachedChildren(diffs, from).flatMap(
+      ([id, diff]) =>
+        isEmptyContainerDiff(diff)
+          ? []
+          : [
+              {
+                target: id as ContainerID,
+                diff,
+                path: containerPath(this.#containers.get(id)!),
+              },
+            ],
+    );
     if (events.length === 0) return;
     const base = {
       by,
@@ -6701,6 +6713,56 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const batch = { ...base, currentTarget: target as ContainerID, events: relevant };
       for (const listener of listeners) listener(batch);
     }
+  }
+
+  /**
+   * Like Rust's `DocState::apply_diff`, a child container that a diff in the
+   * batch attaches (a map value, a list insert, or a created tree node's
+   * metadata) is "revived": its event carries its whole state, so a listener
+   * that starts it from empty ends up with the right content, and the same
+   * applies to the children it attaches in turn. Its own delta is dropped: it
+   * describes a change relative to the hidden state, which the listener never
+   * saw. A movable-list child that only moved keeps its delta. Returns the
+   * diffs parent first.
+   */
+  #reviveAttachedChildren(
+    diffs: Map<string, LoroEvent["diff"]>,
+    from: readonly CodecId[],
+  ): [string, LoroEvent["diff"]][] {
+    let fromVersion: VersionVector | undefined;
+    const revived = new Set<string>();
+    const byDepth = new Map<number, LoroContainer[]>();
+    const schedule = (container: LoroContainer): void => {
+      const depth = containerDepth(container);
+      const bucket = byDepth.get(depth);
+      if (bucket === undefined) byDepth.set(depth, [container]);
+      else bucket.push(container);
+    };
+    for (const id of diffs.keys()) schedule(this.#containers.get(id)!);
+    const ordered: [string, LoroEvent["diff"]][] = [];
+    for (let depth = 0; byDepth.size > 0; depth += 1) {
+      const bucket = byDepth.get(depth);
+      if (bucket === undefined) continue;
+      byDepth.delete(depth);
+      for (const parent of bucket) {
+        const diff = diffs.get(parent.id)!;
+        ordered.push([parent.id, diff]);
+        for (const child of this.#attachedChildren(parent, diff)) {
+          if (revived.has(child.id)) continue;
+          // A List diff can delete and re-insert an unchanged child (the
+          // fallback path diffs whole values); a listener resets it, so it is
+          // revived too. Only a movable-list move keeps the moved child.
+          if (parent instanceof LoroMovableList && !revived.has(parent.id)) {
+            fromVersion ??= this.#causalVersionForKnownFrontiers(from);
+            if (this.#reachableThroughParentAt(child, parent, fromVersion)) continue;
+          }
+          revived.add(child.id);
+          if (!diffs.has(child.id)) schedule(child);
+          diffs.set(child.id, containerDiff(child, undefined));
+        }
+      }
+    }
+    return ordered;
   }
 
   #hasEventSubscribers(): boolean {
