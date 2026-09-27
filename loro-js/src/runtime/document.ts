@@ -5473,18 +5473,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
 
-    let start = parsed;
-    if (start.length > 1) {
-      const versions = start.map((frontier) => this.#causalVersionAt([frontier]));
-      const peers = new Set(versions.flatMap((version) => [...version.keys()]));
-      const common = new VersionVector();
-      for (const peer of peers) {
-        const counter = Math.min(...versions.map((version) => version.get(peer) ?? 0));
-        if (counter > 0) common.set(peer, counter);
-      }
-      const commonFrontiers = this.#frontiersForVersion(common);
-      start = commonFrontiers.length === 1 ? commonFrontiers : [];
-    }
+    // Every retained op must be causally before or after the root, so a
+    // branch merged after `requested` that forked below it moves the root
+    // down (loro-dev/loro#1095).
+    let start =
+      parsed.length === 0
+        ? []
+        : this.#latestSingleHeadCriticalVersion(parsed, [
+            ...this.#historyFrontiers.values(),
+          ]);
 
     if (start.length === 1) {
       const operation = this.#operationAt(start[0]!);
@@ -5501,6 +5498,130 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return this.#shallowRootFrontiers.map((id) => ({ ...id }));
     }
     return start;
+  }
+
+  /**
+   * Port of Rust's `latest_single_head_critical_version` (`dag.rs`): the
+   * newest op `v` such that every other op in the union of both histories is
+   * an ancestor of `v` or causally after it, or the empty version when no
+   * such op exists. The heap is always a cut of the unexplored region, so the
+   * first time it narrows to one span, that span's last op is the answer.
+   */
+  #latestSingleHeadCriticalVersion(
+    left: readonly CodecId[],
+    right: readonly CodecId[],
+  ): CodecId[] {
+    interface Span {
+      readonly peer: bigint;
+      readonly counter: number;
+      readonly lamport: number;
+      len: number;
+      readonly deps: readonly CodecId[];
+    }
+    const spanOf = (id: CodecId): Span | undefined => {
+      const record = this.#recordContaining(id);
+      if (record === undefined) return undefined;
+      const change = record.change;
+      return {
+        peer: change.id.peer,
+        counter: change.id.counter,
+        lamport: change.lamport,
+        len: id.counter - change.id.counter + 1,
+        deps: change.dependencies,
+      };
+    };
+    const lastCounter = (span: Span): number => span.counter + span.len - 1;
+    const lastLamport = (span: Span): number => span.lamport + span.len - 1;
+    const contains = (span: Span, peer: bigint, counter: number): boolean =>
+      span.peer === peer && span.counter <= counter && counter <= lastCounter(span);
+    // Max-heap order: last lamport, then peer; a shorter span with the same
+    // last op is greater.
+    const greater = (a: Span, b: Span): boolean =>
+      lastLamport(a) !== lastLamport(b)
+        ? lastLamport(a) > lastLamport(b)
+        : a.peer !== b.peer
+          ? a.peer > b.peer
+          : a.len < b.len;
+    const heap: Span[] = [];
+    const push = (span: Span): void => {
+      heap.push(span);
+      for (let index = heap.length - 1; index > 0; ) {
+        const parent = (index - 1) >> 1;
+        if (!greater(heap[index]!, heap[parent]!)) break;
+        [heap[index], heap[parent]] = [heap[parent]!, heap[index]!];
+        index = parent;
+      }
+    };
+    const pop = (): Span => {
+      const top = heap[0]!;
+      const last = heap.pop()!;
+      if (heap.length > 0) {
+        heap[0] = last;
+        for (let index = 0; ; ) {
+          const leftChild = index * 2 + 1;
+          const rightChild = leftChild + 1;
+          let largest = index;
+          if (leftChild < heap.length && greater(heap[leftChild]!, heap[largest]!)) {
+            largest = leftChild;
+          }
+          if (rightChild < heap.length && greater(heap[rightChild]!, heap[largest]!)) {
+            largest = rightChild;
+          }
+          if (largest === index) break;
+          [heap[index], heap[largest]] = [heap[largest]!, heap[index]!];
+          index = largest;
+        }
+      }
+      return top;
+    };
+    for (const id of [...left, ...right]) {
+      const span = spanOf(id);
+      if (span === undefined) return [];
+      push(span);
+    }
+    while (heap.length > 0) {
+      const node = pop();
+      while (
+        heap.length > 0 &&
+        heap[0]!.peer === node.peer &&
+        lastCounter(heap[0]!) === lastCounter(node)
+      ) {
+        pop();
+      }
+      if (heap.length === 0) return [{ peer: node.peer, counter: lastCounter(node) }];
+      const other = heap[0]!;
+      if (contains(node, other.peer, lastCounter(other))) {
+        node.len = lastCounter(other) - node.counter + 1;
+        push(node);
+        continue;
+      }
+      if (node.len > 1) {
+        node.len =
+          lastLamport(other) >= node.lamport
+            ? Math.min(lastLamport(other) - node.lamport + 1, node.len - 1)
+            : 1;
+        push(node);
+        continue;
+      }
+      const deps: Span[] = [];
+      for (const dependency of node.deps) {
+        const span = spanOf(dependency);
+        if (span === undefined) return [];
+        deps.push(span);
+      }
+      if (node.counter > 0) {
+        const previous = spanOf({ peer: node.peer, counter: node.counter - 1 });
+        if (
+          previous !== undefined &&
+          !deps.some((dep) => contains(dep, previous.peer, lastCounter(previous)))
+        ) {
+          deps.push(previous);
+        }
+      }
+      if (deps.length === 0) return [];
+      for (const dep of deps) push(dep);
+    }
+    return [];
   }
 
   #causalVersionForKnownFrontiers(frontiers: readonly CodecId[]): VersionVector {
