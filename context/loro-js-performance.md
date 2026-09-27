@@ -91,6 +91,10 @@ JavaScript constant factor.
   produce the final event.
 - A pending transaction stores its accumulated operation length and causal
   version incrementally. Never recover either by reducing all pending ops.
+- An import journals its history changes (a few undo closures per imported
+  change) so a failure can roll back; importing into an empty document skips
+  the journal. Only a failure after state changed pays for a history replay
+  ([import-batch-atomicity.md](import-batch-atomicity.md)).
 - Plain Text/List elements allocate delete, value, and move metadata only when
   an operation needs it; Text style metadata lives in the range index. A
   multi-scalar Text insertion stores its string and UTF-16 boundaries once in a

@@ -111,3 +111,34 @@ regression on out-of-order batches, where every blob parks and is later unlocked
   `import_batch_failure_leaves_doc_attached_and_unchanged`.
 - `crates/loro-internal/src/oplog/pending_changes.rs`: the `import_batch_*` regressions
   that assert the doc is attached after a batch.
+
+## loro.js
+
+Verified against code 2026-09-30. `loro-js/src/runtime/document.ts` gives
+`import`, `importBatch` and `importJsonUpdates` the same all-or-nothing contract
+through `LoroDoc.#atomically`:
+
+- While an import runs, every in-place change to history structures (records,
+  per-peer arrays and ends, merged records, Map/Tree operation indexes,
+  containers and roots) pushes an undo closure onto `#importUndo`. Fields the
+  import replaces wholesale (frontiers, pending changes, deferred snapshot
+  history/state, shallow root and its entry index, snapshot-sequence entries,
+  counters) are saved by reference or copied, since they are small.
+- On failure the closures run in reverse and the saved fields are restored.
+  If the import had started to change container state (`#applyRecords`,
+  `#hydrateState` or `#rebuildFromHistory` ran), state is rebuilt from the
+  restored history at the previous version. The rebuild only happens on this
+  failure path. The per-container record index is invalidated. A snapshot
+  container that the import completed from its own history first
+  (`#prepareSnapshotImport`) keeps that replay, which equals its snapshot
+  state, and gets its snapshot entry back.
+- Importing into a pristine document skips the journal: a failure empties it
+  again.
+- `import` and `importBatch` emit their event only after the import succeeded,
+  so subscribers and `UndoManager` never see a partial import. A multi-blob
+  batch fails as a whole.
+- `checkout`/`attach` that fail (for example on a forged op a detached import
+  recorded) restore the previous version and attachment instead of leaving the
+  document half switched (`#transitionTo`, from loro-dev/loro#1126).
+
+Tests: `loro-js/tests/import-atomicity.test.ts`.
