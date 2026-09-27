@@ -1652,15 +1652,24 @@ impl LoroDoc {
         self.doc.subscribe_pre_commit(callback)
     }
 
-    /// Delete all content from a root container and hide it from the document.
+    /// Delete all content from a root container and from every container nested in it
+    /// (child containers, tree node metadata and mergeable children, also a mergeable
+    /// child whose map key was later overwritten or deleted), and hide the root from the
+    /// document. The old child container of an overwritten normal map value is not reached.
     ///
     /// When a root container is empty and hidden:
     /// - It won't show up in `get_deep_value()` results
-    /// - It won't be included in document snapshots
+    /// - Its state and the state of its nested containers are not included in exported
+    ///   snapshots (a full `ExportMode::Snapshot` still carries their ops in history)
     ///
-    /// Only works on root containers (containers without parents).
-    pub fn delete_root_container(&self, cid: ContainerID) {
-        self.doc.delete_root_container(cid);
+    /// This also works on a root container that is already unreachable, such as a
+    /// mergeable root whose owning tree node was deleted.
+    ///
+    /// Only works on root containers (containers without parents). Errors if `cid` is not
+    /// a root container, if the document has no such mergeable container, if emptying fails,
+    /// or if the document is detached (`AutoCommitNotStarted`).
+    pub fn delete_root_container(&self, cid: ContainerID) -> LoroResult<()> {
+        self.doc.delete_root_container(cid)
     }
 
     /// Set whether to hide empty root containers.

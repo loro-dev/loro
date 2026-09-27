@@ -9,7 +9,7 @@ use generic_btree::rle::{HasLength as RleHasLength, Mergeable as GBSliceable};
 use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{smallvec, SmallVec};
 
 use crate::{
@@ -166,6 +166,36 @@ pub struct Transaction {
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
     pub(super) is_peer_first_appearance: bool,
+    /// Deleted containers whose local ops are admitted; set only by [`PurgeScope`].
+    purging_containers: FxHashSet<ContainerIdx>,
+}
+
+/// Admits local ops on the given deleted containers in one transaction until dropped.
+/// Other writers need the transaction lock the purge holds, so they never see
+/// the exemption.
+pub(crate) struct PurgeScope<'a> {
+    txn: &'a mut Transaction,
+}
+
+impl<'a> PurgeScope<'a> {
+    pub(crate) fn new(txn: &'a mut Transaction, containers: FxHashSet<ContainerIdx>) -> Self {
+        assert!(
+            txn.purging_containers.is_empty(),
+            "purge scopes do not nest"
+        );
+        txn.purging_containers = containers;
+        Self { txn }
+    }
+
+    pub(crate) fn txn(&mut self) -> &mut Transaction {
+        self.txn
+    }
+}
+
+impl Drop for PurgeScope<'_> {
+    fn drop(&mut self) {
+        self.txn.purging_containers.clear();
+    }
 }
 
 impl std::fmt::Debug for Transaction {
@@ -377,6 +407,7 @@ impl Transaction {
             msg: None,
             latest_timestamp,
             is_peer_first_appearance: false,
+            purging_containers: FxHashSet::default(),
         })
     }
 
@@ -593,7 +624,7 @@ impl Transaction {
 
         let mut oplog = doc.oplog.lock();
         let mut state = doc.state.lock();
-        if state.is_deleted(container) {
+        if state.is_deleted(container) && !self.purging_containers.contains(&container) {
             return Err(LoroError::ContainerDeleted {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
             });
@@ -1019,5 +1050,27 @@ mod tests {
             LoroError::ConcurrentOpsWithSamePeerID { peer: 7, .. }
         ));
         assert!(!doc.app_state().lock().is_in_txn());
+    }
+
+    #[test]
+    fn purge_scope_resets_when_the_purge_panics() {
+        let doc = LoroDoc::new_auto_commit();
+        let idx = doc
+            .arena
+            .register_container(&loro_common::ContainerID::new_root(
+                "text",
+                ContainerType::Text,
+            ));
+        let (panicked, purging_after) = crate::handler::with_txn(&doc, |txn| {
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _purge = PurgeScope::new(txn, FxHashSet::from_iter([idx]));
+                panic!("purge failed");
+            }))
+            .is_err();
+            Ok((panicked, txn.purging_containers.clone()))
+        })
+        .unwrap();
+        assert!(panicked);
+        assert!(purging_after.is_empty());
     }
 }

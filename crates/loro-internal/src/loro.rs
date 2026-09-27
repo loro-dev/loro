@@ -40,7 +40,7 @@ use crate::{change::ChangeRef, lock::LockKind};
 use crate::{lock::LoroMutexGuard, pre_commit::PreCommitCallback};
 use crate::{
     lock::{LoroLockGroup, LoroMutex},
-    txn::Transaction,
+    txn::{PurgeScope, Transaction},
 };
 use either::Either;
 use loro_common::{
@@ -2468,28 +2468,47 @@ impl LoroDoc {
         })
     }
 
-    pub fn delete_root_container(&self, cid: ContainerID) {
+    /// Empties a root container and every container nested in it with deletion ops, and
+    /// hides the root from the document value. The container may already be unreachable,
+    /// such as a mergeable root whose owning tree node was deleted.
+    ///
+    /// Errors if `cid` is not a root container (`ArgErr`), if the document has no such
+    /// mergeable container (`NotFoundError`), or if emptying fails, which includes a detached
+    /// document (`AutoCommitNotStarted`).
+    pub fn delete_root_container(&self, cid: ContainerID) -> LoroResult<()> {
         if !cid.is_root() {
-            return;
+            return Err(LoroError::ArgErr(
+                format!("delete_root_container expects a root container, got {cid:?}").into(),
+            ));
         }
 
         // Do not treat "not in arena" as non-existence; consult state/kv
         if !self.has_container(&cid) {
-            return;
+            return Err(LoroError::NotFoundError(
+                format!("delete_root_container: no such container {cid:?}").into(),
+            ));
         }
 
-        let Some(h) = self.get_handler(cid.clone()) else {
-            return;
-        };
+        self.ensure_root_container(&cid);
 
         self.config
             .deleted_root_containers
             .lock()
             .insert(cid.clone());
-        if let Err(e) = h.clear() {
+
+        let idx = self.arena.register_container(&cid);
+        crate::handler::with_txn(self, |txn| {
+            let containers = self.state.lock().container_and_descendants(idx);
+            let mut purge = PurgeScope::new(txn, containers.iter().copied().collect());
+            for container in containers {
+                let id = self.arena.idx_to_id(container).unwrap();
+                Handler::new_attached(id, self.clone()).clear_with_txn(purge.txn())?;
+            }
+            Ok(())
+        })
+        .inspect_err(|_| {
             self.config.deleted_root_containers.lock().remove(&cid);
-            eprintln!("Failed to clear handler: {:?}", e);
-        }
+        })
     }
 
     pub fn set_hide_empty_root_containers(&self, hide: bool) {
@@ -3410,7 +3429,7 @@ mod test {
         base.set_peer_id(1).unwrap();
         let root_id = ContainerID::new_root("deleted", ContainerType::Map);
         base.get_map("deleted").insert("value", "base").unwrap();
-        base.delete_root_container(root_id);
+        base.delete_root_container(root_id).unwrap();
 
         let target = LoroDoc::new();
         target

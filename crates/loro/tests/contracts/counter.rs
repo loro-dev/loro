@@ -115,7 +115,7 @@ fn counter_events_json_updates_and_deletion_follow_contract() -> LoroResult<()> 
     second.increment(1.5)?;
     doc.commit();
     assert!(!second.is_deleted());
-    doc.delete_root_container(root.id());
+    doc.delete_root_container(root.id()).unwrap();
     doc.commit();
     assert!(second.is_deleted());
 

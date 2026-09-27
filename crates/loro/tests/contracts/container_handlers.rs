@@ -160,7 +160,7 @@ fn map_contracts_cover_iteration_lookup_and_root_hiding() -> LoroResult<()> {
 
     doc.set_hide_empty_root_containers(true);
     map.clear()?;
-    doc.delete_root_container(map.id());
+    doc.delete_root_container(map.id()).unwrap();
 
     assert_eq!(deep_json(&doc), json!({}));
     assert!(doc.has_container(&map.id()));
