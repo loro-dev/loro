@@ -814,6 +814,48 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     return runs;
   }
 
+  /**
+   * The visible element whose metric range contains `offset`. With a 0/1
+   * metric this is the `offset`-th element that has the metric.
+   */
+  visibleAtMetricOffset(offset: number, metric: Metric): T | undefined {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset >= visibleMetric(this.#root, metric)
+    ) {
+      return undefined;
+    }
+    let node = this.#root;
+    let remaining = offset;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftMetric = visibleMetric(node.left, metric);
+      if (remaining < leftMetric) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftMetric;
+      const ownMetric = ownVisibleMetric(node, metric, this.#metrics);
+      if (remaining < ownMetric) {
+        const prefix =
+          metric === "utf16" ? node.visibleUtf16Prefix : node.visibleUtf8Prefix;
+        if (prefix === undefined) return nodeElement(node, 0);
+        let low = 0;
+        let high = prefix.length - 1;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if (prefix[middle + 1]! > remaining) high = middle;
+          else low = middle + 1;
+        }
+        return nodeElement(node, low);
+      }
+      remaining -= ownMetric;
+      node = node.right;
+    }
+    return undefined;
+  }
+
   visibleIndexAfterLineBreaks(count: number): number | undefined {
     const total = visibleLineBreakMetric(this.#root);
     if (!Number.isSafeInteger(count) || count < 0 || count > total) return undefined;
@@ -1078,6 +1120,15 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     this.#invalidateCausalView();
     updateNodeElementVisibility(node, offset, element, deleted, this.#metrics);
     recomputeToRoot(node, this.#metrics, false);
+  }
+
+  /** Recomputes cached metrics after `element`'s metrics changed in place. */
+  refreshMetrics(element: T): void {
+    if (this.#hasLazyDeletions) materializeElementDeletion(element, this.#metrics);
+    const node = elementNode(element);
+    if (node === undefined) return;
+    recomputeOwn(node, this.#metrics);
+    recomputeToRoot(node, this.#metrics);
   }
 
   deleteElement(element: T, deletedBy?: SequenceId): void {

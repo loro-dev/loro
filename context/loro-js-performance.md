@@ -63,12 +63,17 @@ JavaScript constant factor.
   imports apply only newly integrated records.
 - Retreat and comparable-version transitions toggle only the affected sequence
   elements, map keys, tree nodes, counters, text-style entries, and
-  movable-list values. Map and Tree winner lookup uses per-subject/per-peer
-  arrays with binary search. MovableList moves retain before/after neighbor
-  anchors and an operation history per container. Direct switches between
-  concurrent move branches replay only the affected container's order history,
-  then apply the minimum move set selected by a longest-increasing-subsequence
-  pass. Unrelated document history and container state are not rebuilt.
+  MovableList positions and elements. Map and Tree winner lookup uses
+  per-subject/per-peer arrays with binary search. A MovableList
+  (`movable-list.ts`, [loro-js-movable-list.md](loro-js-movable-list.md))
+  keeps a Fugue `SequenceIndex` of positions whose 0/1 metric marks the
+  user-visible ones, so user index ↔ op index ↔ position lookups are
+  O(log n). A version switch toggles the positions that the switched ops
+  created or deleted, then reselects each touched element's winning position
+  and value from its candidates, newest first. It costs
+  O((affected ops + skipped candidates) · log n), like Rust's `last_pos` scan,
+  with no replay. Unrelated document history and container state are not
+  rebuilt.
 - Contiguous Text/List insertion and deletion transitions reuse the physical ID
   runs and reversible lazy subtree visibility in both directions. Without an
   event subscriber, hiding or showing one complete run is expected O(log n +
@@ -521,10 +526,11 @@ The remaining differences are representation and JavaScript constant factors:
   restored text/list values in its event, so its work is proportional to that
   emitted output. Without a subscriber, both hide and show transitions use the
   reversible lazy visibility layer and stay proportional to affected ID runs.
-- Importing interleaved concurrent MovableList moves can canonicalize the
-  affected container once. Initial snapshot hydration and fallback transitions
-  with incomplete history can likewise materialize complete touched containers
-  when their returned state or subscriber event requires it.
+- State hydrated from a latest-state snapshot has no tombstones or MovableList
+  candidate history. The first import that is concurrent with that state, or
+  names a MovableList element it lacks, replays history once
+  (`#needsHistoryReplay`); so do version transitions on such a MovableList.
+  Later imports and transitions are incremental again.
 - The million-operation C1.1 concurrent-text trace still exposes a large
   constant-factor and retained-memory gap. Its local edit phase is about 4x the
   WASM adapter, and parsing the 6.5 MB snapshot takes 3.62 seconds versus 43 ms.

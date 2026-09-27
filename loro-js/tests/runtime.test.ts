@@ -1791,6 +1791,12 @@ describe("loro-wasm-compatible runtime", () => {
     expect(count(() => doc.getCounter("counter").increment(0))).toBe(1);
     // Attaching a detached counter increments it by its value, even 0.
     expect(count(() => map.setContainer("child", new LoroCounter()))).toBe(2);
+    // A movable-list set is recorded even when the value is unchanged.
+    const movable = doc.getMovableList("movable");
+    movable.push("same");
+    doc.commit();
+    expect(count(() => movable.set(0, "same"))).toBe(1);
+    expect(movable.toJSON()).toEqual(["same"]);
   });
 
   test("lets a delete of an absent map key win against a concurrent set", () => {

@@ -115,15 +115,7 @@ const cases: Case[] = [
  * an item that moves inside the Fugue sequence. The Rust-compatible model in
  * context/loro-js-movable-list.md removes them from this set.
  */
-const KNOWN_DIVERGENT = new Set([
-  "insert/delete undo (one peer)",
-  "move/set",
-  "move/set with children",
-  "move/set history",
-  "move/set undo (one peer)",
-  "snapshots",
-  "shallow snapshots",
-]);
+const KNOWN_DIVERGENT = new Set<string>([]);
 
 describe.skipIf(rust === undefined)("MovableList matches the Rust implementation", () => {
   test.each(cases)(
