@@ -340,3 +340,44 @@ fn delete_on_mergeable_key_emits_only_existing_op_types() {
         "delete must emit exactly one op (the MapSet clearing the slot); got {new_ops}"
     );
 }
+
+/// `revert_to` a version before the delete re-activates the hidden child. The revival diff
+/// carries the child's full state, which must replace the preserved hidden state rather than
+/// be appended to it (it used to yield "hellohello" / 14 / ["keep", "keep"]).
+#[test]
+fn revert_to_before_delete_restores_hidden_content_once() {
+    let doc = doc(1);
+    let root = doc.get_map("m");
+    root.ensure_mergeable_text("t")
+        .unwrap()
+        .insert(0, "hello", loro_internal::cursor::PosType::Unicode)
+        .unwrap();
+    root.ensure_mergeable_list("l")
+        .unwrap()
+        .push("keep")
+        .unwrap();
+    #[cfg(feature = "counter")]
+    root.ensure_mergeable_counter("c")
+        .unwrap()
+        .increment(7.0)
+        .unwrap();
+    doc.commit_then_renew();
+    let before_delete = doc.state_frontiers();
+    let expected = doc.get_deep_value().to_json_value();
+
+    for key in ["t", "l", "c"] {
+        let _ = root.delete(key);
+    }
+    doc.commit_then_renew();
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({ "m": {} }));
+
+    doc.revert_to(&before_delete).unwrap();
+    doc.commit_then_renew();
+    assert_eq!(doc.get_deep_value().to_json_value(), expected);
+
+    let replay = loro_internal::LoroDoc::new_auto_commit();
+    replay
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(replay.get_deep_value().to_json_value(), expected);
+}

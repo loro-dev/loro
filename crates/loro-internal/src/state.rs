@@ -1306,6 +1306,16 @@ impl DocState {
         f(state)
     }
 
+    /// The container's current state as a from-empty diff, the shape revival events use.
+    pub(crate) fn container_full_diff(&mut self, idx: ContainerIdx) -> Diff {
+        let doc = self.doc.clone();
+        self.store.get_or_create_mut(idx).to_diff(&doc)
+    }
+
+    pub(crate) fn is_container_state_empty(&mut self, idx: ContainerIdx) -> bool {
+        self.store.get_or_create_mut(idx).is_state_empty()
+    }
+
     pub(super) fn is_in_txn(&self) -> bool {
         self.in_txn
     }

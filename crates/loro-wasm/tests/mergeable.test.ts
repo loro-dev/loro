@@ -222,4 +222,31 @@ describe("mergeable containers (WASM bindings)", () => {
       errorSpy.mockRestore();
     }
   });
+  test("revertTo / applyDiff restore a deleted mergeable child once", () => {
+    const setup = () => {
+      const d = new LoroDoc();
+      d.setPeerId(1);
+      const m = d.getMap("m");
+      m.ensureMergeableText("t").insert(0, "hello");
+      m.ensureMergeableCounter("c").increment(7);
+      m.ensureMergeableList("l").push("keep");
+      m.ensureMergeableMovableList("ml").push("keep");
+      d.commit();
+      const a = d.frontiers();
+      for (const key of ["t", "c", "l", "ml"]) m.delete(key);
+      d.commit();
+      return { d, a, b: d.frontiers() };
+    };
+    const expected = { m: { t: "hello", c: 7, l: ["keep"], ml: ["keep"] } };
+
+    const r = setup();
+    r.d.revertTo(r.a);
+    r.d.commit();
+    expect(r.d.toJSON()).toEqual(expected);
+
+    const p = setup();
+    p.d.applyDiff(p.d.diff(p.b, p.a));
+    p.d.commit();
+    expect(p.d.toJSON()).toEqual(expected);
+  });
 });

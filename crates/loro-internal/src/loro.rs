@@ -1368,12 +1368,21 @@ impl LoroDoc {
 
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
+        // Containers whose diff in this batch is a full (from-empty) state but that keep an
+        // id which may already hold state: re-activated mergeable children and, transitively,
+        // the children of revived containers that were left untouched. See
+        // `handler::full_state` and context/mergeable-containers.md.
+        let mut full_state_targets: FxHashSet<ContainerID> = FxHashSet::default();
+        let mut in_batch: FxHashSet<ContainerID> = FxHashSet::default();
         for (mut id, diff) in diff.into_iter() {
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
                 id = rid.clone();
             }
+
+            let is_full_state = full_state_targets.remove(&id);
+            in_batch.insert(id.clone());
 
             if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
                 // Not in arena does not imply non-existent; consult state/kv and register lazily
@@ -1386,7 +1395,11 @@ impl LoroDoc {
                 self.state.lock().ensure_container(&id);
             }
 
-            if skip_unreachable && !remapped && !self.state.lock().get_reachable(&id) {
+            if skip_unreachable
+                && !remapped
+                && !is_full_state
+                && !self.state.lock().get_reachable(&id)
+            {
                 continue;
             }
 
@@ -1395,8 +1408,45 @@ impl LoroDoc {
                     containers: Box::new(vec![id]),
                 });
             };
-            if let Err(e) = h.apply_diff(diff, container_remap) {
+            let diff = if is_full_state {
+                let current = self.state.lock().container_full_diff(h.container_idx());
+                match crate::handler::reconcile_full_state(
+                    &h,
+                    diff,
+                    current,
+                    &mut full_state_targets,
+                ) {
+                    Ok(Some(diff)) => diff,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        ans = Err(e);
+                        continue;
+                    }
+                }
+            } else {
+                diff
+            };
+            if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
                 ans = Err(e);
+            }
+        }
+
+        // A full-state container without a diff in the batch is empty at the target version.
+        for id in full_state_targets {
+            if in_batch.contains(&id) {
+                continue;
+            }
+            let Some(h) = self.get_handler(id) else {
+                continue;
+            };
+            let is_empty = self
+                .state
+                .lock()
+                .is_container_state_empty(h.container_idx());
+            if !is_empty {
+                if let Err(e) = h.clear() {
+                    ans = Err(e);
+                }
             }
         }
 
