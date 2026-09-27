@@ -381,14 +381,27 @@ pub(crate) fn export_shallow_snapshot_inner(
         if let Some((shallow_root_state_bytes, shallow_root_kv)) =
             state.store.shallow_root_state_for_export()
         {
+            // The cached root may come from an older exporter that kept
+            // containers deleted before the root, so filter it with the same
+            // retention set the other paths compute instead of trusting its
+            // key set.
+            let root_retained = cached_root_retention_keys(&shallow_root_state_bytes)?;
+            let root_pruned = shallow_root_kv
+                .keys()
+                .iter()
+                .any(|key| !root_retained.contains(key));
+            if root_pruned {
+                shallow_root_kv.retain_keys(&root_retained);
+            }
+
             // Ops since the root are few enough to replay on import; otherwise
             // also ship the encoded latest state as an overlay.
             let overlay_kv = if ops_num > MAX_OPS_NUM_TO_ENCODE_WITHOUT_LATEST_STATE {
-                let mut alive_c_bytes = shallow_root_kv.keys();
-                if has_unknown_container_key(alive_c_bytes.iter()) {
+                if has_unknown_container_key(shallow_root_kv.keys().iter()) {
                     return Err(LoroEncodeError::UnknownContainer);
                 }
 
+                let mut alive_c_bytes = root_retained;
                 state.ensure_all_alive_containers()?;
                 state.store.flush();
 
@@ -404,15 +417,15 @@ pub(crate) fn export_shallow_snapshot_inner(
 
             // The stored shallow-root bytes may predate dead-style redaction
             // (e.g. imported from an older export), so re-run it before reuse.
-            let shallow_root_state_bytes =
-                if redact_export_states(&shallow_root_kv, overlay_kv.as_ref())? {
-                    // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
-                    // strips it on import); restore it before export.
-                    shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
-                    shallow_root_kv.export()
-                } else {
-                    shallow_root_state_bytes
-                };
+            let redacted = redact_export_states(&shallow_root_kv, overlay_kv.as_ref())?;
+            let shallow_root_state_bytes = if root_pruned || redacted {
+                // The cloned root kv has no FRONTIERS_KEY (InnerStore::decode
+                // strips it on import); restore it before export.
+                shallow_root_kv.insert(FRONTIERS_KEY, start_from.encode().into());
+                shallow_root_kv.export()
+            } else {
+                shallow_root_state_bytes
+            };
 
             return Ok((
                 Snapshot {
@@ -576,6 +589,23 @@ fn retain_created_after_root(
             alive_c_bytes.insert(cid.to_bytes());
         }
     }
+}
+
+/// Retention set (see `DocState::ensure_all_alive_containers`) of a cached
+/// shallow root state, computed on a scratch doc so the live doc's arena and
+/// store are untouched. The root state is decoded lazily and read
+/// ephemerally, like the walk over a checked-out state.
+fn cached_root_retention_keys(
+    root_state_bytes: &Bytes,
+) -> Result<BTreeSet<Vec<u8>>, LoroEncodeError> {
+    let root_doc = LoroDoc::new();
+    let mut root_state = root_doc.app_state().lock();
+    root_state
+        .store
+        .decode(root_state_bytes.clone())
+        .map_err(LoroEncodeError::from)?;
+    let alive_containers = root_state.ensure_all_alive_containers()?;
+    Ok(alive_indices_to_bytes(&root_state, &alive_containers))
 }
 
 fn encode_shallow_sections(

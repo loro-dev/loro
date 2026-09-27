@@ -7,8 +7,8 @@
 //! old meta map is live again, so it must stay in the shallow root state.
 
 use loro::{
-    ContainerID, ContainerTrait, ExportMode, Frontiers, JsonSchema, LoroDoc, LoroMap, LoroText,
-    TreeID, TreeParentId,
+    ContainerID, ContainerTrait, ContainerType, ExportMode, Frontiers, JsonSchema, LoroDoc,
+    LoroMap, LoroText, TreeID, TreeParentId, ID,
 };
 
 /// `rows` child maps, all deleted, then the cut, then `edits_after_cut` unrelated ops.
@@ -385,4 +385,216 @@ fn legacy_shallow_snapshot_without_revived_node_meta_imports() {
     doc.commit();
     let again = import_fresh(&doc.export(ExportMode::Snapshot).unwrap());
     assert_eq!(again.get_deep_value(), doc.get_deep_value());
+}
+
+// Fixtures below were exported by the pre-#1119 exporter (ad5b2a6d) from the
+// `legacy_*` builders, which must stay byte-for-byte deterministic: the tests
+// rebuild the same history to get a full-history replica. That exporter kept
+// containers deleted before the root in the root state whenever it shipped a
+// latest-state overlay (>256 retained ops, or state-only). Re-exporting at the
+// same root reuses the cached root state and must drop them too.
+
+/// Root map `rows` gets a child map with `secret = "old"`, which is then
+/// deleted before the cut; `filler_ops` unrelated ops follow the cut.
+fn legacy_dead_map_doc(filler_ops: usize) -> (LoroDoc, Frontiers) {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let rows = doc.get_map("rows");
+    let row = rows.insert_container("secret_row", LoroMap::new()).unwrap();
+    row.insert("secret", "old").unwrap();
+    doc.commit();
+    rows.delete("secret_row").unwrap();
+    doc.commit();
+    let cut = doc.oplog_frontiers();
+    let other = doc.get_map("other");
+    for i in 0..filler_ops {
+        other.insert(&format!("k{i}"), i as i64).unwrap();
+        doc.commit();
+    }
+    (doc, cut)
+}
+
+fn legacy_fill_meta(doc: &LoroDoc, node: TreeID, title: &str) {
+    let meta = doc.get_tree("tree").get_meta(node).unwrap();
+    meta.insert("title", title).unwrap();
+    let body = meta.insert_container("body", LoroText::new()).unwrap();
+    body.insert(0, &format!("{title} body")).unwrap();
+}
+
+/// Moves peer-1 node `target` under Root as a peer-2 op on top of the doc's
+/// single-head history.
+fn legacy_remote_move_to_root(doc: &LoroDoc, target: TreeID) {
+    let head = doc.oplog_frontiers().as_single().unwrap();
+    let change = doc.get_change(head).unwrap();
+    let lamport = change.lamport + (head.counter - change.id.counter) as u32 + 1;
+    let json = serde_json::json!({
+        "schema_version": 1,
+        "start_version": {},
+        "peers": ["1", "2"],
+        "changes": [{
+            "id": "0@1",
+            "timestamp": 0,
+            "deps": [format!("{}@0", head.counter)],
+            "lamport": lamport,
+            "msg": null,
+            "ops": [{
+                "container": "cid:root-tree:Tree",
+                "content": {
+                    "type": "move",
+                    "target": format!("{}@0", target.counter),
+                    "parent": null,
+                    "fractional_index": "80",
+                },
+                "counter": 0,
+            }],
+        }],
+    });
+    let updates: JsonSchema = serde_json::from_value(json).unwrap();
+    doc.import_json_updates(updates).unwrap();
+}
+
+/// A dead map plus tree nodes deleted before the cut (`p` with child `c`, and
+/// `d`), revived and edited after it, then `filler_ops` unrelated ops.
+/// Returns the doc, the cut, and every version after the cut.
+fn legacy_tree_revival_doc(filler_ops: usize) -> (LoroDoc, Frontiers, Vec<Frontiers>) {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let rows = doc.get_map("rows");
+    let row = rows.insert_container("secret_row", LoroMap::new()).unwrap();
+    row.insert("secret", "old").unwrap();
+    let tree = doc.get_tree("tree");
+    let p = tree.create(TreeParentId::Root).unwrap();
+    let c = tree.create(p).unwrap();
+    let d = tree.create(TreeParentId::Root).unwrap();
+    legacy_fill_meta(&doc, p, "parent");
+    legacy_fill_meta(&doc, c, "child");
+    legacy_fill_meta(&doc, d, "direct");
+    doc.commit();
+    rows.delete("secret_row").unwrap();
+    tree.delete(p).unwrap();
+    tree.delete(d).unwrap();
+    doc.commit();
+    let cut = doc.oplog_frontiers();
+
+    let mut versions = vec![cut.clone()];
+    legacy_remote_move_to_root(&doc, d);
+    versions.push(doc.oplog_frontiers());
+    tree.get_meta(d)
+        .unwrap()
+        .insert("title", "direct v2")
+        .unwrap();
+    doc.commit();
+    versions.push(doc.oplog_frontiers());
+    tree.mov(c, TreeParentId::Root).unwrap();
+    doc.commit();
+    versions.push(doc.oplog_frontiers());
+    tree.get_meta(c)
+        .unwrap()
+        .insert("title", "child v2")
+        .unwrap();
+    doc.commit();
+    versions.push(doc.oplog_frontiers());
+    tree.delete(d).unwrap();
+    doc.commit();
+    versions.push(doc.oplog_frontiers());
+    let other = doc.get_map("other");
+    for i in 0..filler_ops {
+        other.insert(&format!("k{i}"), i as i64).unwrap();
+        doc.commit();
+    }
+    versions.push(doc.oplog_frontiers());
+    (doc, cut, versions)
+}
+
+/// The first op of both legacy builders creates the dead map.
+fn legacy_dead_map_id() -> ContainerID {
+    ContainerID::new_normal(ID::new(1, 0), ContainerType::Map)
+}
+
+fn assert_no_dead_map(doc: &LoroDoc, context: &str) {
+    assert!(
+        !doc.has_container(&legacy_dead_map_id()),
+        "{context}: the map deleted before the root is still stored"
+    );
+}
+
+/// Every way a shallow doc can be re-exported at its own root.
+fn reexports_at_own_root(shallow: &LoroDoc) -> Vec<(&'static str, LoroDoc)> {
+    vec![
+        (
+            "shallow",
+            shallow_roundtrip(shallow, &shallow.shallow_since_frontiers()),
+        ),
+        (
+            "snapshot",
+            import_fresh(&shallow.export(ExportMode::Snapshot).unwrap()),
+        ),
+        (
+            "state-only",
+            import_fresh(
+                &shallow
+                    .export(ExportMode::state_only(Some(&shallow.oplog_frontiers())))
+                    .unwrap(),
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn legacy_shallow_reexport_drops_dead_map() {
+    for (name, bytes, filler_ops) in [
+        (
+            "shallow, 300 retained ops",
+            &include_bytes!("./legacy_shallow_dead_map.bin")[..],
+            300,
+        ),
+        (
+            "state-only, overlay-free re-export",
+            &include_bytes!("./legacy_state_only_dead_map.bin")[..],
+            300,
+        ),
+    ] {
+        let (full, _) = legacy_dead_map_doc(filler_ops);
+        let legacy = import_fresh(bytes);
+        assert!(
+            legacy.has_container(&legacy_dead_map_id()),
+            "{name}: the fixture should carry the dead map"
+        );
+        assert_eq!(legacy.get_deep_value(), full.get_deep_value(), "{name}");
+        for (mode, again) in reexports_at_own_root(&legacy) {
+            assert_no_dead_map(&again, &format!("{name}, {mode} re-export"));
+            assert_eq!(
+                again.get_deep_value(),
+                full.get_deep_value(),
+                "{name}, {mode} re-export"
+            );
+        }
+    }
+}
+
+#[test]
+fn legacy_shallow_reexport_with_tree_revival_matches_full_history() {
+    let (full, cut, versions) = legacy_tree_revival_doc(300);
+    let legacy = import_fresh(include_bytes!("./legacy_shallow_tree_revival_dead_map.bin"));
+    assert_eq!(legacy.shallow_since_frontiers(), cut);
+    assert!(legacy.has_container(&legacy_dead_map_id()));
+    let full = import_fresh(&full.export(ExportMode::Snapshot).unwrap());
+    for (mode, again) in reexports_at_own_root(&legacy) {
+        assert_no_dead_map(&again, mode);
+        assert_eq!(again.get_deep_value(), full.get_deep_value(), "{mode}");
+        if mode == "state-only" {
+            // State-only history starts at the latest version.
+            continue;
+        }
+        for version in &versions {
+            full.checkout(version).unwrap();
+            again.checkout(version).unwrap();
+            assert_eq!(
+                again.get_deep_value(),
+                full.get_deep_value(),
+                "{mode} re-export, checkout {version:?}"
+            );
+        }
+        full.checkout_to_latest();
+    }
 }

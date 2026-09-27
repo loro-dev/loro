@@ -115,6 +115,16 @@ before the root" is safe to drop only for non-tree children; see
 `crates/loro/tests/shallow_snapshot_deleted_containers.rs`, which also checks
 checkout into the retained range against a full-history replica.
 
+The cached-root reuse branch (a shallow doc re-exported at its own root, which
+also serves `ExportMode::Snapshot` on a shallow doc) applies the same rule:
+`cached_root_retention_keys` decodes the cached root bytes into a scratch doc
+and runs the retention walk there, and the root state is re-encoded only when
+that drops keys or redaction changes it. The cached keys cannot be trusted as
+the retention set: exporters before #1119 kept containers deleted before the
+root whenever they shipped an overlay, and a re-export was the only way to
+scrub them. `legacy_*.bin` fixtures in the same test file pin both the dead-map
+drop and tree-meta revival for such blobs.
+
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as
 `Delete`, their descendants as `Create` under their real parent); with only
@@ -258,8 +268,8 @@ an existing shallow root. The root state carries `fr`; a later state overlay
 does not. Import loads the root first and then either overlays the later state
 or replays retained changes when the state section is `E`. Unknown handling is
 path-dependent: rebuilding a root, or reusing a cached root to build an
-overlay, rejects unknown root containers; the cached-root replay-only `E` fast
-path reuses the root bytes without that check. Containers introduced after the
+overlay, rejects unknown root-state containers that survive retention
+filtering; the cached-root replay-only `E` fast path skips that check. Containers introduced after the
 root are not checked again and can survive either in retained operations (`E`)
 or as raw/lazy overlay state bytes.
 
