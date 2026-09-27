@@ -155,11 +155,15 @@ JavaScript constant factor.
   snapshot version and exports stay exact. A full `#rebuildFromHistory`, still
   used when a transition cannot be incremental and by shallow export, stashes
   snapshot states the same way; it hydrates unread sequence containers first.
-- First checkout after importing a 262,144-operation single-peer Text snapshot:
-  about 60–70 ms on a loaded Apple M5 Pro, versus about 150 ms for the earlier
-  whole-document replay; the replay of that one container dominates. A doc with
-  32,768 child Maps that retreats one of them needs no replay: 63 ms versus
-  170 ms, with the same 234 MiB peak RSS as before the fix.
+- First checkout after importing a 262,144-operation single-peer Text snapshot
+  takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
+  versus about 148 ms for the earlier whole-document replay; 65,536 operations
+  take 25 versus 43 ms, and a subscriber adds nothing measurable (earlier 192
+  ms at 262,144). The replay of that one container dominates. Later checkouts
+  stay around 0.1–0.4 ms. A doc with 32,768 child Maps that retreats one of them
+  needs no replay: 57–61 ms versus 152 ms, with the same 234 MiB peak RSS as
+  before the fix (earlier 284 MiB). The coalesced inserts also make importing
+  the B4 trace as one update about 30% faster (about 195 versus 275 ms).
 - A shallow history trims the ops that wrote root-time Map values and Tree
   placements (the root commit's other ops). When a Map or Tree retreat finds no
   retained winner at or below the target, it uses the shallow root state entry
