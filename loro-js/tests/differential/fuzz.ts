@@ -138,6 +138,12 @@ export class FuzzRun {
   #nextPeer: number;
   /** Last action kind per peer, to keep undo/redo unchained (see `generate`). */
   readonly #lastKind = new Map<number, Action["kind"]>();
+  /**
+   * Value after each peer's last undo/redo. Rust skips an undo item that turns
+   * out to be a no-op and undoes the previous one too, which then chains; so
+   * undo again only after the value changed.
+   */
+  readonly #valueAtUndo = new Map<number, string>();
 
   constructor(
     readonly engines: Record<EngineName, EngineModule>,
@@ -231,11 +237,7 @@ export class FuzzRun {
   }
 
   generate(): Action {
-    const action = this.generateAction();
-    if (countsForUndoChain(action)) {
-      this.#lastKind.set("peer" in action ? action.peer : action.to, action.kind);
-    }
-    return action;
+    return this.generateAction();
   }
 
   generateAction(): Action {
@@ -248,7 +250,8 @@ export class FuzzRun {
     // an undo whose target was recreated by an earlier undo diverges for List
     // too. Undo only right after an edit, and redo only right after an undo.
     const last = this.#lastKind.get(peer);
-    const canUndo = profile.undo && last !== "undo" && last !== "redo";
+    const canUndo =
+      profile.undo && last !== "undo" && last !== "redo" && this.#changedSinceUndo(peer);
     const canRedo = profile.undo && last === "undo";
     const kind = rng.weighted<Action["kind"] | "edit">({
       edit: 12,
@@ -418,6 +421,15 @@ export class FuzzRun {
         const twin = this.twin(action.peer);
         const managers = twin.undo;
         if (managers === undefined) return;
+        const last = this.#lastKind.get(action.peer);
+        if (
+          action.kind === "undo"
+            ? last === "undo" || last === "redo" || !this.#changedSinceUndo(action.peer)
+            : last !== "undo"
+        ) {
+          throw new ChainedUndo(`${action.kind} after ${last ?? "nothing"}`);
+        }
+        this.#lastKind.set(action.peer, action.kind);
         // loro.js picks the undo item before committing the pending transaction,
         // Rust commits first. That is unrelated to MovableList; commit up front.
         twin.both("commit before undo", (doc) => doc.commit());
@@ -433,6 +445,7 @@ export class FuzzRun {
             `${twin.name}: ${action.kind} returned ${results.rust} in Rust but ${results.js} in loro.js`,
           );
         }
+        this.#valueAtUndo.set(action.peer, stringify(plain(twin.docs.rust.toJSON())));
         twin.record();
         return;
       }
@@ -558,6 +571,14 @@ export class FuzzRun {
     twin.events.js.length = 0;
   }
 
+  #changedSinceUndo(peer: number): boolean {
+    const previous = this.#valueAtUndo.get(peer);
+    return (
+      previous === undefined ||
+      previous !== stringify(plain(this.twin(peer).docs.rust.toJSON()))
+    );
+  }
+
   twin(peer: number): Twin {
     return this.twins.get(peer)!;
   }
@@ -568,7 +589,7 @@ export class FuzzRun {
 
   applyEdit(action: Extract<Action, { target: string }>): void {
     const twin = this.twin(action.peer);
-    twin.both(action.kind, (doc, engine) => {
+    const applied = twin.both(action.kind, (doc, engine) => {
       const engineModule = this.engines[engine];
       switch (action.kind) {
         case "insert":
@@ -603,6 +624,10 @@ export class FuzzRun {
           return;
       }
     });
+    // Only a real edit breaks an undo chain (see `generateAction`).
+    if (applied !== undefined && (action.kind !== "move" || action.from !== action.to)) {
+      this.#lastKind.set(action.peer, action.kind);
+    }
   }
 
   applySync(action: Extract<Action, { kind: "sync" }>): void {
@@ -706,10 +731,31 @@ export class FuzzRun {
     };
     for (const engine of ENGINES) {
       const sourceEngine: EngineName = action.cross ? other(engine) : engine;
-      const doc = source.docs[sourceEngine];
-      bytes[engine] = action.shallow
-        ? doc.export({ mode: "shallow-snapshot", frontiers })
-        : doc.export({ mode: "snapshot" });
+      bytes[engine] = source.docs[sourceEngine].export({ mode: "snapshot" });
+    }
+    if (action.shallow) {
+      // loro.js roots a shallow snapshot at the meet of the requested heads,
+      // Rust at the latest single-head critical version (loro-dev/loro#1095),
+      // so replicas made from each keep different history. Both halves load
+      // Rust's; loro.js's must still import into both engines with its value.
+      const rustShallow = source.docs.rust.export({
+        mode: "shallow-snapshot",
+        frontiers,
+      });
+      const jsShallow = source.docs.js.export({ mode: "shallow-snapshot", frontiers });
+      const expected = plain(source.docs.rust.toJSON());
+      for (const engine of ENGINES) {
+        const check = new this.engines[engine].LoroDoc();
+        check.import(jsShallow);
+        if (!isDeepStrictEqual(plain(check.toJSON()), expected)) {
+          throw new Divergence(
+            `${engine} imported loro.js's shallow snapshot of ${source.name} as ` +
+              `${stringify(plain(check.toJSON()))}, expected ${stringify(expected)}`,
+          );
+        }
+      }
+      bytes.rust = rustShallow;
+      bytes.js = rustShallow;
     }
     const twin = new Twin(this.engines, `peer${action.peer}`, action.peer, undefined, {
       undo: this.profile.undo,
@@ -776,7 +822,6 @@ export function minimizeTrace(
     changed = false;
     for (let index = actions.length - 1; index >= 0; index -= 1) {
       const candidate = actions.filter((_, i) => i !== index);
-      if (!keepsUndoUnchained(candidate)) continue;
       const message = replayTrace(engines, { ...trace, actions: candidate });
       if (message !== undefined && !message.startsWith("crash")) {
         actions = candidate;
@@ -787,26 +832,11 @@ export function minimizeTrace(
   return { ...trace, actions };
 }
 
-/** Edits, undo and redo decide whether the next undo would be chained. */
-function countsForUndoChain(action: Action): boolean {
-  if (action.kind === "move") return action.from !== action.to;
-  return "target" in action || action.kind === "undo" || action.kind === "redo";
-}
-
-/** The same rule `FuzzRun.generate` follows: undo after an edit, redo after an undo. */
-function keepsUndoUnchained(actions: readonly Action[]): boolean {
-  const last = new Map<number, Action["kind"]>();
-  for (const action of actions) {
-    if (!countsForUndoChain(action)) continue;
-    const peer = "peer" in action ? action.peer : action.to;
-    const previous = last.get(peer);
-    if (action.kind === "undo" && (previous === "undo" || previous === "redo"))
-      return false;
-    if (action.kind === "redo" && previous !== "undo") return false;
-    last.set(peer, action.kind);
-  }
-  return true;
-}
+/**
+ * A replayed or minimized trace that chains undo, which the generator never
+ * does (see `generateAction`); `replayTrace` reports it as a crash.
+ */
+class ChainedUndo extends Error {}
 
 function saveTrace(trace: SavedTrace): string {
   const safeName = trace.profile.name.replaceAll(/[^a-z0-9]+/giu, "-");
