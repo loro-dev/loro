@@ -3,9 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ContainerType,
+  EncodeMode,
   decodeFastSnapshot,
   decodePostcardVersionVector,
   decodeSstable,
+  encodeChangeBlock,
+  encodeDocument,
+  encodeFastUpdatesBody,
   encodeFastSnapshot,
   encodePostcardVersionVector,
   encodeSstable,
@@ -877,37 +882,68 @@ describe("loro-wasm-compatible runtime", () => {
     });
   });
 
-  test("keeps the i64 counter value type from JSON", () => {
-    const json = {
-      schema_version: 1,
-      start_version: {},
-      peers: ["1"],
-      changes: [
-        {
-          id: "0@0",
-          timestamp: 0,
-          deps: [],
-          lamport: 0,
-          msg: null,
-          ops: [
-            {
-              container: "cid:root-c:Counter",
-              content: { type: "counter", value_type: "i64", value: 3, prop: 0 },
-              counter: 0,
-            },
-          ],
-        },
-      ],
-    } as const;
-    const doc = new LoroDoc();
-    doc.importJsonUpdates(json as never);
-    expect(doc.toJSON()).toEqual({ c: 3 });
-    expect(doc.exportJsonUpdates().changes[0]!.ops[0]!.content).toEqual({
-      type: "counter",
-      value_type: "i64",
-      value: 3,
-      prop: 0,
-    });
+  test("round-trips i64 counter values through JSON like Rust", () => {
+    const counterJson = (value: string): string =>
+      `{"schema_version":1,"start_version":{},"peers":["1"],"changes":[{"id":"0@0","timestamp":0,"deps":[],"lamport":0,"msg":null,"ops":[{"container":"cid:root-c:Counter","counter":0,"content":{"type":"counter","value_type":"i64","value":${value},"prop":0}}]}]}`;
+    // Rust's counter is an f64: it reads an i64 tag with `c as f64`.
+    for (const [text, expected] of [
+      ["9007199254740992", 2 ** 53],
+      ["9223372036854775807", 2 ** 63],
+      ["-9223372036854775808", -(2 ** 63)],
+      ["3", 3],
+    ] as const) {
+      const doc = new LoroDoc();
+      doc.importJsonUpdates(counterJson(text));
+      expect(doc.toJSON()).toEqual({ c: expected });
+      const again = new LoroDoc();
+      again.importJsonUpdates(JSON.stringify(doc.exportJsonUpdates()));
+      expect(again.toJSON()).toEqual({ c: expected });
+    }
+
+    // A binary update may carry an i64 counter value at either i64 endpoint.
+    for (const value of [9007199254740992n, 2n ** 63n - 1n, -(2n ** 63n)]) {
+      const block = encodeChangeBlock({
+        peers: [1n],
+        keys: [],
+        containers: [],
+        positions: [],
+        changes: [
+          {
+            id: { peer: 1n, counter: 0 },
+            timestamp: 0n,
+            dependencies: [],
+            lamport: 0,
+            message: undefined,
+            operations: [
+              {
+                container: {
+                  kind: "root",
+                  name: "c",
+                  containerType: ContainerType.Counter,
+                },
+                counter: 0,
+                length: 1,
+                content: { type: "future", property: 0, value: { type: "i64", value } },
+              },
+            ],
+          },
+        ],
+      });
+      const doc = new LoroDoc();
+      doc.import(encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody([block])));
+      const json = doc.exportJsonUpdates();
+      expect(json.changes[0]!.ops[0]!.content).toEqual({
+        type: "counter",
+        value_type: "f64",
+        value: Number(value),
+        prop: 0,
+      });
+      for (const input of [json, JSON.stringify(json)]) {
+        const again = new LoroDoc();
+        again.importJsonUpdates(input);
+        expect(again.toJSON()).toEqual(doc.toJSON());
+      }
+    }
   });
 
   test("redacts JSON update content while preserving child-container structure", () => {

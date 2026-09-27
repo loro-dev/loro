@@ -77,3 +77,47 @@ describe("postcard primitives", () => {
     reader.assertEnd();
   });
 });
+
+describe("SLEB128 fast paths", () => {
+  const reference = (input: bigint): number[] => {
+    const bytes: number[] = [];
+    let value = input;
+    for (;;) {
+      let byte = Number(value & 0x7fn);
+      value >>= 7n;
+      const sign = (byte & 0x40) !== 0;
+      const done = (value === 0n && !sign) || (value === -1n && sign);
+      if (!done) byte |= 0x80;
+      bytes.push(byte);
+      if (done) return bytes;
+    }
+  };
+
+  test("match the BigInt encoding at every width boundary", () => {
+    const values: bigint[] = [-(1n << 63n), (1n << 63n) - 1n];
+    for (let bits = 0n; bits <= 62n; bits += 1n) {
+      for (const delta of [-2n, -1n, 0n, 1n, 2n]) {
+        values.push((1n << bits) + delta, -(1n << bits) + delta);
+      }
+    }
+    let state = 0x2545f491;
+    for (let index = 0; index < 5000; index += 1) {
+      state ^= state << 13;
+      state ^= state >>> 17;
+      state ^= state << 5;
+      values.push(BigInt(state) * BigInt(index + 1));
+    }
+    for (const value of values) {
+      const writer = new ByteWriter();
+      writeSleb128(writer, value);
+      const bytes = writer.toUint8Array();
+      expect([...bytes]).toEqual(reference(value));
+      if (value > -(2n ** 53n) && value < 2n ** 53n) {
+        const numberWriter = new ByteWriter();
+        writeSleb128(numberWriter, Number(value));
+        expect(numberWriter.toUint8Array()).toEqual(bytes);
+      }
+      expect(readSleb128(new ByteReader(bytes))).toBe(value);
+    }
+  });
+});
