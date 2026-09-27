@@ -5,7 +5,8 @@ use hegel::Generator;
 use hegel::PrettyPrinter;
 use hegel::TestCase;
 use loro::{
-    ExportMode, LoroCounter, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText, LoroValue,
+    ExportMode, IdSpan, LoroCounter, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText,
+    LoroValue,
 };
 use pretty_assertions::assert_eq;
 
@@ -253,14 +254,32 @@ fn test_concurrent_replicas_converge(tc: TestCase) {
 #[hegel::test]
 fn test_export_modes_preserve_state(tc: TestCase) {
     let doc = tc.draw(random_doc(1).print_with(print_deep_value));
+    // normalise empty roots before recording any value
+    touch_roots(&doc);
     doc.commit();
-    let frontiers = doc.oplog_frontiers();
+    // record a historical checkpoint, then keep editing past it
+    let past = doc.oplog_frontiers();
+    let past_value = doc.get_deep_value();
+    let n_edits = tc.draw(gs::integers::<usize>().max_value(5));
+    for _ in 0..n_edits {
+        apply_random_edit(&tc, &doc);
+    }
+    doc.commit();
+    let latest = doc.oplog_frontiers();
+    let latest_value = doc.get_deep_value();
+
+    // version-parameterised modes target either the checkpoint or the latest version
+    let (target, target_value) = if tc.draw(gs::booleans()) {
+        (&past, &past_value)
+    } else {
+        (&latest, &latest_value)
+    };
     let mode = tc.draw(
         gs::sampled_from(vec![
             ExportMode::Snapshot,
-            ExportMode::shallow_snapshot(&frontiers),
-            ExportMode::state_only(None),
-            ExportMode::snapshot_at(&frontiers),
+            ExportMode::shallow_snapshot(target),
+            ExportMode::state_only(Some(target)),
+            ExportMode::snapshot_at(target),
             ExportMode::all_updates(),
         ])
         .print_as_debug(),
@@ -270,6 +289,11 @@ fn test_export_modes_preserve_state(tc: TestCase) {
         mode,
         ExportMode::Snapshot | ExportMode::SnapshotAt { .. } | ExportMode::Updates { .. }
     );
+    // state-only and snapshot-at restore the target version; the rest restore the latest
+    let (expected_frontiers, expected_value) = match mode {
+        ExportMode::StateOnly(_) | ExportMode::SnapshotAt { .. } => (target, target_value),
+        _ => (&latest, &latest_value),
+    };
     let bytes = doc.export(mode).unwrap();
 
     // exercise both `from_snapshot` and `import`
@@ -281,15 +305,49 @@ fn test_export_modes_preserve_state(tc: TestCase) {
         d
     };
 
-    // normalise empty roots on both sides
+    touch_roots(&restored);
+    // every mode must land on the expected version and value
+    assert_eq!(*expected_frontiers, restored.oplog_frontiers());
+    assert_eq!(*expected_frontiers, restored.state_frontiers());
+    assert_eq!(*expected_value, restored.get_deep_value());
+    // full-oplog modes must also reproduce the complete history up to that version
+    if full_history {
+        assert_eq!(
+            doc.frontiers_to_vv(expected_frontiers).unwrap(),
+            restored.oplog_vv()
+        );
+    }
+}
+
+#[hegel::test]
+fn test_updates_in_range_reassemble_history(tc: TestCase) {
+    let doc = tc.draw(random_doc(1).print_with(print_deep_value));
+    doc.commit();
+
+    // split each peer's history at a drawn counter into up to two spans
+    let mut spans = Vec::new();
+    for (&peer, &end) in doc.oplog_vv().iter() {
+        let mid = tc.draw(gs::integers::<i32>().max_value(end));
+        spans.extend(
+            [(0, mid), (mid, end)]
+                .into_iter()
+                .filter(|(from, to)| from < to)
+                .map(|(from, to)| IdSpan::new(peer, from, to)),
+        );
+    }
+
+    // import the spans one by one in a drawn, possibly non-causal, order
+    let restored = LoroDoc::new();
+    for span in tc.draw(gs::permutations(spans).print_as_debug()) {
+        let bytes = doc
+            .export(ExportMode::updates_in_range(vec![span]))
+            .unwrap();
+        restored.import(&bytes).unwrap();
+    }
+
     touch_roots(&doc);
     touch_roots(&restored);
-    // full-oplog modes must reproduce version info; shallow modes only the value
-    if full_history {
-        assert_docs_agree(&doc, &restored);
-    } else {
-        assert_eq!(doc.get_deep_value(), restored.get_deep_value());
-    }
+    assert_docs_agree(&doc, &restored);
 }
 
 #[hegel::test]
