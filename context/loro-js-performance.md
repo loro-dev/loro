@@ -153,8 +153,8 @@ JavaScript constant factor.
   transitions and the snapshot state is reinstated at every version with the
   same operations on that container (`#settleSnapshotSequences`), so the
   snapshot version and exports stay exact. A full `#rebuildFromHistory`, still
-  used when a transition cannot be incremental, stashes installed snapshot states
-  the same way.
+  used when a transition cannot be incremental and by shallow export, stashes
+  snapshot states the same way; it hydrates unread sequence containers first.
 - First checkout after importing a 262,144-operation single-peer Text snapshot:
   about 60–70 ms on a loaded Apple M5 Pro, versus about 150 ms for the earlier
   whole-document replay; the replay of that one container dominates. A doc with
