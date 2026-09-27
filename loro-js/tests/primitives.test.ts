@@ -6,6 +6,7 @@ import {
   LORO_XXHASH_SEED,
   PostcardReader,
   PostcardWriter,
+  bytesEqual,
   bytesToHex,
   readSleb128,
   readUleb128,
@@ -107,17 +108,18 @@ describe("SLEB128 fast paths", () => {
       state ^= state << 5;
       values.push(BigInt(state) * BigInt(index + 1));
     }
+    const numberMismatches: bigint[] = [];
     for (const value of values) {
       const writer = new ByteWriter();
       writeSleb128(writer, value);
       const bytes = writer.toUint8Array();
       expect([...bytes]).toEqual(reference(value));
-      if (value > -(2n ** 53n) && value < 2n ** 53n) {
-        const numberWriter = new ByteWriter();
-        writeSleb128(numberWriter, Number(value));
-        expect(numberWriter.toUint8Array()).toEqual(bytes);
-      }
       expect(readSleb128(new ByteReader(bytes))).toBe(value);
+      if (value <= -(2n ** 53n) || value >= 2n ** 53n) continue;
+      const numberWriter = new ByteWriter();
+      writeSleb128(numberWriter, Number(value));
+      if (!bytesEqual(numberWriter.toUint8Array(), bytes)) numberMismatches.push(value);
     }
+    expect(numberMismatches).toEqual([]);
   });
 });
