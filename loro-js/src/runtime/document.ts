@@ -5296,17 +5296,32 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         changes: [record.change],
       }),
     }));
+    // A snapshot always carries the latest state, as in Rust. A detached
+    // document's state is at its checkout version, so encode the latest state
+    // and then restore the checkout.
+    const latestVersion = this.#historyVersion();
+    const restoreVersion = this.version();
+    const detachedState = restoreVersion.compare(latestVersion) !== 0;
     historyEntries.push({
       key: VERSION_KEY,
-      value: encodePostcardVersionVector(this.version().codecEntries()),
+      value: encodePostcardVersionVector(latestVersion.codecEntries()),
     });
     historyEntries.push({
       key: FRONTIERS_KEY,
-      value: encodePostcardFrontiers(this.#frontiersCodec()),
+      value: encodePostcardFrontiers(
+        [...this.#historyFrontiers.values()].sort(compareIds),
+      ),
     });
+    if (detachedState) this.#rebuildFromHistory(latestVersion);
+    let state: Uint8Array;
+    try {
+      state = encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" });
+    } finally {
+      if (detachedState) this.#rebuildFromHistory(restoreVersion);
+    }
     const body = encodeFastSnapshotBody({
       oplog: encodeSstable(historyEntries, { compression: "auto" }),
-      state: encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" }),
+      state,
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
