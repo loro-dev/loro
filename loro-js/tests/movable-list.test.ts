@@ -11,6 +11,7 @@ import {
 import {
   LoroDoc,
   LoroList,
+  LoroMap,
   LoroMovableList,
   LoroText,
   UndoManager,
@@ -226,6 +227,26 @@ describe("MovableList versions, undo and diffs", () => {
           diff: [{ delete: 2 }, { insert: ["B"] }, { retain: 1 }, { insert: ["a"] }],
         },
       ],
+    ]);
+  });
+
+  test("diff reports a child created in the range by its ops", () => {
+    const a = doc(1);
+    const list = a.getMovableList("list");
+    list.push(0);
+    a.commit();
+    const start = a.frontiers();
+    const child = list.insertContainer(0, new LoroMap());
+    child.set("a", 1);
+    a.commit();
+    child.set("k", 9);
+    a.commit();
+    child.delete("k");
+    a.commit();
+    // Rust lists `k`, which was set and deleted again, as deleted.
+    expect(a.diff(start, a.frontiers(), false)).toEqual([
+      ["cid:root-list:MovableList", { type: "list", diff: [{ insert: [child] }] }],
+      [child.id, { type: "map", updated: { a: 1, k: undefined } }],
     ]);
   });
 
