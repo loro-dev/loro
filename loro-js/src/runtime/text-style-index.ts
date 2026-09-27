@@ -89,6 +89,144 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
     return this.#segmentAt(id)?.histories.get(key);
   }
 
+  /** Every style that covers an element, by key, oldest first. */
+  membershipAt(id: SequenceId): ReadonlyMap<string, readonly Meta[]> | undefined {
+    return this.#segmentAt(id)?.histories;
+  }
+
+  /** Adds every style of `histories` to a run. */
+  addMembership(
+    runs: readonly SequenceIdRun[],
+    histories: ReadonlyMap<string, readonly Meta[]>,
+  ): void {
+    for (const [key, history] of histories) {
+      for (const meta of history) this.add(runs, key, meta);
+    }
+  }
+
+  /**
+   * Whether every element of the runs resolves `key` to a style whose value
+   * satisfies `matches`. An element without a style for the key does not match.
+   */
+  everyWinner(
+    runs: readonly SequenceIdRun[],
+    key: string,
+    version: ReadonlyMap<bigint, number> | undefined,
+    matches: (meta: Meta) => boolean,
+  ): boolean {
+    for (const run of normalizeRuns(runs)) {
+      const segments = this.#segmentsByPeer.get(run.start.peer);
+      if (segments === undefined) return false;
+      const end = run.start.counter + run.length;
+      let cursor = run.start.counter;
+      const first = Math.max(
+        0,
+        segments._lowerBoundBy((segment) => segment.start - cursor) - 1,
+      );
+      for (let index = first; index < segments.size && cursor < end; index += 1) {
+        const segment = segments.at(index)!;
+        if (segment.end <= cursor) continue;
+        if (segment.start > cursor) return false;
+        const meta = latestIncluded(segment.histories.get(key), version);
+        if (meta === undefined || !matches(meta)) return false;
+        cursor = Math.min(end, segment.end);
+      }
+      if (cursor < end) return false;
+    }
+    return true;
+  }
+
+  /** Whether some element of the runs has any style for `key`, even an unmark. */
+  someHasKey(
+    runs: readonly SequenceIdRun[],
+    key: string,
+    version: ReadonlyMap<bigint, number> | undefined,
+  ): boolean {
+    for (const run of normalizeRuns(runs)) {
+      const segments = this.#segmentsByPeer.get(run.start.peer);
+      if (segments === undefined) continue;
+      const end = run.start.counter + run.length;
+      const first = Math.max(
+        0,
+        segments._lowerBoundBy((segment) => segment.start - run.start.counter) - 1,
+      );
+      for (let index = first; index < segments.size; index += 1) {
+        const segment = segments.at(index)!;
+        if (segment.start >= end) break;
+        if (segment.end <= run.start.counter) continue;
+        if (latestIncluded(segment.histories.get(key), version) !== undefined)
+          return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Sub-runs where `meta` now resolves `key` and changed the resolved value:
+   * the elements whose attribute an applied style changes.
+   */
+  winningRuns(
+    runs: readonly SequenceIdRun[],
+    key: string,
+    meta: Meta,
+    version: ReadonlyMap<bigint, number> | undefined,
+    valuesEqual: (left: Meta["value"] | null, right: Meta["value"] | null) => boolean,
+  ): SequenceIdRun[] {
+    return this.replacedRuns(runs, key, meta, version, valuesEqual).map(
+      ({ start, length }) => ({ start, length }),
+    );
+  }
+
+  /**
+   * Like `winningRuns`, with the style each run would resolve to without `meta`.
+   */
+  replacedRuns(
+    runs: readonly SequenceIdRun[],
+    key: string,
+    meta: Meta,
+    version: ReadonlyMap<bigint, number> | undefined,
+    valuesEqual: (left: Meta["value"] | null, right: Meta["value"] | null) => boolean,
+  ): (SequenceIdRun & { readonly previous: Meta | undefined })[] {
+    const output: { start: SequenceId; length: number; previous: Meta | undefined }[] =
+      [];
+    for (const run of normalizeRuns(runs)) {
+      const segments = this.#segmentsByPeer.get(run.start.peer);
+      if (segments === undefined) continue;
+      const end = run.start.counter + run.length;
+      const first = Math.max(
+        0,
+        segments._lowerBoundBy((segment) => segment.start - run.start.counter) - 1,
+      );
+      for (let index = first; index < segments.size; index += 1) {
+        const segment = segments.at(index)!;
+        if (segment.start >= end) break;
+        const start = Math.max(run.start.counter, segment.start);
+        const segmentEnd = Math.min(end, segment.end);
+        if (start >= segmentEnd) continue;
+        const history = segment.histories.get(key);
+        if (latestIncluded(history, version) !== meta) continue;
+        const previous = latestIncluded(history, version, meta);
+        if (valuesEqual(previous?.value ?? null, meta.value)) continue;
+        const last = output.at(-1);
+        if (
+          last !== undefined &&
+          last.previous === previous &&
+          last.start.peer === run.start.peer &&
+          last.start.counter + last.length === start
+        ) {
+          last.length += segmentEnd - start;
+        } else {
+          output.push({
+            start: { peer: run.start.peer, counter: start },
+            length: segmentEnd - start,
+            previous,
+          });
+        }
+      }
+    }
+    return output;
+  }
+
   metasAt(
     id: SequenceId,
     version?: ReadonlyMap<bigint, number>,
@@ -128,30 +266,6 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
       resolved.set(segment, metas);
       return metas;
     };
-  }
-
-  rangeHasKey(
-    runs: readonly SequenceIdRun[],
-    key: string,
-    version?: ReadonlyMap<bigint, number>,
-  ): boolean {
-    for (const run of normalizeRuns(runs)) {
-      const segments = this.#segmentsByPeer.get(run.start.peer);
-      if (segments === undefined) continue;
-      const end = run.start.counter + run.length;
-      const first = Math.max(
-        0,
-        segments._lowerBoundBy((segment) => segment.start - run.start.counter) - 1,
-      );
-      for (let index = first; index < segments.size; index += 1) {
-        const segment = segments.at(index)!;
-        if (segment.start >= end) break;
-        if (segment.end <= run.start.counter) continue;
-        const meta = latestIncluded(segment.histories.get(key), version);
-        if (meta !== undefined && meta.value !== null) return true;
-      }
-    }
-    return false;
   }
 
   transitions(
@@ -209,37 +323,6 @@ export class TextStyleIndex<Meta extends IndexedTextStyleMeta> {
       }
     }
     return transitions;
-  }
-
-  runsContainMeta(runs: readonly SequenceIdRun[], key: string, id: SequenceId): boolean {
-    for (const run of runs) {
-      const segments = this.#segmentsByPeer.get(run.start.peer);
-      if (segments === undefined) return false;
-      const end = run.start.counter + run.length;
-      let cursor = run.start.counter;
-      const first = Math.max(
-        0,
-        segments._lowerBoundBy((segment) => segment.start - cursor) - 1,
-      );
-      for (let index = first; index < segments.size && cursor < end; index += 1) {
-        const segment = segments.at(index)!;
-        if (segment.start > cursor || segment.start >= end) return false;
-        if (segment.end <= cursor) continue;
-        if (
-          !segment.histories
-            .get(key)
-            ?.some(
-              (item) =>
-                item.startId.peer === id.peer && item.startId.counter === id.counter,
-            )
-        ) {
-          return false;
-        }
-        cursor = Math.min(end, segment.end);
-      }
-      if (cursor < end) return false;
-    }
-    return true;
   }
 
   reset(): void {
@@ -383,15 +466,25 @@ function lowerBoundMeta<Meta extends IndexedTextStyleMeta>(
   return low;
 }
 
+/**
+ * The winning style of a history at a version, optionally ignoring one style.
+ * A style applies once its end anchor (the op after `startId`) is included.
+ */
 function latestIncluded<Meta extends IndexedTextStyleMeta>(
   history: readonly Meta[] | undefined,
   version: ReadonlyMap<bigint, number> | undefined,
+  excluded?: Meta,
 ): Meta | undefined {
   if (history === undefined) return undefined;
-  if (version === undefined) return history.at(-1);
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const meta = history[index]!;
-    if (meta.startId.counter < (version.get(meta.startId.peer) ?? 0)) return meta;
+    if (meta === excluded) continue;
+    if (
+      version === undefined ||
+      meta.startId.counter + 1 < (version.get(meta.startId.peer) ?? 0)
+    ) {
+      return meta;
+    }
   }
   return undefined;
 }

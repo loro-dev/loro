@@ -40,12 +40,19 @@ JavaScript constant factor.
 - `ordered-index.ts` is the ordered rank index used for map keys and tree
   children. Insert/delete/rank lookup are expected O(log n), while ordered
   iteration is O(n).
+- Rich-text style anchors are zero-width elements of the Text sequence, as in
+  Rust ([loro-js-richtext-anchors.md](loro-js-richtext-anchors.md)). Each
+  subtree also counts its elements without UTF-16 width, so Unicode and entity
+  positions convert in O(log n); a sequence without anchors takes the old fast
+  paths.
 - `text-style-index.ts` stores style histories in disjoint operation-ID ranges,
-  separately from scalar Text elements. Applying, unapplying, or checking a
-  style range is expected O(log style-runs + affected style-runs). Full-range
-  marks and their subscribed checkout events no longer write or inspect every
-  character. Delta and snapshot output reuse a run-local style resolver so
-  their work remains linear in returned text and style runs.
+  separately from scalar Text elements. A style covers the elements physically
+  between its anchors, so applying one is expected O(log n + ID runs in its
+  range). Checking or undoing a style range is expected O(log style-runs +
+  affected style-runs). Full-range marks and their subscribed checkout events
+  no longer write or inspect every character. Delta and snapshot output reuse a
+  run-local style resolver so their work remains linear in returned text and
+  style runs.
 - `LoroDoc` maintains per-peer change arrays, end counters, operation counts,
   current frontiers, sorted-history cache, and per-change dependency-version
   caches. Latest version/frontier lookup is O(peer/frontier count), and
@@ -208,7 +215,10 @@ heap and 322.1 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 7.4x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 7.4x slower in absolute time. Merging
+consecutive inserts of a transaction into one op, as Rust does, shrank the B4
+update export from 1,153,540 to 274,574 bytes, and merging contiguous text in
+the Text state shrank the snapshot from 309,780 to 206,553 bytes. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
 measured snapshot
 export at 162.4 ms, update export at 129.3 ms, snapshot import at 161.5 ms, and
@@ -267,6 +277,21 @@ isolated repeated probe. Retreating/restoring that full-range mark takes about
 0.11/0.10 ms, and the subscribed restore takes about 0.41 ms. These operations
 now scale with ID/style runs and emitted formatting ranges rather than the 64k
 characters.
+
+With style anchors in the sequence (September 28, Node 22, best of 7 on a
+loaded machine, same process for both revisions): the 64k full-range mark takes
+0.07–0.08 ms (0.06–0.08 before), its retreat/restore 0.06–0.07 ms (about 0.01
+before), and the subscribed restore 0.06 ms. Typing 1,000 characters inside the
+bold range takes 3.1–3.3 ms (1.7–2.1 before): each insert intersects the style
+memberships of its two physical neighbors. Marking the same range again and
+again nests anchors: the n-th mark's range contains the n-1 earlier start
+anchors as separate ID runs, so applying it and moving the version across it
+are O(n), as in Rust, whose `StyleRangeMap` has one segment per anchor there.
+`text-repeated-mark-tail-{retreat,restore}` therefore grows with its size
+(0.5/1.1/2.2/6.9 ms at 1k/2k/4k/8k, versus 0.16–0.29 ms before); the Rust WASM
+build takes 7.1/19/362 ms to retreat 1k/4k/16k such marks, and building the 16k
+history takes 402 s in loro.js and 542 s in Rust. Every other
+`bench:complexity` entry stays flat from 1k to 8k.
 
 A subscribed forward checkout that combines a full-range delete and mark takes
 0.41 ms at 1k characters and 0.16 ms at 8k after warmup. Historical mark

@@ -69,7 +69,7 @@ import {
   type SequenceMoveMeta,
   type SequenceValueMeta,
   type TextElement,
-  type TextStyleMeta,
+  type TextStyle,
   type TreeNodeRecord,
 } from "./containers";
 import { SequenceEventDiff } from "./event-diff";
@@ -2195,7 +2195,22 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           container.increment(-content.value.value);
         }
         return;
-      case "text-mark":
+      case "text-mark": {
+        const style =
+          container instanceof LoroText
+            ? container._styleAt({ peer, counter: operation.counter })
+            : undefined;
+        if (container instanceof LoroText && style !== undefined) {
+          // Compare the style's own effect: the version just before its op
+          // (including earlier ops of the same change) and just after its end.
+          const before = new Map(this.#causalVersionAt(record.change.dependencies));
+          before.set(peer, Math.max(before.get(peer) ?? 0, operation.counter));
+          const after = new Map(before);
+          after.set(peer, operation.counter + 2);
+          container._undoStyle(style, before, after);
+        }
+        return;
+      }
       case "text-mark-end":
       case "movable-list-move":
       case "movable-list-set":
@@ -2209,21 +2224,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     start: number,
     end: number,
   ): void {
-    const positions: number[] = [];
+    // Positions are UTF-16 offsets for Text and indexes for List.
+    const ranges: { start: number; length: number }[] = [];
+    const positions: { start: number; length: number }[] = [];
     for (let counter = start; counter < end; counter += 1) {
       const element = container._sequence.findById({ peer, counter });
       if (element === undefined || element.deleted) continue;
-      const index = container._sequence.visibleIndexOf(element as never);
-      if (index !== undefined) positions.push(index);
+      if (container instanceof LoroText) {
+        const offset = container._sequence.visibleMetricOffsetOf(
+          element as TextElement,
+          "utf16",
+        );
+        const length = (element.value as string).length;
+        if (offset !== undefined && length > 0) positions.push({ start: offset, length });
+      } else {
+        const index = container._sequence.visibleIndexOf(element as never);
+        if (index !== undefined) positions.push({ start: index, length: 1 });
+      }
     }
-    positions.sort((left, right) => left - right);
-    const ranges: { start: number; length: number }[] = [];
+    positions.sort((left, right) => left.start - right.start);
     for (const position of positions) {
       const previous = ranges.at(-1);
-      if (previous !== undefined && previous.start + previous.length === position) {
-        previous.length += 1;
+      if (previous !== undefined && previous.start + previous.length === position.start) {
+        previous.length += position.length;
       } else {
-        ranges.push({ start: position, length: 1 });
+        ranges.push({ ...position });
       }
     }
     for (const selected of ranges.reverse()) {
@@ -2527,7 +2552,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     value: unknown,
   ): void {
     const encoded = this.#encodeRuntimeValue(value, this.#ensurePending());
-    const info = textStyleInfoByte(this.#textStyleExpand(key), value === null);
+    const info = textStyleInfoByte(this.#textStyleExpand(key), value == null);
     this.#appendAndApply(
       container,
       { type: "text-mark", start, end, key, value: encoded, info },
@@ -2863,28 +2888,26 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
         return undefined;
       }
-      if (content.type === "text-mark") {
-        const value = this.#decodeRuntimeValue(
-          content.value,
-          keys,
-          { peer: changeId.peer, counter: operation.counter },
-          container,
-        );
-        const runs = container._styleRuns(content.start, content.end, causalVersion);
-        for (const range of container._sequence.visibleMetricRangesForIdRuns(
-          runs,
-          "utf16",
-        )) {
-          state.diff.formatText(
-            range.start,
-            range.end - range.start,
-            content.key,
-            runtimeValueToJson(value) as Value,
-          );
-        }
-        return undefined;
+      if (content.type === "text-mark") return undefined;
+      if (content.type === "text-mark-end") {
+        // A style takes effect with its end anchor: report the text whose
+        // attribute it changes.
+        return () => {
+          const style = container._styleAt({
+            peer: changeId.peer,
+            counter: operation.counter - 1,
+          });
+          if (style === undefined) return;
+          const value =
+            style.value === null ? null : (runtimeValueToJson(style.value) as Value);
+          for (const range of container._sequence.visibleMetricRangesForIdRuns(
+            container._styleChangeRuns(style),
+            "utf16",
+          )) {
+            state.diff.formatText(range.start, range.end - range.start, style.key, value);
+          }
+        };
       }
-      if (content.type === "text-mark-end") return undefined;
     } else if (container instanceof LoroList) {
       const state = this.#sequenceEventState(recording, container, "list");
       if (content.type === "list-insert" || content.type === "movable-list-insert") {
@@ -3178,19 +3201,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
+  /**
+   * Writes the delete ops for a UTF-16 range like Rust: one op per text run
+   * (style anchors split runs and are never deleted), last run first, so every
+   * recorded position is still the run's entity position.
+   */
   #deleteTextRuns(container: LoroText, position: number, length: number): void {
-    // Like Rust, delete the last run first so every recorded position is still
-    // the run's position in the unchanged prefix.
-    const runs = container._sequence.visibleIdRuns(position, position + length);
-    let end = position + length;
+    const runs = container._deleteRuns(position, position + length);
     for (let index = runs.length - 1; index >= 0; index -= 1) {
-      const run = runs[index]!;
-      end -= run.length;
+      const { position: entity, run } = runs[index]!;
       this.#appendAndApply(
         container,
         {
           type: "text-delete",
-          position: end,
+          position: entity,
           length: BigInt(run.length),
           startId: run.start,
         },
@@ -3417,31 +3441,30 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         text._deleteTargetRuns(runs, length < 0, operationId);
         return;
       }
-      case "text-mark":
-        {
-          const value = this.#decodeRuntimeValue(
-            content.value,
-            keys,
-            operationId,
-            container,
-          );
-          const meta: TextStyleMeta = {
+      case "text-mark": {
+        const value = this.#decodeRuntimeValue(
+          content.value,
+          keys,
+          operationId,
+          container,
+        );
+        (container as LoroText)._applyStyleStart(
+          content.start,
+          {
             startId: operationId,
             lamport,
             info: content.info,
             value,
-          };
-          (container as LoroText)._applyMark(
-            content.start,
-            content.end,
-            content.key,
-            value,
-            meta,
-            causalVersion,
-          );
-        }
+            key: content.key,
+            end: content.end,
+          },
+          lamport,
+          causalVersion,
+        );
         return;
+      }
       case "text-mark-end":
+        (container as LoroText)._applyStyleEnd(operationId, lamport, causalVersion);
         return;
       case "movable-list-move": {
         const list = container as LoroMovableList;
@@ -3824,27 +3847,19 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           ) {
             return false;
           }
-        } else if (content.type === "text-mark") {
+        } else if (content.type === "text-mark" || content.type === "text-mark-end") {
+          // Transitions toggle the style anchors like inserted text; the style
+          // covered its range when its end anchor was applied.
           if (!(container instanceof LoroText) || !container._attributeHistoryComplete) {
             return false;
           }
-          const viewLength = container._sequence.isFullyIncluded(causalVersion)
-            ? container._sequence.visibleLength
-            : container._sequence.causalView(causalVersion).length;
-          if (content.end > viewLength) {
-            return false;
-          }
-          const runs = container._styleRuns(content.start, content.end, causalVersion);
           if (
-            !container._styleIndex.runsContainMeta(runs, content.key, {
-              peer: change.id.peer,
-              counter: operation.counter,
-            })
+            !container._sequence.containsIdRuns([
+              { start: { peer: change.id.peer, counter: operation.counter }, length: 1 },
+            ])
           ) {
             return false;
           }
-        } else if (content.type === "text-mark-end") {
-          if (!(container instanceof LoroText)) return false;
         } else if (content.type === "text-insert") {
           if (!(container instanceof LoroText)) return false;
           if (
@@ -3979,8 +3994,23 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             this.#containerKey(operation.container),
           )!;
           const content = operation.content;
+          if (content.type === "text-mark" || content.type === "text-mark-end") {
+            const text = container as LoroText;
+            textStyleContainers.add(text);
+            if (recording !== undefined && content.type === "text-mark-end") {
+              const style = text._styleAt({
+                peer: change.id.peer,
+                counter: operation.counter - 1,
+              });
+              if (style !== undefined) {
+                addTextAttributeRuns(text, style.key, text._styleMemberRuns(style));
+              }
+            }
+          }
           if (
             content.type === "text-insert" ||
+            content.type === "text-mark" ||
+            content.type === "text-mark-end" ||
             content.type === "list-insert" ||
             content.type === "movable-list-insert"
           ) {
@@ -3992,9 +4022,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
                 length: operation.length,
               },
             ];
+            // Style anchors have no event of their own, so they always take the
+            // bulk path; per-element changes would expand a container's bulk
+            // removals into single elements.
+            const anchor =
+              content.type === "text-mark" || content.type === "text-mark-end";
             if (
               direction === -1 ||
-              (recording === undefined && sequence.canShowIdRunsAt(insertedRuns, target))
+              ((recording === undefined || anchor) &&
+                sequence.canShowIdRunsAt(insertedRuns, target))
             ) {
               if (direction === -1) {
                 addBulkSequenceRemovals(sequenceContainer, insertedRuns);
@@ -4056,16 +4092,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               operation.counter + operation.length,
             )) {
               elements.add(element);
-            }
-          } else if (content.type === "text-mark") {
-            const text = container as LoroText;
-            textStyleContainers.add(text);
-            if (recording !== undefined) {
-              addTextAttributeRuns(
-                text,
-                content.key,
-                text._styleRuns(content.start, content.end, causalVersion),
-              );
             }
           } else if (content.type === "movable-list-set") {
             const list = container as LoroMovableList;
@@ -4221,10 +4247,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }))
         .sort((left, right) => right.position - left.position);
       for (const { element, position } of removals) {
-        state?.diff.delete(
-          position,
-          container instanceof LoroText ? (element.value as string).length : 1,
-        );
+        const length =
+          container instanceof LoroText ? (element.value as string).length : 1;
+        // Style anchors have no width and no event of their own.
+        if (length > 0) state?.diff.delete(position, length);
         container._sequence.setDeleted(element as never, true);
       }
 
@@ -4240,6 +4266,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (state === undefined) continue;
         if (container instanceof LoroText) {
           const textElement = element as TextElement;
+          if (textElement.anchor !== undefined) continue;
           const position = container._sequence.visibleMetricOffsetOf(
             textElement,
             "utf16",
@@ -5669,47 +5696,54 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         value: EncodedLoroValue;
         info: number;
       }[] = [];
-      const metasAt = container._attributeMetasResolver();
-      let active = new Map<string, TextStyleMeta>();
-      for (let index = 0; index <= visible.length; index += 1) {
-        const current = index < visible.length ? metasAt(visible[index]!) : new Map();
-        for (const [key, meta] of active) {
-          if (current.get(key) === meta) continue;
+      // Rust's `encode_snapshot_fast`: text and style anchors in document
+      // order. A start anchor is a zero-length span followed by its mark, an
+      // end anchor a span of length -1 at the start counter + 1 that keeps the
+      // start's lamport offset.
+      const text: string[] = [];
+      for (const element of visible) {
+        const anchor = element.anchor;
+        if (anchor !== undefined) {
+          const style = anchor.style;
           spans.push({
-            peerIndex: peerIndex(meta.startId.peer),
-            counter: meta.startId.counter + 1,
-            lamportSub: meta.lamport - meta.startId.counter,
-            length: -1,
+            peerIndex: peerIndex(style.startId.peer),
+            counter: style.startId.counter + (anchor.isEnd ? 1 : 0),
+            lamportSub: style.lamport - style.startId.counter,
+            length: anchor.isEnd ? -1 : 0,
           });
+          if (!anchor.isEnd) {
+            marks.push({
+              keyIndex: keyIndex(style.key),
+              value: this.#encodeSnapshotValue(style.value),
+              info: style.info,
+            });
+          }
+          continue;
         }
-        for (const [key, meta] of current) {
-          if (active.get(key) === meta) continue;
+        text.push(element.value);
+        const index = peerIndex(element.id.peer);
+        const lamportSub = element.lamport - element.id.counter;
+        const previous = spans.at(-1);
+        if (
+          previous !== undefined &&
+          previous.length > 0 &&
+          previous.peerIndex === index &&
+          previous.lamportSub === lamportSub &&
+          previous.counter + previous.length === element.id.counter
+        ) {
+          previous.length += 1;
+        } else {
           spans.push({
-            peerIndex: peerIndex(meta.startId.peer),
-            counter: meta.startId.counter,
-            lamportSub: meta.lamport - meta.startId.counter,
-            length: 0,
-          });
-          marks.push({
-            keyIndex: keyIndex(key),
-            value: this.#encodeSnapshotValue(meta.value),
-            info: meta.info,
-          });
-        }
-        active = new Map(current);
-        if (index < visible.length) {
-          const element = visible[index]!;
-          spans.push({
-            peerIndex: peerIndex(element.id.peer),
+            peerIndex: index,
             counter: element.id.counter,
-            lamportSub: element.lamport - element.id.counter,
+            lamportSub,
             length: 1,
           });
         }
       }
       return {
         kind: CodecContainerType.Text,
-        text: visible.map((element) => element.value).join(""),
+        text: text.join(""),
         peers,
         spans,
         keys,
@@ -5930,69 +5964,66 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         });
       }
     } else if (container instanceof LoroText && state.kind === CodecContainerType.Text) {
+      // Text state lists text spans and style anchors in document order: a
+      // start anchor is a zero-length span with the next mark, an end anchor a
+      // span of length -1 at the start anchor's counter + 1.
       const characters = Array.from(state.text);
-      const ids: CodecId[] = [];
-      const lamports: number[] = [];
-      const styleRuns: {
-        readonly run: { readonly start: CodecId; readonly length: number };
-        readonly key: string;
-        readonly meta: TextStyleMeta;
-      }[] = [];
-      const stylesById = new Map<string, { key: string; meta: TextStyleMeta }>();
-      const active = new Map<string, TextStyleMeta[]>();
+      const elements: TextElement[] = [];
+      const styles = new Map<string, TextStyle>();
       let characterIndex = 0;
       let markIndex = 0;
       for (const span of state.spans) {
         const peer = state.peers[Number(span.peerIndex)]!;
+        const lamport = span.counter + span.lamportSub;
         if (span.length === 0) {
           const mark = state.marks[markIndex++]!;
-          const key = state.keys[mark.keyIndex]!;
-          const value = this.#decodeSnapshotValue(mark.value);
-          const meta: TextStyleMeta = {
+          const style: TextStyle = {
             startId: { peer, counter: span.counter },
-            lamport: span.counter + span.lamportSub,
+            lamport,
             info: mark.info,
-            value,
+            value: this.#decodeSnapshotValue(mark.value),
+            key: state.keys[mark.keyIndex]!,
+            end: -1,
           };
-          stylesById.set(idKey(meta.startId), { key, meta });
-          const stack = active.get(key) ?? [];
-          stack.push(meta);
-          active.set(key, stack);
+          styles.set(idKey(style.startId), style);
+          elements.push({
+            value: "",
+            id: { peer, counter: span.counter },
+            lamport,
+            deleted: false,
+            originLeft: undefined,
+            originRight: undefined,
+            anchor: { style, isEnd: false },
+          });
           continue;
         }
         if (span.length === -1) {
-          const style = stylesById.get(idKey({ peer, counter: span.counter - 1 }));
-          if (style !== undefined) {
-            const stack = active.get(style.key);
-            if (stack !== undefined) {
-              const index = stack.lastIndexOf(style.meta);
-              if (index >= 0) stack.splice(index, 1);
-              if (stack.length === 0) active.delete(style.key);
-            }
-          }
+          const style = styles.get(idKey({ peer, counter: span.counter - 1 }));
+          if (style === undefined) continue;
+          elements.push({
+            value: "",
+            id: { peer, counter: span.counter },
+            lamport,
+            deleted: false,
+            originLeft: undefined,
+            originRight: undefined,
+            anchor: { style, isEnd: true },
+          });
           continue;
         }
         if (span.length < -1) continue;
-        for (const [key, stack] of active) {
-          const meta = stack.at(-1);
-          if (meta !== undefined) {
-            styleRuns.push({
-              run: { start: { peer, counter: span.counter }, length: span.length },
-              key,
-              meta,
-            });
-          }
-        }
         for (let offset = 0; offset < span.length; offset += 1) {
-          ids.push({ peer, counter: span.counter + offset });
-          lamports.push(span.counter + offset + span.lamportSub);
-          characterIndex += 1;
+          elements.push({
+            value: characters[characterIndex++]!,
+            id: { peer, counter: span.counter + offset },
+            lamport: lamport + offset,
+            deleted: false,
+            originLeft: undefined,
+            originRight: undefined,
+          });
         }
       }
-      container._insertVisible(0, characters.slice(0, characterIndex), ids, lamports);
-      for (const { run, key, meta } of styleRuns) {
-        container._styleIndex.add([run], key, meta);
-      }
+      container._appendElements(elements);
       container._attributeHistoryComplete = false;
     } else if (container instanceof LoroTree && state.kind === CodecContainerType.Tree) {
       const records: TreeNodeRecord[] = [];

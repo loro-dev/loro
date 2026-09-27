@@ -94,9 +94,11 @@ The following paths are checked against the Rust implementation:
 - JSON update import/export and the postcard Awareness/EphemeralStore protocols.
 - Rust-produced fixtures imported by TypeScript and TypeScript-produced fixtures
   imported by Rust.
-- Randomized multi-peer text edits run side by side with the `loro-crdt` WASM build
-  (`tests/richtext-differential.test.ts`): positions, deletes, concurrency, checkout,
-  snapshots, cursors, events, and `revertTo`.
+- Randomized multi-peer text and rich-text edits run side by side with the
+  `loro-crdt` WASM build (`tests/richtext-differential.test.ts`): positions, deletes,
+  marks with every expand mode, concurrency, checkout, snapshots, cursors, events,
+  and `revertTo`. Style anchors are text-sequence elements, as in Rust, so every op
+  position counts them.
 
 This is not yet a claim of complete behavioral equivalence with every `loro-crdt`
 edge case. Important current limits are:
@@ -109,11 +111,11 @@ edge case. Important current limits are:
   importing into a new document or using `LoroDoc.fromSnapshot()`.
 - `diff()` preserves parent-before-child ordering, but independent containers at the
   same depth can appear in a different order than Rust's internal hash-map iteration.
-- `UndoManager` uses ID-span-based semantic undo for sequence edits and common
-  map/tree/counter changes. Style-only rich-text edits and movable-list move/set undo
-  still use simplified behavior.
-- The hardest overlapping rich-text-anchor and concurrent movable-list cases still use
-  simplified metadata compared with the Rust implementation.
+- `UndoManager` uses ID-span-based semantic undo for sequence edits, marks, and
+  common map/tree/counter changes. It does not transform an undo against later remote
+  edits like Rust's, and movable-list move/set undo still uses simplified behavior.
+- The hardest concurrent movable-list cases still use simplified metadata compared
+  with the Rust implementation.
 - `subscribeJsonpath()` deliberately uses broad invalidation, so its callback can have
   false positives.
 
