@@ -12,6 +12,7 @@ import {
   assertTwinAgrees,
   canonicalDiff,
   describeError,
+  eventShapeDifferences,
   mapContainer,
   movableList,
   plain,
@@ -484,7 +485,7 @@ export class FuzzRun {
       case "revert": {
         const twin = this.twin(action.peer);
         const frontiers = this.historyAt(twin, action.at);
-        if (this.#revertOrderIsUnspecified(twin, frontiers)) {
+        if (this.#revertIsUnspecified(twin, frontiers)) {
           this.#revertThroughRust(twin, frontiers);
         } else {
           twin.both("revertTo", (doc) => {
@@ -520,25 +521,42 @@ export class FuzzRun {
   }
 
   /**
+   * Whether the ops of a revert are not determined by the value it restores.
    * Rust applies a revert's container diffs in `FxHashMap` order within one
    * depth, so when several containers at the same depth change, the two
-   * engines write the same values in a different op order. Twins must share
-   * one history, so such a revert is checked by value and then replicated.
+   * engines write the same values in a different op order. A revert's list ops
+   * also follow the shape of `diff(current, target)`: an insert before or after
+   * a deletion at the same index lands on either side of the deleted positions.
+   * Both shapes describe the same change (see `eventShapeDifferences`). Twins
+   * must share one history, so such a revert is checked by value and then
+   * replicated.
    */
-  #revertOrderIsUnspecified(twin: Twin, frontiers: FrontiersLike): boolean {
-    let diff: [string, unknown][];
+  #revertIsUnspecified(twin: Twin, frontiers: FrontiersLike): boolean {
+    let rustDiff: [string, unknown][];
+    let jsDiff: [string, unknown][];
     try {
-      twin.docs.rust.commit();
-      diff = twin.docs.rust.diff(twin.docs.rust.frontiers(), frontiers, false);
+      twin.both("commit before diff", (doc) => doc.commit());
+      rustDiff = twin.docs.rust.diff(twin.docs.rust.frontiers(), frontiers, false);
+      jsDiff = twin.docs.js.diff(twin.docs.js.frontiers(), frontiers, false);
     } catch {
       return false;
     }
     const depths = new Map<number, number>();
-    for (const [id] of diff) {
+    for (const [id] of rustDiff) {
       const depth = twin.docs.rust.getPathToContainer(id)?.length ?? 0;
       depths.set(depth, (depths.get(depth) ?? 0) + 1);
     }
-    return [...depths.values()].some((count) => count > 1);
+    if ([...depths.values()].some((count) => count > 1)) return true;
+    const shape = (diff: [string, unknown][]) =>
+      new Map(diff.map(([id, change]) => [id, orderedDiff(change)]));
+    const rustShape = shape(rustDiff);
+    if (
+      !isDeepStrictEqual(rustShape, shape(jsDiff.filter(([id]) => rustShape.has(id))))
+    ) {
+      eventShapeDifferences.count += 1;
+      return true;
+    }
+    return false;
   }
 
   #revertThroughRust(twin: Twin, frontiers: FrontiersLike): void {
@@ -788,6 +806,31 @@ function newChild(engine: EngineModule, kind: ChildKind): ContainerLike {
     case "MovableList":
       return new engine.LoroMovableList();
   }
+}
+
+/**
+ * `canonicalDiff`, except that list deltas keep the order of inserts and
+ * deletes at one index; adjacent items of one kind are still merged.
+ */
+function orderedDiff(diff: unknown): unknown {
+  const typed = diff as { type: string; diff?: Record<string, unknown>[] };
+  if (typed.type !== "list") return canonicalDiff(diff);
+  const output: Record<string, unknown>[] = [];
+  for (const item of typed.diff!) {
+    const last = output.at(-1);
+    if (last !== undefined && "insert" in item && "insert" in last) {
+      last.insert = [...(last.insert as unknown[]), ...(plain(item.insert) as unknown[])];
+    } else if (last !== undefined && "delete" in item && "delete" in last) {
+      last.delete = (last.delete as number) + (item.delete as number);
+    } else if (last !== undefined && "retain" in item && "retain" in last) {
+      last.retain = (last.retain as number) + (item.retain as number);
+    } else {
+      output.push(
+        "insert" in item ? { insert: plain(item.insert) } : { ...item },
+      );
+    }
+  }
+  return { type: "list", diff: output };
 }
 
 export interface SavedTrace {

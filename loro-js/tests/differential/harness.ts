@@ -465,17 +465,22 @@ export function assertTwinAgrees(
  * Event batches whose list or text deltas differ in shape but not in effect.
  * Rust derives an import's list event from the net change; loro.js composes the
  * change of each op, which can show an element that was hidden and shown again
- * within one import as a delete plus an insert of the same value. After a
- * history replay loro.js diffs text before and after instead of using the ops.
+ * within one import as a delete plus an insert of the same value. When several
+ * imported moves bring an element back to its index, Rust's net change cancels
+ * and it reports nothing, so sequence events without effect are dropped. After
+ * a history replay loro.js diffs text before and after instead of using the ops.
  */
 export const eventShapeDifferences = { count: 0 };
 
 /** Returns why the batches are not equivalent, or undefined when they are. */
 function equivalentEvents(
   lists: ReadonlyMap<string, unknown[] | string>,
-  rust: readonly EventBatchLike[],
-  js: readonly EventBatchLike[],
+  rustBatches: readonly EventBatchLike[],
+  jsBatches: readonly EventBatchLike[],
 ): string | undefined {
+  const rust = withoutNoOpSequenceEvents(lists, rustBatches);
+  const js = withoutNoOpSequenceEvents(lists, jsBatches);
+  if (rust === undefined || js === undefined) return "a list delta overruns";
   if (rust.length !== js.length) return "batch counts differ";
   const rustLists = new Map<string, unknown[] | string>();
   const jsLists = new Map<string, unknown[] | string>();
@@ -521,6 +526,32 @@ function equivalentEvents(
     }
   }
   return undefined;
+}
+
+/** Drops list and text events that leave their target unchanged, then empty batches. */
+function withoutNoOpSequenceEvents(
+  lists: ReadonlyMap<string, unknown[] | string>,
+  batches: readonly EventBatchLike[],
+): EventBatchLike[] | undefined {
+  const current = new Map(lists);
+  const output: EventBatchLike[] = [];
+  for (const batch of batches) {
+    const events: EventBatchLike["events"][number][] = [];
+    for (const event of batch.events) {
+      const diff = event.diff as { type: string; diff?: DeltaItem[] };
+      if ((diff.type !== "list" && diff.type !== "text") || hasAttributes(diff.diff!)) {
+        events.push(event);
+        continue;
+      }
+      const before = current.get(event.target) ?? (diff.type === "text" ? "" : []);
+      const after = applySequenceDelta(before, diff.diff!);
+      if (after === undefined) return undefined;
+      current.set(event.target, after);
+      if (!isDeepStrictEqual(before, after)) events.push(event);
+    }
+    if (events.length > 0) output.push({ ...batch, events });
+  }
+  return output;
 }
 
 function hasAttributes(...deltas: (readonly DeltaItem[])[]): boolean {
