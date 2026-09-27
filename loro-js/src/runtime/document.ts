@@ -5247,7 +5247,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (this.isShallow()) {
       return this.#encodeShallowSnapshot(this.shallowSinceFrontiers());
     }
+    // A snapshot always carries the latest state, as in Rust. A detached
+    // document's state (lazy or not) may be at an older version or may miss
+    // updates imported while detached.
+    const latestVersion = this.#historyVersion();
+    const detachedState = this.version().compare(latestVersion) !== 0;
     if (
+      !detachedState &&
       this.#deferredSnapshotHistory !== undefined &&
       this.#deferredSnapshotState !== undefined
     ) {
@@ -5272,11 +5278,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       historyEntries.push(
         {
           key: VERSION_KEY,
-          value: encodePostcardVersionVector(this.version().codecEntries()),
+          value: encodePostcardVersionVector(latestVersion.codecEntries()),
         },
         {
           key: FRONTIERS_KEY,
-          value: encodePostcardFrontiers(this.#frontiersCodec()),
+          value: encodePostcardFrontiers(
+            [...this.#historyFrontiers.values()].sort(compareIds),
+          ),
         },
       );
       const body = encodeFastSnapshotBody({
@@ -5296,12 +5304,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         changes: [record.change],
       }),
     }));
-    // A snapshot always carries the latest state, as in Rust. A detached
-    // document's state is at its checkout version, so encode the latest state
-    // and then restore the checkout.
-    const latestVersion = this.#historyVersion();
-    const restoreVersion = this.version();
-    const detachedState = restoreVersion.compare(latestVersion) !== 0;
     historyEntries.push({
       key: VERSION_KEY,
       value: encodePostcardVersionVector(latestVersion.codecEntries()),
@@ -5312,19 +5314,46 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         [...this.#historyFrontiers.values()].sort(compareIds),
       ),
     });
-    if (detachedState) this.#rebuildFromHistory(latestVersion);
-    let state: Uint8Array;
-    try {
-      state = encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" });
-    } finally {
-      if (detachedState) this.#rebuildFromHistory(restoreVersion);
-    }
+    const state = encodeStateSnapshotStore(
+      detachedState ? this.#latestStateStore() : this.#buildStateStore(),
+      { compression: "auto" },
+    );
     const body = encodeFastSnapshotBody({
       oplog: encodeSstable(historyEntries, { compression: "auto" }),
       state,
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
+  }
+
+  /**
+   * The latest state of a detached document, without changing its checkout.
+   * Like `diff`, it transitions to the latest version and back when the
+   * version delta allows it (O(delta)). Otherwise, including for lazily
+   * imported state that `#buildStateStore` cannot enumerate, it replays the
+   * history once on an isolated staging document.
+   */
+  #latestStateStore(): StateSnapshotStore {
+    const current = this.version();
+    const latest = this.#historyVersion();
+    if (this.#deferredSnapshotState === undefined) {
+      const forward = this.#recordsInVersionRange(current, latest);
+      const retreat = this.#recordsInVersionRange(latest, current);
+      const mode = movableMoveTransitionMode(retreat, forward, this.#movableMovePeers);
+      if (this.#canTransitionRecords([...retreat, ...forward], mode)) {
+        let restored = false;
+        try {
+          this.#applyVersionTransition(retreat, forward, latest, undefined, mode);
+          const store = this.#buildStateStore();
+          this.#applyVersionTransition(forward, retreat, current, undefined, mode);
+          restored = true;
+          return store;
+        } finally {
+          if (!restored) this.#rebuildFromHistory(current);
+        }
+      }
+    }
+    return this.forkAt(this.oplogFrontiers()).#buildStateStore();
   }
 
   #encodeDeferredSnapshotState(): Uint8Array {
