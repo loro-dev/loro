@@ -260,22 +260,14 @@ impl ContainerState for MapState {
                 continue;
             };
 
-            if mode == DiffMode::Checkout
-                && self
-                    .map
-                    .get(&key)
-                    .is_some_and(|old| old.value == value.value)
-            {
-                // Only the winning op changed (see `MapDiffCalculator`): keep the
-                // lamport/peer accurate without reporting a value change.
-                self.insert(key, value);
-                continue;
-            }
-
             let mut changed = false;
             if force {
-                self.insert(key.clone(), value.clone());
-                changed = true;
+                let prev = self.insert(key.clone(), value.clone());
+                // A checkout diff carries every key whose winning op changed,
+                // including ones whose value did not (see `MapDiffCalculator`):
+                // those only refresh the lamport/peer and report no change.
+                changed = mode != DiffMode::Checkout
+                    || !matches!(prev, Some(prev) if prev.value == value.value);
             } else {
                 match self.map.get(&key) {
                     Some(old_value) if old_value > &value => {}
