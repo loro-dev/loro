@@ -823,4 +823,79 @@ describe("indexed version transitions", () => {
     left.checkout(leftFrontiers);
     expect(left.getText("text").length).toBe(0);
   });
+
+  // Packed Text spans return a new element wrapper on each lookup, so two
+  // concurrent deletes of one character must still delete it once.
+  for (const inserts of [["ab"], ["a", "b"]]) {
+    test(`deletes a character deleted by two peers once (${inserts.length} inserts)`, () => {
+      const source = new LoroDoc();
+      source.setPeerId(1);
+      let position = 0;
+      for (const text of inserts) {
+        source.getText("t").insert(position, text);
+        position += text.length;
+      }
+      source.commit();
+      const base = source.frontiers();
+      const initial = source.export({ mode: "update" });
+      const updates = [2, 3].map((peer) => {
+        const replica = new LoroDoc();
+        replica.import(initial);
+        replica.setPeerId(peer);
+        replica.getText("t").delete(1, 1);
+        if (peer === 3) replica.getText("t").insert(1, "X");
+        replica.commit();
+        return replica.export({ mode: "update", from: source.oplogVersion() });
+      });
+
+      const doc = new LoroDoc();
+      doc.import(initial);
+      doc.importBatch(updates);
+      const mirror = new LoroDoc();
+      mirror.getText("t").insert(0, "aX");
+      let batches = 0;
+      doc.subscribe((batch: LoroEventBatch) => {
+        batches += 1;
+        mirror.applyDiff(batch.events.map(({ target, diff }) => [target, diff]));
+      });
+      doc.checkout(base);
+      expect(doc.getText("t").toString()).toBe("ab");
+      doc.attach();
+      expect(doc.getText("t").toString()).toBe("aX");
+      expect(mirror.getText("t").toString()).toBe("aX");
+      expect(batches).toBe(2);
+      const again = new LoroDoc();
+      again.import(doc.export({ mode: "snapshot" }));
+      expect(again.getText("t").toString()).toBe("aX");
+    });
+  }
+
+  test("leaves the state and version unchanged when a checkout throws", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const text = doc.getText("t");
+    text.insert(0, "abc");
+    doc.getMap("m").set("k", 1);
+    doc.commit();
+    const base = doc.frontiers();
+    text.delete(0, 1);
+    doc.getMap("m").set("k", 2);
+    doc.commit();
+    const latest = doc.frontiers();
+
+    const failure = vi
+      .spyOn(text._sequence, "setIdRunsVisible")
+      .mockImplementation(() => {
+        throw new Error("transition failed");
+      });
+    expect(() => doc.checkout(base)).toThrow("transition failed");
+    failure.mockRestore();
+    expect(doc.isDetached()).toBe(false);
+    expect(doc.frontiers()).toEqual(latest);
+    expect(doc.toJSON()).toEqual({ t: "bc", m: { k: 2 } });
+    doc.checkout(base);
+    expect(doc.toJSON()).toEqual({ t: "abc", m: { k: 1 } });
+    doc.attach();
+    expect(doc.toJSON()).toEqual({ t: "bc", m: { k: 2 } });
+  });
 });

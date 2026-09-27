@@ -313,7 +313,11 @@ after the root, never concurrent with it (loro-dev/loro#1095). The meet of
 the requested heads is not enough: a branch merged later that
 forked below the requested version is concurrent with it. `StateOnly` retains
 history only up to its target, so it uses the target on both sides.
-`crates/loro/tests/shallow_root_critical.rs` checks the property op by op. The
+`crates/loro/tests/shallow_root_critical.rs` checks the property op by op.
+Because the root state is materialized by a checkout, it is only as correct as
+the checkout's winner metadata (lamport/peer), not just its values: see
+"Winner metadata, not just values" in
+[crates/loro-internal/docs/diff_calc.md](../crates/loro-internal/docs/diff_calc.md). The
 root is then moved past a rich-text StyleStart when necessary and clamped to
 an existing shallow root. The root state carries `fr`; a later state overlay
 does not. Import loads the root first and then either overlays the later state

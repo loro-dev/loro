@@ -150,12 +150,24 @@ JavaScript constant factor.
   positions, so a replay of Rust-created styled text can differ from its
   snapshot state (for example, an insert right after a mark's end anchor). The
   completion therefore compares the replay with the snapshot state (visible ids,
-  plus the delta when styled). When they differ, the replayed state serves
-  transitions and the snapshot state is reinstated at every version with the
-  same operations on that container (`#settleSnapshotSequences`), so the
-  snapshot version and exports stay exact. A full `#rebuildFromHistory`, still
-  used when a transition cannot be incremental and by shallow export, stashes
-  snapshot states the same way; it hydrates unread sequence containers first.
+  plus the delta when styled). When they differ, the replay is discarded and the
+  container becomes `unreplayable`: it keeps its snapshot state, encoded once,
+  and every transition that touches it rebuilds it from that state
+  (`#rebuildFromSnapshotState`, O(container size + its operations)) instead of
+  transitioning a replay. The rebuild hides the state's inserted elements and
+  styles that the target excludes and applies later operations the target
+  includes. So the latest state, imports, and exports always equal the
+  snapshot state plus later operations, as without history; an older version
+  cannot restore text deleted before the snapshot. A full `#rebuildFromHistory`
+  (the non-incremental fallback, shallow export, `forkAt`) first checks the
+  snapshot-hydrated styled Text and MovableList containers, including lazily
+  encoded ones, and then rebuilds unreplayable containers the same way. Only the
+  root state of a shallow export uses the replay, since the snapshot state is
+  later than the root.
+- Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
+  packed Text span returns a new wrapper per lookup, so two concurrent deletes
+  of one character used to delete it twice. A checkout that throws restores its
+  previous version and state (`#transitionTo`).
 - First checkout after importing a 262,144-operation single-peer Text snapshot
   takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
   versus about 148 ms for the earlier whole-document replay; 65,536 operations
@@ -171,12 +183,14 @@ JavaScript constant factor.
   (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
   or node; a retained Tree delete whose placement was trimmed takes the root
   placement and stays deleted. The root store entry for a container comes from
-  `#shallowRootEntryIndex`, the key index the import already builds to merge
-  the root and latest states, and each container's key/node index is built on
-  first lookup. A retreat therefore touches only the maps and trees it changes,
-  as in Rust's per-map checkout index seeding (loro-dev/loro#1120, #1124): the
-  first such retreat in a shallow doc with 32,768 child Maps takes about 0.45
-  ms, flat from 1,024 Maps, and later ones about 0.017 ms.
+  `#shallowRootEntryIndex`: the key index the import builds to merge the root
+  and latest states, or while hydrating the root store for a replay (Rust omits
+  the latest state for a short retained tail). Each container's key/node index
+  is built on first lookup. A retreat therefore touches only the maps and trees
+  it changes, as in Rust's per-map checkout index seeding (loro-dev/loro#1120,
+  #1124): the first such retreat in a shallow doc with 32,768 child Maps takes
+  under 1 ms for both loro.js- and Rust-written snapshots, flat from 1,024
+  Maps, and later ones about 0.02–0.03 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or

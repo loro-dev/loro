@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "vitest";
 
 import { LoroDoc, LoroMap, UndoManager, type Frontiers } from "../src/index";
@@ -156,6 +158,29 @@ describe("shallow checkout of a value rewritten after the root", () => {
       expect(shallow.getMap("map").getLastEditor("a")).toBe("1");
       shallow.checkout(latest);
       expect(shallow.toJSON()).toEqual({ map: { a: 2, z: 0 } });
+    }
+  });
+
+  test("reads root-time values from a Rust snapshot without a latest state", () => {
+    // Rust shallow export, peer 1 at the root: map {a:1, z:0, child:{x:"root"}};
+    // peer 2 then writes a=2 and child.x="later". The short retained tail makes
+    // Rust omit the latest state, so the import replays from the root state.
+    const shallow = importBytes(
+      new Uint8Array(
+        readFileSync(
+          new URL("./fixtures/rust/shallow-empty-state.blob", import.meta.url),
+        ),
+      ),
+    );
+    const root: Frontiers = [{ peer: "1", counter: 3 }];
+    const latest = shallow.frontiers();
+    expect(shallow.toJSON()).toEqual({ map: { a: 2, z: 0, child: { x: "later" } } });
+    for (let round = 0; round < 2; round += 1) {
+      shallow.checkout(root);
+      expect(shallow.toJSON()).toEqual({ map: { a: 1, z: 0, child: { x: "root" } } });
+      expect(shallow.getMap("map").getLastEditor("a")).toBe("1");
+      shallow.checkout(latest);
+      expect(shallow.getMap("map").getLastEditor("a")).toBe("2");
     }
   });
 
