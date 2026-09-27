@@ -404,7 +404,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (
       container !== undefined &&
       isMergeableContainerId(parsed) &&
-      this._isContainerDeleted(container) &&
+      this.#isContainerUnbound(container, false) &&
       !this.#containerHasOperations(parsed)
     ) {
       return undefined;
@@ -2026,7 +2026,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     };
   }
 
+  /**
+   * Whether `container` is unreachable from the roots: it or an ancestor was
+   * removed from its parent, or its tree node is under a deleted node. Rust's
+   * `DocState::is_deleted` has the same meaning.
+   */
   _isContainerDeleted(container: LoroContainer): boolean {
+    for (
+      let current: LoroContainer | undefined = container;
+      current !== undefined;
+      current = current.parent()
+    ) {
+      if (this.#isContainerUnbound(current, true)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether `container` is no longer attached to its own parent. With
+   * `treeAncestors`, a tree node under a deleted node also counts.
+   */
+  #isContainerUnbound(container: LoroContainer, treeAncestors: boolean): boolean {
     if (
       container._codecId?.kind === "root" &&
       !isMergeableContainerId(container._codecId)
@@ -2050,7 +2070,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return binding.element.deleted || binding.element.value !== container;
     }
     if (binding?.kind === "tree" && parent instanceof LoroTree) {
-      return binding.record.deleted || binding.record.data !== container;
+      return (
+        (treeAncestors ? parent._isNodeHidden(binding.record) : binding.record.deleted) ||
+        binding.record.data !== container
+      );
     }
     return parent !== undefined;
   }
@@ -2739,6 +2762,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (container._codecId === undefined || container._doc !== this)
       throw new Error("container is detached");
     this._ensureContainerHydrated(container);
+    if (this._isContainerDeleted(container)) {
+      throw new Error(
+        `The container ${container.id} is deleted. You cannot apply the op on a deleted container.`,
+      );
+    }
     const pending = this.#ensurePending();
     const counter = this.#nextOperationCounter(pending);
     const operation: DecodedOperation = {
