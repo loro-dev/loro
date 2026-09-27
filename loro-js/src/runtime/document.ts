@@ -3824,6 +3824,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (!(container instanceof LoroList || container instanceof LoroText)) {
             return false;
           }
+          // A delete imported while detached is in the history but not in the
+          // sequence's deletion index yet; only a replay applies it.
+          let recorded = 0;
+          for (const run of container._sequence.idRunsDeletedBy(
+            change.id.peer,
+            operation.counter,
+            operation.counter + operation.length,
+          )) {
+            recorded += run.length;
+          }
+          if (recorded !== operation.length) return false;
         } else if (content.type === "map-insert" || content.type === "map-delete") {
           if (!(container instanceof LoroMap)) return false;
         } else if (

@@ -361,6 +361,44 @@ describe("loro-wasm-compatible runtime", () => {
     expect(doc.getText("text").toString()).toBe("base latest");
   });
 
+  // A delete imported while detached was left out of the next transition:
+  // the transition looked it up in the sequence's deletion index, which only
+  // attached imports update. loro-crdt applies it.
+  test.each([
+    ["text", "latest"],
+    ["text", "checkout"],
+    ["list", "latest"],
+    ["list", "checkout"],
+  ] as const)("applies a %s delete imported while detached (%s)", (kind, target) => {
+    const read = (doc: LoroDoc): unknown =>
+      kind === "text" ? doc.getText("seq").toString() : doc.getList("seq").toArray();
+    const source = new LoroDoc();
+    source.setPeerId(2);
+    if (kind === "text") source.getText("seq").insert(0, "hello");
+    else for (const value of "hello") source.getList("seq").push(value);
+    source.commit();
+
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.import(source.export({ mode: "update" }));
+    if (kind === "text") source.getText("seq").delete(4, 1);
+    else source.getList("seq").delete(4, 1);
+    source.commit();
+    doc.getCounter("counter").increment(1);
+    doc.commit();
+
+    doc.checkout([{ peer: "2", counter: 1 }]);
+    expect(read(doc)).toEqual(kind === "text" ? "he" : ["h", "e"]);
+    doc.import(source.export({ mode: "update", from: doc.oplogVersion() }));
+    if (target === "latest") doc.checkoutToLatest();
+    else doc.checkout(doc.oplogFrontiers());
+
+    expect(read(doc)).toEqual(kind === "text" ? "hell" : ["h", "e", "l", "l"]);
+    const replay = new LoroDoc();
+    replay.import(doc.export({ mode: "update" }));
+    expect(read(replay)).toEqual(read(doc));
+  });
+
   test("holds causally incomplete updates pending until dependencies arrive", () => {
     const source = new LoroDoc();
     source.setPeerId(1);
