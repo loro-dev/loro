@@ -27,7 +27,7 @@ use crate::{
     id::{Counter, PeerID, ID},
     lock::{LoroMutex, LoroMutexGuard},
     loro::CommitOptions,
-    op::{Op, RawOp, RawOpContent},
+    op::{InnerContent, Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
     version::Frontiers,
@@ -789,22 +789,26 @@ fn change_to_diff(
             let mut ops_for_hint: SmallVec<[Op; 1]> = SmallVec::new();
             let mut total_len = 0;
             while total_len < hint.rle_len() {
-                let op_len = container_ops[op_index].atom_len();
+                let Some(op) = container_ops.get_mut(op_index) else {
+                    unreachable!("Op/hint length mismatch: {hint:?}");
+                };
+                let op_len = op.atom_len();
                 let needed = hint.rle_len() - total_len;
                 if op_len > needed {
-                    let left = container_ops[op_index].slice(0, needed);
-                    let right = container_ops[op_index].slice(needed, op_len);
-                    container_ops[op_index] = right;
+                    ops_for_hint.push(op.slice(0, needed));
+                    *op = op.slice(needed, op_len);
                     total_len += needed;
-                    ops_for_hint.push(left);
                 } else {
                     total_len += op_len;
-                    ops_for_hint.push(container_ops[op_index].clone());
+                    ops_for_hint.push(op.clone());
                     op_index += 1;
                 }
             }
 
-            assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
+            debug_assert!(
+                ops_for_hint.iter().all(|op| op_matches_hint(op, &hint)),
+                "Op/hint kind mismatch: {hint:?} {ops_for_hint:?}"
+            );
 
             // Move to next hint
             current_hint = hint_iter.next();
@@ -983,9 +987,40 @@ fn change_to_diff(
                 .map(|x| x.content_len() as Lamport)
                 .sum::<Lamport>();
         }
+
+        debug_assert!(
+            current_hint.is_none(),
+            "Unused event hint: {current_hint:?}"
+        );
     }
 
     ans
+}
+
+/// Whether `op` is the kind of op `hint` was recorded for.
+fn op_matches_hint(op: &Op, hint: &EventHint) -> bool {
+    match &op.content {
+        InnerContent::List(list_op) => matches!(
+            (list_op, hint),
+            (InnerListOp::StyleStart { .. }, EventHint::Mark { .. })
+                | (InnerListOp::StyleEnd, EventHint::MarkEnd)
+                | (InnerListOp::InsertText { .. }, EventHint::InsertText { .. })
+                | (
+                    InnerListOp::Delete(_),
+                    EventHint::DeleteText { .. } | EventHint::DeleteList(_)
+                )
+                | (InnerListOp::Insert { .. }, EventHint::InsertList { .. })
+                | (InnerListOp::Move { .. }, EventHint::Move { .. })
+                | (InnerListOp::Set { .. }, EventHint::SetList { .. })
+        ),
+        InnerContent::Map(_) => matches!(hint, EventHint::Map { .. }),
+        InnerContent::Tree(_) => matches!(hint, EventHint::Tree(_)),
+        #[cfg(feature = "counter")]
+        InnerContent::Future(crate::op::FutureInnerContent::Counter(_)) => {
+            matches!(hint, EventHint::Counter(_))
+        }
+        InnerContent::Future(_) => false,
+    }
 }
 
 #[cfg(test)]

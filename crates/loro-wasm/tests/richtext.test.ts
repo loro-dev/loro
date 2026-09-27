@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Delta, LoroDoc, TextDiff, Cursor, OpId } from "../bundler/index";
+import {
+  Delta,
+  LoroDoc,
+  TextDiff,
+  Cursor,
+  OpId,
+  UndoManager,
+} from "../bundler/index";
 import { expectDefined } from "./helpers";
 
 describe("richtext", () => {
@@ -655,5 +662,22 @@ describe("richtext", () => {
     doc.commit();
     expect(text.toString()).toBe("");
     expect(events.length).toBe(2);
+  });
+
+  it("undoes merged deletes of astral text without a subscriber", () => {
+    const doc = new LoroDoc();
+    // The UndoManager alone makes the transaction build its events.
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const text = doc.getText("text");
+    text.insert(0, "𝒳y");
+    doc.commit();
+    text.delete(2, 1);
+    text.delete(0, 2);
+    doc.commit();
+    expect(text.toString()).toBe("");
+    undo.undo();
+    expect(text.toString()).toBe("𝒳y");
+    undo.redo();
+    expect(text.toString()).toBe("");
   });
 });

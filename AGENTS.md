@@ -27,6 +27,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
   root-whitelisted latest state):
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
+- Rich-text insert positions next to style anchors, the insert cursor cache,
+  and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
 - User-facing Loro usage, sync, editor integration, and performance guidance:
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:
