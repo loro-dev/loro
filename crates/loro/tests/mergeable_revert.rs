@@ -2,12 +2,60 @@
 //! content exactly once.
 //!
 //! A mergeable child keeps its state at a deterministic cid while the parent marker is
-//! gone. The diff that re-activates it carries the child's *full* target state (the same
-//! "revival" shape events use), so `apply_diff` has to set the hidden child to that
-//! state instead of appending it. See `context/mergeable-containers.md`.
+//! gone, and a doc at the diff's start version still holds that state. So `LoroDoc::diff`
+//! and undo record the re-activated child's own delta instead of a full-state revival,
+//! which keeps char/element/TreeID identity. See `context/mergeable-containers.md`.
 
-use loro::{ExpandType, Frontiers, LoroDoc, StyleConfig, ToJson, TreeParentId, UndoManager};
-use serde_json::Value;
+use loro::{
+    event::{Diff, DiffBatch, MapDelta},
+    ExpandType, Frontiers, LoroDoc, StyleConfig, ToJson, TreeParentId, UndoManager,
+};
+use serde_json::{json, Value};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex},
+};
+
+fn owned_diff(diff: Diff<'_>) -> Diff<'static> {
+    match diff {
+        Diff::List(l) => Diff::List(l),
+        Diff::Text(t) => Diff::Text(t),
+        Diff::Map(m) => Diff::Map(MapDelta {
+            updated: m
+                .updated
+                .into_iter()
+                .map(|(k, v)| (Cow::Owned(k.into_owned()), v))
+                .collect(),
+        }),
+        Diff::Tree(t) => Diff::Tree(Cow::Owned(t.into_owned())),
+        #[cfg(feature = "counter")]
+        Diff::Counter(c) => Diff::Counter(c),
+        _ => Diff::Unknown,
+    }
+}
+
+/// Runs `op` on `source` and forwards the local events it emits to `mirror` through
+/// `apply_diff`. `mirror` must start in the same state as `source`.
+fn forward_events(source: &LoroDoc, mirror: &LoroDoc, op: impl FnOnce(&LoroDoc)) {
+    let batches: Arc<Mutex<Vec<DiffBatch>>> = Default::default();
+    let sink = batches.clone();
+    let sub = source.subscribe_root(Arc::new(move |e| {
+        let mut batch = DiffBatch::default();
+        for d in e.events {
+            batch
+                .push(d.target.clone(), owned_diff(d.diff))
+                .unwrap_or_else(|_| panic!("duplicate container in one event"));
+        }
+        sink.lock().unwrap().push(batch);
+    }));
+    op(source);
+    source.commit();
+    drop(sub);
+    for batch in batches.lock().unwrap().drain(..) {
+        mirror.apply_diff(batch).unwrap();
+    }
+    mirror.commit();
+}
 
 fn doc() -> LoroDoc {
     let d = LoroDoc::new();
@@ -96,6 +144,13 @@ fn check(setup: impl Fn(&LoroDoc), mutate: impl Fn(&LoroDoc), reuses_children: b
     r.revert_to(&b).unwrap();
     r.commit();
     assert_replays_to(&r, &expected_b, "revert_to back to b");
+
+    // Local events of a revert, forwarded to a doc in the same state.
+    let source = d.fork();
+    let mirror = d.fork();
+    forward_events(&source, &mirror, |s| s.revert_to(&a).unwrap());
+    assert_eq!(json(&source), expected_a, "event forwarding: source");
+    assert_eq!(json(&mirror), expected_a, "event forwarding: mirror");
 
     // diff + apply_diff
     let r = d.fork();
@@ -438,36 +493,293 @@ fn revert_restores_mergeable_text_once() {
     assert_eq!(d.len_ops() - before, 1);
 }
 
-/// Undoing a local delete while a remote peer edited the (now hidden) child must not
-/// duplicate content. The revived child is set to its state at the undone version, so the
-/// concurrent remote edit is dropped, the same as for a revived regular container, whose
-/// concurrent edits stay in the dead original.
-#[test]
-fn undo_delete_with_concurrent_remote_edit_does_not_duplicate() {
-    let a = doc();
-    let b = LoroDoc::new();
-    b.set_peer_id(2).unwrap();
-    a.get_map("m")
-        .ensure_mergeable_text("s")
-        .unwrap()
-        .insert(0, "hello")
-        .unwrap();
-    a.commit();
-    b.import(&a.export(loro::ExportMode::all_updates()).unwrap())
-        .unwrap();
-    let mut undo = UndoManager::new(&a);
-    delete_s(&a);
-    a.commit();
-    b.get_map("m")
-        .ensure_mergeable_text("s")
-        .unwrap()
-        .insert(5, "!")
-        .unwrap();
-    b.commit();
+fn peer(d: &LoroDoc, id: u64) -> LoroDoc {
+    let f = d.fork();
+    f.set_peer_id(id).unwrap();
+    f
+}
+
+fn sync(a: &LoroDoc, b: &LoroDoc) {
     a.import(&b.export(loro::ExportMode::all_updates()).unwrap())
         .unwrap();
-    assert_eq!(json(&a), serde_json::json!({"m": {}}));
-    assert!(undo.undo().unwrap());
+    b.import(&a.export(loro::ExportMode::all_updates()).unwrap())
+        .unwrap();
+}
+
+/// A doc whose mergeable children under `m` were visible with `target` content, then got
+/// `diverge` applied and their keys deleted. Returns the doc and the target version.
+fn deleted_after_divergence(
+    target: impl Fn(&LoroDoc),
+    diverge: impl Fn(&LoroDoc),
+) -> (LoroDoc, Frontiers, Value) {
+    let d = doc();
+    target(&d);
+    d.commit();
+    let a = d.state_frontiers();
+    let expected = json(&d);
+    diverge(&d);
+    d.commit();
+    let keys: Vec<String> = d.get_map("m").keys().map(|k| k.to_string()).collect();
+    for k in keys {
+        d.get_map("m").delete(&k).unwrap();
+    }
+    d.commit();
+    (d, a, expected)
+}
+
+fn diverged_children() -> (LoroDoc, Frontiers, Value) {
+    deleted_after_divergence(
+        |d| {
+            let m = d.get_map("m");
+            m.ensure_mergeable_text("t")
+                .unwrap()
+                .insert(0, "hello")
+                .unwrap();
+            m.ensure_mergeable_list("l").unwrap().push("keep").unwrap();
+            m.ensure_mergeable_movable_list("ml")
+                .unwrap()
+                .push("keep")
+                .unwrap();
+            m.ensure_mergeable_map("nested")
+                .unwrap()
+                .ensure_mergeable_text("t")
+                .unwrap()
+                .insert(0, "hello")
+                .unwrap();
+            let tree = m.ensure_mergeable_tree("tree").unwrap();
+            let n = tree.create(TreeParentId::Root).unwrap();
+            tree.get_meta(n).unwrap().insert("v", "keep").unwrap();
+        },
+        |d| {
+            let m = d.get_map("m");
+            m.ensure_mergeable_text("t")
+                .unwrap()
+                .insert(5, "!")
+                .unwrap();
+            m.ensure_mergeable_list("l").unwrap().push("extra").unwrap();
+            m.ensure_mergeable_movable_list("ml")
+                .unwrap()
+                .push("extra")
+                .unwrap();
+            m.ensure_mergeable_map("nested")
+                .unwrap()
+                .ensure_mergeable_text("t")
+                .unwrap()
+                .insert(5, "!")
+                .unwrap();
+            m.ensure_mergeable_tree("tree")
+                .unwrap()
+                .create(TreeParentId::Root)
+                .unwrap();
+        },
+    )
+}
+
+fn tree_ids(d: &LoroDoc) -> Vec<loro::TreeID> {
+    let m = d.get_map("m");
+    let tree = m.ensure_mergeable_tree("tree").unwrap();
+    tree.nodes()
+        .into_iter()
+        .filter(|n| !tree.is_node_deleted(n).unwrap())
+        .collect()
+}
+
+/// Revert rewrites hidden content that differs from the target with identity-preserving
+/// edits: only `!` / `extra` / the extra tree node are removed.
+#[test]
+fn revert_diverged_hidden_children_keeps_identity() {
+    let (d, a, expected) = diverged_children();
+    let tree_before = d.fork();
+    tree_before.checkout(&a).unwrap();
+    let original_node = tree_ids(&tree_before);
+    let before = d.len_ops();
+    d.revert_to(&a).unwrap();
+    d.commit();
+    assert_replays_to(&d, &expected, "revert");
+    assert_eq!(tree_ids(&d), original_node, "tree node identity is kept");
+    // Markers (5), plus deleting "!" twice, "extra" twice and one tree node.
+    assert_eq!(d.len_ops() - before, 10);
+}
+
+/// Local revert events forwarded to another doc through `apply_diff` reproduce the source
+/// state, including hidden children whose content matched or differed from the target.
+#[test]
+fn revert_events_forward_through_apply_diff() {
+    let (d, a, expected) = diverged_children();
+    let source = d.fork();
+    let mirror = d.fork();
+    forward_events(&source, &mirror, |s| s.revert_to(&a).unwrap());
+    assert_eq!(json(&source), expected);
+    assert_eq!(json(&mirror), expected);
+}
+
+#[test]
+#[cfg(feature = "counter")]
+fn revert_counter_events_forward_through_apply_diff() {
+    // Hidden value equal to the target (7) and larger than it (10).
+    for extra in [0.0, 3.0] {
+        let (d, a, expected) = deleted_after_divergence(
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_counter("c")
+                    .unwrap()
+                    .increment(7.0)
+                    .unwrap();
+            },
+            |d| {
+                if extra != 0.0 {
+                    d.get_map("m")
+                        .ensure_mergeable_counter("c")
+                        .unwrap()
+                        .increment(extra)
+                        .unwrap();
+                }
+            },
+        );
+        assert_eq!(expected, json!({"m": {"c": 7.0}}));
+        let source = d.fork();
+        let mirror = d.fork();
+        forward_events(&source, &mirror, |s| s.revert_to(&a).unwrap());
+        assert_eq!(json(&source), expected, "source, hidden extra {extra}");
+        assert_eq!(json(&mirror), expected, "mirror, hidden extra {extra}");
+    }
+}
+
+/// Two peers revert the same deleted state concurrently. Identity-preserving edits make
+/// the two reverts delete the same elements, so the merge equals the target.
+#[test]
+fn concurrent_reverts_of_diverged_hidden_children_converge_to_target() {
+    let (a, target, expected) = diverged_children();
+    let b = peer(&a, 2);
+    a.revert_to(&target).unwrap();
     a.commit();
-    assert_replays_to(&a, &serde_json::json!({"m": {"s": "hello"}}), "undo");
+    b.revert_to(&target).unwrap();
+    b.commit();
+    sync(&a, &b);
+    assert_replays_to(&a, &expected, "peer a");
+    assert_replays_to(&b, &expected, "peer b");
+    assert_eq!(tree_ids(&a).len(), 1);
+}
+
+/// A revert that keeps a tree node must keep its TreeID, so a concurrent edit to that node
+/// on another peer survives the merge.
+#[test]
+fn revert_keeps_tree_node_for_concurrent_meta_edit() {
+    let a = doc();
+    let tree = a.get_map("m").ensure_mergeable_tree("tree").unwrap();
+    let n = tree.create(TreeParentId::Root).unwrap();
+    tree.get_meta(n).unwrap().insert("v", "keep").unwrap();
+    a.commit();
+    let target = a.state_frontiers();
+    tree.create(TreeParentId::Root).unwrap();
+    a.commit();
+    let b = peer(&a, 2);
+
+    a.get_map("m").delete("tree").unwrap();
+    a.commit();
+    a.revert_to(&target).unwrap();
+    a.commit();
+    b.get_map("m")
+        .ensure_mergeable_tree("tree")
+        .unwrap()
+        .get_meta(n)
+        .unwrap()
+        .insert("remote", "REMOTE")
+        .unwrap();
+    b.commit();
+    sync(&a, &b);
+
+    for d in [&a, &b] {
+        assert_eq!(tree_ids(d), vec![n]);
+        let meta = d
+            .get_map("m")
+            .ensure_mergeable_tree("tree")
+            .unwrap()
+            .get_meta(n)
+            .unwrap();
+        assert_eq!(
+            meta.get_deep_value().to_json_value(),
+            json!({"v": "keep", "remote": "REMOTE"})
+        );
+    }
+}
+
+/// Undoing a local delete only restores the parent marker, so a remote edit made to the
+/// hidden child survives regardless of whether it arrives before or after the undo.
+#[test]
+fn undo_delete_keeps_concurrent_remote_edit_in_either_order() {
+    for import_before_undo in [true, false] {
+        let a = doc();
+        a.get_map("m")
+            .ensure_mergeable_text("s")
+            .unwrap()
+            .insert(0, "hello")
+            .unwrap();
+        a.commit();
+        let b = peer(&a, 2);
+        let mut undo = UndoManager::new(&a);
+        delete_s(&a);
+        a.commit();
+        b.get_map("m")
+            .ensure_mergeable_text("s")
+            .unwrap()
+            .insert(5, "!")
+            .unwrap();
+        b.commit();
+        let remote = b.export(loro::ExportMode::all_updates()).unwrap();
+        if import_before_undo {
+            a.import(&remote).unwrap();
+            assert_eq!(json(&a), json!({"m": {}}));
+        }
+        assert!(undo.undo().unwrap());
+        a.commit();
+        if !import_before_undo {
+            a.import(&remote).unwrap();
+        }
+        assert_replays_to(
+            &a,
+            &json!({"m": {"s": "hello!"}}),
+            &format!("undo, import_before_undo={import_before_undo}"),
+        );
+    }
+}
+
+/// `revert_to` targets a version: a remote edit already observed is reverted, one that
+/// arrives afterwards merges, exactly as for a root text.
+#[test]
+fn revert_after_remote_edit_to_hidden_child_behaves_like_root_text() {
+    for import_before_revert in [true, false] {
+        let a = doc();
+        a.get_map("m")
+            .ensure_mergeable_text("s")
+            .unwrap()
+            .insert(0, "hello")
+            .unwrap();
+        a.commit();
+        let target = a.state_frontiers();
+        let b = peer(&a, 2);
+        delete_s(&a);
+        a.commit();
+        b.get_map("m")
+            .ensure_mergeable_text("s")
+            .unwrap()
+            .insert(5, "!")
+            .unwrap();
+        b.commit();
+        let remote = b.export(loro::ExportMode::all_updates()).unwrap();
+        if import_before_revert {
+            a.import(&remote).unwrap();
+        }
+        a.revert_to(&target).unwrap();
+        a.commit();
+        if !import_before_revert {
+            a.import(&remote).unwrap();
+        }
+        let expected = if import_before_revert {
+            "hello"
+        } else {
+            "hello!"
+        };
+        assert_replays_to(&a, &json!({"m": {"s": expected}}), "revert");
+    }
 }

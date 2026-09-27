@@ -249,4 +249,79 @@ describe("mergeable containers (WASM bindings)", () => {
     p.d.commit();
     expect(p.d.toJSON()).toEqual(expected);
   });
+  describe("revert of hidden mergeable children that diverged from the target", () => {
+    // Target: t="hello", l=["keep"], c=7, tree with one node. Then the hidden children
+    // diverge (t="hello!", l=["keep","extra"], c=10, an extra tree node) and are deleted.
+    const setup = (peer: number) => {
+      const d = new LoroDoc();
+      d.setPeerId(peer);
+      const m = d.getMap("m");
+      m.ensureMergeableText("t").insert(0, "hello");
+      m.ensureMergeableList("l").push("keep");
+      m.ensureMergeableCounter("c").increment(7);
+      const tree = m.ensureMergeableTree("tree");
+      const n = tree.createNode();
+      n.data.set("v", "keep");
+      d.commit();
+      const target = d.frontiers();
+      m.ensureMergeableText("t").insert(5, "!");
+      m.ensureMergeableList("l").push("extra");
+      m.ensureMergeableCounter("c").increment(3);
+      tree.createNode();
+      d.commit();
+      for (const key of ["t", "l", "c", "tree"]) m.delete(key);
+      d.commit();
+      return { d, target, nodeId: n.id };
+    };
+    const expected = {
+      t: "hello",
+      l: ["keep"],
+      c: 7,
+    };
+    const visible = (d: LoroDoc) => {
+      const { tree, ...rest } = d.toJSON().m;
+      return { rest, tree };
+    };
+
+    test("revertTo keeps tree node identity", () => {
+      const { d, target, nodeId } = setup(1);
+      d.revertTo(target);
+      d.commit();
+      const { rest, tree } = visible(d);
+      expect(rest).toEqual(expected);
+      expect(tree.map((n: any) => n.id)).toEqual([nodeId]);
+    });
+
+    test("local revert events forwarded through applyDiff match the source", () => {
+      const { d, target } = setup(1);
+      const mirror = d.fork();
+      const batches: [string, any][][] = [];
+      const unsub = d.subscribe((e) => {
+        batches.push(e.events.map((ev) => [ev.target, ev.diff]));
+      });
+      d.revertTo(target);
+      d.commit();
+      unsub();
+      for (const batch of batches) mirror.applyDiff(batch as any);
+      mirror.commit();
+      expect(mirror.toJSON()).toEqual(d.toJSON());
+      expect(visible(mirror).rest).toEqual(expected);
+    });
+
+    test("two peers reverting concurrently merge to the target", () => {
+      const { d: a, target, nodeId } = setup(1);
+      const b = a.fork();
+      b.setPeerId(2);
+      a.revertTo(target);
+      a.commit();
+      b.revertTo(target);
+      b.commit();
+      sync(a, b);
+      const { rest, tree } = visible(a);
+      // The counter is additive: both peers compensate 10 -> 7, like a root counter.
+      expect(rest).toEqual({ ...expected, c: 4 });
+      expect(tree.map((n: any) => n.id)).toEqual([nodeId]);
+      expect(b.toJSON()).toEqual(a.toJSON());
+    });
+  });
 });

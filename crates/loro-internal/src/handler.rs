@@ -23,16 +23,14 @@ use loro_common::{
     ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, PeerID,
     TreeID, ID,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
 use tracing::{error, instrument};
 
 pub use crate::diff::diff_impl::UpdateOptions;
 pub use tree::TreeHandler;
-mod full_state;
 mod movable_list_apply_delta;
-pub(crate) use full_state::reconcile_full_state;
 mod tree;
 
 const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
@@ -1169,7 +1167,6 @@ impl Handler {
         key: &str,
         old_id: ContainerID,
         on_container_remap: &mut dyn FnMut(ContainerID, ContainerID),
-        full_state_targets: &mut FxHashSet<ContainerID>,
     ) -> LoroResult<()> {
         if old_id.is_mergeable() {
             let parent_id = map.id();
@@ -1177,9 +1174,6 @@ impl Handler {
             let new_id = ContainerID::new_mergeable(&parent_id, key, kind);
             let marker = loro_common::mergeable_marker(&parent_id, key, kind);
             map.insert_without_skipping(key, marker)?;
-            // The deterministic cid may still hold hidden state, while the child's diff in
-            // this batch is its full target state. Reconcile instead of appending.
-            full_state_targets.insert(new_id.clone());
             on_container_remap(old_id, new_id);
             return Ok(());
         }
@@ -1292,7 +1286,6 @@ impl Handler {
         &self,
         diff: Diff,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
-        full_state_targets: &mut FxHashSet<ContainerID>,
     ) -> LoroResult<()> {
         // In this method we will not clone the values of the containers if
         // they are remapped. It's the caller's duty to do so
@@ -1319,7 +1312,6 @@ impl Handler {
                                 &key,
                                 h.id(),
                                 on_container_remap,
-                                full_state_targets,
                             )?;
                         }
                         Some(ValueOrHandler::Value(LoroValue::Container(old_id))) => {
@@ -1328,7 +1320,6 @@ impl Handler {
                                 &key,
                                 old_id,
                                 on_container_remap,
-                                full_state_targets,
                             )?;
                         }
                         Some(ValueOrHandler::Value(v)) => {

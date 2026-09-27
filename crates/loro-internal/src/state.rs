@@ -174,6 +174,12 @@ pub struct DocState {
 
     dead_containers_cache: DeadContainersCache,
     alive_containers_cache: Option<AliveContainersCache>,
+    /// Set while recording a diff that will be applied to a doc at the start version
+    /// (`LoroDoc::diff`, undo). A mergeable child re-activated inside a container that
+    /// keeps its id then records its own delta instead of a full-state revival, because the
+    /// target doc still holds the child's hidden state at the same deterministic cid. See
+    /// context/mergeable-containers.md.
+    mergeable_revival_as_delta: bool,
 }
 
 struct AliveContainersCache {
@@ -499,6 +505,7 @@ impl DocState {
                 event_recorder: Default::default(),
                 dead_containers_cache: Default::default(),
                 alive_containers_cache: None,
+                mergeable_revival_as_delta: false,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -524,6 +531,7 @@ impl DocState {
             event_recorder: Default::default(),
             dead_containers_cache: Default::default(),
             alive_containers_cache: None,
+            mergeable_revival_as_delta: false,
         }))
     }
 
@@ -785,32 +793,46 @@ impl DocState {
                             }
                             let state = self.store.get_or_create_mut(idx);
                             if is_recording {
+                                let is_revived =
+                                    diff.bring_back || to_revive_in_this_layer.contains(&idx);
                                 // process bring_back before apply
-                                let external_diff =
-                                    if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
-                                        state.apply_diff(
-                                            internal_diff.into_internal().unwrap(),
-                                            DiffApplyContext {
-                                                mode: diff.diff_mode,
-                                                doc: &self.doc,
-                                            },
-                                        )?;
-                                        state.to_diff(&self.doc)
-                                    } else {
-                                        state.apply_diff_and_convert(
-                                            internal_diff.into_internal().unwrap(),
-                                            DiffApplyContext {
-                                                mode: diff.diff_mode,
-                                                doc: &self.doc,
-                                            },
-                                        )
-                                    };
+                                let external_diff = if is_revived {
+                                    state.apply_diff(
+                                        internal_diff.into_internal().unwrap(),
+                                        DiffApplyContext {
+                                            mode: diff.diff_mode,
+                                            doc: &self.doc,
+                                        },
+                                    )?;
+                                    state.to_diff(&self.doc)
+                                } else {
+                                    state.apply_diff_and_convert(
+                                        internal_diff.into_internal().unwrap(),
+                                        DiffApplyContext {
+                                            mode: diff.diff_mode,
+                                            doc: &self.doc,
+                                        },
+                                    )
+                                };
+                                let arena = &self.arena;
+                                let mergeable_as_delta =
+                                    self.mergeable_revival_as_delta && !is_revived;
                                 trigger_on_new_container(
                                     &external_diff,
                                     |cid| {
+                                        // This container keeps its id, so a mergeable child
+                                        // it re-activates keeps its hidden state; its own
+                                        // delta (if any) is what the target doc needs.
+                                        if mergeable_as_delta
+                                            && arena
+                                                .idx_to_id(cid)
+                                                .is_some_and(|id| id.is_mergeable())
+                                        {
+                                            return;
+                                        }
                                         to_revive_in_next_layer.insert(cid);
                                     },
-                                    &self.arena,
+                                    arena,
                                 );
                                 diff.diff = external_diff.into();
                             } else {
@@ -1306,14 +1328,8 @@ impl DocState {
         f(state)
     }
 
-    /// The container's current state as a from-empty diff, the shape revival events use.
-    pub(crate) fn container_full_diff(&mut self, idx: ContainerIdx) -> Diff {
-        let doc = self.doc.clone();
-        self.store.get_or_create_mut(idx).to_diff(&doc)
-    }
-
-    pub(crate) fn is_container_state_empty(&mut self, idx: ContainerIdx) -> bool {
-        self.store.get_or_create_mut(idx).is_state_empty()
+    pub(crate) fn set_mergeable_revival_as_delta(&mut self, on: bool) {
+        self.mergeable_revival_as_delta = on;
     }
 
     pub(super) fn is_in_txn(&self) -> bool {

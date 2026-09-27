@@ -341,9 +341,9 @@ fn delete_on_mergeable_key_emits_only_existing_op_types() {
     );
 }
 
-/// `revert_to` a version before the delete re-activates the hidden child. The revival diff
-/// carries the child's full state, which must replace the preserved hidden state rather than
-/// be appended to it (it used to yield "hellohello" / 14 / ["keep", "keep"]).
+/// `revert_to` a version before the delete re-activates the hidden child. The diff must carry
+/// the child's delta relative to its preserved hidden state, not a full-state revival that
+/// would be appended to it (it used to yield "hellohello" / 14 / ["keep", "keep"]).
 #[test]
 fn revert_to_before_delete_restores_hidden_content_once() {
     let doc = doc(1);
