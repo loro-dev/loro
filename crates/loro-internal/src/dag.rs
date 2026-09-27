@@ -962,16 +962,20 @@ where
     // a redundant route into an ancestor we already found.
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType, Vec<ID>)> = BinaryHeap::new();
     for span in ids_to_ord_id_spans(left, get).unwrap() {
-        let branch_tips = (left.len() > 1)
-            .then(|| vec![span.id_last()])
-            .unwrap_or_default();
+        let branch_tips = if left.len() > 1 {
+            vec![span.id_last()]
+        } else {
+            Vec::new()
+        };
         queue.push((span, NodeType::A, branch_tips));
     }
 
     for span in ids_to_ord_id_spans(right, get).unwrap() {
-        let branch_tips = (right.len() > 1)
-            .then(|| vec![span.id_last()])
-            .unwrap_or_default();
+        let branch_tips = if right.len() > 1 {
+            vec![span.id_last()]
+        } else {
+            Vec::new()
+        };
         queue.push((span, NodeType::B, branch_tips));
     }
 

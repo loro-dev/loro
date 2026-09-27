@@ -349,8 +349,8 @@ pub(crate) fn export_shallow_snapshot_inner(
     // is bounded absolutely and relative to the tail, because this path pays
     // for replaying all of it while the checkout path only walks the tail.
     let pre_root_ops: usize = root_vv
-        .iter()
-        .map(|(_, counter)| (*counter).max(0) as usize)
+        .values()
+        .map(|counter| (*counter).max(0) as usize)
         .sum();
     // Cheap op-count legs first (even the estimate walks the prefix's ops, so
     // it must not run for the small-tail cases the checkout path handles
