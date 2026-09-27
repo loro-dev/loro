@@ -1126,7 +1126,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         mapKeysAtTo = this.#captureMapKeys(changed);
       }
       materializedVersion = toVersion;
-      return [...changed]
+      const entries = [...changed]
         .flatMap((id) => {
           const container = this.#containers.get(id);
           return container === undefined ? [] : [container];
@@ -1139,14 +1139,26 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               from: mapKeysAtFrom.get(container.id),
               to: mapKeysAtTo.get(container.id),
             });
-          if (isEmptyContainerDiff(diff)) return [];
-          return [
-            [container.id, forJson ? diffForJson(diff) : diff] as [
-              ContainerID,
-              Diff | JsonDiff,
-            ],
-          ];
+          return isEmptyContainerDiff(diff) ? [] : [[container.id, diff] as const];
         });
+      // A child without ops in the range can still be (re)attached by it, for
+      // example a map key set back to an older child. As in Rust, its whole
+      // state is part of the diff; otherwise applyDiff recreates it empty.
+      const emitted = new Set<ContainerID>(entries.map(([id]) => id));
+      for (let index = 0; index < entries.length; index += 1) {
+        for (const childId of attachedChildIds(entries[index]![1])) {
+          if (emitted.has(childId)) continue;
+          emitted.add(childId);
+          const child = this.#containers.get(childId);
+          if (child === undefined) continue;
+          const diff = containerDiff(child, undefined);
+          if (!isEmptyContainerDiff(diff)) entries.push([childId, diff]);
+        }
+      }
+      return entries.map(
+        ([id, diff]) =>
+          [id, forJson ? diffForJson(diff) : diff] as [ContainerID, Diff | JsonDiff],
+      );
     } catch (error) {
       transitionFailed = useIncrementalTransition;
       throw error;
@@ -8138,6 +8150,26 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
+}
+
+/** Child containers a map or list diff attaches. */
+function attachedChildIds(diff: LoroEvent["diff"]): ContainerID[] {
+  const ids: ContainerID[] = [];
+  if (diff.type === "map") {
+    for (const value of Object.values(diff.updated)) {
+      const id = diffContainerId(value);
+      if (id !== undefined) ids.push(id);
+    }
+  } else if (diff.type === "list") {
+    for (const delta of diff.diff) {
+      if (!("insert" in delta)) continue;
+      for (const value of delta.insert) {
+        const id = diffContainerId(value);
+        if (id !== undefined) ids.push(id);
+      }
+    }
+  }
+  return ids;
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {
