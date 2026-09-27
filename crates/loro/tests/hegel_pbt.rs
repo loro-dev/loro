@@ -344,10 +344,13 @@ fn test_checkout_reproduces_recorded_states(tc: TestCase) {
     assert!(!doc.is_detached());
 }
 
-#[ignore = "Being discussed in #1112"]
-#[hegel::test]
-fn test_counter_zero_sum_import_batching_diverges_known_bug(tc: TestCase) {
-    let x = tc.draw(gs::integers::<i32>().min_value(1).max_value(1000)) as f64;
+/// Known bug: importing a counter increment and its matching decrement in
+/// separate batches drops the zero-sum diff. Any non-zero `x` reproduces it,
+/// so this is a plain example test rather than a property.
+#[test]
+#[ignore = "https://github.com/loro-dev/loro/issues/1112"]
+fn counter_zero_sum_import_batching_converges() {
+    let x = 1.0;
     let origin = LoroDoc::new();
     origin.set_peer_id(1).unwrap();
     let counter = origin.get_counter("counter");
