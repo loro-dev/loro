@@ -284,6 +284,19 @@ impl OpLog {
 }
 
 pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Result<Snapshot, LoroEncodeError> {
+    encode_snapshot_inner_with(doc, shallow_snapshot::CachedShallowRoot::Prune)
+}
+
+/// Snapshot for `LoroDoc::fork`: a shallow doc's cached root is copied
+/// verbatim instead of being filtered.
+pub(crate) fn encode_snapshot_inner_for_fork(doc: &LoroDoc) -> Result<Snapshot, LoroEncodeError> {
+    encode_snapshot_inner_with(doc, shallow_snapshot::CachedShallowRoot::Verbatim)
+}
+
+fn encode_snapshot_inner_with(
+    doc: &LoroDoc,
+    cached_root: shallow_snapshot::CachedShallowRoot,
+) -> Result<Snapshot, LoroEncodeError> {
     assert!(doc.drop_pending_events().is_empty());
     let old_state_frontiers = doc.state_frontiers();
     let was_detached = doc.is_detached();
@@ -295,7 +308,7 @@ pub(crate) fn encode_snapshot_inner(doc: &LoroDoc) -> Result<Snapshot, LoroEncod
         let f = oplog.shallow_since_frontiers().clone();
         drop(state);
         drop(oplog);
-        let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f)?;
+        let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(doc, &f, cached_root)?;
         return Ok(snapshot);
     }
 
