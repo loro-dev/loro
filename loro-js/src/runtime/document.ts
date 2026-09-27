@@ -66,6 +66,7 @@ import {
   type LastWriter,
   type MapRecord,
   type RuntimeValue,
+  type SequenceContainerState,
   type SequenceElement,
   type SequenceMoveMeta,
   type SequenceValueMeta,
@@ -114,6 +115,7 @@ import type {
   JsonChange,
   JsonContainerID,
   JsonDiff,
+  JsonIdLp,
   JsonOp,
   JsonOpContent,
   JsonSchema,
@@ -171,6 +173,8 @@ interface DeferredSnapshotHistory {
 
 interface DeferredSnapshotState {
   readonly store: Extract<LazyStateSnapshotStore, { readonly kind: "sstable" }>;
+  // The version of the encoded state.
+  readonly version: VersionVector;
 }
 
 interface IndexedHistoryOperation {
@@ -191,6 +195,43 @@ interface EventRecording {
 }
 
 type MovableMoveTransitionMode = "anchors" | "replay";
+
+type SnapshotSequenceState =
+  // The snapshot state of `version` is installed. It has no history for the
+  // operations of `version`; operations applied since then are indexed.
+  | { readonly kind: "hydrated"; readonly version: VersionVector }
+  // A replayed state is installed. `snapshot` is the container's state at
+  // every version whose operations on it match `version`. `fingerprint` is set
+  // until a replay has been compared with it.
+  | {
+      readonly kind: "replayed";
+      readonly snapshot: SequenceContainerState;
+      readonly version: VersionVector;
+      readonly fingerprint: SequenceFingerprint | undefined;
+    }
+  // The snapshot state is installed again; `replayed` is the replayed state for
+  // the same operations as `version`, valid until an operation is applied to
+  // the container.
+  | {
+      readonly kind: "pinned";
+      readonly replayed: SequenceContainerState;
+      readonly version: VersionVector;
+    };
+
+interface SnapshotTransition {
+  readonly beforeValues: Map<string, unknown>;
+  readonly pins: readonly string[];
+}
+
+interface SequenceFingerprint {
+  readonly runs: readonly SequenceIdRun[];
+  readonly values: readonly unknown[] | undefined;
+}
+
+interface ContainerHistoryIndex {
+  readonly revision: number;
+  readonly records: Map<string, HistoryRecord[]>;
+}
 
 interface PendingChange extends EventRecording {
   readonly id: CodecId;
@@ -256,10 +297,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #pendingHistory = new Map<string, HistoryRecord>();
   #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
   #deferredSnapshotState: DeferredSnapshotState | undefined;
-  // Latest-state snapshot entries carry no tombstones, winner history, or move
-  // history, so incremental version transitions cannot retreat them. The first
-  // checkout replays history instead; see context/loro-js-performance.md.
-  #stateFromSnapshot = false;
+  // Text, List, and MovableList containers whose state came from a snapshot.
+  // It has no tombstones or style, value, and move history, so a version
+  // transition first rebuilds each touched one from its own history; see
+  // #prepareSnapshotTransition and context/loro-js-performance.md.
+  #snapshotSequences = new Map<string, SnapshotSequenceState>();
+  // Incremented whenever retained history changes; invalidates
+  // #containerHistoryIndex.
+  #historyRevision = 0;
+  #containerHistoryIndex: ContainerHistoryIndex | undefined;
+  // Per container and peer, the sorted disjoint [start, end) counter ranges of
+  // its operations, flattened. Built on first use, then kept up to date.
+  #containerOperationSpans: Map<string, Map<bigint, number[]>> | undefined;
   #hydratedSnapshotContainers = new Set<string>();
   #hydratingSnapshotContainers = new Set<string>();
   #snapshotContainerDepths = new Map<string, bigint>();
@@ -290,6 +339,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #shallowRootVersion = new VersionVector();
   #shallowRootFrontiers: CodecId[] = [];
   #shallowRootStore: StateSnapshotStore | undefined;
+  // Root store entries by container key, built by the import merge or on first
+  // lookup.
+  #shallowRootEntries: Map<string, StateSnapshotContainerEntry> | undefined;
   // Root-time map entries and tree nodes of a shallow doc, indexed per
   // container on first lookup.
   #shallowRootIndexes = new WeakMap<StateSnapshotStore, ShallowRootIndex>();
@@ -748,12 +800,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         lazyStateStore?.kind === "sstable"
           ? undefined
           : decodeStateSnapshotStore(snapshot.state);
+      const rootEntries =
+        rootStore === undefined ? undefined : stateStoreEntriesByKey(rootStore);
       const hydratedStore =
         stateStore === undefined
           ? undefined
           : rootStore === undefined
             ? stateStore
-            : mergeStateSnapshotStores(rootStore, stateStore);
+            : mergeStateSnapshotStores(rootStore, stateStore, rootEntries);
       if (
         stagedShallowRootVersion !== undefined &&
         encodedEndVersion !== undefined &&
@@ -774,6 +828,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#shallowRootVersion = stagedShallowRootVersion;
         this.#shallowRootFrontiers = stagedShallowRootFrontiers;
         this.#shallowRootStore = rootStore;
+        this.#shallowRootEntries = rootEntries;
       };
       const canDeferHistory =
         initializeFromSnapshot &&
@@ -794,8 +849,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         );
         installStagedShallowRoot();
         if (lazyStateStore?.kind === "sstable") {
-          this.#deferredSnapshotState = { store: lazyStateStore };
-          this.#stateFromSnapshot = true;
+          this.#deferredSnapshotState = { store: lazyStateStore, version: endVersion };
           deferredChanged = new Set(lazyStateStore.roots.map(formatContainerId));
           for (const root of lazyStateStore.roots) this.#getOrCreateContainer(root);
         } else {
@@ -808,7 +862,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (this.#hasEventSubscribers()) {
             beforeValues = this.#captureContainerEventValues(deferredChanged);
           }
-          this.#hydrateState(hydratedStore);
+          this.#hydrateState(hydratedStore, endVersion);
         }
         this.#deferredSnapshotHistory = {
           entries: oplogEntries,
@@ -851,7 +905,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (rootStore !== undefined && stateStore!.kind === "empty") {
             this.#rebuildFromHistory();
           } else {
-            this.#hydrateState(hydratedStore!);
+            this.#hydrateState(hydratedStore!, this.#historyVersion());
           }
         } else if (!this.#detached && integration.added.length > 0) {
           const recording = this.#hasEventSubscribers()
@@ -927,6 +981,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       this.#shallowRootVersion = rootVersion;
       this.#shallowRootFrontiers = startFrontiers.map((id) => ({ ...id }));
       this.#shallowRootStore = rootStore;
+      this.#shallowRootEntries = undefined;
     }
 
     for (const decoded of ordered) {
@@ -944,14 +999,19 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (rootStore !== undefined && stateStore.kind === "empty") {
           this.#rebuildFromHistory();
         } else {
-          this.#hydrateState(
-            rootStore === undefined
-              ? stateStore
-              : mergeStateSnapshotStores(rootStore, stateStore),
-          );
           const snapshotVersion =
             snapshotSeed.endVersion?.clone() ??
             historyVersionForRecords(snapshotSeed.records, snapshotSeed.startVersion);
+          this.#hydrateState(
+            rootStore === undefined
+              ? stateStore
+              : mergeStateSnapshotStores(
+                  rootStore,
+                  stateStore,
+                  this.#shallowRootEntryIndex(),
+                ),
+            snapshotVersion,
+          );
           const forwardRecords = this.#recordsInVersionRange(
             snapshotVersion,
             this.#historyVersion(),
@@ -1079,6 +1139,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       forwardRecords,
       this.#movableMovePeers,
     );
+    const toFromSnapshotPins = this.#prepareSnapshotTransition(
+      [
+        ...currentToFromRetreat,
+        ...currentToFromForward,
+        ...retreatRecords,
+        ...forwardRecords,
+      ],
+      restoreVersion,
+      fromVersion,
+      false,
+    ).pins;
     const useIncrementalTransition =
       this.#canTransitionRecords(
         [...currentToFromRetreat, ...currentToFromForward],
@@ -1100,8 +1171,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             undefined,
             currentToFromMoveMode,
           );
+          this.#settleSnapshotSequences(fromVersion, toFromSnapshotPins);
         } else {
-          this.#rebuildFromHistory(fromVersion);
+          this.#rebuildFromHistory(fromVersion, restoreVersion);
         }
         materializedVersion = fromVersion;
       }
@@ -1111,6 +1183,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       let mapKeysAtFrom = new Map<string, Set<string>>();
       let mapKeysAtTo = new Map<string, Set<string>>();
       if (useIncrementalTransition || retreatRecords.length === 0) {
+        const snapshotTransition = this.#prepareSnapshotTransition(
+          [...retreatRecords, ...forwardRecords],
+          fromVersion,
+          toVersion,
+          true,
+        );
         const recording: EventRecording = {
           beforeValues: new Map(),
           eventStates: new Map(),
@@ -1126,12 +1204,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         } else {
           this.#applyRecords(forwardRecords, recording);
         }
+        this.#settleSnapshotSequences(toVersion, snapshotTransition.pins);
         before = recording.beforeValues;
         calculated = this.#recordedEventDiffs(recording, true);
+        for (const [key, value] of snapshotTransition.beforeValues) {
+          before.set(key, value);
+          calculated.delete(key);
+        }
       } else {
         before = this.#captureContainerEventValues(changed);
         mapKeysAtFrom = this.#captureMapKeys(changed);
-        this.#rebuildFromHistory(toVersion);
+        this.#rebuildFromHistory(toVersion, fromVersion);
         mapKeysAtTo = this.#captureMapKeys(changed);
       }
       materializedVersion = toVersion;
@@ -1165,6 +1248,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       } else if (materializedVersion.compare(restoreVersion) !== 0) {
         if (useIncrementalTransition) {
           if (materializedVersion.compare(toVersion) === 0) {
+            const { pins } = this.#prepareSnapshotTransition(
+              [...forwardRecords, ...retreatRecords],
+              toVersion,
+              fromVersion,
+              false,
+            );
             this.#applyVersionTransition(
               forwardRecords,
               retreatRecords,
@@ -1172,9 +1261,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               undefined,
               fromToToMoveMode,
             );
+            this.#settleSnapshotSequences(fromVersion, pins);
             materializedVersion = fromVersion;
           }
           if (materializedVersion.compare(restoreVersion) !== 0) {
+            const { pins } = this.#prepareSnapshotTransition(
+              [...currentToFromForward, ...currentToFromRetreat],
+              fromVersion,
+              restoreVersion,
+              false,
+            );
             this.#applyVersionTransition(
               currentToFromForward,
               currentToFromRetreat,
@@ -1182,9 +1278,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               undefined,
               currentToFromMoveMode,
             );
+            this.#settleSnapshotSequences(restoreVersion, pins);
           }
         } else {
-          this.#rebuildFromHistory(restoreVersion);
+          this.#rebuildFromHistory(restoreVersion, materializedVersion);
         }
       }
     }
@@ -1706,6 +1803,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     fork.#shallowRootVersion = this.#shallowRootVersion.clone();
     fork.#shallowRootFrontiers = this.#shallowRootFrontiers.map((id) => ({ ...id }));
     fork.#shallowRootStore = this.#shallowRootStore;
+    fork.#shallowRootEntries = this.#shallowRootEntries;
     fork.#integrateHistory(this.#recordsAtVersion(version), undefined);
     fork.#rebuildFromHistory();
     return fork;
@@ -1728,12 +1826,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#assertVersionNotBeforeShallowRoot(targetVersion);
     const forwardRecords = this.#recordsInVersionRange(currentVersion, targetVersion);
     const retreatRecords = this.#recordsInVersionRange(targetVersion, currentVersion);
-    const changed = changedContainerIds([...forwardRecords, ...retreatRecords]);
+    const changedRecords = [...forwardRecords, ...retreatRecords];
+    const changed = changedContainerIds(changedRecords);
+    const snapshotTransition = this.#prepareSnapshotTransition(
+      changedRecords,
+      currentVersion,
+      targetVersion,
+      this.#hasEventSubscribers(),
+    );
     let beforeValues = new Map<string, unknown>();
     let preparedDiffs = new Map<string, Diff>();
     this.#checkoutVersion = targetVersion;
     this.#detached = true;
-    const changedRecords = [...forwardRecords, ...retreatRecords];
     const movableMoveMode = movableMoveTransitionMode(
       retreatRecords,
       forwardRecords,
@@ -1770,7 +1874,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (this.#hasEventSubscribers()) {
         beforeValues = this.#captureContainerEventValues(changed);
       }
-      this.#rebuildFromHistory(targetVersion);
+      this.#rebuildFromHistory(targetVersion, currentVersion);
+    }
+    this.#settleSnapshotSequences(targetVersion, snapshotTransition.pins);
+    for (const [key, value] of snapshotTransition.beforeValues) {
+      beforeValues.set(key, value);
+      preparedDiffs.delete(key);
     }
     this.#emit(
       "checkout",
@@ -1802,13 +1911,21 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const latestVersion = this.#historyVersion();
     const forwardRecords = this.#recordsInVersionRange(currentVersion, latestVersion);
     const retreatRecords = this.#recordsInVersionRange(latestVersion, currentVersion);
-    const changed = changedContainerIds([...forwardRecords, ...retreatRecords]);
+    const changedRecords = [...forwardRecords, ...retreatRecords];
+    const changed = changedContainerIds(changedRecords);
+    const snapshotTransition = wasDetached
+      ? this.#prepareSnapshotTransition(
+          changedRecords,
+          currentVersion,
+          latestVersion,
+          this.#hasEventSubscribers(),
+        )
+      : undefined;
     let beforeValues = new Map<string, unknown>();
     let preparedDiffs = new Map<string, Diff>();
     this.#checkoutVersion = undefined;
     this.#detached = false;
-    if (wasDetached) {
-      const changedRecords = [...forwardRecords, ...retreatRecords];
+    if (snapshotTransition !== undefined) {
       const movableMoveMode = movableMoveTransitionMode(
         retreatRecords,
         forwardRecords,
@@ -1845,7 +1962,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (this.#hasEventSubscribers()) {
           beforeValues = this.#captureContainerEventValues(changed);
         }
-        this.#rebuildFromHistory();
+        this.#rebuildFromHistory(undefined, currentVersion);
+      }
+      this.#settleSnapshotSequences(latestVersion, snapshotTransition.pins);
+      for (const [key, value] of snapshotTransition.beforeValues) {
+        beforeValues.set(key, value);
+        preparedDiffs.delete(key);
       }
       this.#emit(
         "checkout",
@@ -2313,24 +2435,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (store === undefined || store.kind !== "sstable") return undefined;
     let index = this.#shallowRootIndexes.get(store);
     if (index === undefined) {
-      index = { store, containers: undefined, maps: new Map(), trees: new Map() };
+      index = { maps: new Map(), trees: new Map() };
       this.#shallowRootIndexes.set(store, index);
     }
     return index;
   }
 
-  #shallowRootContainerState(
-    index: ShallowRootIndex,
-    containerKey: string,
-  ): ContainerStateSnapshot | undefined {
-    if (index.containers === undefined) {
-      index.containers = new Map(
-        index.store.containers.map(
-          (entry) => [formatContainerId(entry.id), entry] as const,
-        ),
-      );
-    }
-    return index.containers.get(containerKey)?.wrapper.state;
+  #shallowRootContainerState(containerKey: string): ContainerStateSnapshot | undefined {
+    return this.#shallowRootEntryIndex().get(containerKey)?.wrapper.state;
   }
 
   #shallowRootTreeNode(
@@ -2344,7 +2456,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     let nodes = index.trees.get(containerKey);
     if (nodes === undefined) {
       nodes = new Map();
-      const state = this.#shallowRootContainerState(index, containerKey);
+      const state = this.#shallowRootContainerState(containerKey);
       if (state?.kind === CodecContainerType.Tree) {
         const ids = state.nodes.map((node) => ({
           peer: state.peers[Number(node.peerIndex)]!,
@@ -2383,7 +2495,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const containerKey = this.#containerKey(id);
     let entries = index.maps.get(containerKey);
     if (entries === undefined) {
-      const state = this.#shallowRootContainerState(index, containerKey);
+      const state = this.#shallowRootContainerState(containerKey);
       entries = new Map();
       if (state?.kind === CodecContainerType.Map) {
         const values = new Map(state.values);
@@ -2797,6 +2909,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       container._attach(this, id, parent);
       container._reset();
       this.#hydrateContainerState(container, entry.wrapper.state);
+      this.#markSnapshotSequence(container, deferred.version);
       this.#snapshotContainerDepths.set(key, entry.wrapper.depth);
       this.#hydratedSnapshotContainers.add(key);
     } finally {
@@ -3423,6 +3536,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     knownContainer?: LoroContainer,
   ): void {
     const container = knownContainer ?? this.#getOrCreateContainer(operation.container);
+    if (this.#snapshotSequences.size !== 0) {
+      const entry = this.#snapshotSequences.get(container.id);
+      if (entry?.kind === "pinned") {
+        // The stashed replay lacks this operation; the snapshot state records it.
+        this.#snapshotSequences.set(container.id, {
+          kind: "hydrated",
+          version: entry.version,
+        });
+      }
+    }
     const operationId = { peer: changeId.peer, counter: operation.counter };
     const lamport = changeLamport + (operation.counter - changeId.counter);
     const writer: LastWriter = { peer: changeId.peer, lamport };
@@ -3783,10 +3906,37 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #applyRecords(records: readonly HistoryRecord[], recording?: EventRecording): void {
-    for (const record of records) {
-      const causalVersion = this.#causalVersionAt(record.change.dependencies);
-      for (const operation of record.change.operations) {
-        const container = this.#getOrCreateContainer(operation.container);
+    for (const record of records)
+      this.#applyChange(record.change, record.keys, recording);
+  }
+
+  /**
+   * Applies the operations of `change`, or only those on `only.container`.
+   * Without event recording, a run of text inserts that each continue the
+   * previous one is applied as one insert (see coalescedTextInsert).
+   */
+  #applyChange(
+    change: DecodedChange,
+    keys: readonly string[],
+    recording?: EventRecording,
+    only?: { readonly key: string; readonly container: LoroContainer },
+  ): void {
+    const causalVersion = this.#causalVersionAt(change.dependencies);
+    const operations = change.operations;
+    for (let index = 0; index < operations.length; ) {
+      let operation = operations[index]!;
+      let next = index + 1;
+      if (only === undefined || this.#containerKey(operation.container) === only.key) {
+        const container =
+          only?.container ?? this.#getOrCreateContainer(operation.container);
+        if (recording === undefined && operation.content.type === "text-insert") {
+          ({ operation, next } = coalescedTextInsert(
+            operations,
+            index,
+            (left, right) =>
+              left === right || this.#containerKey(left) === this.#containerKey(right),
+          ));
+        }
         const finishEvent =
           recording === undefined
             ? undefined
@@ -3794,29 +3944,30 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
                 recording,
                 container,
                 operation,
-                record.keys,
-                record.change.id,
+                keys,
+                change.id,
                 causalVersion,
                 true,
               );
         this.#applyOperation(
           operation,
-          record.keys,
-          record.change.id,
-          record.change.lamport,
+          keys,
+          change.id,
+          change.lamport,
           causalVersion,
           container,
         );
-        this.#dirtySnapshotContainers.add(container.id);
+        if (only === undefined) this.#dirtySnapshotContainers.add(container.id);
         finishEvent?.();
-        causalVersion.set(
-          record.change.id.peer,
-          Math.max(
-            causalVersion.get(record.change.id.peer) ?? 0,
-            operation.counter + operation.length,
-          ),
-        );
       }
+      causalVersion.set(
+        change.id.peer,
+        Math.max(
+          causalVersion.get(change.id.peer) ?? 0,
+          operation.counter + operation.length,
+        ),
+      );
+      index = next;
     }
   }
 
@@ -3824,7 +3975,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     records: readonly HistoryRecord[],
     movableMoveMode: MovableMoveTransitionMode = "anchors",
   ): boolean {
-    if (this.#stateFromSnapshot) return false;
     const replayedMoveContainers = new Set<string>();
     if (movableMoveMode === "replay") {
       for (const { change } of records) {
@@ -4775,21 +4925,307 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
-  #rebuildFromHistory(version?: VersionVector): void {
+  /**
+   * Resets every container and replays history up to `version`, or the latest
+   * version. `previousVersion` is the version that the current state reflects:
+   * snapshot states installed there are stashed and reinstated wherever the
+   * replay does not reproduce them (#settleSnapshotSequences). Omit it when the
+   * current state may be inconsistent, for example after a failed transition.
+   */
+  #rebuildFromHistory(version?: VersionVector, previousVersion?: VersionVector): void {
+    const target = version ?? this.#historyVersion();
+    for (const [key, entry] of this.#snapshotSequences) {
+      if (entry.kind === "replayed") continue;
+      const container = this.#containers.get(key) as LoroList | LoroText | undefined;
+      if (container === undefined || previousVersion === undefined) {
+        this.#snapshotSequences.delete(key);
+        continue;
+      }
+      this.#snapshotSequences.set(key, {
+        kind: "replayed",
+        fingerprint:
+          entry.kind === "hydrated" ? sequenceFingerprint(container) : undefined,
+        snapshot: container._swapState(),
+        version: previousVersion.clone(),
+      });
+    }
     this.#discardDeferredSnapshotState();
     for (const container of this.#containers.values()) container._reset();
     if (this.#shallowRootStore !== undefined) {
-      this.#hydrateState(this.#shallowRootStore);
-      const target = version ?? this.#historyVersion();
+      this.#hydrateState(this.#shallowRootStore, undefined);
       this.#assertVersionNotBeforeShallowRoot(target);
       this.#applyRecords(this.#recordsInVersionRange(this.#shallowRootVersion, target));
-      this.#stateFromSnapshot = false;
-      return;
+    } else {
+      this.#applyRecords(
+        version === undefined ? this.#sortedHistory() : this.#recordsAtVersion(version),
+      );
     }
-    this.#applyRecords(
-      version === undefined ? this.#sortedHistory() : this.#recordsAtVersion(version),
-    );
-    this.#stateFromSnapshot = false;
+    this.#settleSnapshotSequences(target);
+  }
+
+  #markSnapshotSequence(container: LoroContainer, version: VersionVector): void {
+    if (container instanceof LoroList || container instanceof LoroText) {
+      this.#snapshotSequences.set(container.id, { kind: "hydrated", version });
+    }
+  }
+
+  /**
+   * Readies the containers that `records` touch for a transition from
+   * `current` to `target`. A lazily encoded container that no transition has
+   * touched still holds its latest state, which is also its state at
+   * `current`, so it is hydrated now. A snapshot-hydrated sequence is rebuilt
+   * from its own history (#completeSnapshotSequence), and a pinned snapshot
+   * state is swapped for the replayed state it covers. Unrelated containers
+   * are not touched. The caller reinstates snapshot states after the transition
+   * (`pins`) and reports every swapped container as a whole-container change
+   * from `beforeValues`, which are captured only when `captureValues` is set.
+   */
+  #prepareSnapshotTransition(
+    records: readonly HistoryRecord[],
+    current: VersionVector,
+    target: VersionVector,
+    captureValues: boolean,
+  ): SnapshotTransition {
+    const beforeValues = new Map<string, unknown>();
+    const pins: string[] = [];
+    const lazy = this.#deferredSnapshotState;
+    if (lazy === undefined && this.#snapshotSequences.size === 0) {
+      return { beforeValues, pins };
+    }
+    const touched = new Map<string, CodecContainerId>();
+    // Snapshot-hydrated containers whose snapshot operations the transition
+    // crosses. Operations applied after hydration are indexed like any others.
+    const crossesSnapshot = new Set<string>();
+    for (const { change } of records) {
+      for (const operation of change.operations) {
+        const key = this.#containerKey(operation.container);
+        if (!touched.has(key)) touched.set(key, operation.container);
+        const entry = this.#snapshotSequences.get(key);
+        if (
+          entry?.kind === "hydrated" &&
+          operation.counter < (entry.version.get(change.id.peer) ?? 0)
+        ) {
+          crossesSnapshot.add(key);
+        }
+      }
+    }
+    for (const [key, id] of touched) {
+      if (lazy !== undefined) {
+        if (
+          this.#containers.has(key) ||
+          getLazyStateSnapshotContainer(lazy.store, id) !== undefined
+        ) {
+          this.#getOrCreateContainer(id);
+        }
+        this.#dirtySnapshotContainers.add(key);
+      }
+      const entry = this.#snapshotSequences.get(key);
+      if (entry === undefined) continue;
+      const container = this.#containers.get(key) as LoroList | LoroText;
+      if (entry.kind === "hydrated") {
+        if (!crossesSnapshot.has(key)) continue;
+        const snapshot = this.#completeSnapshotSequence(container, key, current);
+        if (snapshot !== undefined && captureValues) {
+          beforeValues.set(key, sequenceStateEventValue(container, snapshot));
+        }
+      } else if (entry.kind === "pinned") {
+        if (captureValues) beforeValues.set(key, containerEventValue(container));
+        this.#snapshotSequences.set(key, {
+          kind: "replayed",
+          fingerprint: undefined,
+          snapshot: container._swapState(entry.replayed),
+          version: current.clone(),
+        });
+      }
+      const replayed = this.#snapshotSequences.get(key);
+      if (
+        replayed?.kind === "replayed" &&
+        !this.#containerChangedBetween(key, replayed.version, target)
+      ) {
+        pins.push(key);
+        if (captureValues && !beforeValues.has(key)) {
+          beforeValues.set(key, containerEventValue(container));
+        }
+      }
+    }
+    return { beforeValues, pins };
+  }
+
+  /**
+   * Rebuilds a snapshot-hydrated sequence container from its own operations up
+   * to `version`, starting from its shallow root state in a shallow document.
+   * loro.js does not model Rust rich-text style anchors in operation positions,
+   * so a replay can differ from the snapshot state. In that case the replayed
+   * state stays installed for version transitions, and the snapshot state is
+   * returned and kept for every version with the same operations on this
+   * container (see context/loro-js-performance.md).
+   */
+  #completeSnapshotSequence(
+    container: LoroList | LoroText,
+    key: string,
+    version: VersionVector,
+  ): SequenceContainerState | undefined {
+    const expected = sequenceFingerprint(container);
+    const snapshot = container._swapState();
+    try {
+      const root =
+        this.#shallowRootStore === undefined
+          ? undefined
+          : this.#shallowRootEntryIndex().get(key);
+      if (root !== undefined) this.#hydrateContainerState(container, root.wrapper.state);
+      for (const record of this.#containerHistoryRecords(key)) {
+        const { change } = record;
+        const length = changeLength(change);
+        const start = Math.max(
+          0,
+          (this.#shallowRootVersion.get(change.id.peer) ?? 0) - change.id.counter,
+        );
+        const end = Math.min(
+          length,
+          (version.get(change.id.peer) ?? 0) - change.id.counter,
+        );
+        if (start >= end) continue;
+        this.#applyChange(
+          start === 0 && end === length ? change : sliceChange(change, start, end),
+          record.keys,
+          undefined,
+          { key, container },
+        );
+      }
+    } catch (error) {
+      container._swapState(snapshot);
+      throw error;
+    }
+    if (sameSequenceFingerprint(expected, sequenceFingerprint(container))) {
+      this.#snapshotSequences.delete(key);
+      return undefined;
+    }
+    this.#snapshotSequences.set(key, {
+      kind: "replayed",
+      fingerprint: undefined,
+      snapshot,
+      version: version.clone(),
+    });
+    return snapshot;
+  }
+
+  /**
+   * Reinstates stashed snapshot states once the document reaches a version
+   * with the same operations on their containers. A stash that was not yet
+   * compared with a replay is dropped when the replay reproduces it.
+   */
+  #settleSnapshotSequences(target: VersionVector, keys?: readonly string[]): void {
+    for (const key of keys ?? [...this.#snapshotSequences.keys()]) {
+      const entry = this.#snapshotSequences.get(key);
+      if (
+        entry?.kind !== "replayed" ||
+        this.#containerChangedBetween(key, entry.version, target)
+      ) {
+        continue;
+      }
+      const container = this.#containers.get(key) as LoroList | LoroText | undefined;
+      if (container === undefined) {
+        this.#snapshotSequences.delete(key);
+        continue;
+      }
+      if (
+        entry.fingerprint !== undefined &&
+        sameSequenceFingerprint(entry.fingerprint, sequenceFingerprint(container))
+      ) {
+        this.#snapshotSequences.delete(key);
+        continue;
+      }
+      this.#snapshotSequences.set(key, {
+        kind: "pinned",
+        replayed: container._swapState(entry.snapshot),
+        version: entry.version,
+      });
+      this.#dirtySnapshotContainers.add(key);
+    }
+  }
+
+  /** Whether the container has an operation in exactly one of the versions. */
+  #containerChangedBetween(
+    key: string,
+    left: VersionVector,
+    right: VersionVector,
+  ): boolean {
+    if (left.compare(right) === 0) return false;
+    this.#materializeDeferredHistory();
+    if (this.#containerOperationSpans === undefined) {
+      this.#containerOperationSpans = new Map();
+      for (const record of this.#historyOrder.values()) this.#addOperationSpans(record);
+    }
+    const spans = this.#containerOperationSpans.get(key);
+    if (spans === undefined) return false;
+    for (const { peer } of [
+      ...left._codecEntriesUnsorted(),
+      ...right._codecEntriesUnsorted(),
+    ]) {
+      const leftCounter = left.get(peer) ?? 0;
+      const rightCounter = right.get(peer) ?? 0;
+      if (
+        spansIntersect(
+          spans.get(peer),
+          Math.min(leftCounter, rightCounter),
+          Math.max(leftCounter, rightCounter),
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Retained history records that touch the container, in replay order. The
+   * index is built on first use after each history change.
+   */
+  #containerHistoryRecords(key: string): readonly HistoryRecord[] {
+    const records = this.#sortedHistory();
+    let index = this.#containerHistoryIndex;
+    if (index === undefined || index.revision !== this.#historyRevision) {
+      const byContainer = new Map<string, HistoryRecord[]>();
+      for (const record of records) {
+        for (const operation of record.change.operations) {
+          const containerKey = this.#containerKey(operation.container);
+          let containerRecords = byContainer.get(containerKey);
+          if (containerRecords === undefined) {
+            containerRecords = [];
+            byContainer.set(containerKey, containerRecords);
+          }
+          if (containerRecords.at(-1) !== record) containerRecords.push(record);
+        }
+      }
+      index = { revision: this.#historyRevision, records: byContainer };
+      this.#containerHistoryIndex = index;
+    }
+    return index.records.get(key) ?? [];
+  }
+
+  #addOperationSpans(record: HistoryRecord): void {
+    const spans = this.#containerOperationSpans!;
+    const peer = record.change.id.peer;
+    for (const operation of record.change.operations) {
+      const key = this.#containerKey(operation.container);
+      let byPeer = spans.get(key);
+      if (byPeer === undefined) {
+        byPeer = new Map();
+        spans.set(key, byPeer);
+      }
+      let ranges = byPeer.get(peer);
+      if (ranges === undefined) {
+        ranges = [];
+        byPeer.set(peer, ranges);
+      }
+      addSpan(ranges, operation.counter, operation.counter + operation.length);
+    }
+  }
+
+  #shallowRootEntryIndex(): Map<string, StateSnapshotContainerEntry> {
+    return (this.#shallowRootEntries ??= stateStoreEntriesByKey(
+      this.#shallowRootStore ?? { kind: "absent" },
+    ));
   }
 
   #setHistoryRecord(key: string, record: HistoryRecord, appended: HistoryRecord): void {
@@ -4801,6 +5237,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       changeLength(record.change) -
       (previous === undefined ? 0 : changeLength(previous.change));
     this.#sortedHistoryCache = undefined;
+    this.#historyRevision += 1;
 
     let peerRecords = this.#historyByPeer.get(record.change.id.peer);
     if (peerRecords === undefined) {
@@ -4849,6 +5286,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   ): void {
     const appendedLength = changeLength(appended.change);
     this.#historyOperationCount += appendedLength;
+    this.#historyRevision += 1;
     this.#historyEndByPeer.set(
       record.change.id.peer,
       record.change.id.counter + previousLength + appendedLength,
@@ -4871,6 +5309,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #indexHistoryOperations(record: HistoryRecord): void {
+    if (this.#containerOperationSpans !== undefined) this.#addOperationSpans(record);
     for (const operation of record.change.operations) {
       this.#containersWithOperations.add(this.#containerKey(operation.container));
       const content = operation.content;
@@ -5131,6 +5570,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#containerKeys = staged.#containerKeys;
     this.#pendingHistory = staged.#pendingHistory;
     this.#deferredSnapshotHistory = undefined;
+    this.#historyRevision += 1;
+    this.#containerOperationSpans = undefined;
   }
 
   #sortedHistory(): HistoryRecord[] {
@@ -5481,7 +5922,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     });
     const body = encodeFastSnapshotBody({
       oplog: encodeSstable(historyEntries, { compression: "auto" }),
-      state: encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" }),
+      // Containers that were never read still live only in the lazy store.
+      state: this.#encodeDeferredSnapshotState(),
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
@@ -5958,9 +6400,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     };
   }
 
-  #hydrateState(store: StateSnapshotStore): void {
+  /**
+   * Installs every container state in `store`. With `snapshotVersion`, the
+   * version of a snapshot's state, sequence containers are marked for history
+   * completion before a transition crosses their snapshot operations. A shallow
+   * root state that retained history is replayed onto needs no mark.
+   */
+  #hydrateState(
+    store: StateSnapshotStore,
+    snapshotVersion: VersionVector | undefined,
+  ): void {
     if (store.kind !== "sstable") return;
-    this.#stateFromSnapshot = true;
     for (const { id } of store.containers) {
       this.#getOrCreateContainer(id, undefined, false);
     }
@@ -5976,6 +6426,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const { id, wrapper } of store.containers) {
       const container = this.#getOrCreateContainer(id, undefined, false);
       this.#hydrateContainerState(container, wrapper.state);
+      if (snapshotVersion !== undefined) {
+        this.#markSnapshotSequence(container, snapshotVersion);
+      }
     }
   }
 
@@ -6912,17 +7365,185 @@ function versionDistance(start: VersionVector, end: VersionVector): number {
   return distance;
 }
 
+function stateStoreEntriesByKey(
+  store: StateSnapshotStore,
+): Map<string, StateSnapshotContainerEntry> {
+  return new Map(
+    store.kind === "sstable"
+      ? store.containers.map((entry) => [formatContainerId(entry.id), entry] as const)
+      : [],
+  );
+}
+
+/**
+ * Operations in a run of text inserts on one container, each continuing the
+ * previous one at the next counter and position, have the same Fugue placement
+ * as one multi-character insert; Loro's Rust runtime stores such a run as one
+ * operation. Applying the run as one span avoids a sequence-index update per
+ * character when replaying history.
+ */
+function coalescedTextInsert(
+  operations: readonly DecodedOperation[],
+  index: number,
+  sameContainer: (left: CodecContainerId, right: CodecContainerId) => boolean,
+): { readonly operation: DecodedOperation; readonly next: number } {
+  const first = operations[index]!;
+  if (first.content.type !== "text-insert") return { operation: first, next: index + 1 };
+  let next = index + 1;
+  let counter = first.counter + first.length;
+  let position = first.content.position + first.length;
+  const values = [first.content.value];
+  for (; next < operations.length; next += 1) {
+    const operation = operations[next]!;
+    if (
+      operation.content.type !== "text-insert" ||
+      operation.counter !== counter ||
+      operation.content.position !== position ||
+      !sameContainer(first.container, operation.container)
+    ) {
+      break;
+    }
+    values.push(operation.content.value);
+    counter += operation.length;
+    position += operation.length;
+  }
+  if (next === index + 1) return { operation: first, next };
+  return {
+    operation: {
+      container: first.container,
+      counter: first.counter,
+      length: counter - first.counter,
+      content: {
+        type: "text-insert",
+        position: first.content.position,
+        value: values.join(""),
+      },
+    },
+    next,
+  };
+}
+
+/**
+ * Visible element ids of a sequence, plus the Text delta when it has styles and
+ * MovableList values (other element values are fixed by their ids).
+ */
+function sequenceFingerprint(container: LoroList | LoroText): SequenceFingerprint {
+  const sequence = container._sequence;
+  const runs: SequenceIdRun[] = [];
+  for (const run of sequence.visibleIdRuns(0, sequence.visibleLength)) {
+    const last = runs.at(-1);
+    if (
+      last !== undefined &&
+      last.start.peer === run.start.peer &&
+      last.start.counter + last.length === run.start.counter
+    ) {
+      runs[runs.length - 1] = { start: last.start, length: last.length + run.length };
+    } else {
+      runs.push(run);
+    }
+  }
+  let values: readonly unknown[] | undefined;
+  if (container instanceof LoroText) {
+    values = container._styleIndex.isEmpty ? undefined : container.toDelta();
+  } else if (container instanceof LoroMovableList) {
+    values = container._visibleElements().map((element) => element.value);
+  }
+  return { runs, values };
+}
+
+function sameSequenceFingerprint(
+  left: SequenceFingerprint,
+  right: SequenceFingerprint,
+): boolean {
+  if (
+    left.runs.length !== right.runs.length ||
+    left.runs.some(
+      (run, index) =>
+        run.length !== right.runs[index]!.length ||
+        !idsEqual(run.start, right.runs[index]!.start),
+    )
+  ) {
+    return false;
+  }
+  if (left.values === undefined || right.values === undefined) {
+    // Same ids mean the same characters; an unstyled Text only matches a delta
+    // without attributes.
+    const values = left.values ?? right.values;
+    return (
+      values === undefined ||
+      values.every((item) => (item as { attributes?: unknown }).attributes === undefined)
+    );
+  }
+  return eventValuesEqual(left.values, right.values);
+}
+
+function sequenceStateEventValue(
+  container: LoroList | LoroText,
+  state: SequenceContainerState,
+): unknown {
+  const installed = container._swapState(state);
+  try {
+    return containerEventValue(container);
+  } finally {
+    container._swapState(installed);
+  }
+}
+
+/** Adds [start, end) to flattened sorted disjoint ranges, merging neighbors. */
+function addSpan(ranges: number[], start: number, end: number): void {
+  if (ranges.length === 0 || ranges.at(-1)! < start) {
+    ranges.push(start, end);
+    return;
+  }
+  if (ranges.at(-2)! <= start) {
+    ranges[ranges.length - 1] = Math.max(ranges.at(-1)!, end);
+    return;
+  }
+  let first = 0;
+  let last = ranges.length / 2;
+  while (first < last) {
+    const middle = (first + last) >>> 1;
+    if (ranges[middle * 2 + 1]! < start) first = middle + 1;
+    else last = middle;
+  }
+  let mergedStart = start;
+  let mergedEnd = end;
+  let removeEnd = first;
+  while (removeEnd < ranges.length / 2 && ranges[removeEnd * 2]! <= mergedEnd) {
+    mergedStart = Math.min(mergedStart, ranges[removeEnd * 2]!);
+    mergedEnd = Math.max(mergedEnd, ranges[removeEnd * 2 + 1]!);
+    removeEnd += 1;
+  }
+  ranges.splice(first * 2, (removeEnd - first) * 2, mergedStart, mergedEnd);
+}
+
+/** Whether flattened sorted [start, end) ranges intersect [low, high). */
+function spansIntersect(
+  spans: readonly number[] | undefined,
+  low: number,
+  high: number,
+): boolean {
+  if (spans === undefined || low >= high) return false;
+  let first = 0;
+  let last = spans.length / 2;
+  while (first < last) {
+    const middle = (first + last) >>> 1;
+    if (spans[middle * 2 + 1]! <= low) first = middle + 1;
+    else last = middle;
+  }
+  return first < spans.length / 2 && spans[first * 2]! < high;
+}
+
 function mergeStateSnapshotStores(
   root: StateSnapshotStore,
   overlay: StateSnapshotStore,
+  rootEntries = stateStoreEntriesByKey(root),
 ): StateSnapshotStore {
   if (root.kind !== "sstable") return overlay;
   if (overlay.kind !== "sstable") {
     return { kind: "sstable", frontiers: undefined, containers: root.containers };
   }
-  const containers = new Map(
-    root.containers.map((entry) => [formatContainerId(entry.id), entry]),
-  );
+  const containers = new Map(rootEntries);
   for (const entry of overlay.containers) {
     containers.set(formatContainerId(entry.id), entry);
   }
@@ -7014,8 +7635,6 @@ function lowerBoundWriter(
 }
 
 interface ShallowRootIndex {
-  readonly store: Extract<StateSnapshotStore, { kind: "sstable" }>;
-  containers: Map<string, StateSnapshotContainerEntry> | undefined;
   readonly maps: Map<
     string,
     Map<
@@ -7304,19 +7923,13 @@ function decodedOperationToJson(
         type: "move",
         from: content.from,
         to: content.to,
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
       };
       break;
     case "movable-list-set":
       json = {
         type: "set",
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
         value: changeLoroValueToJson(content.value, keys, operationId, peerMap),
       };
       break;
@@ -7419,6 +8032,13 @@ function formatJsonOpId(id: CodecId, peerMap?: JsonPeerMap): `${number}@${PeerID
   return `${id.counter}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as `${number}@${PeerID}`;
 }
 
+function formatJsonIdLp(
+  id: { readonly peer: bigint; readonly lamport: number },
+  peerMap?: JsonPeerMap,
+): JsonIdLp {
+  return `L${id.lamport}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as JsonIdLp;
+}
+
 function formatJsonTreeId(id: CodecId, peerMap?: JsonPeerMap): TreeID {
   return formatJsonOpId(id, peerMap) as TreeID;
 }
@@ -7512,6 +8132,9 @@ function jsonOperationToDecoded(
     const parsed = parseTreeId(value as TreeID);
     return { peer: resolvePeer(parsed.peer), counter: parsed.counter };
   };
+  // Rust writes `L{lamport}@{peer}`; loro.js 0.2.1 and earlier omitted the `L`.
+  const parseIdLp = (value: unknown): CodecId =>
+    parseId(typeof value === "string" && value.startsWith("L") ? value.slice(1) : value);
   const parseParent = (value: unknown): CodecId | undefined =>
     value === null || value === undefined ? undefined : parseId(value);
   const encodeValue = (value: unknown, id = operationId): ChangeLoroValue =>
@@ -7632,7 +8255,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "move") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
@@ -7646,7 +8269,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "set") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
