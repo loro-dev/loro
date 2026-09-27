@@ -1428,7 +1428,17 @@ impl RichtextState {
                 return Ok((0, None));
             }
 
-            if let Some(c) = self.try_get_cache_or_clean(pos, pos_type) {
+            // A cached cursor at a leaf boundary would skip the style-anchor
+            // rules of `find_best_insert_pos`, so it is only reused inside a
+            // text leaf or when there is no style.
+            let cached = self.try_get_cache_or_clean(pos, pos_type).filter(|c| {
+                !self.has_styles()
+                    || self
+                        .tree
+                        .get_elem(c.leaf)
+                        .is_some_and(|elem| c.offset > 0 && c.offset < elem.rle_len())
+            });
+            if let Some(c) = cached {
                 let entity_index = self.get_cache_entity_index().unwrap();
                 Ok((entity_index + c.offset, Some(c)))
             } else {
@@ -2016,9 +2026,11 @@ impl RichtextState {
                         let event_len = s.entity_range_to_event_range(start..end).len();
                         let id = s.id().inc(start as i32);
                         match ans.last_mut() {
+                            // Every entity of a range is text, so its IDs advance by
+                            // the entity length (not the UTF-16 event length).
                             Some(last)
                                 if last.entity_end == entity_index
-                                    && last.id_start.inc(last.event_len as i32) == id =>
+                                    && last.id_start.inc(last.entity_len() as i32) == id =>
                             {
                                 last.entity_end += len;
                                 last.event_len += event_len;

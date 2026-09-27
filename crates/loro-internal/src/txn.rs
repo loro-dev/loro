@@ -10,7 +10,7 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 use rustc_hash::FxHashMap;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -783,30 +783,27 @@ fn change_to_diff(
                 unreachable!("Missing hint for op");
             };
 
-            // Collect ops that belong to this hint
-            let mut ops_for_hint: SmallVec<[Op; 1]> = smallvec![container_ops[op_index].clone()];
-            let mut total_len = container_ops[op_index].atom_len();
-
-            // If hint spans multiple ops, collect them
+            // Collect the ops that belong to this hint. Ops and hints merge by
+            // different rules (text delete hints use UTF-16 spans in WASM), so a
+            // hint can cover several ops and an op can cover several hints.
+            let mut ops_for_hint: SmallVec<[Op; 1]> = SmallVec::new();
+            let mut total_len = 0;
             while total_len < hint.rle_len() {
-                op_index += 1;
-                let next_op_len = container_ops[op_index].atom_len();
-                let op = if next_op_len + total_len > hint.rle_len() {
-                    let new_len = hint.rle_len() - total_len;
-                    let left = container_ops[op_index].slice(0, new_len);
-                    let right = container_ops[op_index].slice(new_len, next_op_len);
+                let op_len = container_ops[op_index].atom_len();
+                let needed = hint.rle_len() - total_len;
+                if op_len > needed {
+                    let left = container_ops[op_index].slice(0, needed);
+                    let right = container_ops[op_index].slice(needed, op_len);
                     container_ops[op_index] = right;
-                    op_index -= 1;
-                    left
+                    total_len += needed;
+                    ops_for_hint.push(left);
                 } else {
-                    container_ops[op_index].clone()
-                };
-
-                total_len += op.atom_len();
-                ops_for_hint.push(op);
+                    total_len += op_len;
+                    ops_for_hint.push(container_ops[op_index].clone());
+                    op_index += 1;
+                }
             }
 
-            op_index += 1;
             assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
 
             // Move to next hint

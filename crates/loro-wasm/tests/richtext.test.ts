@@ -615,4 +615,45 @@ describe("richtext", () => {
       },
     ]);
   });
+
+  it("records delete IDs by Unicode length around astral text", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(7);
+    const text = doc.getText("text");
+    text.insert(0, "a😀b");
+    // x's ID follows 😀's Unicode end, not its UTF-16 end.
+    text.insert(3, "x");
+    doc.commit();
+    text.delete(0, 4); // "a😀x"
+    doc.commit();
+    expect(text.toString()).toBe("b");
+    const deletes = doc
+      .exportJsonUpdates()
+      .changes.flatMap((change) => change.ops.map((op) => op.content))
+      .filter((content) => content.type === "delete");
+    // a😀 (IDs 0..2) and x (ID 3) are separate ID runs.
+    expect(deletes).toStrictEqual([
+      { type: "delete", pos: 2, len: 1, start_id: "3@0" },
+      { type: "delete", pos: 0, len: 2, start_id: "0@0" },
+    ]);
+    const replica = new LoroDoc();
+    replica.importJsonUpdates(doc.exportJsonUpdates());
+    expect(replica.getText("text").toString()).toBe("b");
+  });
+
+  it("emits events for merged deletes of astral text", () => {
+    const doc = new LoroDoc();
+    const events: unknown[] = [];
+    doc.subscribe((event) => events.push(event));
+    const text = doc.getText("text");
+    text.insert(0, "𝒳y");
+    doc.commit();
+    // Backspace twice: the ops merge by Unicode length, the event hints by
+    // UTF-16 span.
+    text.delete(2, 1);
+    text.delete(0, 2);
+    doc.commit();
+    expect(text.toString()).toBe("");
+    expect(events.length).toBe(2);
+  });
 });
