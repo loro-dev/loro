@@ -539,7 +539,10 @@ The remaining differences are representation and JavaScript constant factors:
   concurrently with the snapshot, or names a MovableList element it lacks,
   rebuilds only that container from its own history (`#prepareSnapshotImport`);
   so does the first version transition that touches a hydrated MovableList.
-  Later imports and transitions are incremental again.
+  Later imports and transitions are incremental again. Import validation of
+  MovableList moves and sets costs O(log changes) per op and keeps deferred
+  snapshot history deferred when the target element is in the hydrated state
+  ([loro-js-movable-list.md](loro-js-movable-list.md), "Validation").
 - The million-operation C1.1 concurrent-text trace still exposes a large
   constant-factor and retained-memory gap. Its local edit phase is about 4x the
   WASM adapter, and parsing the 6.5 MB snapshot takes 3.62 seconds versus 43 ms.
