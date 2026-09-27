@@ -2,9 +2,10 @@
 //! content exactly once.
 //!
 //! A mergeable child keeps its state at a deterministic cid while the parent marker is
-//! gone, and a doc at the diff's start version still holds that state. So `LoroDoc::diff`
-//! and undo record the re-activated child's own delta instead of a full-state revival,
-//! which keeps char/element/TreeID identity. See `context/mergeable-containers.md`.
+//! gone. Events and `LoroDoc::diff` report a re-activated child with its full state, so any
+//! doc or mirror can apply them; `apply_diff` aligns that state with whatever hidden state
+//! the target has. Revert and undo apply the child's actual change, which keeps
+//! char/element/TreeID identity. See `context/mergeable-containers.md`.
 
 use loro::{
     event::{Diff, DiffBatch, MapDelta},
@@ -57,6 +58,16 @@ fn forward_events(source: &LoroDoc, mirror: &LoroDoc, op: impl FnOnce(&LoroDoc))
     mirror.commit();
 }
 
+/// A new doc with `d`'s visible state and none of its history or hidden state.
+fn visible_copy(d: &LoroDoc) -> LoroDoc {
+    let copy = LoroDoc::new();
+    copy.set_peer_id(9).unwrap();
+    copy.apply_diff(d.diff(&Frontiers::default(), &d.state_frontiers()).unwrap())
+        .unwrap();
+    copy.commit();
+    copy
+}
+
 fn doc() -> LoroDoc {
     let d = LoroDoc::new();
     d.set_peer_id(1).unwrap();
@@ -66,8 +77,8 @@ fn doc() -> LoroDoc {
     d
 }
 
-/// Deep JSON with tree node ids stripped: reviving a deleted regular tree node through
-/// `apply_diff` creates a fresh node id, which is unrelated to this bug.
+/// Deep JSON with tree node ids and empty roots stripped: reviving a deleted regular tree
+/// node through `apply_diff` creates a fresh node id, which is unrelated to this bug.
 fn json(d: &LoroDoc) -> Value {
     fn strip(v: &mut Value) {
         match v {
@@ -84,6 +95,12 @@ fn json(d: &LoroDoc) -> Value {
     }
     let mut v = d.get_deep_value().to_json_value();
     strip(&mut v);
+    // Empty root containers only exist in docs that touched them.
+    v.as_object_mut().unwrap().retain(|_, root| match root {
+        Value::Array(a) => !a.is_empty(),
+        Value::Object(o) => !o.is_empty(),
+        _ => true,
+    });
     v
 }
 
@@ -145,12 +162,28 @@ fn check(setup: impl Fn(&LoroDoc), mutate: impl Fn(&LoroDoc), reuses_children: b
     r.commit();
     assert_replays_to(&r, &expected_b, "revert_to back to b");
 
-    // Local events of a revert, forwarded to a doc in the same state.
+    // Local events of a revert, forwarded to a doc in the same state, and to one that only
+    // has the visible state (built from `diff`, so it never saw the hidden children).
     let source = d.fork();
     let mirror = d.fork();
     forward_events(&source, &mirror, |s| s.revert_to(&a).unwrap());
     assert_eq!(json(&source), expected_a, "event forwarding: source");
     assert_eq!(json(&mirror), expected_a, "event forwarding: mirror");
+    let source = d.fork();
+    let visible_only = visible_copy(&d);
+    assert_eq!(json(&visible_only), expected_b, "visible-only copy");
+    forward_events(&source, &visible_only, |s| s.revert_to(&a).unwrap());
+    assert_eq!(
+        json(&visible_only),
+        expected_a,
+        "event forwarding: visible-only mirror"
+    );
+
+    // Public diff applied to a doc that only has the visible state.
+    let visible_only = visible_copy(&d);
+    visible_only.apply_diff(d.diff(&b, &a).unwrap()).unwrap();
+    visible_only.commit();
+    assert_eq!(json(&visible_only), expected_a, "diff to visible-only doc");
 
     // diff + apply_diff
     let r = d.fork();
@@ -729,7 +762,7 @@ fn undo_delete_keeps_concurrent_remote_edit_in_either_order() {
         let remote = b.export(loro::ExportMode::all_updates()).unwrap();
         if import_before_undo {
             a.import(&remote).unwrap();
-            assert_eq!(json(&a), json!({"m": {}}));
+            assert_eq!(json(&a), json!({}));
         }
         assert!(undo.undo().unwrap());
         a.commit();
@@ -781,5 +814,238 @@ fn revert_after_remote_edit_to_hidden_child_behaves_like_root_text() {
             "hello!"
         };
         assert_replays_to(&a, &json!({"m": {"s": expected}}), "revert");
+    }
+}
+
+/// `diff` keeps reporting a re-activated mergeable child with its full state, so applying it
+/// restores the target content on docs whose hidden state is absent, the same, or different.
+#[test]
+fn public_diff_restores_children_whatever_the_target_hidden_state() {
+    let (d, target, expected) = diverged_children();
+    let deleted = d.state_frontiers();
+    let diff = || d.diff(&deleted, &target).unwrap();
+
+    // Never saw the children.
+    let absent = LoroDoc::new();
+    absent.get_map("m");
+    absent.apply_diff(diff()).unwrap();
+    absent.commit();
+    assert_eq!(json(&absent), expected, "absent hidden state");
+
+    // Same hidden state.
+    let same = d.fork();
+    same.apply_diff(diff()).unwrap();
+    same.commit();
+    assert_replays_to(&same, &expected, "same hidden state");
+    assert_eq!(tree_ids(&same).len(), 1);
+
+    // Different hidden state at the same deterministic cids.
+    let (other, _, _) = deleted_after_divergence(
+        |d| {
+            let m = d.get_map("m");
+            m.ensure_mergeable_text("t")
+                .unwrap()
+                .insert(0, "xhellz")
+                .unwrap();
+            m.ensure_mergeable_list("l").unwrap().push("other").unwrap();
+            m.ensure_mergeable_movable_list("ml")
+                .unwrap()
+                .push(1)
+                .unwrap();
+            m.ensure_mergeable_map("nested")
+                .unwrap()
+                .ensure_mergeable_text("t")
+                .unwrap()
+                .insert(0, "zz")
+                .unwrap();
+            let tree = m.ensure_mergeable_tree("tree").unwrap();
+            tree.create(TreeParentId::Root).unwrap();
+        },
+        |_| {},
+    );
+    other.set_peer_id(3).unwrap();
+    other.apply_diff(diff()).unwrap();
+    other.commit();
+    assert_replays_to(&other, &expected, "different hidden state");
+}
+
+#[test]
+#[cfg(feature = "counter")]
+fn public_diff_restores_counter_whatever_the_target_hidden_state() {
+    for extra in [0.0, 3.0] {
+        let (d, target, expected) = deleted_after_divergence(
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_counter("c")
+                    .unwrap()
+                    .increment(7.0)
+                    .unwrap();
+            },
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_counter("c")
+                    .unwrap()
+                    .increment(extra)
+                    .unwrap();
+            },
+        );
+        let diff = d.diff(&d.state_frontiers(), &target).unwrap();
+        let absent = LoroDoc::new();
+        absent.get_map("m");
+        absent.apply_diff(diff.clone()).unwrap();
+        absent.commit();
+        assert_eq!(json(&absent), expected, "absent, extra {extra}");
+        let same = d.fork();
+        same.apply_diff(diff).unwrap();
+        same.commit();
+        assert_eq!(json(&same), expected, "same, extra {extra}");
+    }
+}
+
+/// A local re-activation (here `ensure_mergeable_*` over a deleted key) reports the child's
+/// full state, like import and checkout do, so a mirror without hidden state can follow.
+#[test]
+fn local_reactivation_event_carries_full_state() {
+    let d = doc();
+    let m = d.get_map("m");
+    m.ensure_mergeable_text("s")
+        .unwrap()
+        .insert(0, "hello")
+        .unwrap();
+    m.ensure_mergeable_list("l").unwrap().push("keep").unwrap();
+    d.commit();
+    delete_s(&d);
+    m.delete("l").unwrap();
+    d.commit();
+    let mirror = visible_copy(&d);
+    forward_events(&d, &mirror, |d| {
+        let m = d.get_map("m");
+        m.ensure_mergeable_text("s").unwrap();
+        m.ensure_mergeable_list("l").unwrap().push("more").unwrap();
+    });
+    let expected = json!({"m": {"s": "hello", "l": ["keep", "more"]}});
+    assert_eq!(json(&d), expected);
+    assert_eq!(json(&mirror), expected);
+}
+
+/// A re-activates a child that B edited while it was hidden. B's import event reports the
+/// child's full state, but its content did not change, so B can still undo its own edit.
+#[test]
+fn peer_can_undo_own_edit_after_remote_undo_reactivates_child() {
+    type Edit = fn(&LoroDoc);
+    let cases: [(&str, Edit, Edit, Value, Value); 4] = [
+        (
+            "text",
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_text("s")
+                    .unwrap()
+                    .insert(0, "hello")
+                    .unwrap();
+            },
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_text("s")
+                    .unwrap()
+                    .insert(5, "!")
+                    .unwrap();
+            },
+            json!({"m": {"s": "hello!"}}),
+            json!({"m": {"s": "hello"}}),
+        ),
+        (
+            "list",
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_list("s")
+                    .unwrap()
+                    .push("keep")
+                    .unwrap();
+            },
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_list("s")
+                    .unwrap()
+                    .push("mine")
+                    .unwrap();
+            },
+            json!({"m": {"s": ["keep", "mine"]}}),
+            json!({"m": {"s": ["keep"]}}),
+        ),
+        (
+            "movable list",
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .push("keep")
+                    .unwrap();
+            },
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .push("mine")
+                    .unwrap();
+            },
+            json!({"m": {"s": ["keep", "mine"]}}),
+            json!({"m": {"s": ["keep"]}}),
+        ),
+        (
+            "nested text",
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_map("s")
+                    .unwrap()
+                    .ensure_mergeable_text("t")
+                    .unwrap()
+                    .insert(0, "hello")
+                    .unwrap();
+            },
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_map("s")
+                    .unwrap()
+                    .ensure_mergeable_text("t")
+                    .unwrap()
+                    .insert(5, "!")
+                    .unwrap();
+            },
+            json!({"m": {"s": {"t": "hello!"}}}),
+            json!({"m": {"s": {"t": "hello"}}}),
+        ),
+    ];
+    for (name, setup, edit, merged, after_undo) in cases {
+        for delete_arrives_first in [false, true] {
+            let a = doc();
+            setup(&a);
+            a.commit();
+            let b = peer(&a, 2);
+            let mut ua = UndoManager::new(&a);
+            let mut ub = UndoManager::new(&b);
+            delete_s(&a);
+            a.commit();
+            edit(&b);
+            b.commit();
+            if delete_arrives_first {
+                b.import(&a.export(loro::ExportMode::all_updates()).unwrap())
+                    .unwrap();
+            }
+            a.import(&b.export(loro::ExportMode::all_updates()).unwrap())
+                .unwrap();
+            assert!(ua.undo().unwrap(), "{name}: A undoes its delete");
+            a.commit();
+            b.import(&a.export(loro::ExportMode::all_updates()).unwrap())
+                .unwrap();
+            let what = format!("{name}, delete_arrives_first={delete_arrives_first}");
+            assert_eq!(json(&a), merged, "{what}: A");
+            assert_eq!(json(&b), merged, "{what}: B");
+            assert!(ub.can_undo(), "{what}");
+            assert!(ub.undo().unwrap(), "{what}: B undoes its edit");
+            b.commit();
+            assert_replays_to(&b, &after_undo, &what);
+            sync(&a, &b);
+            assert_eq!(json(&a), after_undo, "{what}: A after sync");
+        }
     }
 }

@@ -516,6 +516,7 @@ impl Transaction {
                             bring_back: false,
                             diff: (x.diff.into()),
                             diff_mode: crate::diff_calc::DiffMode::Linear,
+                            kept: None,
                         })
                         .collect(),
                 ),

@@ -79,46 +79,68 @@ rewrites the marker.
 - Detached map handlers cannot ensure mergeable children, because the
   deterministic child cid depends on the attached parent cid.
 
-## Revert, Apply-Diff, And Undo
+## Revert, Apply-Diff, Events, And Undo
 
-When a container becomes reachable again, `DocState::apply_diff` (`state.rs`)
-normally records its *full* state as a from-empty diff. This is called revival, and it
-is what checkout/import subscribers need. `LoroDoc::_apply_diff` recreates regular
-containers under fresh ids, so full state is right for them. A mergeable child is
-different: it is re-activated at its deterministic cid, and a doc at the diff's start
-version still holds its hidden state there. Applying a full state on top used to
-duplicate it (`"hello"` -> `"hellohello"`, counter 7 -> 14).
+A mergeable child that becomes visible again keeps its deterministic cid and its hidden
+state. Two consumers need different things:
 
-`LoroDoc::diff` and the undo diff closure record with
-`DocState::mergeable_revival_as_delta` set. In that mode, a mergeable child that is
-re-activated by the diff of a container that keeps its id (not itself revived) is not
-revived. Its own calculator delta, or nothing when it has no ops in range, becomes the
-batch entry. `_apply_diff` stays purely incremental. So:
+- Anything that did not see the hidden state (JS mirrors, loro-js, another doc, a doc
+  built only from the visible state) needs the child's **full state**.
+- The doc that kept the state (its own revert and undo) needs the **actual change**. So
+  does the undo manager's transform base, because undo positions live in the kept
+  content. Applying a full state there duplicated content (`"hello"` -> `"hellohello"`,
+  counter 7 -> 14), and transforming against it broke later undo steps.
 
-- revert/diff/undo keep char, element and `TreeID` identity. Only the real difference is
-  written; hidden content that already matches costs only the parent marker op.
-- Concurrent reverts of the same state delete the same elements and merge to the
-  target. Concurrent edits to kept elements (e.g. a tree node's meta) survive.
-- Local events of a revert are increments on the hidden state. Forwarding them to a doc
-  in the same state through `apply_diff` reproduces the source state.
-- A mergeable child whose parent *is* revived under a fresh id (e.g. a map in a deleted
-  list element) resolves to a fresh deterministic cid, so it still gets full state.
+The contract keeps both:
+
+- **Events and `LoroDoc::diff` report full state**, as on main. That covers import,
+  checkout, and local transactions. A re-activated mergeable child, and every container it
+  holds that kept its id, appears with its full state; no entry means empty. Import and
+  checkout get this from revival in `DocState::apply_diff`. Local transactions get it from
+  `DocState::revive_mergeable_in_local_diff` (in `commit_txn`), triggered by a local map
+  diff whose value is a mergeable container.
+- **`KeptChange`** (`event.rs`) sits next to such full states on `InternalContainerDiff`
+  and `ContainerDiff::kept`, and holds the actual change. `DocState::apply_diff` tracks the
+  `kept` set: a mergeable child re-activated by a container that is not itself revived, plus
+  what a kept container holds, except containers its own change inserts (those are new, and
+  their full state is their change). A mergeable child under a parent revived under a fresh
+  id is not kept: `apply_diff` gives it a fresh cid. `ContainerDiff::change()` returns the
+  actual change.
+- **Revert and undo** build their batch with `DiffBatch::from_changes` and apply it with
+  alignment off. Only the real difference is written, keeping char/element/`TreeID`
+  identity. Unchanged hidden content costs only the parent marker op.
+- **Public `apply_diff`** (`_apply_diff(.., align_revived_mergeable = true)`) aligns a
+  re-activated mergeable child's full state with whatever the target doc holds at that cid
+  (`handler/full_state.rs`), whether that is nothing, the same state, or a different
+  state:
+  - Map: per key.
+  - Counter: adds the difference.
+  - Text and List/MovableList: keep the common prefix and suffix (chars with equal
+    styles; values, containers by id) and replace the middle.
+  - Tree: by `TreeID`. Missing nodes are created, kept nodes are moved if their parent or
+    position differs, the rest are deleted.
+  - Kept children are handed down as further full-state targets. A target with no entry is
+    cleared.
+- **UndoManager** composes remote/paused events with `change()`, not `diff`.
 
 Consequences:
 
-- `LoroDoc::diff` output for a re-activated mergeable child is a delta relative to its
-  hidden state, not a mirror-friendly full state. Checkout/import events are unchanged
-  and still revive with full state.
-- `revert_to` behaves like it does for a root container: a remote edit to the hidden
-  child that was already observed is reverted, and one that arrives later merges.
-- Undo of a delete only restores the marker, so remote edits made while the child was
-  hidden survive in either arrival order.
-- Counters stay additive: two peers reverting 10 -> 7 concurrently give 4, as for a
-  root counter.
+- `source.diff(D, T)` applied to a doc that never saw the child restores it.
+- Local events forwarded to another doc (same or no hidden state) reproduce the source.
+- A peer can still undo its own edit to a child that a remote undo re-activated.
+- Concurrent reverts of the same state delete the same elements and merge to the target.
+  A concurrent edit to a kept element, such as a tree node's meta, survives.
+- `revert_to` behaves like it does for a root container: a remote edit to the hidden child
+  that was already observed is reverted, and one that arrives later merges. Undo of a delete
+  only restores the marker, so such remote edits survive in either order.
+- Counters stay additive: two peers reverting 10 -> 7 concurrently give 4, as for a root
+  counter.
+- Alignment in `apply_diff` of a different hidden state is content-based. Its edits are
+  new ops of the applying doc; identity is kept only for the shared prefix/suffix and for
+  tree nodes.
 
-Covered by `crates/loro/tests/mergeable_revert.rs` (including event forwarding, concurrent
-reverts, and tree meta edits), `tests/mergeable_container/delete.rs`, and
-`crates/loro-wasm/tests/mergeable.test.ts`.
+Covered by `crates/loro/tests/mergeable_revert.rs`, `tests/mergeable_container/delete.rs`,
+and `crates/loro-wasm/tests/mergeable.test.ts`.
 
 ## Snapshot And Retention Rules
 
@@ -161,9 +183,10 @@ raw/shallow storage may still show the binary marker for forward compatibility.
   by the parent marker.
 - "Deleting the key deletes the child state." False; it hides the child by
   removing the marker.
-- "A re-activated mergeable child needs a full-state revival in a diff that will be
-  applied to a Loro doc." False; the target doc still holds the hidden state, so
-  `LoroDoc::diff`/undo record the child's delta instead.
+- "A full-state revival of a re-activated mergeable child is its change." False; it is
+  what a consumer that never saw the child needs. The doc that kept the child uses
+  `KeptChange` (revert, undo, undo transforms), and `apply_diff` aligns the full state
+  with the target's hidden state.
 - "Kind conflict discards the loser." False; the loser is hidden but should stay
   recoverable by deterministic cid.
 - "The marker is the child cid." False; the marker activates a kind at a

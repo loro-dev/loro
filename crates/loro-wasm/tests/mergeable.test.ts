@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { LoroDoc } from "../bundler/index";
+import { LoroDoc, UndoManager } from "../bundler/index";
 
 function sync(a: LoroDoc, b: LoroDoc) {
   const aBytes = a.export({ mode: "update", from: b.version() });
@@ -323,5 +323,49 @@ describe("mergeable containers (WASM bindings)", () => {
       expect(tree.map((n: any) => n.id)).toEqual([nodeId]);
       expect(b.toJSON()).toEqual(a.toJSON());
     });
+  });
+  test("diff() restores a deleted mergeable child on a doc that never saw it", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    const m = source.getMap("m");
+    m.ensureMergeableText("t").insert(0, "hello");
+    m.ensureMergeableCounter("c").increment(7);
+    m.ensureMergeableList("l").push("keep");
+    source.commit();
+    const target = source.frontiers();
+    m.ensureMergeableCounter("c").increment(3);
+    for (const key of ["t", "c", "l"]) m.delete(key);
+    source.commit();
+
+    const mirror = new LoroDoc();
+    mirror.getMap("m");
+    mirror.applyDiff(source.diff(source.frontiers(), target));
+    mirror.commit();
+    expect(mirror.toJSON()).toEqual({ m: { t: "hello", c: 7, l: ["keep"] } });
+  });
+
+  test("a peer can undo its edit after a remote undo re-activates the child", () => {
+    const a = new LoroDoc();
+    a.setPeerId(1);
+    const t = a.getMap("m").ensureMergeableText("s");
+    t.insert(0, "hello");
+    a.commit();
+    const b = a.fork();
+    b.setPeerId(2);
+    const ua = new UndoManager(a, {});
+    const ub = new UndoManager(b, {});
+    a.getMap("m").delete("s");
+    a.commit();
+    b.getMap("m").ensureMergeableText("s").insert(5, "!");
+    b.commit();
+    a.import(b.export({ mode: "update" }));
+    expect(ua.undo()).toBe(true);
+    a.commit();
+    b.import(a.export({ mode: "update" }));
+    expect(b.toJSON()).toEqual({ m: { s: "hello!" } });
+    expect(ub.canUndo()).toBe(true);
+    expect(ub.undo()).toBe(true);
+    b.commit();
+    expect(b.toJSON()).toEqual({ m: { s: "hello" } });
   });
 });

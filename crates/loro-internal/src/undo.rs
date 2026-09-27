@@ -13,7 +13,7 @@ use crate::{
     change::{get_sys_timestamp, Timestamp},
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
-    event::{Diff, EventTriggerKind},
+    event::{Diff, EventTriggerKind, KeptChange},
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
@@ -36,6 +36,31 @@ impl DiffBatch {
                 let old = map.insert(item.id.clone(), item.diff);
                 assert!(old.is_none(), "Duplicate container ID in diff events");
                 order.push(item.id.clone());
+            }
+        }
+
+        Self {
+            cid_to_events: map,
+            order,
+        }
+    }
+
+    /// Like [`DiffBatch::new`], but a container that kept its state while its event reports a
+    /// full-state revival contributes its actual change. Use it for a batch applied to the doc
+    /// it was computed on (revert, undo). See [`crate::event::KeptChange`].
+    pub(crate) fn from_changes(diff: Vec<DocDiff>) -> Self {
+        let mut map: FxHashMap<ContainerID, Diff> = Default::default();
+        let mut order: Vec<ContainerID> = Vec::with_capacity(diff.len());
+        for d in diff.into_iter() {
+            for item in d.diff.into_iter() {
+                let change = match item.kept {
+                    None => item.diff,
+                    Some(KeptChange::Unchanged) => continue,
+                    Some(KeptChange::Changed(change)) => change,
+                };
+                let old = map.insert(item.id.clone(), change);
+                assert!(old.is_none(), "Duplicate container ID in diff events");
+                order.push(item.id);
             }
         }
 
@@ -420,12 +445,17 @@ impl Stack {
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         let mut remote_diff = remote_diff.lock();
         for e in diff {
+            // Transform against what actually changed. A re-activated mergeable child's event
+            // is its full state, but its content (and the undo items' positions in it) stayed.
+            let Some(change) = e.change() else {
+                continue;
+            };
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
-                d.compose_ref(&e.diff);
+                d.compose_ref(change);
             } else {
                 remote_diff
                     .cid_to_events
-                    .insert(e.id.clone(), e.diff.clone());
+                    .insert(e.id.clone(), change.clone());
                 remote_diff.order.push(e.id.clone());
             }
         }

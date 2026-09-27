@@ -1233,14 +1233,15 @@ impl LoroDoc {
                 {
                     let mut state = self.state.lock();
                     state.start_recording();
-                    state.set_mergeable_revival_as_delta(true);
+                    state.set_record_changes_only(true);
                 }
                 self._checkout_without_emitting(to, false, false).unwrap();
                 let mut state = self.state.lock();
-                state.set_mergeable_revival_as_delta(false);
+                state.set_record_changes_only(false);
                 let e = state.take_events();
                 state.stop_and_clear_recording();
-                DiffBatch::new(e)
+                // Applied to this doc, which kept the state of re-activated mergeable children.
+                DiffBatch::from_changes(e)
             },
             before_diff,
         );
@@ -1258,7 +1259,7 @@ impl LoroDoc {
         // Try applying the diff, but ignore the error if it happens.
         // MovableList's undo behavior is too tricky to handle in a collaborative env
         // so in edge cases this may be an Error
-        if let Err(e) = self._apply_diff(diff, container_remap, true) {
+        if let Err(e) = self._apply_diff(diff, container_remap, true, false) {
             warn!("Undo Failed {:?}", e);
         }
 
@@ -1280,8 +1281,15 @@ impl LoroDoc {
         // TODO: test when the doc is readonly
         // TODO: test when the doc is detached but enabled editing
         let f = self.state_frontiers();
-        let diff = self.diff(&f, target)?;
-        self._apply_diff(diff, &mut Default::default(), false)
+        let diff = self.diff_events(&f, target, true)?;
+        // This doc kept the state of the mergeable children the target re-activates, so apply
+        // their actual changes rather than the full states `diff` reports.
+        self._apply_diff(
+            DiffBatch::from_changes(diff),
+            &mut Default::default(),
+            false,
+            false,
+        )
     }
 
     /// Calculate the diff between two versions so that apply diff on a will make the state same as b.
@@ -1289,6 +1297,16 @@ impl LoroDoc {
     /// NOTE: This method will make the doc enter the **detached mode**.
     // FIXME: This method needs testing (no event should be emitted during processing this)
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
+        self.diff_events(a, b, false).map(DiffBatch::new)
+    }
+
+    /// With `changes_only`, only [`DiffBatch::from_changes`] of the result is meaningful.
+    fn diff_events(
+        &self,
+        a: &Frontiers,
+        b: &Frontiers,
+        changes_only: bool,
+    ) -> LoroResult<Vec<DocDiff>> {
         {
             // Check whether a and b are valid before checkout so this returns a normal error
             // instead of panicking on shallow docs.
@@ -1325,13 +1343,11 @@ impl LoroDoc {
             {
                 let mut state = self.state.lock();
                 state.start_recording();
-                // The batch is applied to a doc at `a`, which still holds the hidden state of
-                // mergeable children that `b` re-activates.
-                state.set_mergeable_revival_as_delta(true);
+                state.set_record_changes_only(changes_only);
             }
             let checkout = self._checkout_without_emitting(b, true, false);
             let mut state = self.state.lock();
-            state.set_mergeable_revival_as_delta(false);
+            state.set_record_changes_only(false);
             checkout?;
             let e = state.take_events();
             state.stop_and_clear_recording();
@@ -1349,13 +1365,13 @@ impl LoroDoc {
         if was_recording {
             self.state.lock().start_recording();
         }
-        result.map(DiffBatch::new)
+        result
     }
 
     /// Apply a diff to the current state.
     #[inline(always)]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
-        self._apply_diff(diff, &mut Default::default(), true)
+        self._apply_diff(diff, &mut Default::default(), true, true)
     }
 
     /// Apply a diff to the current state.
@@ -1369,11 +1385,18 @@ impl LoroDoc {
     ///
     /// However, the diff may contain operations that depend on container IDs.
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
+    ///
+    /// With `align_revived_mergeable`, `diff` follows the event contract: a mergeable child the
+    /// batch re-activates carries its full state (no entry means empty), which is aligned with
+    /// whatever hidden state this doc has at its deterministic cid. Revert and undo pass
+    /// batches of actual changes ([`DiffBatch::from_changes`]) and disable it. See
+    /// context/mergeable-containers.md.
     pub(crate) fn _apply_diff(
         &self,
         diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
+        align_revived_mergeable: bool,
     ) -> LoroResult<()> {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
@@ -1381,11 +1404,21 @@ impl LoroDoc {
 
         let mut ans: LoroResult<()> = Ok(());
         let mut missing_containers: Vec<ContainerID> = Vec::new();
+        // Containers whose diff in this batch is a full state while they keep an id that may
+        // already hold state: re-activated mergeable children and, transitively, the children
+        // of aligned containers that were kept.
+        let mut full_state_targets: FxHashSet<ContainerID> = FxHashSet::default();
+        let mut applied: FxHashSet<ContainerID> = FxHashSet::default();
         for (mut id, diff) in diff.into_iter() {
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
                 id = rid.clone();
+            }
+
+            let is_full_state = align_revived_mergeable && full_state_targets.remove(&id);
+            if align_revived_mergeable {
+                applied.insert(id.clone());
             }
 
             if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
@@ -1399,7 +1432,11 @@ impl LoroDoc {
                 self.state.lock().ensure_container(&id);
             }
 
-            if skip_unreachable && !remapped && !self.state.lock().get_reachable(&id) {
+            if skip_unreachable
+                && !remapped
+                && !is_full_state
+                && !self.state.lock().get_reachable(&id)
+            {
                 continue;
             }
 
@@ -1408,8 +1445,42 @@ impl LoroDoc {
                     containers: Box::new(vec![id]),
                 });
             };
-            if let Err(e) = h.apply_diff(diff, container_remap) {
+            let diff = if is_full_state {
+                let current = self.state.lock().container_full_diff(h.container_idx());
+                match crate::handler::align_full_state(&h, diff, current, &mut full_state_targets) {
+                    Ok(Some(diff)) => diff,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        ans = Err(e);
+                        continue;
+                    }
+                }
+            } else {
+                diff
+            };
+            if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
                 ans = Err(e);
+            }
+        }
+
+        if align_revived_mergeable {
+            // A full-state container without an entry in the batch is empty.
+            for id in full_state_targets {
+                if applied.contains(&id) {
+                    continue;
+                }
+                let Some(h) = self.get_handler(id) else {
+                    continue;
+                };
+                let is_empty = self
+                    .state
+                    .lock()
+                    .is_container_state_empty(h.container_idx());
+                if !is_empty {
+                    if let Err(e) = h.clear() {
+                        ans = Err(e);
+                    }
+                }
             }
         }
 

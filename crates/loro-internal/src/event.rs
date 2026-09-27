@@ -28,6 +28,51 @@ pub struct ContainerDiff {
     pub(crate) idx: ContainerIdx,
     pub is_unknown: bool,
     pub diff: Diff,
+    /// Set when `diff` is a full-state revival of a container that kept its id and state.
+    pub(crate) kept: Option<KeptChange>,
+}
+
+impl ContainerDiff {
+    /// The container's actual change in this event, which differs from `diff` when `diff` is
+    /// a full-state revival of a container that kept its state. `None` means unchanged.
+    pub(crate) fn change(&self) -> Option<&Diff> {
+        match &self.kept {
+            None => Some(&self.diff),
+            Some(KeptChange::Unchanged) => None,
+            Some(KeptChange::Changed(d)) => Some(d),
+        }
+    }
+}
+
+/// Events and [`crate::undo::DiffBatch`]es describe a container that becomes visible with its
+/// full state, which is what a consumer that never saw it needs. A re-activated mergeable child
+/// (and every container it holds) keeps its id and its hidden state, so its actual change is
+/// recorded next to the full state. Undo, revert and the undo manager's transforms use it.
+/// See context/mergeable-containers.md.
+#[derive(Debug, Clone)]
+pub(crate) enum KeptChange {
+    Unchanged,
+    Changed(Diff),
+}
+
+impl KeptChange {
+    pub(crate) fn from_diff(diff: Diff) -> Self {
+        if diff.is_empty() {
+            KeptChange::Unchanged
+        } else {
+            KeptChange::Changed(diff)
+        }
+    }
+
+    /// `self` followed by `next`.
+    pub(crate) fn then(self, next: KeptChange) -> Self {
+        match (self, next) {
+            (KeptChange::Unchanged, x) | (x, KeptChange::Unchanged) => x,
+            (KeptChange::Changed(a), KeptChange::Changed(b)) => {
+                KeptChange::Changed(a.compose(b).unwrap())
+            }
+        }
+    }
 }
 
 /// The kind of the event trigger.
@@ -99,6 +144,8 @@ pub(crate) struct InternalContainerDiff {
     pub(crate) diff: DiffVariant,
     /// This mode decides how should we apply the diff.
     pub(crate) diff_mode: DiffMode,
+    /// See [`ContainerDiff::kept`].
+    pub(crate) kept: Option<KeptChange>,
 }
 
 #[derive(Default, Debug, Clone, EnumAsInner)]

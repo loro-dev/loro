@@ -392,6 +392,7 @@ impl DiffCalculator {
                                     bring_back,
                                     diff: diff.into(),
                                     diff_mode,
+                                    kept: None,
                                 },
                             ),
                         );
@@ -417,6 +418,7 @@ impl DiffCalculator {
                             bring_back: true,
                             diff: DiffVariant::None,
                             diff_mode: DiffMode::Checkout,
+                            kept: None,
                         },
                     ),
                 );
