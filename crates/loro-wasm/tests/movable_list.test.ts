@@ -8,6 +8,7 @@ import {
   LoroMovableList,
   LoroText,
   TextDiff,
+  UndoManager,
 } from "../bundler/index";
 import { expectDefined } from "./helpers";
 
@@ -214,5 +215,64 @@ describe("movable list", () => {
     const text = list.setContainer(0, new LoroText());
     text.insert(0, "Hello");
     expect(list.toJSON()).toStrictEqual(["Hello"]);
+  });
+
+  it("applyDiff moves several child containers at once", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    const a = list.insertContainer(0, new LoroText());
+    a.insert(0, "A");
+    const b = list.insertContainer(1, new LoroText());
+    b.insert(0, "B");
+    list.push("x");
+    doc.commit();
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    doc.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [{ delete: 3 }, { insert: [`🦜:${b.id}`, "y", `🦜:${a.id}`] }],
+        },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toStrictEqual({ l: ["B", "y", "A"] });
+    expect((list.get(0) as LoroText).id).toBe(b.id);
+    expect((list.get(2) as LoroText).id).toBe(a.id);
+    expect(undo.undo()).toBe(true);
+    expect(doc.toJSON()).toStrictEqual({ l: ["A", "B", "x"] });
+    expect(undo.redo()).toBe(true);
+    expect(doc.toJSON()).toStrictEqual({ l: ["B", "y", "A"] });
+  });
+
+  it("applyDiff treats adjacent delete items like one delete", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    list.push("X");
+    list.push("Y");
+    const t = list.insertContainer(2, new LoroText());
+    t.insert(0, "T");
+    list.push("tail");
+    doc.commit();
+    doc.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [
+            { delete: 1 },
+            { delete: 2 },
+            { insert: ["new"] },
+            { retain: 1 },
+            { insert: [`🦜:${t.id}`] },
+          ],
+        },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toStrictEqual({ l: ["new", "tail", "T"] });
   });
 });
