@@ -150,12 +150,24 @@ JavaScript constant factor.
   positions, so a replay of Rust-created styled text can differ from its
   snapshot state (for example, an insert right after a mark's end anchor). The
   completion therefore compares the replay with the snapshot state (visible ids,
-  plus the delta when styled). When they differ, the replayed state serves
-  transitions and the snapshot state is reinstated at every version with the
-  same operations on that container (`#settleSnapshotSequences`), so the
-  snapshot version and exports stay exact. A full `#rebuildFromHistory`, still
-  used when a transition cannot be incremental and by shallow export, stashes
-  snapshot states the same way; it hydrates unread sequence containers first.
+  plus the delta when styled). When they differ, the replay is discarded and the
+  container becomes `unreplayable`: it keeps its snapshot state, encoded once,
+  and every transition that touches it rebuilds it from that state
+  (`#rebuildFromSnapshotState`, O(container size + its operations)) instead of
+  transitioning a replay. The rebuild hides the state's inserted elements and
+  styles that the target excludes and applies later operations the target
+  includes. So the latest state, imports, and exports always equal the
+  snapshot state plus later operations, as without history; an older version
+  cannot restore text deleted before the snapshot. A full `#rebuildFromHistory`
+  (the non-incremental fallback, shallow export, `forkAt`) first checks the
+  snapshot-hydrated styled Text and MovableList containers, including lazily
+  encoded ones, and then rebuilds unreplayable containers the same way. Only the
+  root state of a shallow export uses the replay, since the snapshot state is
+  later than the root.
+- Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
+  packed Text span returns a new wrapper per lookup, so two concurrent deletes
+  of one character used to delete it twice. A checkout that throws restores its
+  previous version and state (`#transitionTo`).
 - First checkout after importing a 262,144-operation single-peer Text snapshot
   takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
   versus about 148 ms for the earlier whole-document replay; 65,536 operations
