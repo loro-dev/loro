@@ -311,6 +311,56 @@ describe("diff and revertTo for containers attached by the range", () => {
     expect(replica.toJSON()).toEqual(doc.toJSON());
   });
 
+  test("revives a parent whose child stayed alive elsewhere without duplicating it", () => {
+    for (const withGrandchild of [false, true]) {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const tree = doc.getTree("tree");
+      const parent = tree.createNode();
+      const child = parent.createNode();
+      child.data.set("k", "v");
+      if (withGrandchild)
+        child.createNode().data.setContainer("t", new LoroText()).insert(0, "g");
+      doc.commit();
+      const before = doc.frontiers();
+      const expected = doc.toJSON() as { tree: TreeJson[] };
+      tree.delete(parent.id);
+      doc.commit();
+      // The child leaves the deleted parent, so it stays alive at the root.
+      tree.move(child.id);
+      tree.getNodeByID(child.id)!.data.set("later", 1);
+      doc.commit();
+
+      const diff = doc.diff(doc.frontiers(), before);
+      const items = diff.find(([id]) => id === tree.id)![1] as {
+        diff: { action: string; target: string }[];
+      };
+      // As in Rust: the old copy of the child is deleted, then the parent and
+      // its subtree are created.
+      expect(items.diff.map((item) => item.action)).toEqual(
+        withGrandchild
+          ? ["delete", "create", "create", "create"]
+          : ["delete", "create", "create"],
+      );
+      expect(items.diff[0]!.target).toBe(child.id);
+
+      const replica = doc.fork();
+      replica.setDetachedEditing(true);
+      replica.applyDiff(diff);
+      doc.revertTo(before);
+      doc.commit();
+      for (const result of [doc, replica]) {
+        const roots = (result.toJSON() as { tree: TreeJson[] }).tree;
+        expect(roots).toHaveLength(1);
+        expect(roots[0]!.children).toHaveLength(1);
+        expect(roots[0]!.children[0]!.meta).toEqual({ k: "v" });
+        expect(roots[0]!.children[0]!.children.map((node) => node.meta)).toEqual(
+          expected.tree[0]!.children[0]!.children.map((node) => node.meta),
+        );
+      }
+    }
+  });
+
   test("recreates a node moved out of a deleted ancestor", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);

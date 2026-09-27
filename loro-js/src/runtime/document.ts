@@ -1455,6 +1455,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
       return false;
     };
+    const originals = new Map(items.map((item) => [item.target, item] as const));
     const output: TreeDiffItem[] = [];
     for (const item of items) {
       if (item.action === "delete" || !revived.has(item.target)) {
@@ -1464,17 +1465,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (insideRevived(item.target)) continue;
       // Iterative preorder: a wide subtree must not be spread into call
       // arguments, and each node is visited once.
-      const emit = (record: TreeNodeRecord, index: number): void => {
-        output.push({
-          target: formatTreeId(record.id),
-          action: "create",
-          parent: record.parent === undefined ? undefined : formatTreeId(record.parent),
-          index,
-          fractionalIndex: bytesToHex(record.position).toUpperCase(),
-        });
-      };
+      const records: TreeNodeRecord[] = [];
+      const indices: number[] = [];
       const top = tree._nodes.get(item.target)!;
-      emit(top, tree._indexOf(top));
+      records.push(top);
+      indices.push(tree._indexOf(top));
       const stack = [{ children: tree._childrenOf(top.id), next: 0 }];
       while (stack.length > 0) {
         const frame = stack.at(-1)!;
@@ -1485,8 +1480,47 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         const index = frame.next;
         frame.next += 1;
         const record = frame.children[index]!;
-        emit(record, index);
+        records.push(record);
+        indices.push(index);
         stack.push({ children: tree._childrenOf(record.id), next: 0 });
+      }
+      // A node of the subtree that was already alive at `from` (moved in, not
+      // revived) is recreated with the rest, so its old copy is deleted first,
+      // as Rust does. Deleting the topmost such nodes removes the others.
+      const aliveAtFrom = new Map<string, TreeNodeRecord>();
+      for (let position = 1; position < records.length; position += 1) {
+        const record = records[position]!;
+        if (this.#treeNodeAliveAt(tree, record.id, from)) {
+          aliveAtFrom.set(idKey(record.id), record);
+        }
+      }
+      for (const record of aliveAtFrom.values()) {
+        const parentAtFrom = this.#treeNodePlacementAt(tree, record.id, from)?.parent;
+        if (parentAtFrom !== undefined && aliveAtFrom.has(idKey(parentAtFrom))) continue;
+        const target = formatTreeId(record.id);
+        const original = originals.get(target);
+        output.push({
+          target,
+          action: "delete",
+          oldParent:
+            original !== undefined && original.action === "move"
+              ? original.oldParent
+              : parentAtFrom === undefined
+                ? undefined
+                : formatTreeId(parentAtFrom),
+          oldIndex:
+            original !== undefined && original.action === "move" ? original.oldIndex : 0,
+        });
+      }
+      for (let position = 0; position < records.length; position += 1) {
+        const record = records[position]!;
+        output.push({
+          target: formatTreeId(record.id),
+          action: "create",
+          parent: record.parent === undefined ? undefined : formatTreeId(record.parent),
+          index: indices[position]!,
+          fractionalIndex: bytesToHex(record.position).toUpperCase(),
+        });
       }
     }
     return output;
@@ -1544,34 +1578,44 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return nodes.get(nodeKey);
   }
 
+  /** `node`'s own placement at `version`, or undefined if it did not exist yet. */
+  #treeNodePlacementAt(
+    tree: LoroTree,
+    node: CodecId,
+    version: VersionVector,
+  ): { deleted: boolean; parent: CodecId | undefined } | undefined {
+    const key = idKey(node);
+    const operations = this.#treeOperationHistory.get(tree.id)?.get(key);
+    if (operations === undefined) {
+      // No retained op (e.g. a shallow root node): its placement is unchanged.
+      const record = tree._nodes.get(formatTreeId(node));
+      return record === undefined
+        ? undefined
+        : { deleted: record.deleted, parent: record.parent };
+    }
+    const winner = latestIncludedOperation(operations, version);
+    if (winner === undefined) {
+      // A shallow history trims the ops before its root; until the first
+      // retained op, the node keeps its placement in the root state.
+      return this.#shallowRootTreePlacement(tree, key);
+    }
+    const content = winner.operation.content;
+    if (content.type !== "tree-create" && content.type !== "tree-move") {
+      return { deleted: true, parent: undefined };
+    }
+    return { deleted: false, parent: content.parent };
+  }
+
   /** Whether `node` and all of its ancestors are alive at `version`. */
   #treeNodeAliveAt(tree: LoroTree, node: CodecId, version: VersionVector): boolean {
-    const history = this.#treeOperationHistory.get(tree.id);
     const visited = new Set<string>();
     for (let current: CodecId | undefined = node; current !== undefined; ) {
       const key = idKey(current);
       if (visited.has(key)) return false;
       visited.add(key);
-      const operations = history?.get(key);
-      if (operations === undefined) {
-        // No retained op (e.g. a shallow root node): its placement is unchanged.
-        const record = tree._nodes.get(formatTreeId(current));
-        if (record === undefined || record.deleted) return false;
-        current = record.parent;
-        continue;
-      }
-      const winner = latestIncludedOperation(operations, version);
-      if (winner === undefined) {
-        // A shallow history trims the ops before its root; until the first
-        // retained op, the node keeps its placement in the root state.
-        const rootNode = this.#shallowRootTreePlacement(tree, key);
-        if (rootNode === undefined || rootNode.deleted) return false;
-        current = rootNode.parent;
-        continue;
-      }
-      const content = winner.operation.content;
-      if (content.type !== "tree-create" && content.type !== "tree-move") return false;
-      current = content.parent;
+      const placement = this.#treeNodePlacementAt(tree, current, version);
+      if (placement === undefined || placement.deleted) return false;
+      current = placement.parent;
     }
     return true;
   }
