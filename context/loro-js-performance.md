@@ -152,18 +152,25 @@ JavaScript constant factor.
   completion therefore compares the replay with the snapshot state (visible ids,
   plus the delta when styled). When they differ, the replay is discarded and the
   container becomes `unreplayable`: it keeps its snapshot state, encoded once,
-  and every transition that touches it rebuilds it from that state
-  (`#rebuildFromSnapshotState`, O(container size + its operations)) instead of
-  transitioning a replay. The rebuild hides the state's inserted elements and
-  styles that the target excludes and applies later operations the target
-  includes. So the latest state, imports, and exports always equal the
-  snapshot state plus later operations, as without history; an older version
-  cannot restore text deleted before the snapshot. A full `#rebuildFromHistory`
-  (the non-incremental fallback, shallow export, `forkAt`) first checks the
-  snapshot-hydrated styled Text and MovableList containers, including lazily
-  encoded ones, and then rebuilds unreplayable containers the same way. Only the
-  root state of a shallow export uses the replay, since the snapshot state is
-  later than the root.
+  and is never given a replay. A transition that touches it runs without its
+  operations and then moves it separately (`#planSnapshotStates`): when the
+  installed state already has every forward operation (tracked as `applied`),
+  a Text is toggled by id and style version, O(delta) as for a state without
+  history; otherwise (for example an update imported while detached) it is
+  rebuilt from the snapshot state plus the later operations the target
+  includes (`#rebuildFromSnapshotState`, O(container size + its operations)).
+  Events come from the transition's recording, or from whole-container values
+  when style operations are crossed, since their ranges come from positions.
+  So the latest state, imports, and exports always equal the snapshot state
+  plus later operations; an older version cannot restore text deleted before
+  the snapshot. A full `#rebuildFromHistory` (the non-incremental fallback,
+  shallow export, `forkAt`) first checks the snapshot-hydrated styled Text and
+  MovableList containers, including lazily encoded ones, and then rebuilds
+  unreplayable containers the same way. Only the root state of a shallow
+  export uses the replay, since the snapshot state is later than the root.
+  `tests/snapshot-checkout.test.ts` checks random checkouts, detaches, and
+  imports on Rust rich-text histories (`rich-text-history.json`) against a
+  document that only imports.
 - Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
   packed Text span returns a new wrapper per lookup, so two concurrent deletes
   of one character used to delete it twice. A checkout that throws restores its

@@ -316,6 +316,108 @@ describe("checkout after a Rust rich-text snapshot import", () => {
   });
 });
 
+/**
+ * `rich-text-history.json`: for each seed, a Rust snapshot of 25 random Text
+ * inserts, deletes, and marks (bold/link/keep/pre expand after/none/both/
+ * before), four Rust updates from another peer that insert at the start, and
+ * the snapshot's versions.
+ */
+interface RichTextHistory {
+  readonly seed: number;
+  readonly snapshot: string;
+  readonly updates: readonly string[];
+  readonly versions: readonly Frontiers[];
+}
+
+const decodeBase64 = (text: string): Uint8Array =>
+  new Uint8Array(Buffer.from(text, "base64"));
+
+const canonicalDelta = (delta: readonly Delta<string>[]): unknown =>
+  delta.map((item) =>
+    "attributes" in item && item.attributes !== undefined
+      ? {
+          ...item,
+          attributes: Object.fromEntries(
+            Object.entries(item.attributes).sort(([left], [right]) =>
+              left < right ? -1 : left > right ? 1 : 0,
+            ),
+          ),
+        }
+      : item,
+  );
+
+describe("latest state of Rust rich text across checkouts", () => {
+  const histories = JSON.parse(
+    readFileSync(
+      new URL("./fixtures/rust/rich-text-history.json", import.meta.url),
+      "utf8",
+    ),
+  ) as RichTextHistory[];
+  for (const history of histories) {
+    test(`checkouts and imports keep the imported latest state (seed ${history.seed})`, () => {
+      const snapshot = decodeBase64(history.snapshot);
+      const updates = history.updates.map(decodeBase64);
+      const reference = new LoroDoc();
+      reference.import(snapshot);
+      for (const update of updates) reference.import(update);
+      const expected = canonicalDelta(reference.getText("t").toDelta());
+
+      let state = history.seed;
+      const random = (): number => {
+        state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+        return state / 2_147_483_648;
+      };
+      for (const subscribed of [false, true]) {
+        const doc = new LoroDoc();
+        doc.import(snapshot);
+        const mirror = new LoroDoc();
+        mirror.configTextStyle({
+          bold: { expand: "after" },
+          link: { expand: "none" },
+          keep: { expand: "both" },
+          pre: { expand: "before" },
+        });
+        mirror.getText("t").applyDelta(doc.getText("t").toDelta());
+        if (subscribed) {
+          doc.subscribe((batch: LoroEventBatch) => {
+            mirror.applyDiff(batch.events.map(({ target, diff }) => [target, diff]));
+          });
+        }
+        const versions = [...history.versions];
+        const mirrorMismatches: number[] = [];
+        let next = 0;
+        for (let step = 0; step < 16; step += 1) {
+          const choice = random();
+          if (choice < 0.5) {
+            doc.checkout(versions[Math.floor(random() * versions.length)]!);
+          } else if (choice < 0.65) {
+            doc.checkoutToLatest();
+          } else if (next < updates.length) {
+            if (random() < 0.5) doc.detach();
+            if (choice < 0.8) doc.import(updates[next++]!);
+            else doc.importBatch([updates[next++]!]);
+            versions.push(doc.oplogFrontiers());
+          }
+          if (
+            subscribed &&
+            JSON.stringify(canonicalDelta(mirror.getText("t").toDelta())) !==
+              JSON.stringify(canonicalDelta(doc.getText("t").toDelta()))
+          ) {
+            mirrorMismatches.push(step);
+          }
+        }
+        expect(mirrorMismatches).toEqual([]);
+        while (next < updates.length) doc.import(updates[next++]!);
+        doc.attach();
+        expect(canonicalDelta(doc.getText("t").toDelta())).toEqual(expected);
+        const again = new LoroDoc();
+        again.import(doc.export({ mode: "snapshot" }));
+        expect(canonicalDelta(again.getText("t").toDelta())).toEqual(expected);
+      }
+    });
+  }
+});
+
 describe("checkout events after a lazy snapshot import", () => {
   test("reports an unread nested container change as its delta", () => {
     const build = (): { doc: LoroDoc; before: Frontiers } => {

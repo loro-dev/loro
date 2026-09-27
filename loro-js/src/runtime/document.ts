@@ -206,15 +206,23 @@ type SnapshotSequenceState =
   // loro.js cannot replay this container's history to its snapshot state
   // (#completeSnapshotSequence). `state` is that state at `version`; every
   // transition rebuilds the container from it (#rebuildFromSnapshotState).
+  // `applied` covers the operations whose elements, deletions, and styles
+  // the installed state has; a transition that only crosses those toggles
+  // them by id (#planSnapshotStates).
   | {
       readonly kind: "unreplayable";
       readonly state: ContainerStateSnapshot;
       readonly version: VersionVector;
+      readonly applied: VersionVector;
     };
 
-interface SnapshotTransition {
-  readonly beforeValues: Map<string, unknown>;
-  readonly rebuilds: ReadonlySet<string>;
+interface SnapshotStatePlan {
+  // Toggled by id, with events in the transition's recording.
+  readonly recorded: Set<string>;
+  // Toggled by id, with whole-container events.
+  readonly toggled: Set<string>;
+  // Rebuilt from the snapshot state, with whole-container events.
+  readonly rebuilt: Set<string>;
 }
 
 interface SequenceFingerprint {
@@ -1125,7 +1133,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     );
     const allForwardRecords = this.#recordsInVersionRange(fromVersion, toVersion);
     const allRetreatRecords = this.#recordsInVersionRange(toVersion, fromVersion);
-    const { rebuilds } = this.#prepareSnapshotTransition(
+    const rebuilds = this.#prepareSnapshotTransition(
       [
         ...allCurrentToFromRetreat,
         ...allCurrentToFromForward,
@@ -1133,7 +1141,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         ...allForwardRecords,
       ],
       restoreVersion,
-      false,
     );
     const currentToFromForward = this.#withoutContainers(
       allCurrentToFromForward,
@@ -1189,7 +1196,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             undefined,
             currentToFromMoveMode,
           );
-          this.#rebuildFromSnapshotStates(rebuilds, fromVersion);
+          this.#moveSnapshotStates(
+            allCurrentToFromRetreat,
+            allCurrentToFromForward,
+            fromVersion,
+            rebuilds,
+          );
         } else {
           this.#rebuildFromHistory(fromVersion, restoreVersion);
         }
@@ -1205,12 +1217,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           beforeValues: new Map(),
           eventStates: new Map(),
         };
-        const rebuiltBefore = new Map<string, unknown>();
-        for (const key of rebuilds) {
-          const container = this.#containers.get(key);
-          if (container !== undefined)
-            rebuiltBefore.set(key, containerEventValue(container));
-        }
+        const plan = this.#planSnapshotStates(
+          allRetreatRecords,
+          allForwardRecords,
+          rebuilds,
+          true,
+        );
+        const wholeBefore = this.#snapshotStateValues(plan);
         if (useIncrementalTransition) {
           this.#applyVersionTransition(
             retreatRecords,
@@ -1222,10 +1235,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         } else {
           this.#applyRecords(forwardRecords, recording);
         }
-        this.#rebuildFromSnapshotStates(rebuilds, toVersion);
+        this.#applySnapshotStates(
+          plan,
+          allRetreatRecords,
+          allForwardRecords,
+          toVersion,
+          recording,
+        );
         before = recording.beforeValues;
         calculated = this.#recordedEventDiffs(recording, true);
-        for (const [key, value] of rebuiltBefore) {
+        for (const [key, value] of wholeBefore) {
           before.set(key, value);
           calculated.delete(key);
         }
@@ -1273,7 +1292,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               undefined,
               fromToToMoveMode,
             );
-            this.#rebuildFromSnapshotStates(rebuilds, fromVersion);
+            this.#moveSnapshotStates(
+              allForwardRecords,
+              allRetreatRecords,
+              fromVersion,
+              rebuilds,
+            );
             materializedVersion = fromVersion;
           }
           if (materializedVersion.compare(restoreVersion) !== 0) {
@@ -1284,7 +1308,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               undefined,
               currentToFromMoveMode,
             );
-            this.#rebuildFromSnapshotStates(rebuilds, restoreVersion);
+            this.#moveSnapshotStates(
+              allCurrentToFromForward,
+              allCurrentToFromRetreat,
+              restoreVersion,
+              rebuilds,
+            );
           }
         } else {
           this.#rebuildFromHistory(restoreVersion, materializedVersion);
@@ -1926,13 +1955,21 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     setVersion: () => void,
   ): { beforeValues: Map<string, unknown>; preparedDiffs: Map<string, Diff> } {
     const subscribed = this.#hasEventSubscribers();
-    const prepared = this.#prepareSnapshotTransition(
+    const rebuilds = this.#prepareSnapshotTransition(
       [...forwardRecords, ...retreatRecords],
       current,
+    );
+    const retreat = this.#withoutContainers(retreatRecords, rebuilds);
+    const forward = this.#withoutContainers(forwardRecords, rebuilds);
+    const plan = this.#planSnapshotStates(
+      retreatRecords,
+      forwardRecords,
+      rebuilds,
       subscribed,
     );
-    const retreat = this.#withoutContainers(retreatRecords, prepared.rebuilds);
-    const forward = this.#withoutContainers(forwardRecords, prepared.rebuilds);
+    const wholeBefore = subscribed
+      ? this.#snapshotStateValues(plan)
+      : new Map<string, unknown>();
     const previousCheckoutVersion = this.#checkoutVersion;
     const previousDetached = this.#detached;
     setVersion();
@@ -1965,7 +2002,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#rebuildFromHistory(target, current);
         return { beforeValues, preparedDiffs };
       }
-      this.#rebuildFromSnapshotStates(prepared.rebuilds, target);
+      this.#applySnapshotStates(plan, retreatRecords, forwardRecords, target, recording);
       if (recording !== undefined) {
         beforeValues = recording.beforeValues;
         preparedDiffs = this.#recordedEventDiffs(recording);
@@ -1976,7 +2013,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       this.#rebuildFromHistory(current, current);
       throw error;
     }
-    for (const [key, value] of prepared.beforeValues) {
+    for (const [key, value] of wholeBefore) {
       beforeValues.set(key, value);
       preparedDiffs.delete(key);
     }
@@ -3437,6 +3474,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     knownContainer?: LoroContainer,
   ): void {
     const container = knownContainer ?? this.#getOrCreateContainer(operation.container);
+    if (this.#snapshotSequences.size !== 0) {
+      const entry = this.#snapshotSequences.get(container.id);
+      if (
+        entry?.kind === "unreplayable" &&
+        operation.counter + operation.length > (entry.applied.get(changeId.peer) ?? 0)
+      ) {
+        entry.applied.set(changeId.peer, operation.counter + operation.length);
+      }
+    }
     const operationId = { peer: changeId.peer, counter: operation.counter };
     const lamport = changeLamport + (operation.counter - changeId.counter);
     const writer: LastWriter = { peer: changeId.peer, lamport };
@@ -4168,12 +4214,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             }
             const elements = sequenceElements(sequenceContainer);
             for (let offset = 0; offset < operation.length; offset += 1) {
-              elements.add(
-                sequence.findById({
-                  peer: change.id.peer,
-                  counter: operation.counter + offset,
-                })!,
-              );
+              // A container rebuilt from its snapshot state lacks the elements
+              // that the snapshot had already deleted.
+              const element = sequence.findById({
+                peer: change.id.peer,
+                counter: operation.counter + offset,
+              });
+              if (element !== undefined) elements.add(element);
             }
           } else if (
             content.type === "text-delete" ||
@@ -4900,22 +4947,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    * hydrated now. A snapshot-hydrated sequence is rebuilt from its own history
    * when the transition crosses a snapshot operation
    * (#completeSnapshotSequence). Unrelated containers are not touched.
-   * `rebuilds` lists the touched containers that loro.js cannot replay: the
-   * caller transitions without their operations, rebuilds them at the target
-   * from their snapshot state, and reports them as whole-container changes from
-   * `beforeValues`, which are captured only when `captureValues` is set.
+   * Returns the touched containers that loro.js cannot replay: the caller
+   * transitions without their operations and moves them separately
+   * (#planSnapshotStates).
    */
   #prepareSnapshotTransition(
     records: readonly HistoryRecord[],
     current: VersionVector,
-    captureValues: boolean,
-  ): SnapshotTransition {
-    const beforeValues = new Map<string, unknown>();
+  ): Set<string> {
     const rebuilds = new Set<string>();
     const lazy = this.#deferredSnapshotState;
-    if (lazy === undefined && this.#snapshotSequences.size === 0) {
-      return { beforeValues, rebuilds };
-    }
+    if (lazy === undefined && this.#snapshotSequences.size === 0) return rebuilds;
     // The first counter per peer of the operations on each touched container.
     const touched = new Map<
       string,
@@ -4962,9 +5004,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
       }
       rebuilds.add(key);
-      if (captureValues) beforeValues.set(key, containerEventValue(container));
     }
-    return { beforeValues, rebuilds };
+    return rebuilds;
   }
 
   /**
@@ -5021,6 +5062,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       kind: "unreplayable",
       state: this.#containerState(container),
       version: version.clone(),
+      applied: version.clone(),
     });
     return true;
   }
@@ -5098,11 +5140,133 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         version.compare(this.#historyVersion()) === 0 ? undefined : versionMap(version),
       );
     }
+    const applied = entry.version.clone();
+    for (const { peer, counter } of version._codecEntriesUnsorted()) {
+      if (counter > (applied.get(peer) ?? 0)) applied.set(peer, counter);
+    }
+    this.#snapshotSequences.set(key, { ...entry, applied });
     this.#dirtySnapshotContainers.add(key);
   }
 
-  #rebuildFromSnapshotStates(keys: ReadonlySet<string>, version: VersionVector): void {
-    for (const key of keys) this.#rebuildFromSnapshotState(key, version);
+  /**
+   * Plans how #applySnapshotStates moves the unreplayable containers in `keys`
+   * across a transition, given its full records. When the installed state has
+   * every forward operation (`applied`), a Text is toggled by id, as a
+   * transition of state without history is. Otherwise the container is
+   * rebuilt from its snapshot state. With `record`, a toggled container without
+   * style operations reports its events through the transition's recording;
+   * style ranges come from positions that loro.js cannot map, so the others
+   * need whole-container event values.
+   */
+  #planSnapshotStates(
+    retreat: readonly HistoryRecord[],
+    forward: readonly HistoryRecord[],
+    keys: ReadonlySet<string>,
+    record: boolean,
+  ): SnapshotStatePlan {
+    const plan: SnapshotStatePlan = {
+      recorded: new Set(),
+      toggled: new Set(),
+      rebuilt: new Set(),
+    };
+    if (keys.size === 0) return plan;
+    const styled = new Set<string>();
+    const unapplied = new Set<string>();
+    for (const [records, isForward] of [
+      [retreat, false],
+      [forward, true],
+    ] as const) {
+      for (const { change } of records) {
+        for (const operation of change.operations) {
+          const key = this.#containerKey(operation.container);
+          if (!keys.has(key)) continue;
+          if (operation.content.type === "text-mark") styled.add(key);
+          const entry = this.#snapshotSequences.get(key);
+          if (
+            isForward &&
+            entry?.kind === "unreplayable" &&
+            operation.counter + operation.length >
+              (entry.applied.get(change.id.peer) ?? 0)
+          ) {
+            unapplied.add(key);
+          }
+        }
+      }
+    }
+    for (const key of keys) {
+      if (unapplied.has(key) || !(this.#containers.get(key) instanceof LoroText)) {
+        plan.rebuilt.add(key);
+      } else if (record && !styled.has(key)) {
+        plan.recorded.add(key);
+      } else {
+        plan.toggled.add(key);
+      }
+    }
+    return plan;
+  }
+
+  /** Moves unreplayable containers to `target` as `plan` says. */
+  #applySnapshotStates(
+    plan: SnapshotStatePlan,
+    retreat: readonly HistoryRecord[],
+    forward: readonly HistoryRecord[],
+    target: VersionVector,
+    recording?: EventRecording,
+  ): void {
+    for (const key of plan.rebuilt) this.#rebuildFromSnapshotState(key, target);
+    for (const [group, groupRecording] of [
+      [plan.recorded, recording],
+      [plan.toggled, undefined],
+    ] as const) {
+      if (group.size === 0) continue;
+      this.#applyVersionTransition(
+        this.#onlyContainers(retreat, group),
+        this.#onlyContainers(forward, group),
+        target,
+        groupRecording,
+      );
+    }
+  }
+
+  /** #applySnapshotStates for a transition without events. */
+  #moveSnapshotStates(
+    retreat: readonly HistoryRecord[],
+    forward: readonly HistoryRecord[],
+    target: VersionVector,
+    keys: ReadonlySet<string>,
+  ): void {
+    this.#applySnapshotStates(
+      this.#planSnapshotStates(retreat, forward, keys, false),
+      retreat,
+      forward,
+      target,
+    );
+  }
+
+  /** Whole-container event values of the planned containers without recording. */
+  #snapshotStateValues(plan: SnapshotStatePlan): Map<string, unknown> {
+    const values = new Map<string, unknown>();
+    for (const key of [...plan.toggled, ...plan.rebuilt]) {
+      const container = this.#containers.get(key);
+      if (container !== undefined) values.set(key, containerEventValue(container));
+    }
+    return values;
+  }
+
+  /** `records` with only the operations on `containers`. */
+  #onlyContainers(
+    records: readonly HistoryRecord[],
+    containers: ReadonlySet<string>,
+  ): HistoryRecord[] {
+    return records.flatMap((record) => {
+      const operations = record.change.operations.filter((operation) =>
+        containers.has(this.#containerKey(operation.container)),
+      );
+      if (operations.length === record.change.operations.length) return [record];
+      return operations.length === 0
+        ? []
+        : [{ ...record, change: { ...record.change, operations } }];
+    });
   }
 
   /** `records` without the operations on `containers`. */
@@ -5877,10 +6041,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const latest = this.#historyVersion();
     const allForward = this.#recordsInVersionRange(current, latest);
     const allRetreat = this.#recordsInVersionRange(latest, current);
-    const { rebuilds } = this.#prepareSnapshotTransition(
+    const rebuilds = this.#prepareSnapshotTransition(
       [...allRetreat, ...allForward],
       current,
-      false,
     );
     const forward = this.#withoutContainers(allForward, rebuilds);
     const retreat = this.#withoutContainers(allRetreat, rebuilds);
@@ -5894,10 +6057,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     let restored = false;
     try {
       this.#applyVersionTransition(retreat, forward, latest, undefined, mode);
-      this.#rebuildFromSnapshotStates(rebuilds, latest);
+      this.#moveSnapshotStates(allRetreat, allForward, latest, rebuilds);
       const state = this.#encodeDeferredSnapshotState();
       this.#applyVersionTransition(forward, retreat, current, undefined, mode);
-      this.#rebuildFromSnapshotStates(rebuilds, current);
+      this.#moveSnapshotStates(allForward, allRetreat, current, rebuilds);
       restored = true;
       return state;
     } finally {
