@@ -98,4 +98,22 @@ describe("local tree positions", () => {
     doc.commit();
     expect(tree.toJSON().map((node) => node.id)).toEqual([a.id, c.id, b.id]);
   });
+
+  // Rust's is_ancestor_of treats a deleted node's parent as the deleted root.
+  test("moves a node under its own deleted child", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const parent = tree.createNode();
+    const child = tree.createNode(parent.id);
+    doc.commit();
+    tree.delete(child.id);
+    doc.commit();
+    const before = doc.opCount();
+    tree.move(parent.id, child.id, 0);
+    doc.commit();
+    expect(doc.opCount() - before).toBe(1);
+    expect(tree.toJSON()).toEqual([]);
+    expect(() => tree.move(child.id, child.id, 0)).toThrow(/below itself/);
+  });
 });

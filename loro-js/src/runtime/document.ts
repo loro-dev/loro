@@ -2597,12 +2597,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     const subject = parseTreeId(target);
     const parentId = parent === undefined ? undefined : parseTreeId(parent);
+    // Like Rust's is_ancestor_of: a deleted node's parent is the deleted
+    // root, so the walk stops there. It is bounded so that a malformed cycle
+    // cannot loop forever.
     let ancestor = parentId;
-    while (ancestor !== undefined) {
+    for (let steps = 0; ancestor !== undefined && steps <= tree._nodes.size; steps += 1) {
       if (idsEqual(ancestor, subject)) {
         throw new RangeError("cannot move a tree node below itself or its descendant");
       }
-      ancestor = tree._nodes.get(formatTreeId(ancestor))?.parent;
+      const record = tree._nodes.get(formatTreeId(ancestor));
+      ancestor = record === undefined || record.deleted ? undefined : record.parent;
     }
     // Rust's mov_with_txn: moving a node to where it already is records nothing.
     const record = tree._nodes.get(target)!;
