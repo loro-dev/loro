@@ -557,6 +557,211 @@ describe("diff and revertTo for containers attached by the range", () => {
       expect(a.toJSON()).toEqual({ m: {} });
     }
   });
+
+  test("undo keeps a later move from an excluded origin", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    list.insertContainer(0, new LoroText()).insert(0, "X");
+    list.push("A");
+    list.push("B");
+    doc.commit();
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      excludeOriginPrefixes: ["system"],
+    });
+    list.move(0, 2);
+    doc.commit();
+    list.move(2, 1);
+    doc.commit({ origin: "system" });
+    // As in Rust: the excluded move keeps X in place.
+    undo.undo();
+    expect(doc.toJSON()).toEqual({ l: ["A", "X", "B"] });
+  });
+
+  test("redo restores moves mixed with inserts in their original order", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    const a = list.insertContainer(0, new LoroText());
+    a.insert(0, "A");
+    const b = list.insertContainer(1, new LoroText());
+    b.insert(0, "B");
+    doc.commit();
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    doc.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [{ delete: 2 }, { insert: [`🦜:${b.id}`, "new", `🦜:${a.id}`] }],
+        },
+      ],
+    ]);
+    doc.commit();
+    const applied = doc.toJSON();
+    expect(applied).toEqual({ l: ["B", "new", "A"] });
+    for (let round = 0; round < 3; round += 1) {
+      expect(undo.undo()).toBe(true);
+      expect(doc.toJSON()).toEqual({ l: ["A", "B"] });
+      expect(undo.redo()).toBe(true);
+      expect(doc.toJSON()).toEqual(applied);
+    }
+  });
+
+  test("moves a child of a lazily imported nested list", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    const nested = source
+      .getMovableList("outer")
+      .insertContainer(0, new LoroMovableList());
+    const text = nested.insertContainer(0, new LoroText());
+    text.insert(0, "hello");
+    nested.push("tail");
+    source.commit();
+    const doc = new LoroDoc();
+    doc.setPeerId(2);
+    doc.import(source.export({ mode: "snapshot" }));
+    doc.applyDiff([
+      [
+        nested.id,
+        {
+          type: "list",
+          diff: [{ delete: 1 }, { retain: 1 }, { insert: [`🦜:${text.id}`] }],
+        },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toEqual({ outer: [["tail", "hello"]] });
+  });
+
+  test("rejects malformed or out-of-bounds list deltas without applying them", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    const text = list.insertContainer(0, new LoroText());
+    text.insert(0, "T");
+    list.push("s");
+    doc.getMap("m").set("k", 1);
+    doc.commit();
+    const before = doc.toJSON();
+    for (const diff of [
+      [{ delete: 1e100 }, { insert: [`🦜:${text.id}`] }],
+      [{ delete: Infinity }],
+      [{ delete: 1 }, { retain: 99 }, { insert: [`🦜:${text.id}`] }],
+      [{ retain: -1 }],
+      [{ retain: 1, delete: 1 }],
+    ]) {
+      expect(() =>
+        doc.applyDiff([
+          ["cid:root-m:Map", { type: "map", updated: { k: 2 } }],
+          [list.id, { type: "list", diff } as never],
+        ]),
+      ).toThrow(/list diff/u);
+      expect(doc.toJSON()).toEqual(before);
+    }
+  });
+
+  test("deletes around a moved child without walking the deleted range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    const text = list.insertContainer(0, new LoroText());
+    text.insert(0, "X");
+    for (let index = 0; index < 200_000; index += 1) list.push(index);
+    doc.commit();
+    doc.applyDiff([
+      [
+        list.id,
+        { type: "list", diff: [{ delete: 200_001 }, { insert: [`🦜:${text.id}`] }] },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toEqual({ l: ["X"] });
+    expect((list.get(0) as LoroText).id).toBe(text.id);
+  });
+
+  test("undo restores a mergeable child overwritten by another value", () => {
+    const redone: { overwrite: string; matches: boolean }[] = [];
+    for (const overwrite of ["scalar", "text"] as const) {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const map = doc.getMap("m");
+      const child = map.ensureMergeableText("s");
+      child.insert(0, "hello");
+      doc.commit();
+      const undo = new UndoManager(doc, { mergeInterval: 0 });
+      if (overwrite === "scalar") map.set("s", "scalar");
+      else map.setContainer("s", new LoroText()).insert(0, "other");
+      doc.commit();
+      const overwritten = doc.toJSON();
+      expect(undo.undo()).toBe(true);
+      expect(doc.toJSON()).toEqual({ m: { s: "hello" } });
+      expect((map.get("s") as LoroText).id).toBe(child.id);
+      expect(undo.redo()).toBe(true);
+      // Redoing an overwrite by a container re-creates it empty; main does the
+      // same for regular containers, so only the scalar case is checked here.
+      redone.push({
+        overwrite,
+        matches: JSON.stringify(doc.toJSON()) === JSON.stringify(overwritten),
+      });
+    }
+    expect(redone.filter(({ overwrite }) => overwrite === "scalar")).toEqual([
+      { overwrite: "scalar", matches: true },
+    ]);
+  });
+
+  test("revives a deep chain in linear time with exact delete indices", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("t");
+    tree.enableFractionalIndex(0);
+    const root = tree.createNode();
+    let node = root;
+    for (let depth = 0; depth < 8000; depth += 1) node = node.createNode();
+    doc.commit();
+    const before = doc.frontiers();
+    tree.delete(root.id);
+    doc.commit();
+    const started = performance.now();
+    const diff = doc.diff(doc.frontiers(), before, true);
+    // e7415e21 took about 18 ms here; the quadratic walk took about 23 s.
+    expect(performance.now() - started).toBeLessThan(5000);
+    const items = diff.find(([id]) => id === tree.id)![1] as { diff: unknown[] };
+    expect(items.diff).toHaveLength(8001);
+  }, 60_000);
+
+  test("reports the index at `from` for a moved-in node deleted before recreation", () => {
+    for (const depth of [1, 3]) {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const tree = doc.getTree("t");
+      tree.enableFractionalIndex(0);
+      const parent = tree.createNode();
+      let child = parent.createNode();
+      for (let level = 1; level < depth; level += 1) child = child.createNode();
+      child.data.set("k", "v");
+      const sibling = tree.createNode();
+      doc.commit();
+      const before = doc.frontiers();
+      tree.delete(parent.id);
+      doc.commit();
+      tree.move(child.id, undefined, 0);
+      doc.commit();
+      // Roots at `from`: [child, sibling].
+      expect(tree.roots().map((root) => root.id)).toEqual([child.id, sibling.id]);
+      const diff = doc.diff(doc.frontiers(), before, true);
+      const items = diff.find(([id]) => id === tree.id)![1] as {
+        diff: { action: string; target: string; oldIndex?: number; oldParent?: string }[];
+      };
+      expect(items.diff[0]).toMatchObject({
+        action: "delete",
+        target: child.id,
+        oldIndex: 0,
+        oldParent: undefined,
+      });
+    }
+  });
 });
 
 interface TreeJson {

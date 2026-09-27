@@ -71,6 +71,10 @@ export class UndoManager {
   #onPush: UndoConfig["onPush"];
   #onPop: UndoConfig["onPop"];
   #applying = false;
+  // Every counter range this manager recorded or wrote while undoing or
+  // redoing, per peer, merged when adjacent. Later moves inside these do not
+  // block undoing an earlier move; any other later move does.
+  readonly #tracked = new Map<bigint, CounterSpan[]>();
   #paused = false;
   #groupDepth = 0;
   #unsubscribe: () => void;
@@ -234,6 +238,7 @@ export class UndoManager {
       (spans.length === 1 ? spans[0] : undefined);
     if (span === undefined || span.length === 0) return;
     this.#peer = span.peer;
+    this.#track(span.peer, { start: span.counter, end: span.counter + span.length });
     const now = Date.now();
     const item: UndoItem = {
       peer: span.peer,
@@ -274,7 +279,7 @@ export class UndoManager {
     const before = this.#doc.frontiers();
     this.#applying = true;
     try {
-      this.#doc._undoIdSpan(item.peer, item.range);
+      this.#doc._undoIdSpan(item.peer, item.range, (id) => this.#isTracked(id));
       this.#doc.commit({ origin: isUndo ? "undo" : "redo" });
       const after = this.#doc.frontiers();
       const spans = this.#doc.findIdSpansBetween(before, after).forward;
@@ -289,6 +294,7 @@ export class UndoManager {
       if (span === undefined || span.length === 0) return undefined;
       const range = { start: span.counter, end: span.counter + span.length };
       this.#peer = span.peer;
+      this.#track(span.peer, range);
       return {
         peer: span.peer,
         range,
@@ -299,6 +305,35 @@ export class UndoManager {
     } finally {
       this.#applying = false;
     }
+  }
+
+  #track(peer: PeerID, range: CounterSpan): void {
+    const key = BigInt(peer);
+    let ranges = this.#tracked.get(key);
+    if (ranges === undefined) {
+      ranges = [];
+      this.#tracked.set(key, ranges);
+    }
+    const last = ranges.at(-1);
+    if (last !== undefined && last.end === range.start) {
+      ranges[ranges.length - 1] = { start: last.start, end: range.end };
+    } else {
+      ranges.push({ ...range });
+    }
+  }
+
+  #isTracked(id: { readonly peer: bigint; readonly counter: number }): boolean {
+    const ranges = this.#tracked.get(id.peer);
+    if (ranges === undefined) return false;
+    let low = 0;
+    let high = ranges.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (ranges[middle]!.start <= id.counter) low = middle + 1;
+      else high = middle;
+    }
+    const range = ranges[low - 1];
+    return range !== undefined && id.counter < range.end;
   }
 
   #pushUndo(item: UndoItem, clearRedo: boolean): void {

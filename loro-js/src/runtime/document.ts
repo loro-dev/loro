@@ -289,7 +289,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   // Tree placements in the shallow root state, indexed per tree on first use.
   #shallowRootTreePlacements = new WeakMap<
     StateSnapshotStore,
-    Map<string, Map<string, { deleted: boolean; parent: CodecId | undefined }>>
+    Map<string, Map<string, TreePlacement>>
   >();
   #textStyles = new Map<string, TextStyleExpand>([
     ["bold", "after"],
@@ -1268,6 +1268,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     delta: readonly Delta<unknown[]>[],
     containerRemap: Map<ContainerID, Container>,
   ): boolean {
+    // Children of a lazily imported list only exist once it is decoded.
+    list._ensureHydrated();
     // Deleted ranges in original (pre-delta) indices, in ascending order.
     const deletedRanges: { readonly start: number; readonly length: number }[] = [];
     const insertedChildren: ContainerID[] = [];
@@ -1375,20 +1377,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
 
     // Delete the deleted ranges back to front, keeping the moved elements.
-    const kept = new Set(
-      [...moved.values()]
-        .filter(({ element }) => movedElements.has(element))
-        .map(({ index: position }) => position),
-    );
+    // Only the gaps between kept positions are deleted, so the work follows
+    // the number of moved children, not the length of the deleted ranges.
+    const kept = [...moved.values()]
+      .filter(({ element }) => movedElements.has(element))
+      .map(({ index: position }) => position)
+      .sort((left, right) => right - left);
+    let keptIndex = 0;
     for (let rangeIndex = deletedRanges.length - 1; rangeIndex >= 0; rangeIndex -= 1) {
       const range = deletedRanges[rangeIndex]!;
       let end = range.start + range.length;
-      for (let position = end - 1; position >= range.start - 1; position -= 1) {
-        if (position >= range.start && !kept.has(position)) continue;
-        const start = position + 1;
-        if (end > start) list.delete(start, end - start);
+      while (keptIndex < kept.length && kept[keptIndex]! >= range.start) {
+        const position = kept[keptIndex]!;
+        keptIndex += 1;
+        if (position >= end) continue;
+        if (end > position + 1) list.delete(position + 1, end - position - 1);
         end = position;
       }
+      if (end > range.start) list.delete(range.start, end - range.start);
     }
 
     for (const item of items) {
@@ -1436,14 +1442,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     items: readonly TreeDiffItem[],
     from: VersionVector,
   ): TreeDiffItem[] {
+    const aliveCache = new Map<string, boolean>();
+    const aliveAtFrom = (node: CodecId): boolean =>
+      this.#treeNodeAliveAt(tree, node, from, aliveCache);
     const revived = new Set<string>();
     for (const item of items) {
       if (item.action === "delete") continue;
       const record = tree._nodes.get(item.target);
       if (record === undefined || this.#isTreeRecordHidden(tree, record)) continue;
-      if (item.action === "create" || !this.#treeNodeAliveAt(tree, record.id, from)) {
-        revived.add(item.target);
-      }
+      if (item.action === "create" || !aliveAtFrom(record.id)) revived.add(item.target);
     }
     if (revived.size === 0) return [...items];
     const insideRevived = (target: TreeID): boolean => {
@@ -1455,11 +1462,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
       return false;
     };
-    const originals = new Map(items.map((item) => [item.target, item] as const));
-    const output: TreeDiffItem[] = [];
+
+    const changed = new Set(items.map((item) => item.target));
+    const deletes: TreeDiffItem[] = [];
+    const deletedSoFar: { parent: string; key: TreeSiblingKey }[] = [];
+    const body: TreeDiffItem[] = [];
     for (const item of items) {
       if (item.action === "delete" || !revived.has(item.target)) {
-        if (item.action === "delete" || !insideRevived(item.target)) output.push(item);
+        if (item.action === "delete" || !insideRevived(item.target)) body.push(item);
         continue;
       }
       if (insideRevived(item.target)) continue;
@@ -1485,36 +1495,47 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         stack.push({ children: tree._childrenOf(record.id), next: 0 });
       }
       // A node of the subtree that was already alive at `from` (moved in, not
-      // revived) is recreated with the rest, so its old copy is deleted first,
-      // as Rust does. Deleting the topmost such nodes removes the others.
-      const aliveAtFrom = new Map<string, TreeNodeRecord>();
+      // revived) is recreated with the rest, so its old copy is deleted, as
+      // Rust does. Deleting the topmost such nodes removes the others.
+      const alive = new Set<string>();
+      for (let position = 1; position < records.length; position += 1) {
+        if (aliveAtFrom(records[position]!.id)) alive.add(idKey(records[position]!.id));
+      }
       for (let position = 1; position < records.length; position += 1) {
         const record = records[position]!;
-        if (this.#treeNodeAliveAt(tree, record.id, from)) {
-          aliveAtFrom.set(idKey(record.id), record);
+        if (!alive.has(idKey(record.id))) continue;
+        const placement = this.#treeNodePlacementAt(tree, record.id, from)!;
+        if (placement.parent !== undefined && alive.has(idKey(placement.parent)))
+          continue;
+        // Emitted before every other item, so the index is the one at `from`,
+        // less the siblings deleted by earlier such items.
+        const parentKey = placement.parent === undefined ? "" : idKey(placement.parent);
+        const key = siblingKey(record.id, placement);
+        let oldIndex = this.#treeIndexAt(
+          tree,
+          record.id,
+          placement.parent,
+          key,
+          from,
+          changed,
+        );
+        for (const deleted of deletedSoFar) {
+          if (deleted.parent === parentKey && compareSiblingKeys(deleted.key, key) < 0) {
+            oldIndex -= 1;
+          }
         }
-      }
-      for (const record of aliveAtFrom.values()) {
-        const parentAtFrom = this.#treeNodePlacementAt(tree, record.id, from)?.parent;
-        if (parentAtFrom !== undefined && aliveAtFrom.has(idKey(parentAtFrom))) continue;
-        const target = formatTreeId(record.id);
-        const original = originals.get(target);
-        output.push({
-          target,
+        deletedSoFar.push({ parent: parentKey, key });
+        deletes.push({
+          target: formatTreeId(record.id),
           action: "delete",
           oldParent:
-            original !== undefined && original.action === "move"
-              ? original.oldParent
-              : parentAtFrom === undefined
-                ? undefined
-                : formatTreeId(parentAtFrom),
-          oldIndex:
-            original !== undefined && original.action === "move" ? original.oldIndex : 0,
+            placement.parent === undefined ? undefined : formatTreeId(placement.parent),
+          oldIndex,
         });
       }
       for (let position = 0; position < records.length; position += 1) {
         const record = records[position]!;
-        output.push({
+        body.push({
           target: formatTreeId(record.id),
           action: "create",
           parent: record.parent === undefined ? undefined : formatTreeId(record.parent),
@@ -1523,7 +1544,40 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         });
       }
     }
-    return output;
+    return [...deletes, ...body];
+  }
+
+  /**
+   * `node`'s index among its siblings under `parent` at `from`. Siblings whose
+   * placement did not change in the range are the current children; the
+   * changed ones are resolved from their placement at `from`.
+   */
+  #treeIndexAt(
+    tree: LoroTree,
+    node: CodecId,
+    parent: CodecId | undefined,
+    key: TreeSiblingKey,
+    from: VersionVector,
+    changed: ReadonlySet<string>,
+  ): number {
+    let index = 0;
+    const parentKey = parent === undefined ? undefined : idKey(parent);
+    for (const child of tree._childrenOf(parent)) {
+      const target = formatTreeId(child.id);
+      if (changed.has(target) || idKey(child.id) === idKey(node)) continue;
+      if (compareSiblingKeys(siblingKey(child.id, child), key) < 0) index += 1;
+    }
+    for (const target of changed) {
+      const record = tree._nodes.get(target);
+      if (record === undefined || idKey(record.id) === idKey(node)) continue;
+      const placement = this.#treeNodePlacementAt(tree, record.id, from);
+      if (placement === undefined || placement.deleted) continue;
+      const placementParent =
+        placement.parent === undefined ? undefined : idKey(placement.parent);
+      if (placementParent !== parentKey) continue;
+      if (compareSiblingKeys(siblingKey(record.id, placement), key) < 0) index += 1;
+    }
+    return index;
   }
 
   #isTreeRecordHidden(tree: LoroTree, record: TreeNodeRecord): boolean {
@@ -1537,10 +1591,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return false;
   }
 
-  #shallowRootTreePlacement(
-    tree: LoroTree,
-    nodeKey: string,
-  ): { deleted: boolean; parent: CodecId | undefined } | undefined {
+  #shallowRootTreePlacement(tree: LoroTree, nodeKey: string): TreePlacement | undefined {
     const store = this.#shallowRootStore;
     const treeId = tree._codecId;
     if (store === undefined || store.kind !== "sstable" || treeId === undefined) {
@@ -1570,6 +1621,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               node.parentIndexPlusTwo >= 2n
                 ? ids[Number(node.parentIndexPlusTwo - 2n)]
                 : undefined,
+            position: state.positions[node.fractionalIndexIndex]!,
+            writer: {
+              peer: state.peers[Number(node.lastSetPeerIndex)]!,
+              lamport: node.lastSetCounter + node.lastSetLamportSub,
+            },
           });
         }
       }
@@ -1583,7 +1639,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     tree: LoroTree,
     node: CodecId,
     version: VersionVector,
-  ): { deleted: boolean; parent: CodecId | undefined } | undefined {
+  ): TreePlacement | undefined {
     const key = idKey(node);
     const operations = this.#treeOperationHistory.get(tree.id)?.get(key);
     if (operations === undefined) {
@@ -1591,7 +1647,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const record = tree._nodes.get(formatTreeId(node));
       return record === undefined
         ? undefined
-        : { deleted: record.deleted, parent: record.parent };
+        : {
+            deleted: record.deleted,
+            parent: record.parent,
+            position: record.position,
+            writer: record.writer,
+          };
     }
     const winner = latestIncludedOperation(operations, version);
     if (winner === undefined) {
@@ -1601,23 +1662,61 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     const content = winner.operation.content;
     if (content.type !== "tree-create" && content.type !== "tree-move") {
-      return { deleted: true, parent: undefined };
+      return {
+        deleted: true,
+        parent: undefined,
+        position: EMPTY_BYTES,
+        writer: winner.writer,
+      };
     }
-    return { deleted: false, parent: content.parent };
+    return {
+      deleted: false,
+      parent: content.parent,
+      position: content.position,
+      writer: winner.writer,
+    };
   }
 
-  /** Whether `node` and all of its ancestors are alive at `version`. */
-  #treeNodeAliveAt(tree: LoroTree, node: CodecId, version: VersionVector): boolean {
-    const visited = new Set<string>();
-    for (let current: CodecId | undefined = node; current !== undefined; ) {
+  /**
+   * Whether `node` and all of its ancestors are alive at `version`. `cache`
+   * memoizes every node on the walked path, so a whole subtree resolves in
+   * time linear in its size.
+   */
+  #treeNodeAliveAt(
+    tree: LoroTree,
+    node: CodecId,
+    version: VersionVector,
+    cache: Map<string, boolean> = new Map(),
+  ): boolean {
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let result: boolean | undefined;
+    for (let current: CodecId | undefined = node; ; ) {
+      if (current === undefined) {
+        result = true;
+        break;
+      }
       const key = idKey(current);
-      if (visited.has(key)) return false;
-      visited.add(key);
+      const cached = cache.get(key);
+      if (cached !== undefined) {
+        result = cached;
+        break;
+      }
+      if (onPath.has(key)) {
+        result = false;
+        break;
+      }
+      path.push(key);
+      onPath.add(key);
       const placement = this.#treeNodePlacementAt(tree, current, version);
-      if (placement === undefined || placement.deleted) return false;
+      if (placement === undefined || placement.deleted) {
+        result = false;
+        break;
+      }
       current = placement.parent;
     }
-    return true;
+    for (const key of path) cache.set(key, result);
+    return result;
   }
 
   /** Child containers that a map, list, or tree diff of `parent` attaches. */
@@ -1675,12 +1774,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       throw new Error("cannot edit a detached document; call attach() first");
     }
 
-    const containerRemap = new Map<ContainerID, Container>();
-    const treeRemap = new Map<TreeID, TreeID>();
+    // Validate every entry before changing anything, so a malformed batch is
+    // rejected as a whole instead of being partly applied.
     for (const entry of diffBatch) {
       if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
         throw new TypeError("each diff entry must be a [ContainerID, Diff] tuple");
       }
+      const diff = entry[1] as Diff | JsonDiff;
+      if (diff?.type !== "list") continue;
+      const existing = this.#resolveDiffContainer(entry[0] as ContainerID, new Map());
+      validateListDelta(
+        diff.diff,
+        existing instanceof LoroList ? existing.length : undefined,
+      );
+    }
+
+    const containerRemap = new Map<ContainerID, Container>();
+    const treeRemap = new Map<TreeID, TreeID>();
+    for (const entry of diffBatch) {
       const sourceId = entry[0] as ContainerID;
       const diff = entry[1];
       const container = this.#resolveDiffContainer(sourceId, containerRemap);
@@ -1709,10 +1820,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (parsed.kind === "root" && !isMergeableContainerId(parsed)) {
       return this.#getOrCreateContainer(parsed) as Container;
     }
-    const existing = this.#containers.get(formatContainerId(parsed)) as
-      | Container
-      | undefined;
-    return existing !== undefined && !this._isContainerDeleted(existing)
+    // Also resolves a child still encoded in a lazily imported snapshot.
+    const existing = this.getContainerById(sourceId);
+    return existing !== undefined && !this._isContainerDeleted(existing as LoroContainer)
       ? existing
       : undefined;
   }
@@ -1760,6 +1870,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
 
     if (!(container instanceof LoroList)) throw diffKindMismatch(container, diff.type);
+    validateListDelta(diff.diff, container.length);
     if (
       container instanceof LoroMovableList &&
       this.#applyMovableListMoves(container, diff.diff, containerRemap)
@@ -2548,9 +2659,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return parent !== undefined;
   }
 
-  _undoIdSpan(peer: PeerID, range: CounterSpan): void {
+  /**
+   * `isTracked` tells whether an op belongs to the calling UndoManager's
+   * history (edits it recorded, including undone ones, and the ops its undo
+   * and redo wrote). Without it, every op of this document's peer counts.
+   */
+  _undoIdSpan(
+    peer: PeerID,
+    range: CounterSpan,
+    isTracked: (id: CodecId) => boolean = (id) => id.peer === this.#peer,
+  ): void {
     this.#commit({}, true);
     this.#materializeDeferredHistory();
+    // Ops written by this undo call itself (inverses of later ops in the same
+    // item) are tracked too; the manager only learns their span afterwards.
+    const writer = this.#peer;
+    const writtenFrom = this.oplogVersion().get(writer) ?? 0;
+    const tracked = (id: CodecId): boolean =>
+      (id.peer === writer && id.counter >= writtenFrom) || isTracked(id);
     const parsedPeer = parsePeerId(peer);
     const records = this.#historyByPeer.get(parsedPeer) ?? [];
     let recordIndex = Math.min(
@@ -2568,7 +2694,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       for (; operationIndex >= 0; operationIndex -= 1) {
         const operation = record.change.operations[operationIndex]!;
         if (operation.counter + operation.length <= range.start) break;
-        this.#undoOperation(record, operation, parsedPeer, range);
+        this.#undoOperation(record, operation, parsedPeer, range, tracked);
       }
     }
   }
@@ -2589,6 +2715,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     operation: DecodedOperation,
     peer: bigint,
     range: CounterSpan,
+    isTracked: (id: CodecId) => boolean,
   ): void {
     const container = this.#containers.get(formatContainerId(operation.container));
     if (container === undefined) return;
@@ -2657,6 +2784,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             content,
             record.change.id.peer,
             operation.counter,
+            isTracked,
           );
         }
         return;
@@ -2676,6 +2804,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     content: Extract<DecodedOperationContent, { type: "movable-list-move" }>,
     peer: bigint,
     counter: number,
+    isTracked: (id: CodecId) => boolean,
   ): void {
     const element = list._sequence.findByLamport(
       content.elementId.peer,
@@ -2691,14 +2820,40 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       metaIndex -= 1;
     }
     if (metaIndex < 0) return;
-    // Later moves by this document (e.g. the inverse ops written while undoing
-    // a later move in the same group) do not block undoing this one; a later
-    // remote move does.
+    // Later moves the UndoManager tracks (edits it recorded and undid, and the
+    // inverse ops it wrote) do not block undoing this one. Any other later
+    // move, remote or from an excluded origin, keeps its position, as in Rust.
     for (let later = metaIndex + 1; later < history.length; later += 1) {
-      if (history[later]!.id.peer !== this.#peer) return;
+      if (!isTracked(history[later]!.id)) return;
     }
     const meta = history[metaIndex]!;
     const from = list._sequence.visibleIndexOf(element)!;
+    if (meta.beforePhysicalNext !== undefined) {
+      // Put the element back at its exact physical slot, next to deleted
+      // neighbors too, so a later restore of those keeps the relative order.
+      const before =
+        meta.beforePhysicalNext === null
+          ? undefined
+          : list._sequence.findById(meta.beforePhysicalNext);
+      if (meta.beforePhysicalNext === null || before !== undefined) {
+        const physicalFrom = list._sequence.physicalIndexOf(element)!;
+        let to =
+          before === undefined ? list.length - 1 : list._sequence.visibleIndexOf(before)!;
+        if (
+          before !== undefined &&
+          physicalFrom < list._sequence.physicalIndexOf(before)!
+        ) {
+          to -= 1;
+        }
+        list._physicalMoveHint = { element, before };
+        try {
+          this._movableMove(list, from, to);
+        } finally {
+          list._physicalMoveHint = undefined;
+        }
+        return;
+      }
+    }
     const visibleIndex = (id: CodecId | undefined): number | undefined => {
       if (id === undefined) return undefined;
       const neighbor = list._sequence.findById(id);
@@ -2851,7 +3006,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       // Restore the marker only: the child keeps its deterministic cid, so its
       // hidden state and remote edits made while it was hidden come back, as in
       // Rust (loro-dev/loro#1134).
-      ensureMergeableChild(map, content.key, codecTypeToPublic(mergeableType));
+      // The key may now hold another value (a later overwrite being undone).
+      this._mapEnsureMergeable(map, content.key, codecTypeToPublic(mergeableType), true);
       return;
     }
     const value = this.#materializeMapValue(map, content.key, rawValue);
@@ -2970,7 +3126,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }));
   }
 
-  _mapEnsureMergeable(container: LoroMap, key: string, type: ContainerType): Container {
+  /** `overwrite` replaces a non-mergeable value (undo restoring a marker). */
+  _mapEnsureMergeable(
+    container: LoroMap,
+    key: string,
+    type: ContainerType,
+    overwrite = false,
+  ): Container {
     const parentId = container._codecId;
     if (parentId === undefined || container._doc !== this) {
       throw new Error("cannot ensure a mergeable child on a detached map");
@@ -2982,7 +3144,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const existing = container._entries.get(key);
     if (existing !== undefined && !existing.deleted && existing.rawValue !== null) {
       const existingType = parseMergeableMarker(parentId, key, existing.rawValue);
-      if (existingType === undefined) {
+      if (existingType === undefined && !overwrite) {
         throw new TypeError(
           `cannot create a mergeable ${type} at key ${JSON.stringify(key)}: ` +
             "the key already holds a non-mergeable value",
@@ -8244,6 +8406,7 @@ function unicodeScalarLength(value: string): number {
 
 /** Rust's `FractionalIndex::default()`, encoded for nodes under the deleted root. */
 const DEFAULT_TREE_POSITION = new Uint8Array([0x80]);
+const EMPTY_BYTES = new Uint8Array();
 
 function compareWriter(left: LastWriter, right: LastWriter): number {
   return (
@@ -8780,6 +8943,75 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
+}
+
+interface TreePlacement {
+  readonly deleted: boolean;
+  readonly parent: CodecId | undefined;
+  readonly position: Uint8Array;
+  readonly writer: LastWriter;
+}
+
+/** Sibling order of tree nodes: position, then last writer, then id. */
+interface TreeSiblingKey {
+  readonly position: Uint8Array;
+  readonly writer: LastWriter;
+  readonly id: CodecId;
+}
+
+function siblingKey(
+  id: CodecId,
+  placement: { readonly position: Uint8Array; readonly writer: LastWriter },
+): TreeSiblingKey {
+  return { position: placement.position, writer: placement.writer, id };
+}
+
+function compareSiblingKeys(left: TreeSiblingKey, right: TreeSiblingKey): number {
+  return (
+    compareBytes(left.position, right.position) ||
+    compareWriter(left.writer, right.writer) ||
+    (left.id.peer < right.id.peer ? -1 : left.id.peer > right.id.peer ? 1 : 0) ||
+    left.id.counter - right.id.counter
+  );
+}
+
+/**
+ * Rejects a list delta that is malformed or, when `length` is known, consumes
+ * more elements than the list has. Counts must be non-negative safe integers.
+ */
+function validateListDelta(delta: unknown, length: number | undefined): void {
+  if (!Array.isArray(delta)) throw new TypeError("list diff must be an array");
+  const count = (value: unknown, name: string): number => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`list diff ${name} must be a non-negative safe integer`);
+    }
+    return value;
+  };
+  let consumed = 0;
+  for (const item of delta as unknown[]) {
+    if (typeof item !== "object" || item === null) {
+      throw new TypeError("list diff items must be objects");
+    }
+    const keys = ["retain", "delete", "insert"].filter((key) => key in item);
+    if (keys.length !== 1) {
+      throw new TypeError("list diff items need exactly one of retain, delete, insert");
+    }
+    if ("insert" in item) {
+      if (!Array.isArray((item as { insert: unknown }).insert)) {
+        throw new TypeError("list diff insert must be an array");
+      }
+      continue;
+    }
+    consumed +=
+      "retain" in item
+        ? count((item as { retain: unknown }).retain, "retain")
+        : count((item as { delete: unknown }).delete, "delete");
+    if (length !== undefined && consumed > length) {
+      throw new RangeError(
+        `list diff consumes ${consumed} items but the list has ${length}`,
+      );
+    }
+  }
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {

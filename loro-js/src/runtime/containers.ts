@@ -70,6 +70,13 @@ export interface SequenceMoveMeta {
   readonly beforeNext: CodecId | undefined;
   readonly afterPrevious: CodecId | undefined;
   readonly afterNext: CodecId | undefined;
+  /**
+   * The element physically after the moved one before the move, deleted or
+   * not; `null` when it was last. Undo puts the element back there, so undone
+   * moves and restored deletions keep their relative order. Undefined when
+   * unknown (e.g. metadata rebuilt from a snapshot).
+   */
+  readonly beforePhysicalNext?: CodecId | null | undefined;
 }
 
 export type CausalVersion = ReadonlyMap<bigint, number>;
@@ -2056,6 +2063,11 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     return this._sequence.atVisible(pos)?.id.peer.toString();
   }
 
+  /** Physical placement for the next `_applyMove` of `element` (used by undo). */
+  _physicalMoveHint:
+    | { readonly element: SequenceElement; readonly before: SequenceElement | undefined }
+    | undefined;
+
   _applyMove(
     from: number,
     to: number,
@@ -2066,12 +2078,24 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     if (element === undefined) return;
     const beforePrevious = this._sequence.previousVisible(element)?.id;
     const beforeNext = this._sequence.nextVisible(element)?.id;
-    this._sequence.moveVisible(from, to);
+    const physical = this._sequence.physicalIndexOf(element);
+    const beforePhysicalNext =
+      physical === undefined
+        ? undefined
+        : (this._sequence.atPhysical(physical + 1)?.id ?? null);
+    const hint = this._physicalMoveHint;
+    this._physicalMoveHint = undefined;
+    if (hint !== undefined && hint.element === element) {
+      this._sequence.moveBefore(element, hint.before);
+    } else {
+      this._sequence.moveVisible(from, to);
+    }
     if (operation === undefined) return;
     const meta: SequenceMoveMeta = {
       ...operation,
       beforePrevious,
       beforeNext,
+      beforePhysicalNext,
       afterPrevious: this._sequence.previousVisible(element)?.id,
       afterNext: this._sequence.nextVisible(element)?.id,
     };
