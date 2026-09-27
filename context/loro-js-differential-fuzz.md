@@ -78,21 +78,56 @@ lands.
 
 ## Divergences found on main (2026-09-28)
 
-Fixed in separate PRs (#1139, #1140, and the `fix/loro-js-*` branches listed in
-the pending map): Fugue insert ordering after the origin's last child, doubled
-checkout events for concurrent deletes, deletes imported while detached,
-`checkout(currentFrontiers)` detaching, the shallow root not being a critical
-version, and local op generation (absent-key map delete, zero counter
-increment, text delete run order).
+Fixed in separate PRs: Fugue insert order after the origin's last child
+(#1139), doubled checkout events for concurrent deletes (#1140), a
+`checkout(currentFrontiers)` that detached (#1143), shallow roots that were
+not critical versions (#1144), local op generation for absent-key map deletes,
+zero counter increments, and text delete run order (#1145), deletes imported
+while detached (#1146), liveness of containers under deleted ancestors
+(#1147), local tree positions and no-op moves (#1148), and events for child
+containers that a checkout attaches (#1150, on #1131).
 
 Still open, so `CI_RUNS` does not enable them yet:
 
-- Tree: concurrent moves can form a cycle (both nodes disappear, and a later
-  local move loops forever); tree event items use final indexes in op order;
-  nodes under a deleted ancestor still count as alive; equal fractional indexes
-  make `createNode`/`move` throw instead of rearranging; no-op moves emit ops.
-- Child containers re-attached by a checkout get a delta relative to their
-  hidden state instead of their full state (Rust "revives" them).
+- Tree convergence: `loro.js` applies tree moves per node, last writer wins,
+  with no cycle check. Two peers that move `x` under `y` and `y` under `x`
+  converge to a cycle, so both nodes disappear (Rust keeps `y` as a root with
+  child `x`). Rust applies a tree's ops in (lamport, peer) order and skips a
+  move whose new parent descends from the target (`TreeCacheForDiff::apply`,
+  `diff_calc/tree.rs`). A port needs, per tree, the ops in that order with an
+  effective flag. A new op applies directly when it is the newest; otherwise
+  the suffix after it is retreated and reapplied. Version transitions replay
+  the suffix from the lowest changed op. This rewrites the tree branch of
+  `#applyVersionTransition`, which #1127 changes for shallow roots, and the
+  tree logic #1131 adds for `diff()`, so it waits for those PRs.
+- Tree events: items are a before/after snapshot diff that lists final
+  indexes in op order. Importing two roots created at index 0 emits
+  `create 0@2 @1, create 1@2 @0` (Rust: `@0, @0`); creating a child and
+  deleting its parent in one commit emits the delete first; reviving a node
+  omits `create` for its children. Rust records an item per effective op at
+  the moment it is applied, plus a `create` for each child of a revived node
+  (`TreeState::apply_diff_and_convert`). This belongs with the port above.
+- Events for containers that are unreachable after the batch: Rust drops them
+  (`DocState::get_path`); `loro.js` still sends them. Needs #1147's liveness.
 - Snapshot and shallow checkouts: see #1126–#1128.
 - MovableList and rich-text styles are covered by their own reworks
-  (`loro-js/tests/differential/` in #1132, and #1135).
+  (`loro-js/tests/differential/` in #1132, and #1135). `loro.js` also skips a
+  movable-list `set` to the current value, which Rust records.
+
+## Rust-side findings
+
+Found while comparing, reproducible with `loro-crdt` alone:
+
+- With a subscriber, `checkout` then `attach`, then `text.delete` across an
+  astral character panics with `Op/hint length mismatch` (`txn.rs`); #1135
+  fixes the same panic for backspacing inside a transaction.
+- With a subscriber, some checkout sequences panic at `tree_state.rs:1075`
+  (`get_index_by_tree_id(..).unwrap()` on a `Create`), e.g. a change that
+  creates a node and a child after a list op, and a branch that imported only
+  that list op.
+- Checking out from a version that contains a tree node's creation to a
+  concurrent version that does not can keep the node (a direct checkout of the
+  second version is correct).
+- After `isDeleted()` is queried on the metadata of a node under a deleted
+  ancestor, a local move that revives the subtree leaves that metadata marked
+  deleted until the document is reloaded.

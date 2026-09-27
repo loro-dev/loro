@@ -53,9 +53,9 @@ const CI_RUNS: readonly {
     seeds: Array.from({ length: 120 }, (_, index) => index),
     pending: new Map([
       [7, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [21, "delete imported while detached (fix/loro-js-detached-import-delete)"],
+      [21, "delete imported while detached (#1146)"],
       [29, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [44, "delete imported while detached (fix/loro-js-detached-import-delete)"],
+      [44, "delete imported while detached (#1146)"],
       [52, "concurrent deletes emitted twice in checkout events (#1140)"],
       [61, "concurrent deletes emitted twice in checkout events (#1140)"],
       [69, "Fugue interval after the last child of the origin (#1139)"],
