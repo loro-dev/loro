@@ -286,6 +286,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #shallowRootVersion = new VersionVector();
   #shallowRootFrontiers: CodecId[] = [];
   #shallowRootStore: StateSnapshotStore | undefined;
+  // Tree placements in the shallow root state, indexed per tree on first use.
+  #shallowRootTreePlacements = new WeakMap<
+    StateSnapshotStore,
+    Map<string, Map<string, { deleted: boolean; parent: CodecId | undefined }>>
+  >();
   #textStyles = new Map<string, TextStyleExpand>([
     ["bold", "after"],
     ["italic", "after"],
@@ -1456,6 +1461,47 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return false;
   }
 
+  #shallowRootTreePlacement(
+    tree: LoroTree,
+    nodeKey: string,
+  ): { deleted: boolean; parent: CodecId | undefined } | undefined {
+    const store = this.#shallowRootStore;
+    const treeId = tree._codecId;
+    if (store === undefined || store.kind !== "sstable" || treeId === undefined) {
+      return undefined;
+    }
+    let byTree = this.#shallowRootTreePlacements.get(store);
+    if (byTree === undefined) {
+      byTree = new Map();
+      this.#shallowRootTreePlacements.set(store, byTree);
+    }
+    const treeKey = this.#containerKey(treeId);
+    let nodes = byTree.get(treeKey);
+    if (nodes === undefined) {
+      nodes = new Map();
+      const state = store.containers.find(
+        (entry) => this.#containerKey(entry.id) === treeKey,
+      )?.wrapper.state;
+      if (state?.kind === CodecContainerType.Tree) {
+        const ids = state.nodes.map((node) => ({
+          peer: state.peers[Number(node.peerIndex)]!,
+          counter: node.counter,
+        }));
+        for (const [index, node] of state.nodes.entries()) {
+          nodes.set(idKey(ids[index]!), {
+            deleted: node.parentIndexPlusTwo === 1n,
+            parent:
+              node.parentIndexPlusTwo >= 2n
+                ? ids[Number(node.parentIndexPlusTwo - 2n)]
+                : undefined,
+          });
+        }
+      }
+      byTree.set(treeKey, nodes);
+    }
+    return nodes.get(nodeKey);
+  }
+
   /** Whether `node` and all of its ancestors are alive at `version`. */
   #treeNodeAliveAt(tree: LoroTree, node: CodecId, version: VersionVector): boolean {
     const history = this.#treeOperationHistory.get(tree.id);
@@ -1473,7 +1519,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         continue;
       }
       const winner = latestIncludedOperation(operations, version);
-      if (winner === undefined) return false;
+      if (winner === undefined) {
+        // A shallow history trims the ops before its root; until the first
+        // retained op, the node keeps its placement in the root state.
+        const rootNode = this.#shallowRootTreePlacement(tree, key);
+        if (rootNode === undefined || rootNode.deleted) return false;
+        current = rootNode.parent;
+        continue;
+      }
       const content = winner.operation.content;
       if (content.type !== "tree-create" && content.type !== "tree-move") return false;
       current = content.parent;

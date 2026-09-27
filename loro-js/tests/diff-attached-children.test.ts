@@ -285,6 +285,32 @@ describe("diff and revertTo for containers attached by the range", () => {
     expect(root!.children[0]!.children[0]!.meta).toEqual({ t: "deep" });
   });
 
+  // With a shallow history, the same move must stay a move even though the
+  // create op was trimmed (#treeNodeAliveAt falls back to the root state). The
+  // shallow retreat that needs is fixed separately (loro-dev/loro#1127), whose
+  // shallow-root-map-winner tests cover the combination.
+  test("reports a tree move of a node that stays alive as a move", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const moved = tree.createNode();
+    const target = tree.createNode();
+    moved.data.set("x", "root");
+    doc.commit();
+    const root = doc.frontiers();
+    tree.move(moved.id, target.id);
+    doc.commit();
+    const diff = doc.diff(root, doc.frontiers());
+    const items = diff.find(([id]) => id === tree.id)![1] as {
+      diff: { action: string }[];
+    };
+    expect(items.diff.map((item) => item.action)).toEqual(["move"]);
+    const replica = doc.forkAt(root);
+    replica.setDetachedEditing(true);
+    replica.applyDiff(diff);
+    expect(replica.toJSON()).toEqual(doc.toJSON());
+  });
+
   test("recreates a node moved out of a deleted ancestor", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
