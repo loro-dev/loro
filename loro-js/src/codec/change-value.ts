@@ -312,6 +312,12 @@ export function encodeChangeValueContent(value: ChangeValue): EncodedChangeValue
   return { tag, bytes: writer.toUint8Array() };
 }
 
+// Decoded byte-sized integers (common in number lists) share immutable values.
+const SMALL_I64_VALUES: readonly ChangeLoroValue[] = Array.from(
+  { length: 256 },
+  (_, value) => Object.freeze({ type: "i64", value: BigInt(value) }) as ChangeLoroValue,
+);
+
 export function readChangeLoroValue(reader: ByteReader, depth = 0): ChangeLoroValue {
   decodeAssert(depth <= MAX_VALUE_DEPTH, "change LoroValue is too deep", reader.position);
   const kind = reader.readU8();
@@ -322,8 +328,12 @@ export function readChangeLoroValue(reader: ByteReader, depth = 0): ChangeLoroVa
       return { type: "bool", value: true };
     case 2:
       return { type: "bool", value: false };
-    case 3:
-      return { type: "i64", value: readSleb128(reader) };
+    case 3: {
+      const value = readSleb128(reader);
+      return value >= 0n && value < 256n
+        ? SMALL_I64_VALUES[Number(value)]!
+        : { type: "i64", value };
+    }
     case 4:
       return { type: "double", value: readF64BE(reader) };
     case 5:
