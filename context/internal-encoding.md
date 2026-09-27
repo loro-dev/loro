@@ -117,8 +117,10 @@ checkout into the retained range against a full-history replica.
 
 The pure TypeScript runtime (`loro-js`) uses the same retention rule when it
 rebuilds both states in `LoroDoc.#encodeShallowSnapshot`. The root state keeps
-`#retainedContainerKeys()` at the root: root containers, visible Map/List
-children, and every tree node's meta, including deleted nodes. The latest state
+`#retainedContainerKeys()` at the root: root containers (every mergeable
+container is one, as in Rust's `existing_retention_roots`, so a child hidden by
+a deleted or different-kind marker keeps its state), visible Map/List children,
+and every tree node's meta, including deleted nodes. The latest state
 additionally keeps containers alive at the latest version and containers whose
 creation id the root version does not include. `loro-js` always rebuilds the
 root state by replay instead of reusing its cached root store, so re-exporting

@@ -6143,11 +6143,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   /**
-   * Containers reachable from the root containers in the current state. Tree
-   * node metadata is followed for every node, including deleted ones: a
-   * retained move can revive a deleted node together with its old metadata.
-   * Deleted Map and List children are not followed; re-inserting one creates
-   * a new container ID.
+   * Containers reachable from the root containers in the current state. As in
+   * Rust, every mergeable container is a root too: its deterministic ID
+   * survives a deleted or replaced marker, and re-ensuring the same kind shows
+   * its state again. Tree node metadata is followed for every node, including
+   * deleted ones: a retained move can revive a deleted node together with its
+   * old metadata. Deleted Map and List children are not followed; re-inserting
+   * one creates a new container ID.
    */
   #retainedContainerKeys(): Set<string> {
     const retained = new Set<string>();
@@ -6161,8 +6163,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       pending.push(container);
     };
     for (const container of this.#containers.values()) {
-      const id = container._codecId;
-      if (id?.kind === "root" && !isMergeableContainerId(id)) visit(container);
+      if (container._codecId?.kind === "root") visit(container);
     }
     for (
       let container = pending.pop();

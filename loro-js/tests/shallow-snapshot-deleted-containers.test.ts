@@ -149,6 +149,37 @@ describe("shallow snapshots drop containers deleted before the root", () => {
     });
   }
 
+  // A mergeable child keeps its deterministic ID when its marker is deleted or
+  // replaced by another kind, and re-ensuring the kind shows its state again.
+  for (const fillerOps of RETAINED_FILLER) {
+    for (const hide of ["delete the marker", "switch the kind"] as const) {
+      test(`keeps a hidden mergeable child (${hide}, ${fillerOps} retained ops)`, () => {
+        const doc = new LoroDoc();
+        doc.setPeerId(1);
+        const map = doc.getMap("m");
+        const text = map.ensureMergeableText("x");
+        text.insert(0, "hello");
+        doc.commit();
+        if (hide === "delete the marker") map.delete("x");
+        else map.ensureMergeableMap("x").set("n", 1);
+        doc.commit();
+        const root = doc.frontiers();
+        filler(doc, fillerOps);
+        const latest = doc.frontiers();
+
+        const bytes = doc.export({ mode: "shallow-snapshot", frontiers: root });
+        expect(storedContainers(bytes).has(text.id)).toBe(true);
+        const shallow = importBytes(bytes);
+        shallow.checkout(root);
+        shallow.checkout(latest);
+        shallow.checkoutToLatest();
+        expect(shallow.getMap("m").ensureMergeableText("x").toString()).toBe("hello");
+        const again = shallowRoundTrip(shallow, root);
+        expect(again.getMap("m").ensureMergeableText("x").toString()).toBe("hello");
+      });
+    }
+  }
+
   test("keeps containers created after the root", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);

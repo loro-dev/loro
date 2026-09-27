@@ -87,7 +87,8 @@ flushed KV entry; the shallow alive walk retains them explicitly). An
 ensured-but-empty mergeable child has no KV entry of its own: full export omits
 it and importers resolve it from the parent map's marker. This is covered by
 `tests/mergeable_container/snapshot.rs`, including shallow snapshot tests for
-losing-kind state.
+losing-kind state. loro.js follows the same rule in `#retainedContainerKeys`
+(`loro-js/tests/shallow-snapshot-deleted-containers.test.ts`).
 
 Raw marker bytes are the wire/storage representation. Public read and diff
 surfaces should translate an active marker to a container value. APIs that expose
