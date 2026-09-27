@@ -21,6 +21,9 @@ before changing mergeable child behavior.
   shallow-snapshot export; read
   [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
   before changing the richtext snapshot codec or that pass.
+  `movable_list_state.rs` import validation and the Checkout-mode fallback for
+  moves of deleted elements:
+  [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
 - `dead_containers_cache.rs`: dead/alive tracking and marker-driven mergeable
   reactivation.

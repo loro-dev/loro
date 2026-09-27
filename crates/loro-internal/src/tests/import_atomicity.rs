@@ -711,3 +711,95 @@ fn outdated_update_on_shallow_doc_is_dropped_not_pending() {
         "outdated changes must be dropped, not parked as pending"
     );
 }
+
+/// Binary update whose movable-list move targets an element that never existed.
+/// The public import paths reject it, so the carrier inserts the decoded change
+/// straight into its oplog to obtain the bytes.
+fn binary_update_moving_unknown_movable_list_elem() -> (LoroDoc, Vec<u8>) {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let list = doc.get_movable_list("list");
+    list.insert(0, "a").unwrap();
+    list.insert(1, "b").unwrap();
+    doc.commit_then_renew();
+
+    let carrier = LoroDoc::new();
+    carrier
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let json = serde_json::json!({
+        "schema_version": 1,
+        "start_version": {},
+        "peers": ["1"],
+        "changes": [{
+            "id": "2@0", "timestamp": 0, "deps": ["1@0"], "lamport": 2, "msg": null,
+            "ops": [{
+                "container": "cid:root-list:MovableList",
+                "content": {"type": "move", "from": 0, "to": 1, "elem_id": "L99@0"},
+                "counter": 2
+            }]
+        }]
+    });
+    let json: JsonSchema = serde_json::from_value(json).unwrap();
+    {
+        let mut oplog = carrier.oplog().lock();
+        let changes =
+            crate::encoding::json_schema::decode_json_changes(json, &oplog.arena).unwrap();
+        crate::encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+    }
+    let bytes = carrier
+        .export(ExportMode::updates(&doc.oplog_vv()))
+        .unwrap();
+    (doc, bytes)
+}
+
+#[test]
+fn binary_move_of_unknown_movable_list_elem_is_rejected_atomically() {
+    let (doc, bad) = binary_update_moving_unknown_movable_list_elem();
+    let vv_before = doc.oplog_vv();
+    let frontiers_before = doc.oplog_frontiers();
+    let state_before = doc.get_deep_value();
+
+    let err = doc.import(&bad).unwrap_err();
+    assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+    assert_doc_unchanged(&doc, &vv_before, &frontiers_before, &state_before);
+
+    doc.detach();
+    let err = doc.import(&bad).unwrap_err();
+    assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+    doc.attach();
+    assert_doc_unchanged(&doc, &vv_before, &frontiers_before, &state_before);
+
+    doc.get_movable_list("list").mov(0, 1).unwrap();
+    doc.commit_then_renew();
+    assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+}
+
+/// Blobs inside an attached `import_batch` are imported detached, so their element
+/// references are validated once in `BatchImportGuard::finish`.
+#[test]
+fn import_batch_with_move_of_unknown_movable_list_elem_rolls_back() {
+    let (doc, bad) = binary_update_moving_unknown_movable_list_elem();
+    let valid = LoroDoc::new_auto_commit();
+    valid.set_peer_id(2).unwrap();
+    valid
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    valid.get_movable_list("list").push("v".into()).unwrap();
+    valid.commit_then_renew();
+    let valid_update = valid.export(ExportMode::updates(&doc.oplog_vv())).unwrap();
+
+    let vv_before = doc.oplog_vv();
+    let frontiers_before = doc.oplog_frontiers();
+    let state_before = doc.get_deep_value();
+
+    let err = doc.import_batch(&[valid_update, bad]).unwrap_err();
+    assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+    assert!(!doc.is_detached());
+    assert!(!doc.oplog().lock().batch_importing);
+    assert_doc_unchanged(&doc, &vv_before, &frontiers_before, &state_before);
+
+    doc.get_movable_list("list").mov(0, 1).unwrap();
+    doc.commit_then_renew();
+    assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+}

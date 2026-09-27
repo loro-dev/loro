@@ -967,6 +967,26 @@ impl DocState {
         }
     }
 
+    /// Whether a forward import diff has to be recomputed in Checkout mode because a
+    /// movable-list op targets an element this state no longer holds.
+    /// See [`MovableListState::references_absent_elem`].
+    pub(crate) fn needs_checkout_diff(&mut self, diffs: &[InternalContainerDiff]) -> bool {
+        diffs.iter().any(|diff| {
+            let crate::event::DiffVariant::Internal(InternalDiff::MovableList(delta)) = &diff.diff
+            else {
+                return false;
+            };
+            match self.store.get_container(diff.idx) {
+                Some(State::MovableListState(state)) => state.references_absent_elem(delta),
+                Some(_) => unreachable!("movable list diff for a non movable list container"),
+                None => delta
+                    .elements
+                    .values()
+                    .any(|elem| elem.pos.is_none() || elem.value_id.is_none()),
+            }
+        })
+    }
+
     fn validate_diff_batch(&mut self, diffs: &[InternalContainerDiff]) -> LoroResult<()> {
         for diff in diffs {
             let crate::event::DiffVariant::Internal(internal_diff) = &diff.diff else {

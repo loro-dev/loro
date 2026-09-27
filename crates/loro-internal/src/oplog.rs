@@ -24,7 +24,7 @@ use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, InnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
@@ -334,7 +334,7 @@ impl OpLog {
             if change.ops.iter().any(|op| {
                 matches!(
                     op.container.get_type(),
-                    ContainerType::List | ContainerType::Tree
+                    ContainerType::List | ContainerType::MovableList | ContainerType::Tree
                 )
             }) {
                 ans.needs_state_apply_rollback = true;
@@ -1156,6 +1156,105 @@ impl OpLog {
             change.id.peer,
             (id.lamport - change.lamport) as Counter + change.id.counter,
         ))
+    }
+
+    /// Reject movable-list `Move`/`Set` ops added since `from` whose `elem_id` is not
+    /// an element inserted into the same list within the op's causal history.
+    ///
+    /// Honest peers can only target elements they can see, and the movable-list diff
+    /// calculator relies on it (`last_pos`/`last_value` lookups). See
+    /// `context/movable-list-op-validation.md`.
+    pub(crate) fn validate_movable_list_elem_refs_since(
+        &self,
+        from: &VersionVector,
+    ) -> Result<(), LoroError> {
+        for (&peer, &end) in self.vv().iter() {
+            let start = from.get(&peer).copied().unwrap_or(0);
+            if end <= start {
+                continue;
+            }
+
+            for change in self
+                .change_store
+                .iter_changes(IdSpan::new(peer, start, end))
+            {
+                for op in change.ops.iter() {
+                    if op.counter < start || op.container.get_type() != ContainerType::MovableList {
+                        continue;
+                    }
+
+                    let elem_id = match &op.content {
+                        InnerContent::List(list_op::InnerListOp::Move { elem_id, .. })
+                        | InnerContent::List(list_op::InnerListOp::Set { elem_id, .. }) => *elem_id,
+                        _ => continue,
+                    };
+                    let op_id = ID::new(peer, op.counter);
+                    let op_lamport = change.lamport + (op.counter - change.id.counter) as Lamport;
+                    if !self.is_visible_movable_list_elem(op.container, op_id, op_lamport, elem_id)
+                    {
+                        return Err(LoroError::DecodeError(
+                            format!(
+                                "Movable list op {op_id} targets element {elem_id}, which is not \
+                                 in the list's causal history"
+                            )
+                            .into_boxed_str(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// [`Self::validate_movable_list_elem_refs_since`] for everything imported since
+    /// the open rollback scope began.
+    pub(crate) fn validate_movable_list_elem_refs_in_import_scope(&self) -> Result<(), LoroError> {
+        match &self.import_rollback {
+            Some(rollback) => self.validate_movable_list_elem_refs_since(&rollback.old_vv),
+            None => Ok(()),
+        }
+    }
+
+    fn is_visible_movable_list_elem(
+        &self,
+        container: ContainerIdx,
+        op_id: ID,
+        op_lamport: Lamport,
+        elem_id: IdLp,
+    ) -> bool {
+        if elem_id.lamport >= op_lamport {
+            return false;
+        }
+
+        // History before a shallow root is trimmed. An op after the root can only
+        // see pre-root elements that are still alive at the root.
+        let in_shallow_root = || {
+            self.with_history_cache(|h| h.shallow_root_has_movable_list_elem(container, elem_id))
+        };
+        let Some(target) = self.idlp_to_id(elem_id) else {
+            return in_shallow_root();
+        };
+
+        let causal = (target.peer == op_id.peer && target.counter < op_id.counter)
+            || self
+                .dag
+                .get_vv(op_id)
+                .is_some_and(|vv| vv.includes_id(target));
+        if !causal {
+            return false;
+        }
+
+        match self.get_op_that_includes(target) {
+            Some(op) => {
+                op.container == container
+                    && matches!(
+                        op.content,
+                        InnerContent::List(list_op::InnerListOp::Insert { .. })
+                    )
+            }
+            None => in_shallow_root(),
+        }
     }
 
     #[allow(unused)]
