@@ -103,7 +103,16 @@ JavaScript constant factor.
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
   future ID run while finding the next causally included element. Ordinary local
   edits keep the smaller unindexed path. MovableList continues to use the scan
-  because moves break the origin-tree physical preorder.
+  because moves break the origin-tree physical preorder. Sibling subtrees are
+  contiguous, so the gap between two direct children belongs to the earlier
+  child. After the last child the interval can also hold concurrent elements
+  whose origin is left of `originLeft`; Rust's scan stops before them. The index
+  therefore checks whether the interval's last element descends from
+  `originLeft` and otherwise binary-searches the boundary. The descent test
+  walks origin-left links but jumps over each implicit run through per-peer
+  sorted counters of explicit (non-consecutive) elements, so it costs
+  O(explicit links · log n), like Rust's span-based scan, instead of one probe
+  per scalar in a long concurrent run.
 - Merging adjacent changes appends only the new operations and key-table entries
   to the retained record. The cached operation length, peer end, frontier set,
   operation indexes, and subscriber update slice are updated incrementally, so

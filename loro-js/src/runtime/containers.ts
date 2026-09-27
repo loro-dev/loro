@@ -2870,6 +2870,12 @@ interface FugueOriginEntry {
 interface FugueOriginIndex {
   structureVersion: number;
   readonly explicitChildren: Map<string, FugueOriginEntry[]>;
+  /**
+   * Sorted counters, per peer, of the elements that are not the implicit child
+   * of their predecessor ID. Every other element is linked to `counter - 1`, so
+   * an origin-left walk can jump from any element to the head of its run.
+   */
+  readonly explicitCounters: Map<bigint, number[]>;
 }
 
 interface FugueInsertionResult {
@@ -3036,6 +3042,7 @@ function indexedFugueInsertion<T extends SequenceElement>(
   const parentRightIndex = directRightParentIndex(sequence, originLeft, originRight);
   let insertIndex = startIndex;
   let scanning = false;
+  let afterLastChild = false;
   for (let childIndex = 0; childIndex < candidates.length; childIndex += 1) {
     const { entry: other } = candidates[childIndex]!;
     if (sameOptionalId(other.originRight, originRight)) {
@@ -3054,7 +3061,38 @@ function indexedFugueInsertion<T extends SequenceElement>(
     }
 
     if (!scanning) {
-      insertIndex = candidates[childIndex + 1]?.index ?? originRightIndex;
+      const next = candidates[childIndex + 1];
+      insertIndex = next?.index ?? originRightIndex;
+      afterLastChild = next === undefined;
+    }
+  }
+
+  // Sibling subtrees are contiguous, so the gap between two direct children
+  // belongs to the earlier one. After the last child, the interval can also
+  // hold concurrent elements whose origin is left of `originLeft`; the scan
+  // stops before them, so the insertion must too.
+  const lastChild = candidates.at(-1);
+  if (afterLastChild && originLeft !== undefined && lastChild !== undefined) {
+    const left = sequence.findByIdRaw(originLeft);
+    const leftIndex = left === undefined ? undefined : sequence.physicalIndexOf(left);
+    if (leftIndex === undefined) return undefined;
+    const inSubtree = (index: number): boolean =>
+      fugueDescendsFrom(
+        sequence,
+        originIndex,
+        sequence.atPhysicalRaw(index)!.id,
+        originLeft,
+        leftIndex,
+      );
+    if (!inSubtree(originRightIndex - 1)) {
+      let low = lastChild.index + 1;
+      let high = originRightIndex - 1;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (inSubtree(middle)) low = middle + 1;
+        else high = middle;
+      }
+      insertIndex = low;
     }
   }
 
@@ -3064,6 +3102,54 @@ function indexedFugueInsertion<T extends SequenceElement>(
     originRight,
     indexUpdate: originIndex,
   };
+}
+
+/**
+ * Whether `ancestor`, at physical index `ancestorIndex`, is on the origin-left
+ * chain of `id`. Ancestors precede their descendants, so the walk stops at the
+ * first origin left of `ancestorIndex`; runs of implicit children are skipped
+ * through `explicitCounters`.
+ */
+function fugueDescendsFrom<T extends SequenceElement>(
+  sequence: SequenceIndex<T>,
+  index: FugueOriginIndex,
+  id: CodecId,
+  ancestor: CodecId,
+  ancestorIndex: number,
+): boolean {
+  let current = id;
+  for (;;) {
+    const counters = index.explicitCounters.get(current.peer);
+    let head = current.counter;
+    if (counters !== undefined) {
+      let low = 0;
+      let high = counters.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (counters[middle]! <= current.counter) low = middle + 1;
+        else high = middle;
+      }
+      if (low > 0) head = counters[low - 1]!;
+    }
+    if (
+      ancestor.peer === current.peer &&
+      head <= ancestor.counter &&
+      ancestor.counter < current.counter
+    ) {
+      return true;
+    }
+    const parent = sequence.findByIdRaw({
+      peer: current.peer,
+      counter: head,
+    })?.originLeft;
+    if (parent === undefined) return false;
+    if (parent.peer === ancestor.peer && parent.counter === ancestor.counter) return true;
+    const element = sequence.findByIdRaw(parent);
+    const parentIndex =
+      element === undefined ? undefined : sequence.physicalIndexOf(element);
+    if (parentIndex === undefined || parentIndex < ancestorIndex) return false;
+    current = parent;
+  }
 }
 
 function getFugueOriginIndex<T extends SequenceElement>(
@@ -3079,6 +3165,7 @@ function getFugueOriginIndex<T extends SequenceElement>(
   const rebuilt: FugueOriginIndex = {
     structureVersion: sequence.structureVersion,
     explicitChildren: new Map(),
+    explicitCounters: new Map(),
   };
   sequence.forEachPhysicalRaw((element) => {
     recordFugueOriginEntry(rebuilt, element.id, element.originLeft, element.originRight);
@@ -3146,6 +3233,21 @@ function recordFugueOriginEntry(
     id.counter === originLeft.counter + 1
   ) {
     return;
+  }
+  const counters = index.explicitCounters.get(id.peer);
+  if (counters === undefined) {
+    index.explicitCounters.set(id.peer, [id.counter]);
+  } else if (counters.at(-1)! < id.counter) {
+    counters.push(id.counter);
+  } else {
+    let low = 0;
+    let high = counters.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (counters[middle]! < id.counter) low = middle + 1;
+      else high = middle;
+    }
+    if (counters[low] !== id.counter) counters.splice(low, 0, id.counter);
   }
   const key = optionalSequenceIdKey(originLeft);
   const children = index.explicitChildren.get(key);
