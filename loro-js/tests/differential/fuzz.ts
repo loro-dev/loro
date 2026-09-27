@@ -716,8 +716,12 @@ export class FuzzRun {
       case "snapshot":
         return doc.export({ mode: "snapshot" });
       case "range": {
+        // Rust exports nothing for a span that starts in history trimmed by a
+        // shallow snapshot (context/loro-js-movable-list.md), so spans start at
+        // the shallow root.
+        const trimmed = vvToMap(doc.shallowSinceVV());
         const spans = [...vvToMap(doc.oplogVersion())].flatMap(([peer, end]) => {
-          const start = receiverVersion.get(peer) ?? 0;
+          const start = Math.max(receiverVersion.get(peer) ?? 0, trimmed.get(peer) ?? 0);
           return end > start ? [{ id: { peer, counter: start }, len: end - start }] : [];
         });
         return doc.export({ mode: "updates-in-range", spans });
@@ -825,9 +829,7 @@ function orderedDiff(diff: unknown): unknown {
     } else if (last !== undefined && "retain" in item && "retain" in last) {
       last.retain = (last.retain as number) + (item.retain as number);
     } else {
-      output.push(
-        "insert" in item ? { insert: plain(item.insert) } : { ...item },
-      );
+      output.push("insert" in item ? { insert: plain(item.insert) } : { ...item });
     }
   }
   return { type: "list", diff: output };

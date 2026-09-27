@@ -221,3 +221,23 @@ them (see the comments in `harness.ts` and `fuzz.ts`):
 - Multi-blob `importBatch` events are labeled `by: "checkout"` by Rust and
   `"import"` by loro.js; checkout events carry origin `"checkout"` only in
   Rust. Rust's `oplogVersion()` also counts the pending transaction.
+
+Differences in form, not in effect, which the suite checks by value:
+
+- `revertTo` applies same-depth containers in Rust's `FxHashMap` order, and
+  its list ops follow the insert/delete order of `diff(current, target)` at one
+  index, which Rust's `DeltaRope` composition decides. When either differs,
+  the suite checks the revert by value and replicates Rust's ops.
+- Event deltas can differ in shape, or be a no-op where Rust reports nothing;
+  the suite then checks that each engine's deltas turn the previous value into
+  the new one.
+
+Rust issues the suite works around:
+
+- On a shallow document, `getLastEditorAt` can report the root list item's or
+  the last mover's peer instead of the setter's (`record_shallow_root_state`
+  in `history_cache.rs` seeds the value writer with the list item ID). The
+  suite does not compare editors on shallow documents.
+- `updates-in-range` on a shallow document exports nothing for a span that
+  starts in trimmed history (`ChangeStore::iter_blocks`). The suite starts
+  such spans at the shallow root.
