@@ -63,6 +63,8 @@ export interface Change {
 }
 
 export type JsonOpID = `${number}@${PeerID}`;
+/** A lamport-based element ID, `L{lamport}@{peer}`, as used by movable-list moves and sets. */
+export type JsonIdLp = `L${number}@${PeerID}`;
 export type JsonValue =
   | string
   | number
@@ -96,9 +98,9 @@ export type JsonOpContent =
       readonly type: "move";
       readonly from: number;
       readonly to: number;
-      readonly elem_id: JsonOpID;
+      readonly elem_id: JsonIdLp;
     }
-  | { readonly type: "set"; readonly elem_id: JsonOpID; readonly value: JsonValue }
+  | { readonly type: "set"; readonly elem_id: JsonIdLp; readonly value: JsonValue }
   | {
       readonly type: "create" | "move";
       readonly target: TreeID;
