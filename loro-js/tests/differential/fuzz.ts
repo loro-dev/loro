@@ -541,9 +541,20 @@ export class FuzzRun {
     } catch {
       return false;
     }
+    // Depths at the target: a container the revert brings back has no path now.
+    // Rust cannot fork a shallow document; without the target, such a
+    // container's depth is unknown and the order counts as unspecified.
+    let atTarget: DocLike | undefined;
+    try {
+      atTarget = twin.docs.rust.forkAt(frontiers);
+    } catch {
+      atTarget = undefined;
+    }
     const depths = new Map<number, number>();
     for (const [id] of rustDiff) {
-      const depth = twin.docs.rust.getPathToContainer(id)?.length ?? 0;
+      const path = (atTarget ?? twin.docs.rust).getPathToContainer(id);
+      if (path === undefined && atTarget === undefined) return true;
+      const depth = path?.length ?? 0;
       depths.set(depth, (depths.get(depth) ?? 0) + 1);
     }
     if ([...depths.values()].some((count) => count > 1)) return true;
