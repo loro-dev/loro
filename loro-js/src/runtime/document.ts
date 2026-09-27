@@ -5044,24 +5044,26 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (lazy === undefined && this.#snapshotSequences.size === 0) {
       return { beforeValues, pins };
     }
-    const touched = new Map<string, CodecContainerId>();
-    // Snapshot-hydrated containers whose snapshot operations the transition
-    // crosses. Operations applied after hydration are indexed like any others.
-    const crossesSnapshot = new Set<string>();
+    // The first counter per peer of the operations on each touched container.
+    const touched = new Map<
+      string,
+      { readonly id: CodecContainerId; readonly firstCounters: Map<bigint, number> }
+    >();
     for (const { change } of records) {
       for (const operation of change.operations) {
         const key = this.#containerKey(operation.container);
-        if (!touched.has(key)) touched.set(key, operation.container);
-        const entry = this.#snapshotSequences.get(key);
-        if (
-          entry?.kind === "hydrated" &&
-          operation.counter < (entry.version.get(change.id.peer) ?? 0)
-        ) {
-          crossesSnapshot.add(key);
+        let container = touched.get(key);
+        if (container === undefined) {
+          container = { id: operation.container, firstCounters: new Map() };
+          touched.set(key, container);
+        }
+        const first = container.firstCounters.get(change.id.peer);
+        if (first === undefined || operation.counter < first) {
+          container.firstCounters.set(change.id.peer, operation.counter);
         }
       }
     }
-    for (const [key, id] of touched) {
+    for (const [key, { id, firstCounters }] of touched) {
       if (lazy !== undefined) {
         if (
           this.#containers.has(key) ||
@@ -5075,7 +5077,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (entry === undefined) continue;
       const container = this.#containers.get(key) as LoroList | LoroText;
       if (entry.kind === "hydrated") {
-        if (!crossesSnapshot.has(key)) continue;
+        // Operations applied after hydration are indexed like any others; only
+        // crossing a snapshot operation needs its history.
+        const { version } = entry;
+        if (
+          [...firstCounters].every(
+            ([peer, counter]) => counter >= (version.get(peer) ?? 0),
+          )
+        ) {
+          continue;
+        }
         const snapshot = this.#completeSnapshotSequence(container, key, current);
         if (snapshot !== undefined && captureValues) {
           beforeValues.set(key, sequenceStateEventValue(container, snapshot));

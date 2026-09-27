@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   LoroDoc,
@@ -276,6 +276,29 @@ describe("checkout events after a lazy snapshot import", () => {
     };
     expect(diffs(false)).toEqual([{ type: "text", diff: [{ delete: 1 }] }]);
     expect(diffs(true)).toEqual(diffs(false));
+  });
+
+  test("rebuilds only the unread nested sequence that a checkout crosses", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const text = doc.getMap("root").setContainer("text", new LoroText());
+    text.insert(0, "abc");
+    doc.getMap("other").set("k", 1);
+    doc.commit();
+    const before = doc.frontiers();
+    text.delete(1, 1);
+    doc.commit();
+
+    const loaded = new LoroDoc();
+    loaded.import(doc.export({ mode: "snapshot" }));
+    const resets = [loaded.getMap("root"), loaded.getMap("other")].map((container) =>
+      vi.spyOn(container, "_reset"),
+    );
+    loaded.checkout(before);
+    expect(loaded.toJSON()).toEqual({ root: { text: "abc" }, other: { k: 1 } });
+    loaded.checkoutToLatest();
+    expect(loaded.toJSON()).toEqual({ root: { text: "ac" }, other: { k: 1 } });
+    expect(resets.every((reset) => reset.mock.calls.length === 0)).toBe(true);
   });
 
   test("exports unread nested containers after history is loaded", () => {
