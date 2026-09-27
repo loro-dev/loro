@@ -226,11 +226,6 @@ interface SnapshotStatePlan {
   readonly rebuilt: Set<string>;
 }
 
-interface SequenceFingerprint {
-  readonly runs: readonly SequenceIdRun[];
-  readonly values: readonly unknown[] | undefined;
-}
-
 interface ContainerHistoryIndex {
   readonly revision: number;
   readonly records: Map<string, HistoryRecord[]>;
@@ -5142,7 +5137,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     key: string,
     version: VersionVector,
   ): boolean {
-    const expected = sequenceFingerprint(container);
+    const snapshotRuns = sequenceIdRuns(container);
     const snapshot = container._swapState();
     try {
       const root =
@@ -5173,7 +5168,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       container._swapState(snapshot);
       throw error;
     }
-    if (sameSequenceFingerprint(expected, sequenceFingerprint(container))) {
+    let same = sameIdRuns(snapshotRuns, sequenceIdRuns(container));
+    if (same) {
+      // Values need a full read; compare them only when the ids already agree.
+      const replayedValues = sequenceValues(container);
+      const replayed = container._swapState(snapshot);
+      const snapshotValues = sequenceValues(container);
+      container._swapState(replayed);
+      same = sameSequenceValues(snapshotValues, replayedValues);
+    }
+    if (same) {
       this.#snapshotSequences.delete(key);
       return false;
     }
@@ -7752,11 +7756,8 @@ function coalescedTextInsert(
   };
 }
 
-/**
- * Visible element ids of a sequence, plus the Text delta when it has styles and
- * MovableList values (other element values are fixed by their ids).
- */
-function sequenceFingerprint(container: LoroList | LoroText): SequenceFingerprint {
+/** Visible element ids of a sequence, as maximal runs. */
+function sequenceIdRuns(container: LoroList | LoroText): SequenceIdRun[] {
   const sequence = container._sequence;
   const runs: SequenceIdRun[] = [];
   for (const run of sequence.visibleIdRuns(0, sequence.visibleLength)) {
@@ -7771,39 +7772,49 @@ function sequenceFingerprint(container: LoroList | LoroText): SequenceFingerprin
       runs.push(run);
     }
   }
-  let values: readonly unknown[] | undefined;
-  if (container instanceof LoroText) {
-    values = container._styleIndex.isEmpty ? undefined : container.toDelta();
-  } else if (container instanceof LoroMovableList) {
-    values = container._visibleElements().map((element) => element.value);
-  }
-  return { runs, values };
+  return runs;
 }
 
-function sameSequenceFingerprint(
-  left: SequenceFingerprint,
-  right: SequenceFingerprint,
+function sameIdRuns(
+  left: readonly SequenceIdRun[],
+  right: readonly SequenceIdRun[],
 ): boolean {
-  if (
-    left.runs.length !== right.runs.length ||
-    left.runs.some(
+  return (
+    left.length === right.length &&
+    left.every(
       (run, index) =>
-        run.length !== right.runs[index]!.length ||
-        !idsEqual(run.start, right.runs[index]!.start),
+        run.length === right[index]!.length && idsEqual(run.start, right[index]!.start),
     )
-  ) {
-    return false;
+  );
+}
+
+/**
+ * The values that equal ids do not fix: the Text delta when it has styles and
+ * MovableList values (other element values are fixed by their ids).
+ */
+function sequenceValues(container: LoroList | LoroText): readonly unknown[] | undefined {
+  if (container instanceof LoroText) {
+    return container._styleIndex.isEmpty ? undefined : container.toDelta();
   }
-  if (left.values === undefined || right.values === undefined) {
+  return container instanceof LoroMovableList
+    ? container._visibleElements().map((element) => element.value)
+    : undefined;
+}
+
+function sameSequenceValues(
+  left: readonly unknown[] | undefined,
+  right: readonly unknown[] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) {
     // Same ids mean the same characters; an unstyled Text only matches a delta
     // without attributes.
-    const values = left.values ?? right.values;
+    const values = left ?? right;
     return (
       values === undefined ||
       values.every((item) => (item as { attributes?: unknown }).attributes === undefined)
     );
   }
-  return eventValuesEqual(left.values, right.values);
+  return eventValuesEqual(left, right);
 }
 
 /**
