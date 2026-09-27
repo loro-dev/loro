@@ -160,7 +160,14 @@ impl VersionRange {
 /// can be created from cloning and modifying other similar version vectors.
 #[repr(transparent)]
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ImVersionVector(im::HashMap<PeerID, Counter, rustc_hash::FxBuildHasher>);
+pub struct ImVersionVector(
+    imbl::GenericHashMap<
+        PeerID,
+        Counter,
+        rustc_hash::FxBuildHasher,
+        imbl::shared_ptr::DefaultSharedPtr,
+    >,
+);
 
 #[inline]
 fn normalize_vv_counter(counter: Counter) -> Counter {
@@ -197,7 +204,9 @@ impl ImVersionVector {
         self.0.is_empty()
     }
 
-    pub fn iter(&self) -> im::hashmap::Iter<'_, PeerID, Counter> {
+    pub fn iter(
+        &self,
+    ) -> imbl::hashmap::Iter<'_, PeerID, Counter, imbl::shared_ptr::DefaultSharedPtr> {
         self.0.iter()
     }
 
