@@ -25,7 +25,7 @@ use loro_common::{
 };
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, cmp::Reverse, collections::BinaryHeap, fmt::Debug, ops::Deref, sync::Arc};
+use std::{borrow::Cow, fmt::Debug, ops::Deref, sync::Arc};
 use tracing::{error, instrument};
 
 pub use crate::diff::diff_impl::UpdateOptions;
