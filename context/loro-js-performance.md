@@ -127,25 +127,51 @@ JavaScript constant factor.
   staging document before installing them. Import subscribers retain eager
   state hydration because their import event must describe every changed
   container.
-- State hydrated from a latest-state snapshot (eager or lazy) has no
-  tombstones, winner history, or move history, so incremental version
-  transitions cannot retreat it. `LoroDoc.#stateFromSnapshot` makes
-  `#canTransitionRecords` refuse, and the first checkout or `diff` after such an
-  import replays history once through `#rebuildFromHistory` (about 34 ms for a
-  64k-operation Text on an Apple M5 Pro; later checkouts stay around 0.3–0.7
-  ms). The replay first discards the lazy latest-state SSTable
-  (`#discardDeferredSnapshotState`); otherwise replayed containers would later
-  hydrate their latest encoded state on top of the replayed operations. A
-  delete transition is also refused unless the deletion index recorded that
-  delete operation, since a replay to an earlier version never applied it.
+- Text, List, and MovableList state hydrated from a snapshot (eager, lazy, or a
+  shallow root) has no tombstones, deletion index, or style, value, and move
+  history for the snapshot's operations. `LoroDoc.#snapshotSequences` records
+  each such container with its snapshot version. Before `checkout`,
+  `checkoutToLatest`, or `diff` transitions,
+  `#prepareSnapshotTransition` looks only at the containers the transition
+  touches: it hydrates lazily encoded ones (an untouched lazy container still
+  holds its latest state, which is its state at the current version) and, when
+  the transition crosses a snapshot operation, rebuilds that one container from
+  its own operations (`#completeSnapshotSequence`, from its shallow root entry
+  in a shallow document). Operations applied after hydration are indexed like
+  any others, and Map, Tree, and Counter state needs no rebuild. The per-container
+  record index is built once per history revision. Consecutive text inserts that
+  continue each other replay as one span (`coalescedTextInsert`). Unrelated
+  containers are never replayed and the lazy SSTable is kept, so snapshot export
+  copies every untouched entry and rewrites only the touched ones. A delete
+  transition is still refused unless the deletion index recorded that delete,
+  for example one imported while detached.
+- loro.js does not count Rust rich-text style anchors in Text operation
+  positions, so a replay of Rust-created styled text can differ from its
+  snapshot state (for example, an insert right after a mark's end anchor). The
+  completion therefore compares the replay with the snapshot state (visible ids,
+  plus the delta when styled). When they differ, the replayed state serves
+  transitions and the snapshot state is reinstated at every version with the
+  same operations on that container (`#settleSnapshotSequences`), so the
+  snapshot version and exports stay exact. A full `#rebuildFromHistory`, still
+  used when a transition cannot be incremental, stashes installed snapshot states
+  the same way.
+- First checkout after importing a 262,144-operation single-peer Text snapshot:
+  about 60–70 ms on a loaded Apple M5 Pro, versus about 150 ms for the earlier
+  whole-document replay; the replay of that one container dominates. A doc with
+  32,768 child Maps that retreats one of them needs no replay: 63 ms versus
+  170 ms, with the same 234 MiB peak RSS as before the fix.
 - A shallow history trims the ops that wrote root-time Map values and Tree
   placements (the root commit's other ops). When a Map or Tree retreat finds no
   retained winner at or below the target, it uses the shallow root state entry
   (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
-  or node. The root store's container index and each container's key/node index
-  are built on first lookup and cached per root store, so a retreat touches only
-  the maps and trees it changes, as in Rust's per-map checkout index seeding
-  (loro-dev/loro#1120, #1124).
+  or node; a retained Tree delete whose placement was trimmed takes the root
+  placement and stays deleted. The root store entry for a container comes from
+  `#shallowRootEntryIndex`, the key index the import already builds to merge
+  the root and latest states, and each container's key/node index is built on
+  first lookup. A retreat therefore touches only the maps and trees it changes,
+  as in Rust's per-map checkout index seeding (loro-dev/loro#1120, #1124): the
+  first such retreat in a shallow doc with 32,768 child Maps takes about 0.45
+  ms, flat from 1,024 Maps, and later ones about 0.017 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or

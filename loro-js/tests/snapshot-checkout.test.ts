@@ -1,6 +1,16 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, test } from "vitest";
 
-import { LoroDoc, LoroList, LoroMap, LoroText, type Frontiers } from "../src/index";
+import {
+  LoroDoc,
+  LoroList,
+  LoroMap,
+  LoroText,
+  type Delta,
+  type Frontiers,
+  type LoroEventBatch,
+} from "../src/index";
 
 /**
  * A snapshot import keeps non-root containers encoded until they are first read.
@@ -89,5 +99,182 @@ describe("checkout after a lazy snapshot import", () => {
     loaded.import(doc.export({ mode: "shallow-snapshot", frontiers: versions[0]! }));
     const expected = valuesAt(doc, versions);
     expect(valuesAt(loaded, versions)).toEqual(expected);
+  });
+});
+
+/**
+ * `styled-text.blob` is a Rust snapshot (peer 1, `bold` expands after, `keep`
+ * expands both ways). Versions, one commit each:
+ * 0. `both`: insert "a", mark it `keep`.
+ * 1. `both`: delete "a", leaving an empty both-expand pair.
+ * 2. `both`: insert "b" at 0; Rust places it inside the pair, so it is kept.
+ * 3. `after`: insert "hello".
+ * 4. `after`: mark 1..3 `bold`.
+ * 5. `after`: insert "X" at 4, after the end anchor of the mark.
+ * 6. `after`: delete 0..1.
+ * The expected file holds the Rust `toDelta()` of both texts at each version.
+ */
+interface StyledTextVersion {
+  readonly frontiers: Frontiers;
+  readonly both: Delta<string>[];
+  readonly after: Delta<string>[];
+}
+
+const styledText = (): { bytes: Uint8Array; versions: StyledTextVersion[] } => ({
+  bytes: new Uint8Array(
+    readFileSync(new URL("./fixtures/rust/styled-text.blob", import.meta.url)),
+  ),
+  versions: JSON.parse(
+    readFileSync(
+      new URL("./fixtures/rust/styled-text.expected.json", import.meta.url),
+      "utf8",
+    ),
+  ) as StyledTextVersion[],
+});
+
+// loro.js interprets Text operation positions without Rust style anchors, so
+// replaying version 5 places "X" after "o". Every other state matches Rust.
+const REPLAY_POSITION_GAP = 5;
+const REPLAYED_AT_GAP: Delta<string>[] = [
+  { insert: "h" },
+  { insert: "el", attributes: { bold: true } },
+  { insert: "loX" },
+];
+
+describe("checkout after a Rust rich-text snapshot import", () => {
+  test("keeps snapshot styles and text that a history replay cannot reproduce", () => {
+    const { bytes, versions } = styledText();
+    const latest = versions.at(-1)!;
+    for (const order of [
+      [0, 1, 2, 3, 4, 5, 6],
+      [6, 5, 4, 3, 2, 1, 0],
+      [1, 6, 2, 5, 0, 3, 6, 4],
+    ]) {
+      const doc = new LoroDoc();
+      doc.import(bytes);
+      const mirror = new LoroDoc();
+      mirror.configTextStyle({ keep: { expand: "both" }, bold: { expand: "after" } });
+      mirror.getText("both").applyDelta(doc.getText("both").toDelta());
+      mirror.getText("after").applyDelta(doc.getText("after").toDelta());
+      doc.subscribe((batch: LoroEventBatch) => {
+        mirror.applyDiff(batch.events.map(({ target, diff }) => [target, diff]));
+      });
+      const check = (expected: StyledTextVersion, index: number): void => {
+        const both = doc.getText("both").toDelta();
+        const after = doc.getText("after").toDelta();
+        expect(both).toEqual(expected.both);
+        expect(after).toEqual(
+          index === REPLAY_POSITION_GAP ? REPLAYED_AT_GAP : expected.after,
+        );
+        expect(mirror.getText("both").toDelta()).toEqual(both);
+        expect(mirror.getText("after").toDelta()).toEqual(after);
+      };
+      for (const index of order) {
+        doc.checkout(versions[index]!.frontiers);
+        check(versions[index]!, index);
+      }
+      doc.checkoutToLatest();
+      check(latest, versions.length - 1);
+
+      const again = new LoroDoc();
+      again.import(doc.export({ mode: "snapshot" }));
+      expect(again.getText("both").toDelta()).toEqual(latest.both);
+      expect(again.getText("after").toDelta()).toEqual(latest.after);
+    }
+  });
+
+  test("returns to the snapshot state after edits and imports elsewhere", () => {
+    const { bytes, versions } = styledText();
+    const latest = versions.at(-1)!;
+    const doc = new LoroDoc();
+    doc.import(bytes);
+    const remote = new LoroDoc();
+    remote.import(bytes);
+    remote.setPeerId(2);
+    remote.getMap("other").set("remote", 1);
+    remote.commit();
+
+    doc.checkout(versions[4]!.frontiers);
+    doc.checkoutToLatest();
+    doc.getMap("other").set("local", 1);
+    doc.commit();
+    doc.checkout(versions[2]!.frontiers);
+    doc.import(remote.export({ mode: "update", from: doc.oplogVersion() }));
+    doc.checkoutToLatest();
+    expect(doc.getText("both").toDelta()).toEqual(latest.both);
+    expect(doc.getText("after").toDelta()).toEqual(latest.after);
+    expect(doc.getMap("other").toJSON()).toEqual({ local: 1, remote: 1 });
+
+    doc.getText("after").insert(0, "A");
+    doc.commit();
+    expect(doc.getText("after").toString()).toBe("AellXo");
+    doc.checkout(versions[6]!.frontiers);
+    expect(doc.getText("after").toDelta()).toEqual(latest.after);
+  });
+
+  test("diffs a Rust snapshot like a full-history document", () => {
+    const { bytes, versions } = styledText();
+    const doc = new LoroDoc();
+    doc.import(bytes);
+    const diff = doc.diff(versions[6]!.frontiers, versions[1]!.frontiers, false);
+    expect(doc.getText("both").toDelta()).toEqual(versions[6]!.both);
+    const mirror = new LoroDoc();
+    mirror.configTextStyle({ keep: { expand: "both" }, bold: { expand: "after" } });
+    mirror.getText("both").applyDelta(versions[6]!.both);
+    mirror.getText("after").applyDelta(versions[6]!.after);
+    mirror.applyDiff(diff);
+    expect(mirror.getText("both").toDelta()).toEqual(versions[1]!.both);
+    expect(mirror.getText("after").toDelta()).toEqual(versions[1]!.after);
+  });
+});
+
+describe("checkout events after a lazy snapshot import", () => {
+  test("reports an unread nested container change as its delta", () => {
+    const build = (): { doc: LoroDoc; before: Frontiers } => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const parent = doc.getMap("root").setContainer("parent", new LoroMap());
+      const child = parent.setContainer("child", new LoroText());
+      child.insert(0, "abc");
+      doc.commit();
+      const before = doc.frontiers();
+      child.insert(0, "X");
+      doc.commit();
+      return { doc, before };
+    };
+    const { doc, before } = build();
+    const bytes = doc.export({ mode: "snapshot" });
+    const diffs = (read: boolean): unknown[] => {
+      const loaded = new LoroDoc();
+      loaded.import(bytes);
+      if (read) loaded.toJSON();
+      const events: unknown[] = [];
+      loaded.subscribe((batch) => {
+        for (const event of batch.events) events.push(event.diff);
+      });
+      loaded.checkout(before);
+      expect(loaded.toJSON()).toEqual({ root: { parent: { child: "abc" } } });
+      return events;
+    };
+    expect(diffs(false)).toEqual([{ type: "text", diff: [{ delete: 1 }] }]);
+    expect(diffs(true)).toEqual(diffs(false));
+  });
+
+  test("exports unread nested containers after history is loaded", () => {
+    const { doc, versions } = buildHistory();
+    for (const load of [
+      (loaded: LoroDoc) => loaded.getAllChanges(),
+      (loaded: LoroDoc) => {
+        loaded.checkout(versions[0]!);
+        loaded.checkoutToLatest();
+      },
+    ]) {
+      const loaded = new LoroDoc();
+      loaded.import(doc.export({ mode: "snapshot" }));
+      load(loaded);
+      const again = new LoroDoc();
+      again.import(loaded.export({ mode: "snapshot" }));
+      expect(again.toJSON()).toEqual(doc.toJSON());
+    }
   });
 });
