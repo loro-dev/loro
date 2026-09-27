@@ -7186,13 +7186,22 @@ function decodedOperationToJson(
     case "future": {
       const value = content.value;
       if (value.type === "double" || value.type === "i64") {
+        // Rust tags the counter value (`OwnedValue`, serde `value_type`) and
+        // rejects an untagged number. Its counter is an f64, so it writes every
+        // counter op as "f64", including one decoded from an i64 value.
         json = {
           type: "counter",
+          value_type: "f64",
           value: value.type === "double" ? value.value : Number(value.value),
           prop: content.property,
         };
       } else if (value.type === "delta-int") {
-        json = { type: "counter", value: value.value, prop: content.property };
+        json = {
+          type: "counter",
+          value_type: "delta_int",
+          value: value.value,
+          prop: content.property,
+        };
       } else {
         json = {
           type: "unknown",
@@ -7225,8 +7234,14 @@ function changeLoroValueToJson(
       return value.value;
     case "i64":
       return Number(value.value);
-    case "binary":
-      return value.value.slice();
+    case "binary": {
+      // The JSON schema has no binary type; Rust writes a byte array as numbers.
+      const bytes = value.value;
+      const numbers = new Array<number>(bytes.length);
+      for (let index = 0; index < bytes.length; index += 1)
+        numbers[index] = bytes[index]!;
+      return numbers;
+    }
     case "list":
       return value.value.map((item, index) =>
         changeLoroValueToJson(
@@ -7568,12 +7583,30 @@ function jsonOperationToDecoded(
           typeof content === "object" && content !== null && "prop" in content
             ? requireJsonInteger(content.prop, "counter property")
             : 0,
+        // Rust reads both "f64" and "i64" counter values as an f64 (`c as f64`).
         value: { type: "double", value },
       },
     };
   }
 
   throw new TypeError("JSON updates do not support this container type");
+}
+
+// Byte arrays arrive as number lists (Rust's JSON form of a binary value), so
+// small integers are common. Their values are immutable and shared.
+const SMALL_JSON_INTEGERS: readonly ChangeLoroValue[] = Array.from(
+  { length: 256 },
+  (_, value) => Object.freeze({ type: "i64", value: BigInt(value) }) as ChangeLoroValue,
+);
+
+function jsonNumberToChangeLoroValue(value: number): ChangeLoroValue {
+  if (Number.isInteger(value) && value >= 0 && value < 256) {
+    return SMALL_JSON_INTEGERS[value]!;
+  }
+  if (!Number.isFinite(value)) throw new TypeError("JSON update numbers must be finite");
+  return Number.isSafeInteger(value)
+    ? { type: "i64", value: BigInt(value) }
+    : { type: "double", value };
 }
 
 function jsonValueToChangeLoroValue(
@@ -7584,13 +7617,7 @@ function jsonValueToChangeLoroValue(
 ): ChangeLoroValue {
   if (value === undefined || value === null) return { type: "null" };
   if (typeof value === "boolean") return { type: "bool", value };
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("JSON update numbers must be finite");
-    return Number.isSafeInteger(value)
-      ? { type: "i64", value: BigInt(value) }
-      : { type: "double", value };
-  }
+  if (typeof value === "number") return jsonNumberToChangeLoroValue(value);
   if (typeof value === "bigint") return { type: "i64", value };
   if (typeof value === "string") {
     if (value.startsWith("🦜:")) {
@@ -7617,12 +7644,14 @@ function jsonValueToChangeLoroValue(
     return {
       type: "list",
       value: value.map((item, index) =>
-        jsonValueToChangeLoroValue(
-          item,
-          { peer: operationId.peer, counter: operationId.counter + index },
-          resolvePeer,
-          registerKey,
-        ),
+        typeof item === "number"
+          ? jsonNumberToChangeLoroValue(item)
+          : jsonValueToChangeLoroValue(
+              item,
+              { peer: operationId.peer, counter: operationId.counter + index },
+              resolvePeer,
+              registerKey,
+            ),
       ),
     };
   }
