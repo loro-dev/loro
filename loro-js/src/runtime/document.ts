@@ -1254,143 +1254,172 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   /**
    * A movable-list delta reports a moved child container as a delete at its
-   * old position plus an insert of the same container. Port of Rust's
-   * `MovableListHandler::apply_delta` (handler/movable_list_apply_delta.rs):
-   * each such pair becomes one move of the existing element, every other
-   * insert and delete is applied as is, and the deleted slots of moved
-   * children are skipped when the remaining deletions run. Returns false,
-   * leaving the O(delta) path to the caller, when no deleted range holds a
-   * child container.
+   * old position plus an insert of the same container. Like Rust's
+   * `MovableListHandler::apply_delta`, each such pair becomes one move of the
+   * existing element instead of an empty copy; every other insert and delete
+   * is applied as is. Positions are resolved through element identity rather
+   * than index bookkeeping, so unmerged delta items (`delete 1, delete 2`) and
+   * several children moved out of one deleted range stay correct. Returns
+   * false, leaving the O(delta) path to the caller, when no inserted child
+   * currently sits in a deleted range.
    */
   #applyMovableListMoves(
     list: LoroMovableList,
     delta: readonly Delta<unknown[]>[],
     containerRemap: Map<ContainerID, Container>,
   ): boolean {
-    // Containers in the deleted ranges, by their current index.
-    const toDelete = new Map<ContainerID, number>();
+    // Deleted ranges in original (pre-delta) indices, in ascending order.
+    const deletedRanges: { readonly start: number; readonly length: number }[] = [];
+    const insertedChildren: ContainerID[] = [];
     let index = 0;
     for (const operation of delta) {
       if ("retain" in operation) {
         index += operation.retain;
       } else if ("delete" in operation) {
-        for (let offset = 0; offset < operation.delete; offset += 1) {
-          const value = list._sequence.atVisible(index + offset)?.value;
-          if (value instanceof LoroContainer) toDelete.set(value.id, index + offset);
+        const last = deletedRanges.at(-1);
+        if (last !== undefined && last.start + last.length === index) {
+          deletedRanges[deletedRanges.length - 1] = {
+            start: last.start,
+            length: last.length + operation.delete,
+          };
+        } else if (operation.delete > 0) {
+          deletedRanges.push({ start: index, length: operation.delete });
         }
         index += operation.delete;
+      } else {
+        for (const value of operation.insert) {
+          const id = diffContainerId(value);
+          if (id !== undefined) insertedChildren.push(id);
+        }
       }
     }
-    if (toDelete.size === 0) return false;
+    if (insertedChildren.length === 0 || deletedRanges.length === 0) return false;
 
-    const shiftOnInsert = (at: number): void => {
-      for (const [id, position] of toDelete) {
-        if (position >= at) toDelete.set(id, position + 1);
+    const inDeletedRange = (position: number): boolean => {
+      let low = 0;
+      let high = deletedRanges.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (deletedRanges[middle]!.start <= position) low = middle + 1;
+        else high = middle;
       }
+      const range = deletedRanges[low - 1];
+      return range !== undefined && position < range.start + range.length;
     };
-    const shiftOnDelete = (at: number): void => {
-      for (const [id, position] of toDelete) {
-        if (position >= at) toDelete.set(id, position - 1);
+    // Inserted children that currently occupy a deleted slot of this list.
+    const moved = new Map<ContainerID, { element: SequenceElement; index: number }>();
+    for (const sourceId of insertedChildren) {
+      let id: ContainerID | undefined = sourceId;
+      let child = this.#containers.get(id);
+      for (let hops = 0; child === undefined && hops < 64; hops += 1) {
+        id = containerRemap.get(id!)?.id;
+        if (id === undefined) break;
+        child = this.#containers.get(id);
       }
+      if (child === undefined || child.parent() !== list) continue;
+      const binding = child._parentLink?.binding ?? recoverParentBinding(child, list);
+      if (binding?.kind !== "sequence" || binding.element.value !== child) continue;
+      if (binding.element.deleted) continue;
+      const position = list._sequence.visibleIndexOf(binding.element);
+      if (position === undefined || !inDeletedRange(position)) continue;
+      if (!moved.has(sourceId))
+        moved.set(sourceId, { element: binding.element, index: position });
+    }
+    if (moved.size === 0) return false;
+
+    // Walk the delta once more: each inserted item is placed right after its
+    // predecessor in the final order (a retained element or an earlier item).
+    type Item = {
+      readonly value: unknown;
+      readonly movedElement: SequenceElement | undefined;
+      readonly after: Predecessor | undefined;
+      placed: SequenceElement | undefined;
     };
+    type Predecessor =
+      | { readonly kind: "retained"; readonly element: SequenceElement }
+      | { readonly kind: "item"; readonly item: Item };
+    const items: Item[] = [];
+    const used = new Set<ContainerID>();
+    const movedElements = new Set<SequenceElement>();
+    let predecessor: Predecessor | undefined;
     index = 0;
-    let indexShift = 0;
-    const deletedIndices: number[] = [];
-    // Min-heap of old indices already vacated by a move; kept sorted.
-    const nextDeleted: number[] = [];
-    // Positive entries retain, negative entries delete.
-    const changes: number[] = [];
     for (const operation of delta) {
       if ("retain" in operation) {
-        index += operation.retain;
-        changes.push(operation.retain);
+        if (operation.retain > 0) {
+          index += operation.retain;
+          predecessor = {
+            kind: "retained",
+            element: list._sequence.atVisible(index - 1)!,
+          };
+        }
+      } else if ("delete" in operation) {
+        index += operation.delete;
+      } else {
+        for (const value of operation.insert) {
+          const id = diffContainerId(value);
+          const entry = id === undefined || used.has(id) ? undefined : moved.get(id);
+          if (entry !== undefined) {
+            used.add(id!);
+            movedElements.add(entry.element);
+          }
+          const item: Item = {
+            value,
+            movedElement: entry?.element,
+            after: predecessor,
+            placed: undefined,
+          };
+          items.push(item);
+          predecessor = { kind: "item", item };
+        }
+      }
+    }
+
+    // Delete the deleted ranges back to front, keeping the moved elements.
+    const kept = new Set(
+      [...moved.values()]
+        .filter(({ element }) => movedElements.has(element))
+        .map(({ index: position }) => position),
+    );
+    for (let rangeIndex = deletedRanges.length - 1; rangeIndex >= 0; rangeIndex -= 1) {
+      const range = deletedRanges[rangeIndex]!;
+      let end = range.start + range.length;
+      for (let position = end - 1; position >= range.start - 1; position -= 1) {
+        if (position >= range.start && !kept.has(position)) continue;
+        const start = position + 1;
+        if (end > start) list.delete(start, end - start);
+        end = position;
+      }
+    }
+
+    for (const item of items) {
+      const after =
+        item.after === undefined
+          ? undefined
+          : item.after.kind === "retained"
+            ? item.after.element
+            : item.after.item.placed;
+      let target = after === undefined ? 0 : list._sequence.visibleIndexOf(after)! + 1;
+      if (item.movedElement !== undefined) {
+        const from = list._sequence.visibleIndexOf(item.movedElement)!;
+        if (from < target) target -= 1;
+        if (from !== target) list.move(from, target);
+        item.placed = item.movedElement;
         continue;
       }
-      if ("delete" in operation) {
-        const oldIndex = index;
-        let remaining = operation.delete;
-        while (
-          nextDeleted.length > 0 &&
-          nextDeleted[0]! + indexShift < index + remaining
-        ) {
-          nextDeleted.shift();
-          remaining -= 1;
-        }
-        index += remaining;
-        changes.push(-(index - oldIndex));
-        continue;
-      }
-      for (const value of operation.insert) {
-        let sourceId = diffContainerId(value);
-        if (sourceId === undefined) {
-          list.insert(index, value);
-          shiftOnInsert(index);
-          index += 1;
-          indexShift += 1;
-          continue;
-        }
-        if (!toDelete.has(sourceId)) {
-          for (let mapped = containerRemap.get(sourceId); mapped !== undefined; ) {
-            sourceId = mapped.id;
-            if (toDelete.has(sourceId)) break;
-            mapped = containerRemap.get(sourceId);
-          }
-        }
-        const oldIndex = toDelete.get(sourceId);
-        if (oldIndex !== undefined) {
-          toDelete.delete(sourceId);
-          if (oldIndex > index) {
-            list.move(oldIndex, index);
-            const at = sortedInsertIndex(nextDeleted, oldIndex);
-            nextDeleted.splice(at, 0, oldIndex);
-            index += 1;
-            indexShift += 1;
-          } else {
-            list.move(oldIndex, index - 1);
-          }
-          deletedIndices.push(oldIndex);
-          shiftOnDelete(oldIndex);
-          shiftOnInsert(index);
-          continue;
-        }
-        const parsed = parseContainerId(sourceId);
+      const sourceChildId = diffContainerId(item.value);
+      if (sourceChildId === undefined) {
+        list.insert(target, item.value);
+      } else {
+        const parsed = parseContainerId(sourceChildId);
         if (parsed.kind === "root") {
           throw new TypeError("a root container cannot be inserted as a child");
         }
         const child = createContainer(
           codecTypeToPublic(parsed.containerType),
         ) as Container;
-        containerRemap.set(sourceId, list.insertContainer(index, child));
-        shiftOnInsert(index);
-        index += 1;
-        indexShift += 1;
+        containerRemap.set(sourceChildId, list.insertContainer(target, child));
       }
-      changes.push(operation.insert.length);
-    }
-
-    // Apply the remaining deletions, skipping slots vacated by moves.
-    deletedIndices.sort((left, right) => right - left);
-    index = 0;
-    for (const change of changes) {
-      if (change > 0) {
-        index += change;
-        continue;
-      }
-      let remaining = -change;
-      while (deletedIndices.length > 0) {
-        const last = deletedIndices.at(-1)!;
-        if (last < index) {
-          deletedIndices.pop();
-          continue;
-        }
-        if (last < index + remaining) {
-          deletedIndices.pop();
-          remaining -= 1;
-        } else {
-          break;
-        }
-      }
-      if (remaining > 0) list.delete(index, remaining);
+      item.placed = list._sequence.atVisible(target);
     }
     return true;
   }
@@ -1433,18 +1462,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         continue;
       }
       if (insideRevived(item.target)) continue;
-      const pending = [tree._nodes.get(item.target)!];
-      while (pending.length > 0) {
-        const record = pending.shift()!;
-        const node = this.#treeEventNode(tree, record);
+      // Iterative preorder: a wide subtree must not be spread into call
+      // arguments, and each node is visited once.
+      const emit = (record: TreeNodeRecord, index: number): void => {
         output.push({
-          target: node.id,
+          target: formatTreeId(record.id),
           action: "create",
-          parent: node.parent,
-          index: node.index,
-          fractionalIndex: node.fractionalIndex,
+          parent: record.parent === undefined ? undefined : formatTreeId(record.parent),
+          index,
+          fractionalIndex: bytesToHex(record.position).toUpperCase(),
         });
-        pending.unshift(...tree._childrenOf(record.id));
+      };
+      const top = tree._nodes.get(item.target)!;
+      emit(top, tree._indexOf(top));
+      const stack = [{ children: tree._childrenOf(top.id), next: 0 }];
+      while (stack.length > 0) {
+        const frame = stack.at(-1)!;
+        if (frame.next === frame.children.length) {
+          stack.pop();
+          continue;
+        }
+        const index = frame.next;
+        frame.next += 1;
+        const record = frame.children[index]!;
+        emit(record, index);
+        stack.push({ children: tree._childrenOf(record.id), next: 0 });
       }
     }
     return output;
@@ -2583,7 +2625,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   /**
    * Moves an element back next to the neighbor it had before `counter@peer`
-   * moved it, while that move is still the element's winning position.
+   * moved it, unless another peer moved the element afterwards.
    */
   #undoMovableMove(
     list: LoroMovableList,
@@ -2596,9 +2638,22 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       content.elementId.lamport,
     );
     if (element === undefined || element.deleted) return;
-    const meta = element.moveHistory?.at(-1);
-    if (meta === undefined || meta.id.peer !== peer || meta.id.counter !== counter)
-      return;
+    const history = element.moveHistory ?? [];
+    let metaIndex = history.length - 1;
+    while (
+      metaIndex >= 0 &&
+      (history[metaIndex]!.id.peer !== peer || history[metaIndex]!.id.counter !== counter)
+    ) {
+      metaIndex -= 1;
+    }
+    if (metaIndex < 0) return;
+    // Later moves by this document (e.g. the inverse ops written while undoing
+    // a later move in the same group) do not block undoing this one; a later
+    // remote move does.
+    for (let later = metaIndex + 1; later < history.length; later += 1) {
+      if (history[later]!.id.peer !== this.#peer) return;
+    }
+    const meta = history[metaIndex]!;
     const from = list._sequence.visibleIndexOf(element)!;
     const visibleIndex = (id: CodecId | undefined): number | undefined => {
       if (id === undefined) return undefined;
@@ -2743,6 +2798,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       previousId,
       map,
     );
+    const mapId = map._codecId;
+    const mergeableType =
+      mapId === undefined
+        ? undefined
+        : parseMergeableMarker(mapId, content.key, rawValue);
+    if (mergeableType !== undefined) {
+      // Restore the marker only: the child keeps its deterministic cid, so its
+      // hidden state and remote edits made while it was hidden come back, as in
+      // Rust (loro-dev/loro#1134).
+      ensureMergeableChild(map, content.key, codecTypeToPublic(mergeableType));
+      return;
+    }
     const value = this.#materializeMapValue(map, content.key, rawValue);
     if (isContainer(value)) {
       const child = createContainer(value.kind()) as Container;
@@ -8669,17 +8736,6 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
-}
-
-function sortedInsertIndex(values: readonly number[], value: number): number {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (values[middle]! < value) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {

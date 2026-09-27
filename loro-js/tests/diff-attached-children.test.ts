@@ -337,6 +337,176 @@ describe("diff and revertTo for containers attached by the range", () => {
     const [node] = (replica.toJSON() as { tree: TreeJson[] }).tree;
     expect(node!.meta).toEqual({ text: "hello", merge: "keep" });
   });
+
+  test("undo reverts several moves of the same element", () => {
+    const build = () => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = doc.getMovableList("l");
+      const text = list.insertContainer(0, new LoroText());
+      text.insert(0, "X");
+      for (const value of ["A", "B", "C"]) list.push(value);
+      doc.commit();
+      return { doc, list, text, undo: new UndoManager(doc, { mergeInterval: 0 }) };
+    };
+    const initial = { l: ["X", "A", "B", "C"] };
+    const moves = (
+      doc: LoroDoc,
+      list: LoroMovableList,
+      text: LoroText,
+      commitEach: boolean,
+    ) => {
+      doc.applyDiff([
+        [
+          list.id,
+          {
+            type: "list",
+            diff: [{ delete: 1 }, { retain: 3 }, { insert: [`🦜:${text.id}`] }],
+          },
+        ],
+      ]);
+      if (commitEach) doc.commit();
+      doc.applyDiff([
+        [
+          list.id,
+          {
+            type: "list",
+            diff: [
+              { retain: 1 },
+              { insert: [`🦜:${text.id}`] },
+              { retain: 2 },
+              { delete: 1 },
+            ],
+          },
+        ],
+      ]);
+      doc.commit();
+    };
+
+    // Both moves in one undo step.
+    const together = build();
+    moves(together.doc, together.list, together.text, false);
+    expect(together.doc.toJSON()).toEqual({ l: ["A", "X", "B", "C"] });
+    expect(together.undo.undo()).toBe(true);
+    expect(together.doc.toJSON()).toEqual(initial);
+    expect(together.undo.redo()).toBe(true);
+    expect(together.doc.toJSON()).toEqual({ l: ["A", "X", "B", "C"] });
+
+    // One undo step per move.
+    const separate = build();
+    moves(separate.doc, separate.list, separate.text, true);
+    expect(separate.undo.undo()).toBe(true);
+    expect(separate.doc.toJSON()).toEqual({ l: ["A", "B", "C", "X"] });
+    expect(separate.undo.undo()).toBe(true);
+    expect(separate.doc.toJSON()).toEqual(initial);
+
+    // Direct moves behave the same.
+    const direct = build();
+    direct.list.move(0, 3);
+    direct.list.move(3, 1);
+    direct.doc.commit();
+    expect(direct.undo.undo()).toBe(true);
+    expect(direct.doc.toJSON()).toEqual(initial);
+  });
+
+  test("applies unmerged adjacent delete items", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    list.push("X");
+    list.push("Y");
+    const text = list.insertContainer(2, new LoroText());
+    text.insert(0, "T");
+    list.push("tail");
+    doc.commit();
+    doc.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [
+            { delete: 1 },
+            { delete: 2 },
+            { insert: ["new"] },
+            { retain: 1 },
+            { insert: [`🦜:${text.id}`] },
+          ],
+        },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toEqual({ l: ["new", "tail", "T"] });
+  });
+
+  test("moves several children out of one deleted range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    const a = list.insertContainer(0, new LoroText());
+    a.insert(0, "A");
+    const b = list.insertContainer(1, new LoroText());
+    b.insert(0, "B");
+    list.push("c");
+    doc.commit();
+    const opsBefore = doc.opCount();
+    doc.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [{ delete: 3 }, { insert: [`🦜:${b.id}`, "new", `🦜:${a.id}`] }],
+        },
+      ],
+    ]);
+    doc.commit();
+    expect(doc.toJSON()).toEqual({ l: ["B", "new", "A"] });
+    // Delete "c", move B, insert "new"; A already ends up in place.
+    expect(doc.opCount() - opsBefore).toBe(3);
+    expect((list.get(0) as LoroText).id).toBe(b.id);
+    expect((list.get(2) as LoroText).id).toBe(a.id);
+  });
+
+  test("revives a wide subtree without spreading it into call arguments", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("t");
+    tree.enableFractionalIndex(0);
+    const parent = tree.createNode();
+    for (let index = 0; index < 150_000; index += 1) parent.createNode();
+    doc.commit();
+    const before = doc.frontiers();
+    tree.delete(parent.id);
+    doc.commit();
+    const diff = doc.diff(doc.frontiers(), before, true);
+    const items = diff.find(([id]) => id === tree.id)![1] as { diff: unknown[] };
+    expect(items.diff).toHaveLength(150_001);
+  }, 60_000);
+
+  test("undo of a deleted mergeable key keeps the child's identity", () => {
+    for (const remoteFirst of [false, true]) {
+      const a = new LoroDoc();
+      a.setPeerId(1);
+      const text = a.getMap("m").ensureMergeableText("s");
+      text.insert(0, "hello");
+      a.commit();
+      const b = a.fork();
+      b.setPeerId(2);
+      const undo = new UndoManager(a, { mergeInterval: 0 });
+      a.getMap("m").delete("s");
+      a.commit();
+      const version = a.oplogVersion();
+      (b.getMap("m").get("s") as LoroText).insert(5, "!");
+      b.commit();
+      const remote = b.export({ mode: "update", from: version });
+      if (remoteFirst) a.import(remote);
+      expect(undo.undo()).toBe(true);
+      if (!remoteFirst) a.import(remote);
+      expect(a.toJSON()).toEqual({ m: { s: "hello!" } });
+      expect((a.getMap("m").get("s") as LoroText).id).toBe(text.id);
+      expect(undo.redo()).toBe(true);
+      expect(a.toJSON()).toEqual({ m: {} });
+    }
+  });
 });
 
 interface TreeJson {
