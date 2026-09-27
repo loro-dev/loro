@@ -60,6 +60,11 @@ metadata of deleted roots and dead containers, so comparing lamports against
 the state is not sound for concurrent ops. Containers with no concurrent old
 ops keep the fast path; they are not marked `source_not_in_op_context`.
 
+On a shallow doc the history cache seeds a map's shallow-root entries only
+when that map is first resolved (`ContainerHistoryCache::ensure_shallow_map_seeded`),
+so the first concurrent map import costs O(that map), not O(every map in the
+shallow root). Regression and perf test: `crates/loro/tests/shallow_lazy_map_checkout_index.rs`.
+
 Anything else (a text, list, movable list, tree or unknown container with ops
 on both sides) falls back to the DAG's conservative answer exactly as before.
 So does a shallow doc whose concurrent old history reaches below the shallow
