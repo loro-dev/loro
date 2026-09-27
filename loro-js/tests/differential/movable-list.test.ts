@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { describe, expect, test } from "vitest";
 
@@ -153,8 +153,10 @@ test.runIf(replayPath !== undefined)(
   "replays a saved trace",
   () => {
     let trace = JSON.parse(readFileSync(replayPath!, "utf8")) as SavedTrace;
-    if (process.env["LORO_JS_DIFF_MINIMIZE"] === "1")
+    if (process.env["LORO_JS_DIFF_MINIMIZE"] === "1") {
       trace = minimizeTrace(engines, trace);
+      writeFileSync(`${replayPath!}.min.json`, JSON.stringify(trace));
+    }
     const message = replayTrace(engines, trace);
     expect(
       message === undefined

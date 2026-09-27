@@ -91,7 +91,9 @@ export interface DocLike {
   isShallow(): boolean;
   shallowSinceVV(): VersionVectorLike;
   getCursorPos(cursor: CursorLike): { readonly offset: number };
+  getPathToContainer(id: string): (string | number)[] | undefined;
   forkAt(frontiers: FrontiersLike): DocLike;
+  fork(): DocLike;
 }
 
 export interface UndoManagerLike {

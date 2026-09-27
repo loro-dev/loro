@@ -82,6 +82,8 @@ export class Twin {
   readonly history: FrontiersLike[] = [];
   /** Set while `importBatch` runs; see `canonicalBatch`. */
   batchImport = false;
+  /** List and Text values at the last comparison, to replay event deltas. */
+  readonly lists = new Map<string, unknown[] | string>();
 
   constructor(
     readonly engines: Side<EngineModule>,
@@ -441,12 +443,134 @@ export function assertTwinAgrees(
     const reachable = new Set(rustContainers.map(({ id }) => id));
     const rustEvents = onlyReachable(twin.events.rust.splice(0), reachable);
     const jsEvents = onlyReachable(twin.events.js.splice(0), reachable);
-    if (!isDeepStrictEqual(rustEvents, jsEvents))
-      fail("events differ", rustEvents, jsEvents);
+    if (!isDeepStrictEqual(rustEvents, jsEvents)) {
+      const reason = equivalentEvents(twin.lists, rustEvents, jsEvents);
+      if (reason !== undefined) fail(`events differ (${reason})`, rustEvents, jsEvents);
+      eventShapeDifferences.count += 1;
+    }
   } else {
     twin.events.rust.length = 0;
     twin.events.js.length = 0;
   }
+  twin.lists.clear();
+  for (const info of rustContainers) {
+    if (info.kind !== "MovableList" && info.kind !== "List" && info.kind !== "Text")
+      continue;
+    const value = rust.getContainerById(info.id)?.getShallowValue();
+    if (Array.isArray(value) || typeof value === "string") twin.lists.set(info.id, value);
+  }
+}
+
+/**
+ * Event batches whose list or text deltas differ in shape but not in effect.
+ * Rust derives an import's list event from the net change; loro.js composes the
+ * change of each op, which can show an element that was hidden and shown again
+ * within one import as a delete plus an insert of the same value. After a
+ * history replay loro.js diffs text before and after instead of using the ops.
+ */
+export const eventShapeDifferences = { count: 0 };
+
+/** Returns why the batches are not equivalent, or undefined when they are. */
+function equivalentEvents(
+  lists: ReadonlyMap<string, unknown[] | string>,
+  rust: readonly EventBatchLike[],
+  js: readonly EventBatchLike[],
+): string | undefined {
+  if (rust.length !== js.length) return "batch counts differ";
+  const rustLists = new Map<string, unknown[] | string>();
+  const jsLists = new Map<string, unknown[] | string>();
+  for (let index = 0; index < rust.length; index += 1) {
+    const left = rust[index]!;
+    const right = js[index]!;
+    if (left.by !== right.by || left.origin !== right.origin)
+      return "batch labels differ";
+    if (left.events.length !== right.events.length) return "event counts differ";
+    for (let eventIndex = 0; eventIndex < left.events.length; eventIndex += 1) {
+      const rustEvent = left.events[eventIndex]!;
+      const jsEvent = right.events[eventIndex]!;
+      if (rustEvent.target !== jsEvent.target) return "event targets differ";
+      if (!isDeepStrictEqual(rustEvent.path, jsEvent.path)) return "event paths differ";
+      const rustDiff = rustEvent.diff as { type: string; diff?: DeltaItem[] };
+      const jsDiff = jsEvent.diff as { type: string; diff?: DeltaItem[] };
+      const sequence =
+        rustDiff.type === jsDiff.type &&
+        (rustDiff.type === "list" || rustDiff.type === "text");
+      if (!sequence) {
+        if (!isDeepStrictEqual(rustDiff, jsDiff)) return `${rustDiff.type} diffs differ`;
+        continue;
+      }
+      // Text attributes are compared structurally; only plain inserts are replayed.
+      if (rustDiff.type === "text" && hasAttributes(rustDiff.diff!, jsDiff.diff!)) {
+        return "text diffs with attributes differ";
+      }
+      const start = lists.get(rustEvent.target) ?? (rustDiff.type === "text" ? "" : []);
+      const rustValue = applySequenceDelta(
+        rustLists.get(rustEvent.target) ?? start,
+        rustDiff.diff!,
+      );
+      const jsValue = applySequenceDelta(
+        jsLists.get(jsEvent.target) ?? start,
+        jsDiff.diff!,
+      );
+      if (rustValue === undefined || jsValue === undefined)
+        return "a list delta overruns";
+      if (!isDeepStrictEqual(rustValue, jsValue))
+        return "list deltas have different effects";
+      rustLists.set(rustEvent.target, rustValue);
+      jsLists.set(jsEvent.target, jsValue);
+    }
+  }
+  return undefined;
+}
+
+function hasAttributes(...deltas: (readonly DeltaItem[])[]): boolean {
+  return deltas.some((delta) =>
+    delta.some((item) => "attributes" in item && item.attributes !== undefined),
+  );
+}
+
+function applySequenceDelta(
+  value: readonly unknown[] | string,
+  delta: readonly DeltaItem[],
+): unknown[] | string | undefined {
+  if (typeof value !== "string") return applyListDelta(value, delta);
+  // Text event indices count UTF-16 code units.
+  const units = applyListDelta(
+    value.split(""),
+    delta.map((item) =>
+      "insert" in item ? { insert: (item.insert as string).split("") } : item,
+    ),
+  );
+  return units === undefined ? undefined : units.join("");
+}
+
+function applyListDelta(
+  value: readonly unknown[],
+  delta: readonly DeltaItem[],
+): unknown[] | undefined {
+  const output: unknown[] = [];
+  let index = 0;
+  for (const item of delta) {
+    if ("retain" in item) {
+      if (index + item.retain > value.length) return undefined;
+      output.push(...value.slice(index, index + item.retain));
+      index += item.retain;
+    } else if ("delete" in item) {
+      if (index + item.delete > value.length) return undefined;
+      index += item.delete;
+    } else {
+      // Shallow values name child containers by ID; events carry handles.
+      output.push(
+        ...(item.insert as unknown[]).map((inserted) =>
+          typeof inserted === "string" && inserted.startsWith("container:")
+            ? inserted.slice("container:".length)
+            : inserted,
+        ),
+      );
+    }
+  }
+  output.push(...value.slice(index));
+  return output;
 }
 
 function onlyReachable(

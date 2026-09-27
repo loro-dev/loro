@@ -134,6 +134,8 @@ export class FuzzRun {
   readonly twins = new Map<number, Twin>();
   readonly log: Action[] = [];
   #nextValue = 0;
+  /** Peer IDs are never reused, including those of peers that left the run. */
+  #nextPeer: number;
   /** Last action kind per peer, to keep undo/redo unchained (see `generate`). */
   readonly #lastKind = new Map<number, Action["kind"]>();
 
@@ -143,6 +145,7 @@ export class FuzzRun {
     readonly seed: number,
   ) {
     this.rng = new Rng(seed);
+    this.#nextPeer = profile.peers + 1;
     for (let peer = 1; peer <= profile.peers; peer += 1) {
       this.twins.set(
         peer,
@@ -229,7 +232,9 @@ export class FuzzRun {
 
   generate(): Action {
     const action = this.generateAction();
-    this.#lastKind.set("peer" in action ? action.peer : action.to, action.kind);
+    if (countsForUndoChain(action)) {
+      this.#lastKind.set("peer" in action ? action.peer : action.to, action.kind);
+    }
     return action;
   }
 
@@ -282,7 +287,7 @@ export class FuzzRun {
         };
       }
       case "join": {
-        const joined = Math.max(...peers) + 1;
+        const joined = this.#nextPeer++;
         return {
           kind: "join",
           from: peer,
@@ -368,8 +373,12 @@ export class FuzzRun {
         const pos = rng.int(length);
         return { kind, peer, target, pos, len: 1 + rng.int(Math.min(3, length - pos)) };
       }
-      case "move":
-        return { kind, peer, target, from: rng.int(length), to: rng.int(length) };
+      case "move": {
+        // A move onto the same index is a no-op; it would hide a chained undo.
+        const from = rng.int(length);
+        const to = (from + 1 + rng.int(length - 1)) % length;
+        return { kind, peer, target, from, to };
+      }
       case "set":
         return { kind, peer, target, pos: rng.int(length), value: this.value() };
       case "setContainer":
@@ -462,10 +471,14 @@ export class FuzzRun {
       case "revert": {
         const twin = this.twin(action.peer);
         const frontiers = this.historyAt(twin, action.at);
-        twin.both("revertTo", (doc) => {
-          doc.revertTo(frontiers);
-          doc.commit();
-        });
+        if (this.#revertOrderIsUnspecified(twin, frontiers)) {
+          this.#revertThroughRust(twin, frontiers);
+        } else {
+          twin.both("revertTo", (doc) => {
+            doc.revertTo(frontiers);
+            doc.commit();
+          });
+        }
         twin.record();
         return;
       }
@@ -491,6 +504,58 @@ export class FuzzRun {
         return;
       }
     }
+  }
+
+  /**
+   * Rust applies a revert's container diffs in `FxHashMap` order within one
+   * depth, so when several containers at the same depth change, the two
+   * engines write the same values in a different op order. Twins must share
+   * one history, so such a revert is checked by value and then replicated.
+   */
+  #revertOrderIsUnspecified(twin: Twin, frontiers: FrontiersLike): boolean {
+    let diff: [string, unknown][];
+    try {
+      twin.docs.rust.commit();
+      diff = twin.docs.rust.diff(twin.docs.rust.frontiers(), frontiers, false);
+    } catch {
+      return false;
+    }
+    const depths = new Map<number, number>();
+    for (const [id] of diff) {
+      const depth = twin.docs.rust.getPathToContainer(id)?.length ?? 0;
+      depths.set(depth, (depths.get(depth) ?? 0) + 1);
+    }
+    return [...depths.values()].some((count) => count > 1);
+  }
+
+  #revertThroughRust(twin: Twin, frontiers: FrontiersLike): void {
+    twin.both("commit before revert", (doc) => doc.commit());
+    assertTwinAgrees(twin, "after commit before revert", {
+      metadata: this.profile.metadata,
+      events: this.profile.events,
+    });
+    const fork = twin.docs.js.fork();
+    fork.revertTo(frontiers);
+    fork.commit();
+    const before = vvToMap(twin.docs.js.oplogVersion());
+    twin.docs.rust.revertTo(frontiers);
+    twin.docs.rust.commit();
+    const expected = plain(twin.docs.rust.toJSON());
+    if (!isDeepStrictEqual(plain(fork.toJSON()), expected)) {
+      throw new Divergence(
+        `${twin.name}: revertTo(${stringify(frontiers)}) values differ\n` +
+          `  rust: ${stringify(expected)}\n  js:   ${stringify(plain(fork.toJSON()))}`,
+      );
+    }
+    twin.docs.js.import(
+      twin.docs.rust.export({
+        mode: "update",
+        from: new this.engines.rust.VersionVector(before),
+      }),
+    );
+    // The Rust half reports a local change, the loro.js half an import.
+    twin.events.rust.length = 0;
+    twin.events.js.length = 0;
   }
 
   twin(peer: number): Twin {
@@ -575,14 +640,24 @@ export class FuzzRun {
       js: exported("js"),
     };
     target.batchImport = action.mode === "batch";
+    let imported: unknown;
     try {
-      target.both(`import from ${source.name} (${action.mode})`, (doc, engine) =>
-        action.mode === "batch"
-          ? doc.importBatch(blobs[engine])
-          : doc.import(blobs[engine][0]!),
+      imported = target.both(
+        `import from ${source.name} (${action.mode})`,
+        (doc, engine) =>
+          action.mode === "batch"
+            ? doc.importBatch(blobs[engine])
+            : doc.import(blobs[engine][0]!),
       );
     } finally {
       target.batchImport = false;
+    }
+    if (imported === undefined) {
+      // Both rejected it, typically a change concurrent with a shallow root.
+      // Rust keeps the blob's other changes; loro.js imports atomically. The
+      // halves can now differ by design, so this peer leaves the run.
+      this.twins.delete(action.to);
+      return;
     }
     target.record();
   }
@@ -614,6 +689,7 @@ export class FuzzRun {
   }
 
   applyJoin(action: Extract<Action, { kind: "join" }>): void {
+    this.#nextPeer = Math.max(this.#nextPeer, action.peer + 1);
     const source = this.twin(action.from);
     source.both("commit before join", (doc) => doc.commit());
     assertTwinAgrees(source, "after commit before join", {
@@ -700,6 +776,7 @@ export function minimizeTrace(
     changed = false;
     for (let index = actions.length - 1; index >= 0; index -= 1) {
       const candidate = actions.filter((_, i) => i !== index);
+      if (!keepsUndoUnchained(candidate)) continue;
       const message = replayTrace(engines, { ...trace, actions: candidate });
       if (message !== undefined && !message.startsWith("crash")) {
         actions = candidate;
@@ -708,6 +785,27 @@ export function minimizeTrace(
     }
   }
   return { ...trace, actions };
+}
+
+/** Edits, undo and redo decide whether the next undo would be chained. */
+function countsForUndoChain(action: Action): boolean {
+  if (action.kind === "move") return action.from !== action.to;
+  return "target" in action || action.kind === "undo" || action.kind === "redo";
+}
+
+/** The same rule `FuzzRun.generate` follows: undo after an edit, redo after an undo. */
+function keepsUndoUnchained(actions: readonly Action[]): boolean {
+  const last = new Map<number, Action["kind"]>();
+  for (const action of actions) {
+    if (!countsForUndoChain(action)) continue;
+    const peer = "peer" in action ? action.peer : action.to;
+    const previous = last.get(peer);
+    if (action.kind === "undo" && (previous === "undo" || previous === "redo"))
+      return false;
+    if (action.kind === "redo" && previous !== "undo") return false;
+    last.set(peer, action.kind);
+  }
+  return true;
 }
 
 function saveTrace(trace: SavedTrace): string {
