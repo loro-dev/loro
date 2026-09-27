@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-27.
+Verified against code 2026-09-28.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -114,6 +114,16 @@ matching the root frontiers (that kept almost every container). So "deleted
 before the root" is safe to drop only for non-tree children; see
 `crates/loro/tests/shallow_snapshot_deleted_containers.rs`, which also checks
 checkout into the retained range against a full-history replica.
+
+The pure TypeScript runtime (`loro-js`) uses the same retention rule when it
+rebuilds both states in `LoroDoc.#encodeShallowSnapshot`. The root state keeps
+`#retainedContainerKeys()` at the root: root containers, visible Map/List
+children, and every tree node's meta, including deleted nodes. The latest state
+additionally keeps containers alive at the latest version and containers whose
+creation id the root version does not include. `loro-js` always rebuilds the
+root state by replay instead of reusing its cached root store, so re-exporting
+an older blob at the same root also prunes it (the #1123 case). Tests are in
+`loro-js/tests/shallow-snapshot-deleted-containers.test.ts`.
 
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as

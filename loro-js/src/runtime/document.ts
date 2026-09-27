@@ -4495,7 +4495,38 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           winnerContent.type === "tree-create" || winnerContent.type === "tree-move"
             ? winner
             : latestIncludedTreePlacement(operations, target, winner.writer);
-        if (placement === undefined) continue;
+        if (placement === undefined) {
+          // A retained delete whose placement was trimmed from a shallow history.
+          const rootNode = this.#shallowRootTreeNode(tree, nodeKey);
+          if (rootNode === undefined || winnerContent.type !== "tree-delete") continue;
+          const deleteId = {
+            peer: winner.record.change.id.peer,
+            counter: winner.operation.counter,
+          };
+          if (existing === undefined) {
+            tree._setRecord({
+              ...rootNode,
+              position: rootNode.position.slice(),
+              deleted: true,
+              writer: winner.writer,
+              lastMoveId: deleteId,
+              data: this.#getOrCreateContainer(
+                { kind: "normal", ...rootNode.id, containerType: CodecContainerType.Map },
+                tree,
+              ) as LoroMap,
+            });
+          } else {
+            tree._updateRecord(
+              existing,
+              rootNode.parent,
+              rootNode.position.slice(),
+              rootNode.writer,
+              rootNode.lastMoveId,
+            );
+            tree._deleteRecord(existing, winner.writer, deleteId);
+          }
+          continue;
+        }
         const placementContent = placement.operation.content;
         if (
           placementContent.type !== "tree-create" &&
@@ -5542,10 +5573,22 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const latestFrontiers = this.#frontiersForVersion(latestVersion);
     const restoreVersion = this.version();
 
+    // Only containers a retained op can still reach are exported; content
+    // deleted before the root must not survive in either state section.
+    // See context/internal-encoding.md (shallow snapshot retention set).
     this.#rebuildFromHistory(rootVersion);
-    const rootStore = this.#buildStateStore(startFrontiers);
+    const rootRetained = this.#retainedContainerKeys();
+    const rootStore = this.#buildStateStore(startFrontiers, rootRetained);
     this.#rebuildFromHistory(latestVersion);
-    const latestStore = this.#buildStateStore();
+    const latestRetained = this.#retainedContainerKeys();
+    for (const key of rootRetained) latestRetained.add(key);
+    for (const [key, container] of this.#containers) {
+      const id = container._codecId;
+      if (id?.kind === "normal" && id.counter >= (rootVersion.get(id.peer) ?? 0)) {
+        latestRetained.add(key);
+      }
+    }
+    const latestStore = this.#buildStateStore(undefined, latestRetained);
     if (restoreVersion.compare(latestVersion) !== 0) {
       this.#rebuildFromHistory(restoreVersion);
     }
@@ -5657,11 +5700,58 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       : undefined;
   }
 
-  #buildStateStore(frontiers?: readonly CodecId[]): StateSnapshotStore {
+  /**
+   * Containers reachable from the root containers in the current state. Tree
+   * node metadata is followed for every node, including deleted ones: a
+   * retained move can revive a deleted node together with its old metadata.
+   * Deleted Map and List children are not followed; re-inserting one creates
+   * a new container ID.
+   */
+  #retainedContainerKeys(): Set<string> {
+    const retained = new Set<string>();
+    const pending: LoroContainer[] = [];
+    const visit = (container: LoroContainer): void => {
+      const id = container._codecId;
+      if (id === undefined) return;
+      const key = this.#containerKey(id);
+      if (retained.has(key)) return;
+      retained.add(key);
+      pending.push(container);
+    };
+    for (const container of this.#containers.values()) {
+      const id = container._codecId;
+      if (id?.kind === "root" && !isMergeableContainerId(id)) visit(container);
+    }
+    for (
+      let container = pending.pop();
+      container !== undefined;
+      container = pending.pop()
+    ) {
+      if (container instanceof LoroMap) {
+        for (const record of container._entries.values()) {
+          if (!record.deleted && record.value instanceof LoroContainer)
+            visit(record.value);
+        }
+      } else if (container instanceof LoroList) {
+        for (const element of container._visibleElements()) {
+          if (element.value instanceof LoroContainer) visit(element.value);
+        }
+      } else if (container instanceof LoroTree) {
+        for (const record of container._nodes.values()) visit(record.data);
+      }
+    }
+    return retained;
+  }
+
+  #buildStateStore(
+    frontiers?: readonly CodecId[],
+    retained?: ReadonlySet<string>,
+  ): StateSnapshotStore {
     const containers: StateSnapshotContainerEntry[] = [];
     for (const container of this.#containers.values()) {
       const id = container._codecId;
       if (id === undefined) continue;
+      if (retained !== undefined && !retained.has(this.#containerKey(id))) continue;
       const parent = container.parent()?._codecId;
       containers.push({
         id,
