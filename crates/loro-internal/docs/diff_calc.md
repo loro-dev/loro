@@ -78,6 +78,26 @@ Map diffs in `Checkout`/`Import` mode only look up the keys written inside the
 replayed span, and skip replayed ops that both versions already contain, so
 their cost follows the update instead of the map size.
 
+## Winner metadata, not just values
+
+Map and MovableList states store the winning op's lamport/peer (map entry,
+movable-list `value_id`) next to the value. A checkout must move that metadata
+even when both versions hold an equal value written by different ops (a value
+rewritten after the target, e.g. by `revert_to`). `MapDiffCalculator` therefore
+emits a key whenever the winning op differs, and `MapState` /
+`MovableListState` apply an equal-value entry as a silent metadata update with
+no event, so events still only report value changes.
+
+Skipping those entries left the later op's metadata in the checked-out state.
+Shallow and state-only exports build their root state through such a checkout,
+so the root state carried a lamport/peer that is not in the root version. On
+import, `ensure_shallow_map_seeded` inserted that entry into the map checkout
+index, where it compared equal to the retained later op (the index is keyed by
+container, key, lamport and peer) and was dropped, so `checkout(root)` lost the
+key whenever its root-time writer was trimmed. `get_last_editor` after a
+checkout was wrong for the same reason. Regression tests:
+`crates/loro/tests/shallow_checkout_equal_value.rs`.
+
 ## Diff modes
 
 - `Checkout` is the general and slowest mode. It can move in either direction

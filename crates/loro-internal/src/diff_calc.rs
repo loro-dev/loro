@@ -687,29 +687,39 @@ impl DiffCalculatorTrait for MapDiffCalculator {
                     oplog,
                 );
 
+                // A key whose winning op differs must be emitted even when both
+                // ops carry the same value: the state keeps the winner's
+                // lamport/peer, and a shallow root state encoded from it seeds
+                // the history cache. Stale metadata there collides with a
+                // retained op and loses the root entry. `MapState` applies such
+                // metadata-only entries without reporting a value change.
                 for (k, peek_from) in from_map.iter() {
                     let peek_to = to_map.remove(k);
                     match peek_to {
-                        None => changed.push((k.clone(), None)),
+                        None => changed.push((k.clone(), None, true)),
                         Some(b) => {
                             if peek_from.value != b.value {
-                                changed.push((k.clone(), Some(b)))
+                                changed.push((k.clone(), Some(b), true))
+                            } else if peek_from.lamport != b.lamport || peek_from.peer != b.peer {
+                                changed.push((k.clone(), Some(b), false))
                             }
                         }
                     }
                 }
 
                 for (k, peek_to) in to_map.into_iter() {
-                    changed.push((k, Some(peek_to)));
+                    changed.push((k, Some(peek_to), true));
                 }
 
                 let mut updated =
                     FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
-                for (key, value) in changed {
+                for (key, value, value_changed) in changed {
                     let value = value.map(|v| {
                         let value = v.value.clone();
-                        if let Some(LoroValue::Container(c)) = &value {
-                            on_new_container(c);
+                        if value_changed {
+                            if let Some(LoroValue::Container(c)) = &value {
+                                on_new_container(c);
+                            }
                         }
 
                         MapValue {
