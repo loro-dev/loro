@@ -812,6 +812,39 @@ describe("loro-wasm-compatible runtime", () => {
     }
   });
 
+  test("reads and writes movable-list element IDs in the Rust JSON format", () => {
+    // Rust writes `L{lamport}@{peer}`; this fixture contains moves and sets.
+    const rustJson = readFileSync(
+      new URL("./fixtures/rust/updates.json", import.meta.url),
+      "utf8",
+    );
+    // The JSON schema stores binary values as number arrays, in Rust as well.
+    const withoutBinary = (doc: LoroDoc): unknown =>
+      JSON.parse(
+        JSON.stringify(doc.toJSON(), (_key, value: unknown) =>
+          value instanceof Uint8Array ? [...value] : value,
+        ),
+      );
+    const fromJson = new LoroDoc();
+    fromJson.importJsonUpdates(rustJson);
+    const fromBinary = new LoroDoc();
+    fromBinary.import(fixture("updates.blob"));
+    expect(withoutBinary(fromJson)).toEqual(withoutBinary(fromBinary));
+
+    const elementIds = fromBinary
+      .exportJsonUpdates()
+      .changes.flatMap((change) => change.ops)
+      .flatMap(({ content }) => ("elem_id" in content ? [content.elem_id] : []));
+    expect(elementIds.length).toBeGreaterThan(0);
+    for (const id of elementIds) expect(id).toMatch(/^L\d+@\d+$/u);
+
+    // loro.js 0.2.1 and earlier wrote the ID without the `L` prefix.
+    const legacy = JSON.parse(rustJson.replaceAll(/"elem_id": "L/gu, '"elem_id": "'));
+    const fromLegacy = new LoroDoc();
+    fromLegacy.importJsonUpdates(legacy);
+    expect(withoutBinary(fromLegacy)).toEqual(withoutBinary(fromBinary));
+  });
+
   test("redacts JSON update content while preserving child-container structure", () => {
     const source = new LoroDoc();
     source.setPeerId(1);

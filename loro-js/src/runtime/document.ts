@@ -113,6 +113,7 @@ import type {
   JsonChange,
   JsonContainerID,
   JsonDiff,
+  JsonIdLp,
   JsonOp,
   JsonOpContent,
   JsonSchema,
@@ -7151,19 +7152,13 @@ function decodedOperationToJson(
         type: "move",
         from: content.from,
         to: content.to,
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
       };
       break;
     case "movable-list-set":
       json = {
         type: "set",
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
         value: changeLoroValueToJson(content.value, keys, operationId, peerMap),
       };
       break;
@@ -7266,6 +7261,13 @@ function formatJsonOpId(id: CodecId, peerMap?: JsonPeerMap): `${number}@${PeerID
   return `${id.counter}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as `${number}@${PeerID}`;
 }
 
+function formatJsonIdLp(
+  id: { readonly peer: bigint; readonly lamport: number },
+  peerMap?: JsonPeerMap,
+): JsonIdLp {
+  return `L${id.lamport}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as JsonIdLp;
+}
+
 function formatJsonTreeId(id: CodecId, peerMap?: JsonPeerMap): TreeID {
   return formatJsonOpId(id, peerMap) as TreeID;
 }
@@ -7359,6 +7361,9 @@ function jsonOperationToDecoded(
     const parsed = parseTreeId(value as TreeID);
     return { peer: resolvePeer(parsed.peer), counter: parsed.counter };
   };
+  // Rust writes `L{lamport}@{peer}`; loro.js 0.2.1 and earlier omitted the `L`.
+  const parseIdLp = (value: unknown): CodecId =>
+    parseId(typeof value === "string" && value.startsWith("L") ? value.slice(1) : value);
   const parseParent = (value: unknown): CodecId | undefined =>
     value === null || value === undefined ? undefined : parseId(value);
   const encodeValue = (value: unknown, id = operationId): ChangeLoroValue =>
@@ -7479,7 +7484,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "move") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
@@ -7493,7 +7498,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "set") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
