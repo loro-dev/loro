@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  UndoManager,
   LoroDoc,
   LoroList,
   LoroMap,
@@ -190,4 +191,129 @@ describe("diff and revertTo for containers attached by the range", () => {
     replica.applyDiff(diff);
     expect(replica.toJSON()).toEqual({ m: { s: { a: 1 } } });
   });
+
+  test("applyDiff moves an existing child with one undoable move", () => {
+    for (const toEnd of [true, false]) {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = doc.getMovableList("l");
+      const text = list.insertContainer(0, new LoroText());
+      text.insert(0, "xxxx");
+      for (let index = 0; index < 5; index += 1) list.push(index);
+      if (!toEnd) list.move(0, 5);
+      doc.commit();
+      const before = doc.toJSON();
+      const opsBefore = doc.opCount();
+      const undo = new UndoManager(doc, { mergeInterval: 0 });
+      doc.applyDiff([
+        [
+          list.id,
+          {
+            type: "list",
+            diff: toEnd
+              ? [{ delete: 1 }, { retain: 5 }, { insert: [`🦜:${text.id}`] }]
+              : [{ insert: [`🦜:${text.id}`] }, { retain: 5 }, { delete: 1 }],
+          },
+        ],
+      ]);
+      doc.commit();
+      const after = doc.toJSON();
+      expect(after).toEqual({
+        l: toEnd ? [0, 1, 2, 3, 4, "xxxx"] : ["xxxx", 0, 1, 2, 3, 4],
+      });
+      // Rust's MovableList apply_delta emits one move for the pair.
+      expect(doc.opCount() - opsBefore).toBe(1);
+      expect(undo.undo()).toBe(true);
+      expect(doc.toJSON()).toEqual(before);
+      expect(undo.redo()).toBe(true);
+      expect(doc.toJSON()).toEqual(after);
+    }
+  });
+
+  test("an applied move merges with a concurrent move like Rust's", () => {
+    const base = new LoroDoc();
+    base.setPeerId(1);
+    const list = base.getMovableList("l");
+    const text = list.insertContainer(0, new LoroText());
+    text.insert(0, "text");
+    for (const value of ["A", "B", "C"]) list.push(value);
+    base.commit();
+    const version = base.oplogVersion();
+
+    const mover = base.fork();
+    mover.setPeerId(2);
+    mover.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [{ delete: 1 }, { retain: 3 }, { insert: [`🦜:${text.id}`] }],
+        },
+      ],
+    ]);
+    mover.commit();
+    const concurrent = base.fork();
+    concurrent.setPeerId(3);
+    concurrent.getMovableList("l").move(3, 0);
+    concurrent.commit();
+
+    const receiver = base.fork();
+    receiver.import(mover.export({ mode: "update", from: version }));
+    receiver.import(concurrent.export({ mode: "update", from: version }));
+    expect(receiver.toJSON()).toEqual({ l: ["C", "A", "B", "text"] });
+  });
+
+  test("restores a revived parent's whole subtree", () => {
+    const { doc, diff } = revertAfter(
+      (doc) => {
+        const tree = doc.getTree("tree");
+        const parent = tree.createNode();
+        const child = parent.createNode();
+        child.data.set("k", "v");
+        child.createNode().data.setContainer("t", new LoroText()).insert(0, "deep");
+      },
+      (doc) => doc.getTree("tree").delete("0@1"),
+    );
+    expect(
+      diff
+        .filter(([id]) => id === "cid:root-tree:Tree")
+        .flatMap(([, value]) => (value as { diff: { action: string }[] }).diff)
+        .map((item) => item.action),
+    ).toEqual(["create", "create", "create"]);
+    const [root] = (doc.toJSON() as { tree: TreeJson[] }).tree;
+    expect(root!.children[0]!.meta).toEqual({ k: "v" });
+    expect(root!.children[0]!.children[0]!.meta).toEqual({ t: "deep" });
+  });
+
+  test("recreates a node moved out of a deleted ancestor", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const parent = tree.createNode();
+    const child = parent.createNode();
+    child.data.setContainer("text", new LoroText()).insert(0, "hello");
+    child.data.ensureMergeableText("merge").insert(0, "keep");
+    doc.commit();
+    tree.delete(parent.id);
+    doc.commit();
+    const from = doc.frontiers();
+    tree.move(child.id);
+    doc.commit();
+    const diff = doc.diff(from, doc.frontiers());
+    const treeItems = diff.find(([id]) => id === tree.id)![1] as {
+      diff: { action: string }[];
+    };
+    expect(treeItems.diff.map((item) => item.action)).toEqual(["create"]);
+
+    const replica = doc.forkAt(from);
+    replica.setDetachedEditing(true);
+    replica.applyDiff(diff);
+    const [node] = (replica.toJSON() as { tree: TreeJson[] }).tree;
+    expect(node!.meta).toEqual({ text: "hello", merge: "keep" });
+  });
 });
+
+interface TreeJson {
+  readonly meta: unknown;
+  readonly children: TreeJson[];
+}
