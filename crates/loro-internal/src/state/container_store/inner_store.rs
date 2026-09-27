@@ -2,7 +2,7 @@ use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
-    state::{container_store::FRONTIERS_KEY, ContainerCreationContext},
+    state::{container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState},
     utils::kv_wrapper::KvWrapper,
     version::Frontiers,
 };
@@ -333,6 +333,32 @@ impl InnerStore {
             // the document and avoids constructing another temporary wrapper internally.
             let value = container.try_get_value(idx, ctx)?;
             return Ok(Some((parent, value)));
+        }
+
+        Ok(None)
+    }
+
+    /// Tree counterpart of [`Self::try_get_parent_and_value_ephemeral`]: the encoded parent and
+    /// the meta map ids of every node, deleted nodes included.
+    pub(crate) fn try_get_parent_and_tree_meta_ids_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext<'_>,
+    ) -> LoroResult<Option<(Option<ContainerID>, Vec<ContainerID>)>> {
+        if let Some(entry) = self.get_entry_mut(idx) {
+            let parent = entry.parent().cloned();
+            let ids = entry.try_get_tree_meta_ids_ephemeral(idx, ctx)?;
+            return Ok(Some((parent, ids)));
+        }
+
+        let id = self.arena.get_container_id(idx).unwrap();
+        let key = id.to_bytes();
+        if let Some(value) = self.kv.get(&key) {
+            let mut container = ContainerWrapper::try_new_from_bytes(value)?;
+            let parent = container.parent().cloned();
+            container.decode_state(idx, ctx)?;
+            let ids = container.try_get_state().unwrap().get_child_containers();
+            return Ok(Some((parent, ids)));
         }
 
         Ok(None)

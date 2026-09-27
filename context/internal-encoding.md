@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-21.
+Verified against code 2026-09-27.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -99,11 +99,33 @@ of truth and `has_container` must stop resolving them when the marker is
 removed (`loro_get_container_for_deleted_mergeable_children`).
 
 Shallow snapshot export still needs the complete alive set for its
-`retain_keys` filter. When the export also ships a latest-state overlay, it adds containers
-created after the root: a normal container counts as created after the root when
-the root's start version vector does not include its creation id
-(`!start_vv.includes_id(..)`), never by matching the root frontiers, so
-containers deleted before the root stay out of the root state. The alive walk in `DocState::ensure_all_alive_containers`
+`retain_keys` filter. That set is a *retention* set (`AliveWalk::Retention` in
+`state.rs`): for Tree containers it follows the meta map of every node,
+including deleted ones, because a retained op can revive a node deleted before
+the root with its old meta — a node dead only through a deleted ancestor can be
+moved out locally, and any peer's `Move` op revives even a directly deleted node
+(the handler refuses that locally; undo/`revert_to` create a new `TreeID`
+instead, but the CRDT applies it). Map/list children deleted before the root
+are still dropped: re-inserting creates a new container id, so no retained op
+can re-attach them. When the export also ships a latest-state overlay,
+`retain_created_after_root` adds every stored container whose creation id the
+root version vector does not include (`!root_vv.includes_id(..)`), never by
+matching the root frontiers (that kept almost every container). So "deleted
+before the root" is safe to drop only for non-tree children; see
+`crates/loro/tests/shallow_snapshot_deleted_containers.rs`, which also checks
+checkout into the retained range against a full-history replica.
+
+Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
+seeds the tree diff cache with deleted nodes as well (directly deleted as
+`Delete`, their descendants as `Create` under their real parent); with only
+alive nodes, reviving a node lost its root-time subtree and checkout could not
+retreat later moves of its children. `DocState::register_meta_parents_of_created_tree_nodes`
+registers the tree as the parent of each (re)created node's meta before a diff
+batch is sorted by depth, so blobs from pre-fix exporters (root state without
+the revived meta) no longer panic with "Parent is not registered" or drop the
+meta's diff as a dangling container.
+
+The alive walk in `DocState::ensure_all_alive_containers`
 registers root keys, reads snapshot-backed values ephemerally (via
 `try_get_value_ephemeral`, which never caches the decoded value or retains a
 probe-only wrapper), and only inserts a wrapper when an alive container has no

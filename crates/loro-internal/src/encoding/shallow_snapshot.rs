@@ -392,17 +392,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                 state.ensure_all_alive_containers()?;
                 state.store.flush();
 
-                // All the containers that are created after start_from need to be encoded.
-                for cid in state.store.iter_all_container_ids() {
-                    if let ContainerID::Normal { peer, counter, .. } = cid {
-                        let temp_id = ID::new(peer, counter);
-                        if !start_vv.includes_id(temp_id) {
-                            alive_c_bytes.insert(cid.to_bytes());
-                        }
-                    } else {
-                        alive_c_bytes.insert(cid.to_bytes());
-                    }
-                }
+                retain_created_after_root(&mut state, &root_vv, &mut alive_c_bytes);
 
                 let new_kv = state.store.get_kv_clone();
                 new_kv.remove_same(&shallow_root_kv);
@@ -487,7 +477,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                 latest_state_overlay_kv(
                     &mut state,
                     ops_num,
-                    &start_vv,
+                    &root_vv,
                     &shallow_root_state_kv,
                     &mut alive_c_bytes,
                 )?
@@ -519,7 +509,7 @@ pub(crate) fn export_shallow_snapshot_inner(
             latest_state_overlay_kv(
                 &mut state,
                 ops_num,
-                &start_vv,
+                &root_vv,
                 &shallow_root_state_kv,
                 &mut alive_c_bytes,
             )?
@@ -540,12 +530,12 @@ pub(crate) fn export_shallow_snapshot_inner(
 
 /// Compute the encoded latest-state overlay shipped alongside the shallow root
 /// when the retained history is too large to replay on import. Containers
-/// created after `start_from` are added to `alive_c_bytes` so both the root
+/// created after the root are added to `alive_c_bytes` so both the root
 /// state and the overlay keep them.
 fn latest_state_overlay_kv(
     state: &mut DocState,
     ops_num: usize,
-    start_vv: &VersionVector,
+    root_vv: &VersionVector,
     shallow_root_state_kv: &KvWrapper,
     alive_c_bytes: &mut BTreeSet<Vec<u8>>,
 ) -> Result<Option<KvWrapper>, LoroEncodeError> {
@@ -555,22 +545,37 @@ fn latest_state_overlay_kv(
 
     state.ensure_all_alive_containers()?;
     state.store.encode();
-    // All the containers that are created after start_from need to be encoded
+    retain_created_after_root(state, root_vv, alive_c_bytes);
+
+    let new_kv = state.store.get_kv_clone();
+    new_kv.remove_same(shallow_root_state_kv);
+    new_kv.retain_keys(alive_c_bytes);
+    Ok(Some(new_kv))
+}
+
+/// Adds every stored container created after the root (plus every non-normal
+/// container) to `alive_c_bytes`.
+///
+/// `alive_c_bytes` starts as the root state's retention set
+/// (`DocState::ensure_all_alive_containers`), so a container created at or
+/// before the root survives only if that walk reached it. Map/list children
+/// deleted before the root are dropped: a retained op cannot re-attach them.
+/// Tree node metas are not dropped even when the node is deleted, because a
+/// retained op can revive the node; the retention walk includes them.
+fn retain_created_after_root(
+    state: &mut DocState,
+    root_vv: &VersionVector,
+    alive_c_bytes: &mut BTreeSet<Vec<u8>>,
+) {
     for cid in state.store.iter_all_container_ids() {
         if let ContainerID::Normal { peer, counter, .. } = cid {
-            let temp_id = ID::new(peer, counter);
-            if !start_vv.includes_id(temp_id) {
+            if !root_vv.includes_id(ID::new(peer, counter)) {
                 alive_c_bytes.insert(cid.to_bytes());
             }
         } else {
             alive_c_bytes.insert(cid.to_bytes());
         }
     }
-
-    let new_kv = state.store.get_kv_clone();
-    new_kv.remove_same(shallow_root_state_kv);
-    new_kv.retain_keys(alive_c_bytes);
-    Ok(Some(new_kv))
 }
 
 fn encode_shallow_sections(
@@ -676,8 +681,8 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, target_frontiers, target_frontiers);
-    let mut start_vv =
-        frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
+    let root_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
+    let mut start_vv = root_vv.clone();
     for id in start_from.iter() {
         // we need to include the ops in start_from, this can make things easier
         start_vv.insert(id.peer, id.counter);
@@ -713,16 +718,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         let mut state = doc.app_state().lock();
         state.ensure_all_alive_containers()?;
         state.store.encode();
-        for cid in state.store.iter_all_container_ids() {
-            if let ContainerID::Normal { peer, counter, .. } = cid {
-                let temp_id = ID::new(peer, counter);
-                if !start_vv.includes_id(temp_id) {
-                    alive_c_bytes.insert(cid.to_bytes());
-                }
-            } else {
-                alive_c_bytes.insert(cid.to_bytes());
-            }
-        }
+        retain_created_after_root(&mut state, &root_vv, &mut alive_c_bytes);
 
         let target_state_kv = state.store.get_kv_clone();
         drop(state);

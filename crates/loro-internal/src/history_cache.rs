@@ -29,7 +29,7 @@ use crate::{
     encoding::value_register::ValueRegister,
     op::{InnerContent, RichOp, SliceWithId},
     oplog::ChangeStore,
-    state::{ContainerCreationContext, GcStore},
+    state::{ContainerCreationContext, GcStore, TreeParentId},
     OpLog, VersionVector,
 };
 
@@ -247,15 +247,24 @@ impl ContainerHistoryCache {
                             let tree = c.entry(idx).or_insert_with(|| {
                                 HistoryCacheForImporting::Tree(Default::default())
                             });
+                            // Deleted nodes are seeded too: a retained op can revive a node
+                            // deleted before the shallow root (e.g. move a child out of a
+                            // deleted parent), and the diff calculator then needs the node's
+                            // subtree at the root to re-create it and to retreat later moves.
                             tree.as_tree_mut().unwrap().record_shallow_root_state(
                                 t.tree_nodes()
                                     .into_iter()
+                                    .chain(t.deleted_tree_nodes())
                                     .map(|node| MoveLamportAndID {
                                         id: node.last_move_op,
-                                        op: Arc::new(TreeOp::Create {
-                                            target: node.id,
-                                            parent: node.parent.tree_id(),
-                                            position: node.fractional_index.clone(),
+                                        op: Arc::new(if node.parent == TreeParentId::Deleted {
+                                            TreeOp::Delete { target: node.id }
+                                        } else {
+                                            TreeOp::Create {
+                                                target: node.id,
+                                                parent: node.parent.tree_id(),
+                                                position: node.fractional_index.clone(),
+                                            }
                                         }),
                                         effected: true,
                                     })

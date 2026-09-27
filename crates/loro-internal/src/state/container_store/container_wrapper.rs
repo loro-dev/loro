@@ -253,6 +253,31 @@ impl ContainerWrapper {
         }
     }
 
+    /// Meta map ids of every node in a tree container, including deleted nodes, without caching
+    /// a decoded state that was not already resident.
+    ///
+    /// The tree's `LoroValue` only lists alive nodes, but a deleted node can be revived by a later
+    /// op (a move out of a deleted ancestor, or a peer's `Move` of a directly deleted node) and
+    /// then its meta map is live again. Retention walks use this instead of the value.
+    pub(crate) fn try_get_tree_meta_ids_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+        ctx: ContainerCreationContext,
+    ) -> LoroResult<Vec<ContainerID>> {
+        debug_assert_eq!(self.kind, ContainerType::Tree);
+        match &self.data {
+            ContainerData::State(state) => Ok(state.get_child_containers()),
+            ContainerData::Lazy(lazy) => {
+                let Some(bytes) = lazy.bytes.clone() else {
+                    return Ok(Vec::new());
+                };
+                let mut temporary = Self::try_new_from_bytes(bytes)?;
+                temporary.decode_state(idx, ctx)?;
+                Ok(temporary.try_get_state().unwrap().get_child_containers())
+            }
+        }
+    }
+
     pub fn map_get(
         &mut self,
         idx: ContainerIdx,
