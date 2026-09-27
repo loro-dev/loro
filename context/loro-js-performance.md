@@ -138,6 +138,14 @@ JavaScript constant factor.
   hydrate their latest encoded state on top of the replayed operations. A
   delete transition is also refused unless the deletion index recorded that
   delete operation, since a replay to an earlier version never applied it.
+- A shallow history trims the ops that wrote root-time Map values and Tree
+  placements (the root commit's other ops). When a Map or Tree retreat finds no
+  retained winner at or below the target, it uses the shallow root state entry
+  (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
+  or node. The root store's container index and each container's key/node index
+  are built on first lookup and cached per root store, so a retreat touches only
+  the maps and trees it changes, as in Rust's per-map checkout index seeding
+  (loro-dev/loro#1120, #1124).
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or
