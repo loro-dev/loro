@@ -30,6 +30,8 @@ export interface MovablePosition extends SequenceElement {
    * position read from a snapshot, whose element is not recorded.
    */
   element: MovableElement | undefined;
+  /** Alive at the tracker version minus alive now; see `MovableListState`. */
+  trackerDelta?: number | undefined;
 }
 
 export interface MovableValueCandidate {
@@ -76,14 +78,18 @@ export type MovableTransitionOp =
 
 export class InvalidMovableListOpError extends Error {}
 
-const POINTED: SequenceMetrics = { utf16: 1, utf8: 1 };
-const UNPOINTED: SequenceMetrics = { utf16: 0, utf8: 0 };
+/** Indexed by pointedness, then by tracker delta + 1. */
+const POSITION_METRICS: readonly (readonly SequenceMetrics[])[] = [0, 1].map((utf16) =>
+  [-1, 0, 1].map((utf8) => ({ utf16, utf8 })),
+);
 
-/** A position counts as one user-visible item iff its element points at it. */
+/**
+ * A position counts as one user-visible item (`utf16`) iff its element points
+ * at it. `utf8` holds its tracker delta.
+ */
 function positionMetrics(position: MovablePosition): SequenceMetrics {
-  return position.element !== undefined && position.element.pos === position
-    ? POINTED
-    : UNPOINTED;
+  const pointed = position.element !== undefined && position.element.pos === position;
+  return POSITION_METRICS[pointed ? 1 : 0]![(position.trackerDelta ?? 0) + 1]!;
 }
 
 export function compareLamportIds(
@@ -172,6 +178,18 @@ export class MovableListState {
    * are concurrent with that state must replay history first.
    */
   historyComplete = true;
+  /**
+   * Rust's tracker (`Tracker::checkout` in the MovableList diff calculator).
+   * An op's indices count the positions alive at its causal version. Instead
+   * of building that view per op, the tracker keeps a version and gives each
+   * position a delta, (alive there) - (alive now), as its `utf8` metric, so
+   * `positions.atTracked`/`trackedIndexOf` resolve indices in O(log n).
+   * Moving it to another version revisits only the positions that the ops in
+   * between created or deleted, and each applied op moves it past itself.
+   * Undefined when the tracker is at the current state (all deltas zero).
+   */
+  #trackerVersion: Map<bigint, number> | undefined;
+  readonly #trackedPositions = new Set<MovablePosition>();
 
   constructor(readonly bindValue: (element: MovableElement) => void) {}
 
@@ -186,6 +204,8 @@ export class MovableListState {
   }
 
   reset(): void {
+    this.#trackerVersion = undefined;
+    this.#trackedPositions.clear();
     this.positions.reset();
     this.#elements.clear();
     this.historyComplete = true;
@@ -289,7 +309,10 @@ export class MovableListState {
     events?: MovableListEvents,
   ): void {
     if (values.length === 0) return;
-    const viewLength = this.#viewLength(causalVersion);
+    const tracked = this.#track(causalVersion);
+    const viewLength = tracked
+      ? this.positions.trackedLength
+      : this.positions.visibleLength;
     if (!Number.isSafeInteger(opIndex) || opIndex < 0 || opIndex > viewLength) {
       throw new InvalidMovableListOpError(
         `movable-list insert position ${opIndex} is out of range (length ${viewLength})`,
@@ -324,7 +347,15 @@ export class MovableListState {
     }
     // The origin index misorders a sibling subtree followed by a concurrent
     // element that is not its descendant, so positions use the scan.
-    insertFugueElements(this.positions, opIndex, inserted, causalVersion, false);
+    insertFugueElements(
+      this.positions,
+      opIndex,
+      inserted,
+      causalVersion,
+      false,
+      tracked ? this.#trackedLeft(opIndex) : undefined,
+    );
+    if (tracked) this.#trackPast(firstId, values.length);
     for (const position of inserted) this.bindValue(position.element!);
     if (events !== undefined) {
       events.insertList(
@@ -356,6 +387,7 @@ export class MovableListState {
         events,
       );
     }
+    if (this.#trackerVersion !== undefined) this.#trackPast(deletedBy, count);
   }
 
   /**
@@ -377,12 +409,13 @@ export class MovableListState {
         `movable-list move targets unknown element L${elementId.lamport}@${elementId.peer}`,
       );
     }
-    const current = this.positions.isFullyIncluded(causalVersion);
-    const view = current ? undefined : this.positions.causalView(causalVersion);
-    const viewLength = view?.length ?? this.positions.visibleLength;
-    const source = Number.isSafeInteger(from)
-      ? (view?.at(from) ?? (current ? this.positions.atVisible(from) : undefined))
-      : undefined;
+    const tracked = this.#track(causalVersion);
+    const viewLength = tracked
+      ? this.positions.trackedLength
+      : this.positions.visibleLength;
+    const source = tracked
+      ? this.positions.atTracked(from)
+      : this.positions.atVisible(from);
     if (source === undefined) {
       throw new InvalidMovableListOpError(
         `movable-list move source ${from} is out of range (length ${viewLength})`,
@@ -395,6 +428,8 @@ export class MovableListState {
       );
     }
     this.#deletePosition(source, opId, events);
+    // `to` counts the view after the source is deleted.
+    if (tracked) this.#setTrackedAlive(source, false);
     const afterDelete = new Map(causalVersion);
     afterDelete.set(
       opId.peer,
@@ -409,7 +444,15 @@ export class MovableListState {
       originRight: undefined,
       element,
     };
-    insertFugueElements(this.positions, to, [position], afterDelete, false);
+    insertFugueElements(
+      this.positions,
+      to,
+      [position],
+      afterDelete,
+      false,
+      tracked ? this.#trackedLeft(to) : undefined,
+    );
+    if (tracked) this.#trackPast(opId, 1);
     if (element.positions !== undefined) {
       insertSorted(element.positions, position, (left, right) =>
         compareLamportIds(positionWriter(left), positionWriter(right)),
@@ -454,6 +497,7 @@ export class MovableListState {
     includes: (id: CodecId) => boolean,
     events?: MovableListEvents,
   ): void {
+    this.#clearTracker();
     const positions = new Set<MovablePosition>();
     const elements = new Set<MovableElement>();
     const addPosition = (position: MovablePosition | undefined): void => {
@@ -791,10 +835,77 @@ export class MovableListState {
     byLamport.set(element.lamport, element);
   }
 
-  #viewLength(causalVersion: CausalVersion): number {
-    return this.positions.isFullyIncluded(causalVersion)
-      ? this.positions.visibleLength
-      : this.positions.causalView(causalVersion).length;
+  /**
+   * Moves the tracker to `version`. Returns false, with the tracker cleared,
+   * when `version` includes every op applied so far (the current state).
+   */
+  #track(version: CausalVersion): boolean {
+    if (this.positions.isFullyIncluded(version)) {
+      this.#clearTracker();
+      return false;
+    }
+    const from = this.#trackerVersion ?? this.positions.idEnds();
+    const affected = new Set<MovablePosition>();
+    const visit = (position: MovablePosition): void => {
+      affected.add(position);
+    };
+    for (const peer of new Set([...from.keys(), ...version.keys()])) {
+      const start = Math.min(from.get(peer) ?? 0, version.get(peer) ?? 0);
+      const end = Math.max(from.get(peer) ?? 0, version.get(peer) ?? 0);
+      if (start === end) continue;
+      this.positions.forEachWithIdIn(peer, start, end, visit);
+      for (const position of this.positions.elementsDeletedBy(peer, start, end)) {
+        affected.add(position);
+      }
+    }
+    const target = new Map(version);
+    this.#trackerVersion = target;
+    const includes = (id: CodecId): boolean => id.counter < (target.get(id.peer) ?? 0);
+    for (const position of affected) {
+      this.#setTrackedAlive(
+        position,
+        includes(position.id) && !this.positions.someDeletion(position, includes),
+      );
+    }
+    return true;
+  }
+
+  /** Moves the tracker past the op `id..id+length` it just applied. */
+  #trackPast(id: CodecId, length: number): void {
+    const version = this.#trackerVersion;
+    if (version === undefined) return;
+    const next = new Map(version);
+    next.set(id.peer, Math.max(next.get(id.peer) ?? 0, id.counter + length));
+    this.#track(next);
+  }
+
+  #setTrackedAlive(position: MovablePosition, alive: boolean): void {
+    const delta = (alive ? 1 : 0) - (position.deleted ? 0 : 1);
+    if (delta === (position.trackerDelta ?? 0)) return;
+    position.trackerDelta = delta === 0 ? undefined : delta;
+    if (delta === 0) this.#trackedPositions.delete(position);
+    else this.#trackedPositions.add(position);
+    this.positions.refreshMetrics(position);
+  }
+
+  #clearTracker(): void {
+    this.#trackerVersion = undefined;
+    for (const position of this.#trackedPositions) {
+      position.trackerDelta = undefined;
+      this.positions.refreshMetrics(position);
+    }
+    this.#trackedPositions.clear();
+  }
+
+  /** Fugue origins for an insertion at tracked index `index`. */
+  #trackedLeft(index: number): {
+    readonly current: false;
+    readonly left: MovablePosition | undefined;
+  } {
+    return {
+      current: false,
+      left: index === 0 ? undefined : this.positions.atTracked(index - 1),
+    };
   }
 
   #deletePosition(

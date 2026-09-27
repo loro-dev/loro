@@ -95,18 +95,30 @@ fails loudly.
 - `positions: SequenceIndex<MovablePosition>`: the Fugue sequence of positions.
   `deleted` means "not alive in the tracker"; deletion records (`deletedBy`)
   hold the delete or move op that removed it, which gives causal views and
-  version transitions for free. A position's `utf16`/`utf8` metrics are 1 when
-  it is pointed and 0 otherwise, so the user-visible count is the sequence's
-  visible metric and user ↔ op index conversion is O(log n) through the
-  existing metric queries. `SequenceIndex.refreshMetrics` recomputes one
-  element's node and its ancestors when pointedness changes.
+  version transitions for free. A position's `utf16` metric is 1 when it is
+  pointed and 0 otherwise, so the user-visible count is the sequence's visible
+  metric and user ↔ op index conversion is O(log n) through the existing
+  metric queries. `SequenceIndex.refreshMetrics` recomputes one element's node
+  and its ancestors when pointedness changes. The `utf8` metric holds the
+  tracker delta (below).
 - `elements: Map<peer, Map<lamport, MovableElement>>` keyed by element `IdLp`.
   Each element keeps its current winner position, value and value writer, plus
   history arrays sorted by `IdLp` (positions it may point to, and value
   candidates). Winner selection at a version scans candidates from the
   greatest `IdLp` down until one is included, which is the same work as Rust's
   `BTreeSet` range scan.
-- Remote ops are applied in causal order:
+- Remote ops are applied in causal order. An op's indices count the positions
+  alive at its causal version. When that is not the current state (the op is
+  concurrent with ops already applied), the state resolves them through a
+  tracker, like Rust's `Tracker::checkout`: it keeps a tracker version and
+  gives each position a delta, (alive at the tracker version) - (alive now),
+  as its `utf8` metric, so `SequenceIndex.atTracked`/`trackedIndexOf` count
+  that view in O(log n). Moving the tracker revisits only the positions that
+  the ops between the two versions created or deleted, and each applied op
+  moves it past itself, so a run of concurrent ops costs
+  O((ops + positions they touch) · log n) instead of one O(n) causal view per
+  op. An op that sees the whole state, and every version transition, clears
+  the tracker through the set of positions with a nonzero delta.
   - `Insert`: Fugue insertion at the op index in the op's causal view, then new
     elements.
   - `Delete`: deletes the target position IDs. Rust deletes by index; the two

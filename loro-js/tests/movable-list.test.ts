@@ -132,6 +132,53 @@ describe("MovableList positions and elements", () => {
     expect(metadata(list)).toEqual(metadata(other));
   });
 
+  test("concurrent branches converge in any import order", () => {
+    let seed = 7;
+    const next = (limit: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % limit;
+    };
+    const base = doc(1);
+    for (let index = 0; index < 20; index += 1) base.getMovableList("list").push(index);
+    base.commit();
+    const version = base.oplogVersion();
+    const branches = [2, 3, 4].map((peer) => {
+      const branch = base.fork();
+      branch.setPeerId(peer);
+      const list = branch.getMovableList("list");
+      for (let step = 0; step < 60; step += 1) {
+        const kind = next(4);
+        if (kind === 0) list.insert(next(list.length + 1), `${peer}-${step}`);
+        else if (kind === 1 && list.length > 1) list.delete(next(list.length), 1);
+        else if (kind === 2) list.set(next(list.length), -step);
+        else list.move(next(list.length), next(list.length));
+        if (step % 7 === 6) branch.commit();
+      }
+      branch.commit();
+      return branch.export({ mode: "update", from: version });
+    });
+
+    const results = [
+      [0, 1, 2],
+      [2, 1, 0],
+      [1, 0, 2],
+    ].map((order) => {
+      const target = base.fork();
+      for (const index of order) target.import(branches[index]!);
+      return target;
+    });
+    const batched = base.fork();
+    batched.importBatch(branches);
+    const replayed = new LoroDoc();
+    replayed.import(results[0]!.export({ mode: "update" }));
+    for (const target of [...results, batched, replayed]) {
+      expect(target.toJSON()).toEqual(results[0]!.toJSON());
+      expect(metadata(target.getMovableList("list"))).toEqual(
+        metadata(results[0]!.getMovableList("list")),
+      );
+    }
+  });
+
   test("records a set even when the value does not change", () => {
     const a = doc(1);
     const list = a.getMovableList("list");

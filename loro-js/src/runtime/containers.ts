@@ -3531,6 +3531,7 @@ export function insertFugueElements<T extends SequenceElement>(
   inserted: T[],
   causalVersion: CausalVersion,
   useOriginIndex = true,
+  positionHint?: FuguePositionHint<T>,
 ): void {
   if (inserted.length === 0) return;
 
@@ -3540,6 +3541,7 @@ export function insertFugueElements<T extends SequenceElement>(
     inserted[0]!.id,
     causalVersion,
     useOriginIndex,
+    positionHint,
   );
   const { insertIndex, originLeft, originRight } = insertion;
 
@@ -3580,7 +3582,7 @@ interface FugueInsertionResult {
   readonly indexUpdate?: FugueOriginIndex | undefined;
 }
 
-interface FuguePositionHint<T extends SequenceElement> {
+export interface FuguePositionHint<T extends SequenceElement> {
   readonly current: boolean;
   readonly left: T | undefined;
   readonly startIndex?: number | undefined;

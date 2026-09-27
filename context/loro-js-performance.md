@@ -73,7 +73,11 @@ JavaScript constant factor.
   and value from its candidates, newest first. It costs
   O((affected ops + skipped candidates) · log n), like Rust's `last_pos` scan,
   with no replay. Unrelated document history and container state are not
-  rebuilt.
+  rebuilt. Imported ops that are concurrent with applied ones resolve their
+  indices through a tracker version (a per-position delta metric) that moves
+  incrementally between op versions, like Rust's `Tracker::checkout`, instead
+  of building a causal view per op; `pnpm --dir loro-js bench:movable-list`
+  measures it.
 - Contiguous Text/List insertion and deletion transitions reuse the physical ID
   runs and reversible lazy subtree visibility in both directions. Without an
   event subscriber, hiding or showing one complete run is expected O(log n +

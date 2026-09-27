@@ -221,6 +221,83 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     return visibleCount(this.#root);
   }
 
+  /**
+   * Visible elements plus the `utf8` metric of every element. A caller that
+   * keeps a 0/±1 delta in `utf8` (MovableList's tracker; see
+   * context/loro-js-movable-list.md) indexes a second view with it, where each
+   * element counts 0 or 1: `trackedLength`, `atTracked` and `trackedIndexOf`
+   * are O(log n) like their visible counterparts.
+   */
+  get trackedLength(): number {
+    return trackedCount(this.#root);
+  }
+
+  atTracked(index: number): T | undefined {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= this.trackedLength) {
+      return undefined;
+    }
+    let node = this.#root;
+    let remaining = index;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftCount = trackedCount(node.left);
+      if (remaining < leftCount) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftCount;
+      for (let offset = 0; offset < nodeLength(node); offset += 1) {
+        const count = trackedElementCount(node, offset, this.#metrics);
+        if (remaining < count) return nodeElement(node, offset);
+        remaining -= count;
+      }
+      node = node.right;
+    }
+    return undefined;
+  }
+
+  trackedIndexOf(element: T): number | undefined {
+    if (this.#hasLazyDeletions) materializeElementDeletion(element, this.#metrics);
+    const node = elementNode(element);
+    const offset = elementOffset(element);
+    if (node === undefined || offset === undefined) return undefined;
+    let index = trackedCount(node.left);
+    for (let before = 0; before < offset; before += 1) {
+      index += trackedElementCount(node, before, this.#metrics);
+    }
+    let current = node;
+    while (current.parent !== undefined) {
+      if (current === current.parent.right) {
+        index +=
+          trackedCount(current.parent.left) +
+          ownVisibleCount(current.parent) +
+          current.parent.ownUtf8;
+      }
+      current = current.parent;
+    }
+    return current === this.#root ? index : undefined;
+  }
+
+  /** Visits the elements whose IDs are `peer:start..end`. */
+  forEachWithIdIn(
+    peer: bigint,
+    start: number,
+    end: number,
+    visit: (element: T) => void,
+  ): void {
+    this.#locationsByPeer.get(peer)?.forEach(start, end, (location) => {
+      const element =
+        typeof location === "number" ? this.#elementAtLocation(location) : location;
+      if (this.#hasLazyDeletions) materializeElementDeletion(element, this.#metrics);
+      visit(element);
+    });
+  }
+
+  /** The exclusive end counter of the element and deletion IDs of each peer. */
+  idEnds(): Map<bigint, number> {
+    return new Map(this.#maxCounterByPeer);
+  }
+
   get visibleUtf16Length(): number {
     return visibleMetric(this.#root, "utf16");
   }
@@ -2529,6 +2606,20 @@ function visibleCount<T extends IndexedSequenceElement>(
   node: SequenceNode<T> | undefined,
 ): number {
   return node?.visibleCount ?? 0;
+}
+
+function trackedCount<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+): number {
+  return node === undefined ? 0 : node.visibleCount + node.allUtf8;
+}
+
+function trackedElementCount<T extends IndexedSequenceElement>(
+  node: SequenceNode<T>,
+  offset: number,
+  metrics: (element: T) => SequenceMetrics,
+): number {
+  return (nodeDeleted(node, offset) ? 0 : 1) + nodeMetrics(node, offset, metrics).utf8;
 }
 
 function visibleMetric<T extends IndexedSequenceElement>(
