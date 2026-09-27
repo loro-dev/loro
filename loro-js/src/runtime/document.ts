@@ -2393,8 +2393,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _mapDelete(container: LoroMap, key: string): void {
-    const current = container._entries.get(key);
-    if (current === undefined || current.deleted) return;
+    // Rust records a delete even when the key is absent: it can still win
+    // against a concurrent set.
     this.#appendAndApply(container, { type: "map-delete", key }, 1);
   }
 
@@ -2541,7 +2541,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _counterIncrement(container: LoroCounter, value: number): void {
-    if (value === 0) return;
     this.#appendAndApply(
       container,
       { type: "future", property: 0, value: { type: "double", value } },
@@ -3132,18 +3131,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #deleteTextRuns(container: LoroText, position: number, length: number): void {
-    for (const run of container._sequence.visibleIdRuns(position, position + length)) {
+    // Rust's TextHandler::delete emits one delete per ID run from right to
+    // left, so each run keeps its position and op counters follow that order.
+    const runs = container._sequence.visibleIdRuns(position, position + length);
+    let end = position + length;
+    for (let index = runs.length - 1; index >= 0; index -= 1) {
+      const run = runs[index]!;
+      const start = end - run.length;
       this.#appendAndApply(
         container,
         {
           type: "text-delete",
-          position,
+          position: start,
           length: BigInt(run.length),
           startId: run.start,
         },
         run.length,
       );
       this.#mergeTrailingTextDeletes();
+      end = start;
     }
   }
 
@@ -7720,7 +7726,8 @@ function restoreBlueprint(container: Container, blueprint: ContainerBlueprint): 
   } else if (container instanceof LoroText) {
     container.applyDelta(blueprint.value as never);
   } else if (container instanceof LoroCounter) {
-    if ((blueprint.value as number) !== 0) container.increment(blueprint.value as number);
+    // Rust's CounterHandler::attach increments by the detached value, even 0.
+    container.increment(blueprint.value as number);
   } else if (container instanceof LoroList) {
     for (const value of blueprint.value as unknown[]) {
       if (isContainer(value)) container.pushContainer(value);
