@@ -527,9 +527,10 @@ The remaining differences are representation and JavaScript constant factors:
   emitted output. Without a subscriber, both hide and show transitions use the
   reversible lazy visibility layer and stay proportional to affected ID runs.
 - State hydrated from a latest-state snapshot has no tombstones or MovableList
-  candidate history. The first import that is concurrent with that state, or
-  names a MovableList element it lacks, replays history once
-  (`#needsHistoryReplay`); so do version transitions on such a MovableList.
+  candidate history. The first import that touches such a container
+  concurrently with the snapshot, or names a MovableList element it lacks,
+  rebuilds only that container from its own history (`#prepareSnapshotImport`);
+  so does the first version transition that touches a hydrated MovableList.
   Later imports and transitions are incremental again.
 - The million-operation C1.1 concurrent-text trace still exposes a large
   constant-factor and retained-memory gap. Its local edit phase is about 4x the

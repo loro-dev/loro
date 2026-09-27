@@ -707,6 +707,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       this.#assertImportsNotOutdated(imported);
       integration = this.#integrateHistory(imported);
       const { added } = integration;
+      if (added.length === 0 && !this.#detached) {
+        this.#materializePendingRoots(imported, integration.pending);
+      }
       if (added.length > 0 && !this.#detached) {
         this.#prepareSnapshotImport(added, beforeVersion);
         const recording = this.#hasEventSubscribers()
@@ -914,6 +917,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           } else {
             this.#hydrateState(hydratedStore!, this.#historyVersion());
           }
+        } else if (!this.#detached && integration.added.length === 0) {
+          this.#materializePendingRoots(imported, integration.pending);
         } else if (!this.#detached && integration.added.length > 0) {
           this.#prepareSnapshotImport(integration.added, beforeVersion);
           const recording = this.#hasEventSubscribers()
@@ -5429,33 +5434,58 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return id.counter < (this.#historyEndByPeer.get(id.peer) ?? 0);
   }
 
+  /**
+   * Rust's `pending_root_containers_to_materialize`: an import that applies no
+   * change still creates the root containers that its pending changes edit, so
+   * they read as empty until the changes apply. Mergeable roots are children
+   * and wait for their parent.
+   */
+  #materializePendingRoots(
+    imported: readonly HistoryRecord[],
+    pending: readonly HistoryRecord[],
+  ): void {
+    const pendingChanges = new Set(pending.map(({ change }) => changeKey(change.id)));
+    for (const { change } of imported) {
+      if (!pendingChanges.has(changeKey(change.id))) continue;
+      for (const operation of change.operations) {
+        const id = operation.container;
+        if (id.kind === "root" && !isMergeableContainerId(id))
+          this.#getOrCreateContainer(id);
+      }
+    }
+  }
+
   #assertImportsNotOutdated(records: readonly HistoryRecord[]): void {
     if (this.#shallowRootStore === undefined) return;
-    // Like Rust's `is_before_shallow_root`, a root at the empty version trims
-    // nothing, so a change without dependencies is not outdated.
-    const trimmed = this.#shallowRootFrontiers.length > 0;
+    // Rust's `is_before_shallow_root`: a root at the empty version trims
+    // nothing, so nothing is outdated. (A root at a peer's first op still has a
+    // zero start-version entry, and then a change without dependencies is.)
+    if (this.#shallowRootFrontiers.length === 0) return;
+    const start = this.#shallowStartVersion;
+    const root = this.#shallowRootFrontiers.map(formatOpId);
+    const known = this.#historyVersion();
     for (const { change } of records) {
-      // Changes up to the root are already part of the root state; a change that
-      // straddles the root continues from the root op.
-      const rootEnd = Math.max(
-        this.#shallowStartVersion.get(change.id.peer) ?? 0,
-        this.#shallowRootVersion.get(change.id.peer) ?? 0,
+      // Like Rust, only the part of a change that is not known yet is checked;
+      // a change sliced at `counter` depends on the op before it.
+      const { peer } = change.id;
+      const counter = Math.max(
+        known.get(peer) ?? 0,
+        this.#shallowRootVersion.get(peer) ?? 0,
       );
-      if (change.id.counter < rootEnd) continue;
-      if (change.dependencies.length === 0 && trimmed) {
-        throw new Error("cannot import updates that depend on an outdated version");
-      }
-
-      const touchesShallowRoot = change.dependencies.some((dependency) =>
-        this.#shallowRootFrontiers.some((frontier) => idsEqual(frontier, dependency)),
-      );
-      if (touchesShallowRoot) continue;
-
-      const dependsOnPrunedHistory = change.dependencies.some(
-        (dependency) =>
-          dependency.counter < (this.#shallowStartVersion.get(dependency.peer) ?? 0),
-      );
-      if (dependsOnPrunedHistory) {
+      if (change.id.counter + changeLength(change) <= counter) continue;
+      const sliced = change.id.counter < counter;
+      const ids = sliced ? [{ peer, counter: counter - 1 }] : change.dependencies;
+      const dependencies = ids.map(formatOpId);
+      // A change needs the state at its dependencies: they must be after the
+      // root or exactly the root.
+      if (
+        dependencies.length === 0 ||
+        ids.some(
+          (dependency) => dependency.counter < (start.get(dependency.peer) ?? 0),
+        ) ||
+        (dependencies.some((dependency) => root.includes(dependency)) &&
+          !frontierSetsEqual(dependencies, root))
+      ) {
         throw new Error("cannot import updates that depend on an outdated version");
       }
     }
@@ -7025,7 +7055,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#treeOperationHistory = staged.#treeOperationHistory;
     this.#containersWithOperations = staged.#containersWithOperations;
     this.#containerKeys = staged.#containerKeys;
-    this.#pendingHistory = staged.#pendingHistory;
+    // Pending changes stay pending: their dependencies were already checked
+    // against the deferred version (`#historyContainsId`).
     this.#deferredSnapshotHistory = undefined;
     this.#historyRevision += 1;
   }

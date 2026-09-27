@@ -370,6 +370,32 @@ describe("snapshot-hydrated documents replay history for concurrent imports", ()
       expect(hydrated.toJSON()).toEqual({ list: ["a", "z", "c"] });
     }
   });
+
+  test("the import's event comes from its ops, as in Rust", () => {
+    const b = doc(2);
+    const list = b.getMovableList("list");
+    list.insertContainer(0, new LoroText());
+    list.insert(1, "v8");
+    b.commit();
+    const c = doc(3);
+    c.import(b.export({ mode: "update" }));
+    list.insert(2, 12);
+    list.move(0, 2);
+    b.commit();
+    const hydrated = new LoroDoc();
+    hydrated.import(b.export({ mode: "snapshot" }));
+    // Concurrent with the snapshot: "v8" moves, but stays at index 0.
+    c.getMovableList("list").move(1, 0);
+    c.commit();
+
+    const events: LoroEventBatch[] = [];
+    hydrated.subscribe((event) => events.push(event));
+    hydrated.import(c.export({ mode: "update" }));
+    expect(hydrated.toJSON()).toEqual({ list: ["v8", 12, ""] });
+    expect(events.map(({ events }) => events.map(({ diff }) => diff))).toEqual([
+      [{ type: "list", diff: [{ delete: 1 }, { insert: ["v8"] }] }],
+    ]);
+  });
 });
 
 describe("shallow imports", () => {
@@ -394,6 +420,42 @@ describe("shallow imports", () => {
     );
     shallow.import(source.export({ mode: "snapshot" }));
     expect(shallow.toJSON()).toEqual({ list: ["v"] });
+  });
+
+  test("the part of a change after the root must not depend on trimmed history", () => {
+    const a = doc(3);
+    a.getMovableList("list").push("a");
+    a.commit();
+    const b = doc(1);
+    b.import(a.export({ mode: "update" }));
+    b.getMovableList("list").push("x");
+    b.commit();
+    const shallow = new LoroDoc();
+    shallow.import(b.export({ mode: "shallow-snapshot", frontiers: b.frontiers() }));
+    // One change holds `a` (before the root) and `b`, which depends on `a`.
+    a.getMovableList("list").push("b");
+    a.commit();
+    expect(a.getAllChanges().get("3")).toHaveLength(1);
+    expect(() => shallow.import(a.export({ mode: "update" }))).toThrow(/outdated/u);
+    expect(shallow.toJSON()).toEqual({ list: ["a", "x"] });
+  });
+
+  test("a root at a peer's first op rejects only changes without dependencies", () => {
+    const a = doc(1);
+    a.getMovableList("list").push("x");
+    a.commit();
+    const shallow = new LoroDoc();
+    shallow.import(a.export({ mode: "shallow-snapshot", frontiers: a.frontiers() }));
+    const other = doc(2);
+    other.getMovableList("list").push("y");
+    other.commit();
+    expect(() => shallow.import(other.export({ mode: "update" }))).toThrow(/outdated/u);
+    const next = doc(4);
+    next.import(a.export({ mode: "update" }));
+    next.getMovableList("list").push("z");
+    next.commit();
+    shallow.import(next.export({ mode: "update" }));
+    expect(shallow.toJSON()).toEqual({ list: ["x", "z"] });
   });
 
   test("writes a zero start-version entry for a root at a peer's first op", () => {

@@ -133,35 +133,55 @@ fails loudly.
   in descending before-index order, then insert in ascending after-index
   order. Rust derives an import's event from the net change while loro.js
   composes the ops, so a multi-op import can show an element that was hidden
-  and shown again as a delete plus an insert of the same value; the effect is
-  the same. Getting Rust's exact shape would need an O(n) snapshot per import.
-- Revival, as in Rust's `DocState::apply_diff`: in an import or checkout
-  batch, a child container of an element that was hidden when the batch
-  started and is visible at its end reports its whole state (and so do its
-  descendants), for example a Text brought back by a concurrent move. `diff()`
-  does the same.
+  and shown again as a delete plus an insert of the same value, and when
+  several imported moves bring an element back to its index, Rust's net
+  change cancels and it reports nothing while loro.js reports a delete plus
+  an insert. The effect is the same. Getting Rust's exact shape would need an
+  O(n) snapshot per import, and Rust composes element updates in `FxHashMap`
+  order.
+- Revival, as in Rust's `DocState::apply_diff`: a child container that an
+  import, checkout or `diff()` makes reachable again (for example a Text brought
+  back by a concurrent move) reports its whole state. This is main's generic
+  `#completeDiffEntries`; for a MovableList child, reachability at a version
+  comes from `MovableListState.visibleValueAt` (winning position alive and
+  winning value is that child).
 - Snapshot export follows section 8 exactly. Import hydrates alive positions
   (visible and dead) and visible elements with their real position, element
-  and last-set IDs. Hydrated state has no tombstones, origins or candidate
-  history, so the container is marked incomplete. Version transitions on it
-  replay history once. `LoroDoc.#snapshotStateVersion` records the hydrated
-  version; `#needsHistoryReplay` replays history before an import (or an
-  attach) containing a record that does not depend on that whole version, or a
-  MovableList move/set naming an element the state lacks. Such an op's causal
-  view can need tombstones the snapshot dropped. The same rule fixes List and
-  Text, which had the same gap. `#discardDeferredSnapshotState` (also in
-  loro.js #1126) drops the lazy state first so it is not hydrated again on top
-  of the replay.
+  and last-set IDs, each seeded as the element's only candidate. Hydrated
+  state has no tombstones, origins or older candidates (`historyComplete` is
+  false), so it is right only from the snapshot's version on. A MovableList
+  is therefore a snapshot sequence like Text and List (loro.js #1126,
+  `#markSnapshotSequence`); its snapshot names Rust IDs, so the replay of its
+  history is comparable to the snapshot state (`sameMovableListStates`).
+  Before a version transition touches it, `#prepareSnapshotTransition`
+  rebuilds that one container from its own history (`#completeSnapshotSequence`);
+  a Text or List only when the transition crosses a snapshot op, a MovableList
+  always, since its candidates are partial. Before an import,
+  `#prepareSnapshotImport` does the same for each container that a record
+  touches concurrently with the snapshot version (its causal view can need
+  tombstones the snapshot dropped; loro-dev/loro#1163 for List and Text) or,
+  in a MovableList, whose move/set names an element the state lacks. The
+  import then applies its records as usual, so its events are the ops' events,
+  as in Rust. A container whose replay differs from its snapshot state (a
+  snapshot written by loro.js 0.2) stays `unreplayable`, as #1126 describes.
 - A shallow root store seeds root-time position and value candidates, the
   counterpart of `record_shallow_root_state`, so retreat to the root keeps
   root-time winners (the MovableList part of Rust #1124 / loro.js #1127).
+- Shallow imports follow Rust's `is_before_shallow_root` on the part of each
+  change that is not known yet (`#assertImportsNotOutdated`): a change sliced
+  at the known version depends on the op before the slice. An import that
+  applies no change still creates the root containers of its pending changes
+  (`#materializePendingRoots`, Rust's `pending_root_containers_to_materialize`).
+  Decoding deferred snapshot history keeps the document's pending changes.
 
 ### Undo, `revertTo`, `applyDiff`
 
-`applyDiff` and `revertTo` port Rust's MovableList `apply_delta`
-(`applyMovableListDelta` in `document.ts`): insert first, defer deletes, and
-turn a reinserted child container into a `move`, following the container
-remap chain.
+`applyDiff` and `revertTo` follow Rust's MovableList `apply_delta` after
+loro-dev/loro#1138 (`#applyMovableListMoves`, main's port on the new model;
+[movable-list-apply-diff.md](movable-list-apply-diff.md)): delete unclaimed
+elements right to left, then place each insert after its predecessor, and turn
+a reinserted child container into a `move`, following the container remap
+chain.
 
 Undo follows Rust's `undo_internal` for the MovableList containers of an undo
 item (`#undoMovableLists`). A is the inverse diff from the span's last op back
@@ -169,8 +189,13 @@ to its dependencies, B is the change since the span, and A transformed over B
 (A's inserts first, like `transform(.., left_priority = true)`) is applied with
 `apply_delta`. Undoing a `move`/`set` therefore inserts the old value as a new
 element and deletes the current one, and a child container moves back. Other
-containers keep loro.js's op-based undo. B also contains local changes that
-Rust's per-item remote diff excludes; see the remaining divergences.
+containers keep loro.js's op-based undo. Rust's B is its remote diff, the
+changes the UndoManager did not make; loro.js transforms a list's inverse only
+when such an untracked change touched that list (the UndoManager's
+`isTracked`), and then over everything since, which is approximate. An insert
+of a child that is still visible outside the delta's deleted ranges is dropped,
+Rust's rule for `from_move` inserts that transforms leave behind
+(`#withoutLiveChildInserts`).
 
 ## Validation and import atomicity
 
@@ -251,16 +276,31 @@ Differences in form, not in effect:
   order over arena indices, so the two engines write the same values with a
   different op order when several same-depth containers change. The suite
   checks such a revert by value on a fork and replicates Rust's ops.
-- Event deltas of multi-op imports and of history replays can differ in shape
-  (see "Versions, events, snapshots"); the suite then checks that each
-  engine's delta turns the previous value into the new one.
+- `diff()` list deltas can put an insert and a delete at one index in the
+  other order than Rust's `DeltaRope`, which composes element updates one by
+  one (an insert at or past the end goes after trailing deletes, others before
+  them) in `FxHashMap` order. `revertTo`, undo and `applyDiff` turn an insert
+  before a delete into an insert before the deleted positions, so the two
+  engines can place a restored element on different sides of dead positions:
+  the reverted value is the same, but later concurrent inserts there can
+  interleave differently. The suite checks such a revert by value and
+  replicates Rust's ops.
+- Event deltas of multi-op imports can differ in shape, or be a no-op where
+  Rust reports nothing (see "Versions, events, snapshots"); the suite then
+  checks that each engine's deltas turn the previous value into the new one.
 
 Rust issues found:
 
 - On a shallow document, `checkout(root)` reports `getLastEditorAt` from the
   root list item's peer: `record_shallow_root_state` (`history_cache.rs`)
   seeds the value writer with the list item ID. The full history reports the
-  real setter, and so does loro.js.
+  real setter, and so does loro.js. Imports whose diff crosses the root show
+  the same wrong writer (for example the last mover), so the suite does not
+  compare `getLastEditorAt` on shallow documents.
+- `updates-in-range` on a shallow document exports nothing for a span that
+  starts in trimmed history: `ChangeStore::iter_blocks` looks up the block at
+  the span start and finds none. loro.js exports the part it has. The suite
+  starts such spans at the shallow root.
 - An update whose changes partly depend on history before the shallow root
   applies the other changes and then returns
   `ImportUpdatesThatDependsOnOutdatedVersion`, so the import is not atomic.
