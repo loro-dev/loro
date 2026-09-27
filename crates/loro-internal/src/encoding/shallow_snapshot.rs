@@ -12,7 +12,7 @@ use crate::{
     encoding::fast_snapshot::{_encode_snapshot, Snapshot},
     state::{
         container_store::{ContainerWrapper, PrunedRootState, FRONTIERS_KEY},
-        redact_dead_style_values, DocState, StoredRetention,
+        redact_dead_style_values, DocState,
     },
     utils::kv_wrapper::KvWrapper,
     version::{Frontiers, VersionVector},
@@ -404,6 +404,7 @@ pub(crate) fn export_shallow_snapshot_inner(
                         &shallow_root_state_bytes,
                         &shallow_root_kv,
                         &shallow_root.shallow_root_frontiers,
+                        &root_vv,
                     )
                 })?;
                 if let Some(pruned) = pruned {
@@ -615,15 +616,17 @@ fn retain_created_after_root(
 /// pruned state, or `None` when nothing has to be removed.
 ///
 /// Runs on a scratch doc so the live doc's arena and store are untouched. The
-/// cheap `DocState::stored_container_retention` filter settles the common
-/// case, where the root was written by an exporter that already filtered it,
-/// and keeps roots holding unknown container types as-is. Otherwise the full walk (`ensure_all_alive_containers`)
-/// decides, and its `Err` on an inconsistent root is propagated rather than
-/// dropping containers that are still referenced.
+/// cheap `DocState::unreached_stored_containers` filter settles the common
+/// case: every stored container is reached, counting placeholders for
+/// containers created after the root as reached. Otherwise the full walk
+/// (`ensure_all_alive_containers`) also runs; its `Err` on an inconsistent root
+/// is propagated rather than dropping containers that are still referenced,
+/// and only keys that both leave unreached are removed.
 fn prune_cached_root(
     root_state_bytes: &Bytes,
     root_kv: &KvWrapper,
     root_frontiers: &Frontiers,
+    root_vv: &VersionVector,
 ) -> Result<Option<PrunedRootState>, LoroEncodeError> {
     let root_doc = LoroDoc::new();
     let mut root_state = root_doc.app_state().lock();
@@ -631,35 +634,20 @@ fn prune_cached_root(
         .store
         .decode(root_state_bytes.clone())
         .map_err(LoroEncodeError::from)?;
-    match root_state.stored_container_retention()? {
-        StoredRetention::SomeUnreached => {}
-        StoredRetention::UnknownContainers => return Ok(None),
-        StoredRetention::AllReached => {
-            #[cfg(debug_assertions)]
-            {
-                // The filter must never hide a container the full walk would drop.
-                let check_doc = LoroDoc::new();
-                let mut check_state = check_doc.app_state().lock();
-                check_state.store.decode(root_state_bytes.clone()).unwrap();
-                if let Ok(alive) = check_state.ensure_all_alive_containers() {
-                    let retained = alive_indices_to_bytes(&check_state, &alive);
-                    assert!(
-                        root_kv
-                            .scan_all_keys()
-                            .iter()
-                            .all(|key| retained.contains(&key[..])),
-                        "cached-root retention filter missed an unretained container"
-                    );
-                }
-            }
-            return Ok(None);
-        }
+    let candidates = root_state.unreached_stored_containers(root_vv)?;
+    if candidates.is_empty() {
+        #[cfg(debug_assertions)]
+        debug_check_nothing_to_prune(root_state_bytes, root_kv, root_vv);
+        return Ok(None);
     }
 
+    // Remove only what both the filter and the full walk leave unreached: the
+    // walk rejects forged headers the filter cannot judge, and the filter
+    // protects entries the walk cannot see (post-root placeholders, children of
+    // unknown-type containers).
     let alive = root_state.ensure_all_alive_containers()?;
     let retained = alive_indices_to_bytes(&root_state, &alive);
-    let removed: Vec<Bytes> = root_kv
-        .scan_all_keys()
+    let removed: Vec<Bytes> = candidates
         .into_iter()
         .filter(|key| !retained.contains(&key[..]))
         .collect();
@@ -677,6 +665,44 @@ fn prune_cached_root(
         state_bytes,
         removed,
     }))
+}
+
+/// When the filter finds no candidate, the full walk must not drop anything
+/// either, except post-root placeholders. Only checked when no unknown-type
+/// container is stored: the filter keeps their subtrees, which the walk cannot
+/// see.
+#[cfg(debug_assertions)]
+fn debug_check_nothing_to_prune(
+    root_state_bytes: &Bytes,
+    root_kv: &KvWrapper,
+    root_vv: &VersionVector,
+) {
+    let keys = root_kv.scan_all_keys();
+    if keys
+        .iter()
+        .any(|key| ContainerID::from_bytes(key).is_unknown())
+    {
+        return;
+    }
+    let check_doc = LoroDoc::new();
+    let mut check_state = check_doc.app_state().lock();
+    check_state.store.decode(root_state_bytes.clone()).unwrap();
+    let Ok(alive) = check_state.ensure_all_alive_containers() else {
+        return;
+    };
+    let retained = alive_indices_to_bytes(&check_state, &alive);
+    for key in keys {
+        if retained.contains(&key[..]) {
+            continue;
+        }
+        let ContainerID::Normal { peer, counter, .. } = ContainerID::from_bytes(&key) else {
+            continue;
+        };
+        assert!(
+            !root_vv.includes_id(ID::new(peer, counter)),
+            "cached-root retention filter missed an unretained container"
+        );
+    }
 }
 
 fn encode_shallow_sections(
@@ -1833,6 +1859,103 @@ mod tests {
                 "child of an unknown container was dropped"
             );
             LoroDoc::new().import(&bytes).unwrap();
+        }
+    }
+
+    /// An encoded wrapper of an unknown container type with an empty payload.
+    fn unknown_entry(kind: u8, parent: Option<ContainerID>) -> Bytes {
+        let mut out = vec![kind];
+        leb128::write::unsigned(&mut out, 1).unwrap();
+        postcard::to_io(&parent, &mut out).unwrap();
+        out.into()
+    }
+
+    #[test]
+    fn unknown_types_do_not_shield_unrelated_dead_containers() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // Op 0@1 is a scalar write, so no real container has id 0@1.
+        doc.get_map("decoy").insert("k", 1).unwrap();
+        let row = doc
+            .get_map("rows")
+            .insert_container("row", MapHandler::new_detached())
+            .unwrap();
+        row.insert("secret", "KEEP-ME").unwrap();
+        doc.commit_then_renew();
+        let root = doc.oplog_frontiers();
+        doc.get_map("other").insert("after", 1).unwrap();
+        doc.commit_then_renew();
+        let expected = doc.get_deep_value();
+        let blob = doc.export(ExportMode::shallow_snapshot(&root)).unwrap();
+
+        let rows = ContainerID::new_root("rows", ContainerType::Map);
+        // A pre-root map nothing references, carrying a copy of `row`'s content.
+        let dead = ContainerID::new_normal(ID::new(1, 0), ContainerType::Map);
+        let unknown = ContainerType::Unknown(9);
+        let cases: [(&str, Option<ContainerID>, Option<(ContainerID, Bytes)>); 4] = [
+            (
+                "dead entry claims a missing unknown root parent",
+                Some(ContainerID::new_root("ghost", unknown)),
+                None,
+            ),
+            (
+                "dead entry claims a missing unknown normal parent",
+                Some(ContainerID::new_normal(ID::new(5, 5), unknown)),
+                None,
+            ),
+            (
+                "unreferenced unknown root is stored",
+                Some(rows.clone()),
+                Some((
+                    ContainerID::new_root("future", unknown),
+                    unknown_entry(9, None),
+                )),
+            ),
+            (
+                "unreferenced unknown normal entry is stored",
+                Some(rows.clone()),
+                Some((
+                    ContainerID::new_normal(ID::new(1, 0), unknown),
+                    unknown_entry(9, Some(rows.clone())),
+                )),
+            ),
+        ];
+        for (case, dead_parent, extra) in cases {
+            let forged = forge_root_state(&blob, |kv| {
+                let value = kv.get(&row.id().to_bytes()).unwrap();
+                kv.insert(&dead.to_bytes(), with_header_parent(&value, dead_parent));
+                if let Some((id, value)) = &extra {
+                    kv.insert(&id.to_bytes(), value.clone());
+                }
+            });
+            assert!(root_state_keys(&forged).contains(&dead.to_bytes()));
+            let shallow = LoroDoc::new();
+            shallow.import(&forged).unwrap();
+            // An unknown root shows up as `Null`; everything else is unchanged.
+            let imported = shallow.get_deep_value();
+            for key in ["decoy", "rows", "other"] {
+                assert_eq!(
+                    imported.as_map().unwrap().get(key),
+                    expected.as_map().unwrap().get(key),
+                    "{case}: import"
+                );
+            }
+            for mode in [
+                ExportMode::shallow_snapshot(&shallow.shallow_since_frontiers()),
+                ExportMode::Snapshot,
+            ] {
+                let bytes = shallow.export(mode).unwrap();
+                let keys = root_state_keys(&bytes);
+                assert!(!keys.contains(&dead.to_bytes()), "{case}: dead entry kept");
+                assert!(keys.contains(&row.id().to_bytes()), "{case}: live row lost");
+                if let Some((id, _)) = &extra {
+                    // Roots are always retained; an unreferenced normal entry is not.
+                    assert_eq!(keys.contains(&id.to_bytes()), id.is_root(), "{case}");
+                }
+                let again = LoroDoc::new();
+                again.import(&bytes).unwrap();
+                assert_eq!(again.get_deep_value(), imported, "{case}");
+            }
         }
     }
 }

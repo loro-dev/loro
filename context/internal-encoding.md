@@ -122,25 +122,32 @@ containers deleted before the root whenever they shipped an overlay, and a
 re-export was the only way to scrub them. `prune_cached_root` runs on a scratch
 doc in two steps:
 
-1. `DocState::stored_container_retention` is a cheap filter. It reads each
-   stored container's parent from its encoded header, and it decodes only the
-   containers that are the header parent of another stored container. Leaf
-   maps, texts and tree metas are never decoded; a tree that parents stored
-   metas is decoded for its node list. `AllReached`, the case for every root
-   written since #1119, means the root is reused as-is. Debug builds assert
-   that the full walk agrees.
-2. On `SomeUnreached`, the full `ensure_all_alive_containers` walk decides. A
-   container counts as reached in step 1 only through its header parent, so a
-   forged header shows up as unreached; the full walk then rejects the
+1. `DocState::unreached_stored_containers(root_vv)` is a cheap filter that
+   returns candidate keys. It reads each stored container's parent from its
+   encoded header, and it decodes only the containers that are the header
+   parent of another stored container. Leaf maps, texts and tree metas are
+   never decoded; a tree that parents stored metas is decoded for its node
+   list. Two kinds of entries are never candidates. The first is containers
+   created after the root (`!root_vv.includes_id(..)`): a root state written
+   by the checkout/overlay path keeps an empty placeholder for them that
+   nothing at the root references yet. The second is stored children of a
+   *reached*, stored container of an unknown type: unknown states decode to
+   `Null`, so no walk can list their children. An unknown id that appears
+   only as a header parent, or an unreferenced unknown entry, protects
+   nothing. With no candidates, the root is reused as-is. That is the case
+   for roots written by current exporters with only valid, reachable
+   entries. Debug builds assert that the full walk agrees when no
+   unknown-type container is stored.
+2. With candidates, the full `ensure_all_alive_containers` walk runs as well.
+   A container counts as reached in step 1 only through its header parent, so
+   a forged header makes it a candidate; the full walk then rejects the
    inconsistency with `Err` instead of dropping a container that is still
-   referenced. Never drop keys on the filter's word alone.
+   referenced. Only keys that both steps leave unreached are removed. The
+   filter protects placeholders and unknown subtrees that the walk cannot see,
+   and the walk vetoes anything it still reaches. Never drop keys on either
+   step's word alone.
 
-`UnknownContainers` (a container of a type this version does not know is
-stored, or parents a stored container) keeps the root as-is. Unknown states
-decode to `Null`, so neither step can see their child references, and even
-the full walk would drop their children. Such a root comes from a newer
-exporter, which already filtered it. The overlay (>256 ops) branch still
-rejects unknown root keys, as before.
+The overlay (>256 ops) branch still rejects unknown root keys, as before.
 
 The result (`None`, or the pruned bytes plus the removed keys) is memoized in
 `GcStore::pruned_root` because the cached root never changes. Only the first

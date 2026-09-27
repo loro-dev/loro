@@ -64,6 +64,45 @@ fn cut_with_filler(doc: &LoroDoc, retained_ops: usize) -> Frontiers {
     cut
 }
 
+/// Like `many_maps`, but a container is created right after the root, so the
+/// checkout-path exporter leaves a placeholder entry for it in the root state.
+fn many_maps_with_late_container(retained_ops: usize) -> (LoroDoc, Frontiers) {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let rows = doc.get_map("rows");
+    for i in 0..100_000 {
+        let row = rows
+            .insert_container(&format!("r{i}"), LoroMap::new())
+            .unwrap();
+        row.insert("v", i as i64).unwrap();
+    }
+    doc.commit();
+    let cut = doc.oplog_frontiers();
+    let late = rows.insert_container("late", LoroMap::new()).unwrap();
+    late.insert("v", "late").unwrap();
+    filler(&doc, retained_ops - 2);
+    (doc, cut)
+}
+
+fn deep_tree_with_late_node(retained_ops: usize) -> (LoroDoc, Frontiers) {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let tree = doc.get_tree("tree");
+    let mut parent = TreeParentId::Root;
+    for i in 0..20_000 {
+        if i % 1000 == 0 {
+            parent = TreeParentId::Root;
+        }
+        parent = tree.create(parent).unwrap().into();
+    }
+    doc.commit();
+    let cut = doc.oplog_frontiers();
+    let node = tree.create(TreeParentId::Root).unwrap();
+    tree.get_meta(node).unwrap().insert("v", "late").unwrap();
+    filler(&doc, retained_ops - 2);
+    (doc, cut)
+}
+
 fn many_maps(retained_ops: usize) -> (LoroDoc, Frontiers) {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
@@ -145,4 +184,10 @@ fn perf_shallow_reexport_at_cached_root() {
     bench("100k maps / 257 retained", || many_maps(257));
     bench("10 MiB text / 256 retained", || big_text(256));
     bench("20k tree depth 1000 / 256", || deep_tree(256));
+    bench("100k maps + late map / 300", || {
+        many_maps_with_late_container(300)
+    });
+    bench("20k tree + late node / 300", || {
+        deep_tree_with_late_node(300)
+    });
 }

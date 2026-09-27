@@ -605,3 +605,71 @@ fn legacy_shallow_reexport_with_tree_revival_matches_full_history() {
         full.checkout_to_latest();
     }
 }
+
+/// Splits a snapshot blob into its (oplog, state, shallow root state) sections.
+fn snapshot_sections(blob: &[u8]) -> [&[u8]; 3] {
+    let mut rest = &blob[22..];
+    let mut take = || {
+        let len = u32::from_le_bytes(rest[..4].try_into().unwrap()) as usize;
+        let (section, tail) = rest[4..].split_at(len);
+        rest = tail;
+        section
+    };
+    [take(), take(), take()]
+}
+
+#[test]
+fn reexport_keeps_current_overlay_root_verbatim() {
+    // With a few hundred retained ops the exporter takes the checkout path and
+    // ships an overlay; its root state then holds an empty placeholder entry
+    // for a container created after the root. That entry is not dead: a
+    // re-export must reuse the root as-is instead of pruning it.
+    for build in [0, 1] {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        if build == 0 {
+            let rows = doc.get_map("rows");
+            for i in 0..100 {
+                let row = rows
+                    .insert_container(&format!("r{i}"), LoroMap::new())
+                    .unwrap();
+                row.insert("v", i).unwrap();
+            }
+        } else {
+            let tree = doc.get_tree("tree");
+            let mut parent = TreeParentId::Root;
+            for _ in 0..100 {
+                parent = tree.create(parent).unwrap().into();
+            }
+        }
+        doc.commit();
+        let cut = doc.oplog_frontiers();
+        if build == 0 {
+            let late = doc
+                .get_map("rows")
+                .insert_container("late", LoroMap::new())
+                .unwrap();
+            late.insert("v", "late").unwrap();
+        } else {
+            let tree = doc.get_tree("tree");
+            let node = tree.create(TreeParentId::Root).unwrap();
+            tree.get_meta(node).unwrap().insert("v", "late").unwrap();
+        }
+        doc.commit();
+        filler(&doc, 300);
+
+        let blob = doc.export(ExportMode::shallow_snapshot(&cut)).unwrap();
+        assert_ne!(snapshot_sections(&blob)[1], b"E", "expected an overlay");
+        let shallow = import_fresh(&blob);
+        let again = shallow
+            .export(ExportMode::shallow_snapshot(
+                &shallow.shallow_since_frontiers(),
+            ))
+            .unwrap();
+        assert!(
+            snapshot_sections(&again)[2] == snapshot_sections(&blob)[2],
+            "case {build}: the root state must be reused verbatim"
+        );
+        assert_eq!(import_fresh(&again).get_deep_value(), doc.get_deep_value());
+    }
+}
