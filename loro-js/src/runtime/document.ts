@@ -290,6 +290,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #movableOrderHistory = new Map<string, OrderedIndex<IndexedHistoryOperation>>();
   #movableMovePeers = new Map<string, Set<bigint>>();
   #containersWithOperations = new Set<string>();
+  // Text containers with a mark operation in their history
+  // (#checkSnapshotSequences).
+  #markedTexts = new Set<string>();
   #containerKeys = new WeakMap<CodecContainerId, string>();
   #pendingHistory = new Map<string, HistoryRecord>();
   #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
@@ -4932,19 +4935,27 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   /**
    * Checks, before a full replay replaces every state, the snapshot-hydrated
-   * sequences whose replay can differ from their snapshot state: styled Text,
-   * including lazily encoded ones. `version` is the version that their state
-   * reflects.
+   * sequences whose replay can differ from their snapshot state: Text that has
+   * or had styles, including lazily encoded ones. A mark whose characters were
+   * all deleted leaves no style in the snapshot state, but its anchors still
+   * shift the positions of later Rust operations, so the history counts too
+   * (#hasStyleHistory). `version` is the version that their state reflects.
    */
   #checkSnapshotSequences(version: VersionVector): void {
     const lazy = this.#deferredSnapshotState;
+    if (lazy === undefined && this.#snapshotSequences.size === 0) return;
+    // Mark operations are indexed once the history is loaded.
+    this.#materializeDeferredHistory();
     if (lazy !== undefined) {
       for (const { key, value } of lazy.store.table.entries()) {
         if (bytesEqual(key, FRONTIERS_KEY)) continue;
         const id = decodeContainerId(key);
         if (id.containerType !== CodecContainerType.Text) continue;
-        const { state } = decodeContainerStateWrapper(value);
-        if (state.kind !== CodecContainerType.Text || state.marks.length === 0) continue;
+        if (!this.#hasStyleHistory(this.#containerKey(id))) {
+          const { state } = decodeContainerStateWrapper(value);
+          if (state.kind !== CodecContainerType.Text || state.marks.length === 0)
+            continue;
+        }
         this.#getOrCreateContainer(id);
       }
     }
@@ -4953,11 +4964,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (
         entry.kind === "hydrated" &&
         container instanceof LoroText &&
-        !container._styleIndex.isEmpty
+        (!container._styleIndex.isEmpty || this.#hasStyleHistory(key))
       ) {
         this.#completeSnapshotSequence(container, key, version);
       }
     }
+  }
+
+  /**
+   * Whether a Text had styles before its current state: a mark operation in
+   * its history, or styles in its shallow root state.
+   */
+  #hasStyleHistory(key: string): boolean {
+    if (this.#markedTexts.has(key)) return true;
+    const root =
+      this.#shallowRootStore === undefined
+        ? undefined
+        : this.#shallowRootEntryIndex().get(key)?.wrapper.state;
+    return root?.kind === CodecContainerType.Text && root.marks.length > 0;
   }
 
   /**
@@ -5433,6 +5457,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const operation of record.change.operations) {
       this.#containersWithOperations.add(this.#containerKey(operation.container));
       const content = operation.content;
+      if (content.type === "text-mark") {
+        this.#markedTexts.add(this.#containerKey(operation.container));
+      }
       const indexed = {
         record,
         operation,
@@ -5687,6 +5714,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#movableOrderHistory = staged.#movableOrderHistory;
     this.#movableMovePeers = staged.#movableMovePeers;
     this.#containersWithOperations = staged.#containersWithOperations;
+    this.#markedTexts = staged.#markedTexts;
     this.#containerKeys = staged.#containerKeys;
     this.#pendingHistory = staged.#pendingHistory;
     this.#deferredSnapshotHistory = undefined;
