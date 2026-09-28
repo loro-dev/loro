@@ -4914,8 +4914,18 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
+  /**
+   * Marks a Text or List hydrated from a snapshot for completion. A MovableList
+   * is left as on main: its snapshot state names each element by its Rust
+   * position id and has no move or value history, so a transition that crosses
+   * its snapshot operations falls back to a replay to the target
+   * (#canTransitionRecords). See context/loro-js-performance.md.
+   */
   #markSnapshotSequence(container: LoroContainer, version: VersionVector): void {
-    if (container instanceof LoroList || container instanceof LoroText) {
+    if (
+      (container instanceof LoroList && !(container instanceof LoroMovableList)) ||
+      container instanceof LoroText
+    ) {
       this.#snapshotSequences.set(container.id, { kind: "hydrated", version });
     }
   }
@@ -5032,14 +5042,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     key: string,
     version: VersionVector,
   ): boolean {
-    // A MovableList hydrated from a Rust snapshot carries Rust position ids,
-    // not its elements' ids, so no comparison is meaningful: its replay
-    // replaces the snapshot state, as on main. See
-    // context/loro-js-performance.md.
-    const compared = !(container instanceof LoroMovableList);
-    const snapshotRuns = compared ? sequenceIdRuns(container) : [];
+    const snapshotRuns = sequenceIdRuns(container);
     const snapshot = container._swapState();
-    let same = true;
+    let same: boolean;
     // Any throw reinstalls the snapshot state and leaves the entry hydrated.
     try {
       const root =
@@ -5066,8 +5071,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           { key, container },
         );
       }
-      if (compared) same = sameIdRuns(snapshotRuns, sequenceIdRuns(container));
-      if (compared && same) {
+      same = sameIdRuns(snapshotRuns, sequenceIdRuns(container));
+      if (same) {
         // Values need a full read; compare them only when the ids already agree.
         const replayedValues = sequenceValues(container);
         const replayed = container._swapState(snapshot);
