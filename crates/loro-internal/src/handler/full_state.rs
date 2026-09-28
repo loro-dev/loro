@@ -18,57 +18,51 @@ use crate::{
     },
 };
 use fractional_index::FractionalIndex;
-use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, TreeID};
+use loro_common::{ContainerID, InternalString, LoroValue, TreeID};
 use loro_delta::{array_vec::ArrayVec, DeltaItem, DeltaRope};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Given `target`, a full-state diff for `handler`, and `current`, the handler's current state
-/// as a full-state diff, returns the edit that turns `current` into `target` (or applies it
-/// directly). Returns `target` unchanged if it is not a full-state diff.
+/// as a full-state diff, returns the edit that turns `current` into `target`, or `None` if
+/// there is nothing to do. Returns `target` unchanged if it is not a full-state diff.
 ///
+/// Has no side effects, so `LoroDoc::_apply_diff` can plan a whole batch before applying it.
 /// Child containers that keep their id are added to `full_state_targets`: their own diffs in
 /// the batch are full states as well.
 pub(crate) fn align_full_state(
     handler: &Handler,
-    target: Diff,
+    target: &Diff,
     current: Diff,
     full_state_targets: &mut FxHashSet<ContainerID>,
-) -> LoroResult<Option<Diff>> {
+) -> Option<Diff> {
     match (target, current) {
         (Diff::Map(target), Diff::Map(current)) => {
-            Ok(align_map(target, current, full_state_targets).map(Diff::Map))
+            align_map(target, current, full_state_targets).map(Diff::Map)
         }
         #[cfg(feature = "counter")]
         (Diff::Counter(target), Diff::Counter(current)) => {
-            if let Handler::Counter(counter) = handler {
-                let delta = target - current;
-                if delta != 0.0 {
-                    counter.increment(delta)?;
-                }
-            }
-            Ok(None)
+            let delta = target - current;
+            (matches!(handler, Handler::Counter(_)) && delta != 0.0).then_some(Diff::Counter(delta))
         }
-        (Diff::Text(target), Diff::Text(current)) => Ok(match align_text(&target, &current) {
+        (Diff::Text(target), Diff::Text(current)) => match align_text(target, &current) {
             Some(edit) => (!edit.is_empty()).then_some(Diff::Text(edit)),
-            None => Some(Diff::Text(target)),
-        }),
+            None => Some(Diff::Text(target.clone())),
+        },
         (Diff::List(target), Diff::List(current)) => {
             let movable = matches!(handler, Handler::MovableList(_));
-            Ok(
-                match align_list(&target, &current, movable, full_state_targets) {
-                    Some(edit) => (!edit.is_empty()).then_some(Diff::List(edit)),
-                    None => Some(Diff::List(target)),
-                },
-            )
+            match align_list(target, &current, movable, full_state_targets) {
+                Some(edit) => (!edit.is_empty()).then_some(Diff::List(edit)),
+                None => Some(Diff::List(target.clone())),
+            }
         }
         (Diff::Tree(target), Diff::Tree(current)) => {
-            Ok(match align_tree(&target, &current, full_state_targets) {
+            match align_tree(target, &current, full_state_targets) {
                 Some(edit) => (!edit.diff.is_empty()).then_some(Diff::Tree(edit)),
-                None => Some(Diff::Tree(target)),
-            })
+                None => Some(Diff::Tree(target.clone())),
+            }
         }
-        (Diff::Unknown, _) => Ok(None),
-        (target, _) => Ok(Some(target)),
+        (Diff::Unknown, _) => None,
+        (target, _) => Some(target.clone()),
     }
 }
 
@@ -78,7 +72,7 @@ fn map_value(v: &ResolvedMapValue) -> Option<LoroValue> {
 
 /// Per key, so entries (and the child containers they hold) that already match are kept.
 fn align_map(
-    target: ResolvedMapDelta,
+    target: &ResolvedMapDelta,
     current: ResolvedMapDelta,
     full_state_targets: &mut FxHashSet<ContainerID>,
 ) -> Option<ResolvedMapDelta> {
@@ -89,17 +83,17 @@ fn align_map(
         .collect();
     let mut updated = FxHashMap::default();
     let mut target_keys = FxHashSet::default();
-    for (key, value) in target.updated {
-        let Some(target_value) = map_value(&value) else {
+    for (key, value) in target.updated.iter() {
+        let Some(target_value) = map_value(value) else {
             continue;
         };
         target_keys.insert(key.clone());
-        if current.get(&key) == Some(&target_value) {
+        if current.get(key) == Some(&target_value) {
             if let LoroValue::Container(id) = target_value {
                 full_state_targets.insert(id);
             }
         } else {
-            updated.insert(key, value);
+            updated.insert(key.clone(), value.clone());
         }
     }
     for key in current.keys() {
