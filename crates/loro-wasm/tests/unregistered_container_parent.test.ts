@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { LoroDoc, LoroMap, TreeID } from "../bundler/index";
+import { LoroDoc, LoroMap, TreeID, UndoManager } from "../bundler/index";
 
 // loro-dev/loro#1158: in a document loaded from a snapshot (or `fork()`), the
 // metadata of a tree node created under an already deleted parent had no known
@@ -48,6 +48,18 @@ function loaded(src: LoroDoc): [string, LoroDoc][] {
 
 const metaId = (node: TreeID) => `cid:${node}:Map`;
 
+/** An update from another peer that revives `child` and sets `x` in its meta. */
+function revivalAndMetaEdit(src: LoroDoc, child: TreeID): Uint8Array {
+  const editor = new LoroDoc();
+  editor.setPeerId(4n);
+  editor.import(src.export({ mode: "update" }));
+  const before = editor.oplogVersion();
+  editor.getTree("tree").move(child, undefined);
+  editor.getTree("tree").getNodeByID(child)!.data.set("x", 1);
+  editor.commit();
+  return editor.export({ mode: "update", from: before });
+}
+
 describe("metadata of a node created under a deleted parent", () => {
   const { src, child } = history();
 
@@ -86,24 +98,39 @@ describe("metadata of a node created under a deleted parent", () => {
   });
 
   it("emits events for an imported edit", () => {
-    const editor = new LoroDoc();
-    editor.setPeerId(4n);
-    editor.import(src.export({ mode: "update" }));
-    const before = editor.oplogVersion();
-    editor.getTree("tree").move(child, undefined);
-    editor.getTree("tree").getNodeByID(child)!.data.set("x", 1);
-    editor.commit();
-    const update = editor.export({ mode: "update", from: before });
+    const update = revivalAndMetaEdit(src, child);
 
     let expected: string | undefined;
     for (const [how, doc] of loaded(src)) {
       const seen: string[] = [];
       doc.subscribe((e) => {
-        for (const ev of e.events) seen.push(`${ev.target} ${JSON.stringify(ev.path)}`);
+        for (const ev of e.events)
+          seen.push(`${ev.target} ${JSON.stringify(ev.path)}`);
       });
       doc.import(update);
-      expect(doc.getTree("tree").getNodeByID(child)!.data.get("x"), how).toBe(1);
+      const meta = doc.getTree("tree").getNodeByID(child)!.data;
+      expect(meta.get("x"), how).toBe(1);
       const got = JSON.stringify(seen);
+      if (expected === undefined) expected = got;
+      else expect(got, how).toBe(expected);
+    }
+  });
+
+  it("undoes a local edit after importing an edit of the meta", () => {
+    const update = revivalAndMetaEdit(src, child);
+    let expected: string | undefined;
+    for (const [how, doc] of loaded(src)) {
+      const undo = new UndoManager(doc, { mergeInterval: 0 });
+      doc.getMap("m").set("local", 1);
+      doc.commit();
+      doc.import(update);
+      expect(undo.undo(), how).toBe(true);
+      expect(undo.redo(), how).toBe(true);
+      expect(undo.undo(), how).toBe(true);
+      const meta = doc.getTree("tree").getNodeByID(child)!.data;
+      expect(meta.get("x"), how).toBe(1);
+      expect(doc.getMap("m").get("local"), how).toBeUndefined();
+      const got = JSON.stringify(doc.toJSON());
       if (expected === undefined) expected = got;
       else expect(got, how).toBe(expected);
     }

@@ -143,11 +143,8 @@ fn reviving_the_node_after_loading() {
     }
 }
 
-#[test]
-fn importing_an_edit_of_the_meta_with_a_subscriber() {
-    // Another peer revives the node and edits its meta. The loaded doc emits
-    // events for the meta, which walks its ancestors and its path.
-    let (src, child) = concurrent_child_of_deleted_parent(5000);
+/// An update from another peer that revives `child` and sets `x` in its meta.
+fn revival_and_meta_edit_by_another_peer(src: &LoroDoc, child: TreeID) -> Vec<u8> {
     let editor = LoroDoc::new();
     editor.set_peer_id(4).unwrap();
     editor
@@ -165,7 +162,15 @@ fn importing_an_edit_of_the_meta_with_a_subscriber() {
         .insert("x", 1)
         .unwrap();
     editor.commit();
-    let update = editor.export(ExportMode::updates(&before)).unwrap();
+    editor.export(ExportMode::updates(&before)).unwrap()
+}
+
+#[test]
+fn importing_an_edit_of_the_meta_with_a_subscriber() {
+    // Another peer revives the node and edits its meta. The loaded doc emits
+    // events for the meta, which walks its ancestors and its path.
+    let (src, child) = concurrent_child_of_deleted_parent(5000);
+    let update = revival_and_meta_edit_by_another_peer(&src, child);
 
     let mut expected = None;
     for (how, doc) in loaded(&src) {
@@ -204,6 +209,9 @@ fn importing_an_edit_of_the_meta_with_a_subscriber() {
     }
 }
 
+/// Undo and revert after the loaded doc revives the node itself. The local
+/// move registers the meta's parent, so this also passes on `main`; it checks
+/// that the result matches the reference.
 #[test]
 fn undo_and_revert_touching_the_meta() {
     let (src, child) = concurrent_child_of_deleted_parent(5000);
@@ -211,7 +219,7 @@ fn undo_and_revert_touching_the_meta() {
     for (how, doc) in loaded(&src) {
         let mut undo = UndoManager::new(&doc);
         let tree = doc.get_tree("tree");
-        let alive_before = doc.oplog_frontiers();
+        let before_revival = doc.oplog_frontiers();
         tree.mov(child, TreeParentId::Root).unwrap();
         doc.commit();
         tree.get_meta(child).unwrap().insert("k", 1).unwrap();
@@ -220,8 +228,38 @@ fn undo_and_revert_touching_the_meta() {
         assert!(undo.undo().unwrap(), "{how}");
         assert!(tree.get_meta(child).unwrap().is_deleted(), "{how}");
         assert!(undo.redo().unwrap(), "{how}");
-        doc.revert_to(&alive_before).unwrap();
+        doc.revert_to(&before_revival).unwrap();
         doc.commit();
+        let value = doc.get_deep_value().to_json_value();
+        match &expected {
+            None => expected = Some(value),
+            Some(expected) => assert_eq!(&value, expected, "{how}"),
+        }
+    }
+}
+
+/// Undoing a local edit transforms it against the changes imported since,
+/// here another peer's revival and edit of the meta.
+#[test]
+fn undo_after_importing_an_edit_of_the_meta() {
+    let (src, child) = concurrent_child_of_deleted_parent(5000);
+    let update = revival_and_meta_edit_by_another_peer(&src, child);
+    let mut expected = None;
+    for (how, doc) in loaded(&src) {
+        let mut undo = UndoManager::new(&doc);
+        doc.get_map("m").insert("local", 1).unwrap();
+        doc.commit();
+        doc.import(&update).unwrap();
+        assert!(undo.undo().unwrap(), "{how}");
+        assert!(undo.redo().unwrap(), "{how}");
+        assert!(undo.undo().unwrap(), "{how}");
+        let meta = doc.get_tree("tree").get_meta(child).unwrap();
+        assert_eq!(
+            meta.get_value().to_json_value(),
+            serde_json::json!({"x": 1}),
+            "{how}"
+        );
+        assert!(doc.get_map("m").get("local").is_none(), "{how}");
         let value = doc.get_deep_value().to_json_value();
         match &expected {
             None => expected = Some(value),
