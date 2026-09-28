@@ -289,14 +289,6 @@ impl ContainerHistoryCache {
         }
     }
 
-    pub(crate) fn get_importing_cache(
-        &self,
-        container_idx: &ContainerIdx,
-        _: HasImportingCacheMark,
-    ) -> Option<&HistoryCacheForImporting> {
-        self.for_importing.as_ref().unwrap().get(container_idx)
-    }
-
     pub(crate) fn get_tree(
         &self,
         container_idx: &ContainerIdx,

@@ -586,8 +586,8 @@ fn tree_concurrent_moves_incremental_state_matches_replay() {
 
 /// Checkout between divergent versions whose meet is NOT a critical version
 /// (diamond: the region op `1@1` is concurrent with the meet head `0@2`).
-/// The tree/movable-list/text calculators replay relatively around the base;
-/// this pins that such checkouts stay canonical.
+/// The movable-list/text calculators replay relatively around the base; this
+/// pins that such checkouts stay canonical.
 #[test]
 fn checkout_across_non_critical_meet_stays_canonical() {
     use loro::{Frontiers, TreeID, ID};
@@ -645,11 +645,10 @@ fn checkout_across_non_critical_meet_stays_canonical() {
 }
 
 /// Checkout where the diff region contains a LOW-lamport concurrent branch
-/// (below the meet frontier's lamport window). The tree calculator's
-/// retreat/forward windows skip ops below `lca_min_lamport`, so this is only
-/// safe because the walk retreats the base to a critical version (the
-/// latest-singleton-cut sweep) whenever such a branch exists. Pins that
-/// interplay: weakening the sweep would silently break this.
+/// (below the lamport of the meet frontier). The tree calculator takes its
+/// retreat/forward window from the two versions, not from the replay base
+/// (`context/tree-checkout-window.md`); this pins that the branch is still
+/// forwarded and retreated.
 #[test]
 fn checkout_with_low_lamport_concurrent_branch_stays_canonical() {
     use loro::{Frontiers, TreeID, ID};

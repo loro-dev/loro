@@ -32,6 +32,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
 - Rich-text insert positions next to style anchors, the insert cursor cache,
   and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
+- Tree diff cache transitions and why their lamport window comes from the two
+  versions, not the replay base: [context/tree-checkout-window.md](context/tree-checkout-window.md).
 - User-facing Loro usage, sync, editor integration, and performance guidance:
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:
@@ -44,6 +46,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).
+- Which deletions `DocState::is_deleted` caches, and how tree/movable-list
+  children are revived: [context/dead-container-cache.md](context/dead-container-cache.md).
 - Movable-list `apply_diff`/undo: delete + re-insert of a child becomes a move,
   cursor invariant, pitfalls: [context/movable-list-apply-diff.md](context/movable-list-apply-diff.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
