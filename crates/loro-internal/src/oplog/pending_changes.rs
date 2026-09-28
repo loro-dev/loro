@@ -46,7 +46,7 @@ impl PendingChanges {
                     change.ops.iter().any(|op| {
                         matches!(
                             op.container.get_type(),
-                            ContainerType::List | ContainerType::Tree
+                            ContainerType::List | ContainerType::MovableList | ContainerType::Tree
                         )
                     })
                 })

@@ -781,7 +781,21 @@ impl LoroDoc {
         }
 
         if self.is_detached() {
+            // An enclosing `import_batch` scope validates the whole batch before it
+            // reattaches (`BatchImportGuard::finish`).
+            let owns_rollback =
+                preflight.needs_state_apply_rollback && !oplog.has_import_rollback();
+            if owns_rollback {
+                oplog.begin_import_rollback_with_arena(arena_checkpoint);
+            }
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            if owns_rollback {
+                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
+                    oplog.rollback_import();
+                    return Err(e);
+                }
+                oplog.commit_import_rollback();
+            }
             if result.has_deps_before_shallow_root {
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
             }
@@ -824,6 +838,14 @@ impl LoroDoc {
 
         let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
         if &old_vv != oplog.vv() {
+            // The preflight enables rollback whenever the imported or unlocked
+            // pending changes hold movable-list ops, so other imports skip the scan.
+            if rollback_enabled {
+                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
+                    oplog.rollback_import();
+                    return Err(e);
+                }
+            }
             let mut diff = DiffCalculator::new(false);
             // Applying may have unlocked pending changes; the isolated fast path is only valid
             // when exactly the candidate batch was appended on top of the old version.
@@ -861,6 +883,13 @@ impl LoroDoc {
                 )
             };
             let mut state = self.state.lock();
+            let diff = recalc_in_checkout_mode_if_needed(
+                &mut state,
+                &oplog,
+                &old_vv,
+                &old_frontiers,
+                diff,
+            );
             if let Err(e) = state.apply_diff(
                 InternalDocDiff {
                     origin,
@@ -2961,6 +2990,34 @@ struct BatchImportGuard<'a> {
     finished: bool,
 }
 
+/// Forward import diffs of movable lists take untouched element fields from
+/// `DocState`. When a (forged) op targets an element the state no longer holds,
+/// recompute the diff in Checkout mode, which resolves elements from history the
+/// same way `checkout`, `import_batch` and snapshot replay do.
+/// See `context/movable-list-op-validation.md`.
+fn recalc_in_checkout_mode_if_needed(
+    state: &mut DocState,
+    oplog: &OpLog,
+    old_vv: &VersionVector,
+    old_frontiers: &Frontiers,
+    diff: Vec<crate::event::InternalContainerDiff>,
+) -> Vec<crate::event::InternalContainerDiff> {
+    if !state.needs_checkout_diff(&diff) {
+        return diff;
+    }
+
+    DiffCalculator::new(true)
+        .calc_diff_internal(
+            oplog,
+            old_vv,
+            old_frontiers,
+            oplog.vv(),
+            oplog.dag.get_frontiers(),
+            None,
+        )
+        .0
+}
+
 impl BatchImportGuard<'_> {
     /// Leave batch-import mode, reattach if the doc was attached, and renew the txn.
     ///
@@ -2990,7 +3047,13 @@ impl BatchImportGuard<'_> {
         // flight poisons the mutex.
         let mut checkout = Ok(());
         if self.was_attached {
-            checkout = doc._checkout_to_latest_without_commit(true);
+            // The blobs were imported while detached inside this scope, so their
+            // movable-list element references are validated here, once per batch.
+            let validation = doc
+                .oplog
+                .lock()
+                .validate_movable_list_elem_refs_in_import_scope();
+            checkout = validation.and_then(|()| doc._checkout_to_latest_without_commit(true));
             if let Err(e) = &checkout {
                 // `DocState::apply_diff` validates before mutating, so the state is
                 // still at its pre-batch version; undoing the batch in the `OpLog`

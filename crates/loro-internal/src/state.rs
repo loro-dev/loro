@@ -18,7 +18,7 @@ use tracing::{info_span, instrument, warn};
 
 use crate::{
     configure::{Configure, DefaultRandom, SecureRandomGenerator},
-    container::{idx::ContainerIdx, richtext::config::StyleConfigMap},
+    container::{idx::ContainerIdx, richtext::config::StyleConfigMap, tree::tree_op::TreeOp},
     cursor::{Cursor, PosType},
     delta::TreeExternalDiff,
     diff_calc::{DiffCalculator, DiffMode},
@@ -27,7 +27,7 @@ use crate::{
     handler::ValueOrHandler,
     id::PeerID,
     lock::{LoroLockGroup, LoroMutex},
-    op::{Op, RawOp},
+    op::{Op, RawOp, RawOpContent},
     version::{Frontiers, VersionVector},
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };
@@ -681,17 +681,22 @@ impl DocState {
         }
         // `diff_mode` here is the DIRECTION mode (`origin_diff_mode` from
         // `calc_diff_internal`), not the mode the calculators computed with:
-        // Checkout means the transition may go backwards, so any cached
-        // dead/alive knowledge can be invalidated; every other mode implies a
-        // forward transition, where alive-markers may change but dead
-        // containers stay dead unless a diff revives them.
-        match diff_mode {
-            DiffMode::Checkout => {
-                self.dead_containers_cache.clear();
-            }
-            _ => {
-                self.dead_containers_cache.clear_alive();
-            }
+        // Checkout means the transition may go backwards, which can revive any
+        // container. Any checkout also clears it, even a forward one
+        // (`attach`, `checkout_to_latest`): while the state was behind the
+        // oplog, a container created later looked cut at its map or list
+        // parent. Every other forward transition keeps the state at the
+        // oplog's latest version, where only a tree or movable-list move can
+        // revive a container (see `dead_containers_cache.rs`).
+        if diff_mode == DiffMode::Checkout || diff.by == EventTriggerKind::Checkout {
+            self.dead_containers_cache.clear();
+        } else if diffs.iter().any(|d| {
+            matches!(
+                d.idx.get_type(),
+                ContainerType::Tree | ContainerType::MovableList
+            )
+        }) {
+            self.dead_containers_cache.clear_revivable();
         }
         self.pre_txn(diff.origin.clone(), diff.by);
 
@@ -973,6 +978,26 @@ impl DocState {
         }
     }
 
+    /// Whether a forward import diff has to be recomputed in Checkout mode because a
+    /// movable-list op targets an element this state no longer holds.
+    /// See [`MovableListState::references_absent_elem`].
+    pub(crate) fn needs_checkout_diff(&mut self, diffs: &[InternalContainerDiff]) -> bool {
+        diffs.iter().any(|diff| {
+            let crate::event::DiffVariant::Internal(InternalDiff::MovableList(delta)) = &diff.diff
+            else {
+                return false;
+            };
+            match self.store.get_container(diff.idx) {
+                Some(State::MovableListState(state)) => state.references_absent_elem(delta),
+                Some(_) => unreachable!("movable list diff for a non movable list container"),
+                None => delta
+                    .elements
+                    .values()
+                    .any(|elem| elem.pos.is_none() || elem.value_id.is_none()),
+            }
+        })
+    }
+
     fn validate_diff_batch(&mut self, diffs: &[InternalContainerDiff]) -> LoroResult<()> {
         for diff in diffs {
             let crate::event::DiffVariant::Internal(internal_diff) = &diff.diff else {
@@ -997,11 +1022,14 @@ impl DocState {
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
-        let ret = state.apply_local_op(raw_op, op)?;
-        if !ret.deleted_containers.is_empty() {
-            self.dead_containers_cache.clear_alive();
+        // A local move can take a node out of a deleted subtree. Movable-list
+        // elements cannot be revived locally: a deleted one has no index.
+        if let RawOpContent::Tree(tree_op) = &raw_op.content {
+            if matches!(**tree_op, TreeOp::Move { .. }) {
+                self.dead_containers_cache.clear_revivable();
+            }
         }
-
+        state.apply_local_op(raw_op, op)?;
         Ok(())
     }
 
