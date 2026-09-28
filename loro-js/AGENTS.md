@@ -20,6 +20,11 @@ the same binary and JSON data as Rust (`loro-crdt`) and give the same results.
   `crates/loro/tests/loro_js_interop.rs` imports them. Container state encoders
   live in `src/runtime/document.ts` (`#containerState`) and must follow
   `docs/encoding-container-states.md`.
+- loro.js 0.2 output read by later versions: `scripts/write-legacy-fixtures.mjs`
+  writes `tests/fixtures/loro-js-0.2/` with a 0.2 build; `tests/legacy-data.test.ts`
+  pins that loro.js and Rust read it the same way. Later versions read 0.2 data
+  with Rust's semantics, with no version marker (README "Upgrading from 0.2"; the
+  decision is in [context/loro-js-rust-differential.md](../context/loro-js-rust-differential.md)).
 
 ## Commands
 

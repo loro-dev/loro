@@ -60,20 +60,36 @@ regression test.
 
 ## Rust behaviors the harness works around
 
-The Rust reference has bugs of its own in UTF-16 (WASM) builds:
+WASM builds before loro-dev/loro#1135 had bugs of their own. The harness still
+tolerates them, so it also runs against older reference builds:
 
-- A subscribed transaction that merges deletes of astral text can panic with
+- A subscribed transaction that merges deletes of astral text could panic with
   "Op/hint length mismatch" (`change_to_diff` in
-  `crates/loro-internal/src/txn.rs`), even after unsubscribing. The harness
-  subscribes only to loro.js documents.
+  `crates/loro-internal/src/txn.rs`). The harness subscribes only to loro.js
+  documents.
 - `get_text_entity_ranges` advanced the recorded delete `start_id` by the UTF-16
-  length of astral text, so Rust can write a delete whose `start_id` names the
-  wrong elements. Rust applies deletes by position, and so does loro.js
-  (`LoroText._deleteTargets`). Rust still resolves a deleted cursor target
-  through the recorded IDs, so the harness skips cursors Rust cannot resolve.
-- Rust's shallow import falls back to the recorded delete IDs when they disagree
-  with the positions, which can diverge from its own full-history import. The
-  harness compares loro.js with the source document instead.
+  length of astral text, so Rust could write a delete whose `start_id` names the
+  wrong elements; such deletes stay in existing histories (loro-dev/loro#1149).
+  Rust applies deletes by position, and so does loro.js
+  (`LoroText._deleteTargets`). Rust resolves a deleted cursor target through the
+  recorded IDs, so the harness skips cursors Rust cannot resolve.
+- Rust's shallow import labels placeholders with the recorded delete IDs, which
+  can diverge from its own full-history import when they are wrong. The harness
+  compares loro.js with the source document instead.
 
 Snapshot-import checkout (`snapshotCheckout`) is off by default until loro.js
 can check out a document imported from a snapshot (loro-dev/loro#1126).
+
+## Data written by loro.js 0.2
+
+loro.js 0.2 ordered some concurrent text inserts differently from Rust (a
+concurrent insert after a sibling's subtree, now `fugueSubtreeEnd`) and encoded
+text cursors by UTF-16 position. Decision (2026-09-28): later versions read all
+data with Rust's semantics and add no version marker. The same bytes must mean
+the same thing in both runtimes, documents shared with `loro-crdt` peers had
+already diverged, and a marker would need a format change that Rust does not
+have. The cost falls on documents edited only with 0.2: their history can read
+differently, and a replica loaded from a 0.2 snapshot keeps the 0.2 text while
+one loaded from updates follows Rust. `README.md` ("Upgrading from 0.2")
+describes the migration paths; `tests/legacy-data.test.ts` pins the readings
+with fixtures written by `scripts/write-legacy-fixtures.mjs`.
