@@ -237,6 +237,20 @@ JavaScript constant factor.
   needs no replay: 57–61 ms versus 152 ms, with the same 234 MiB peak RSS as
   before the fix (earlier 284 MiB). The coalesced inserts also make importing
   the B4 trace as one update about 30% faster (about 195 versus 275 ms).
+- A shallow history trims the ops that wrote root-time Map values and Tree
+  placements (the root commit's other ops). When a Map or Tree retreat finds no
+  retained winner at or below the target, it uses the shallow root state entry
+  (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
+  or node; a retained Tree delete whose placement was trimmed takes the root
+  placement and stays deleted. The root store entry for a container comes from
+  `#shallowRootEntryIndex`: the key index the import builds to merge the root
+  and latest states, or while hydrating the root store for a replay (Rust omits
+  the latest state for a short retained tail). Each container's key/node index
+  is built on first lookup. A retreat therefore touches only the maps and trees
+  it changes, as in Rust's per-map checkout index seeding (loro-dev/loro#1120,
+  #1124): the first such retreat in a shallow doc with 32,768 child Maps takes
+  under 1 ms for both loro.js- and Rust-written snapshots, flat from 1,024
+  Maps, and later ones about 0.02–0.03 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or

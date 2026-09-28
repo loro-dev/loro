@@ -69,6 +69,7 @@ import {
   type Container,
   type CausalVersion,
   type LastWriter,
+  type MapRecord,
   type RuntimeValue,
   type SequenceElement,
   type SequenceMoveMeta,
@@ -339,6 +340,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   // Root store entries by container key, built by the import merge or on first
   // lookup.
   #shallowRootEntries: Map<string, StateSnapshotContainerEntry> | undefined;
+  // Root-time map entries and tree nodes of a shallow doc, indexed per
+  // container on first lookup.
+  #shallowRootIndexes = new WeakMap<StateSnapshotStore, ShallowRootIndex>();
   #textStyles = new Map<string, TextStyleExpand>([
     ["bold", "after"],
     ["italic", "after"],
@@ -1164,24 +1168,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       this.#canTransitionRecords(
         [...currentToFromRetreat, ...currentToFromForward],
         currentToFromMoveMode,
-        fromVersion,
       ) &&
       this.#canTransitionRecords(
         [...retreatRecords, ...forwardRecords],
         fromToToMoveMode,
-        toVersion,
-      ) &&
-      (this.#shallowRootStore === undefined ||
-        (this.#canTransitionRecords(
-          [...retreatRecords, ...forwardRecords],
-          fromToToMoveMode,
-          fromVersion,
-        ) &&
-          this.#canTransitionRecords(
-            [...currentToFromRetreat, ...currentToFromForward],
-            currentToFromMoveMode,
-            restoreVersion,
-          )));
+      );
     let materializedVersion = restoreVersion;
     let failed = false;
     try {
@@ -2000,7 +1991,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const recording: EventRecording | undefined = subscribed
         ? { beforeValues: new Map(), eventStates: new Map() }
         : undefined;
-      if (this.#canTransitionRecords([...forward, ...retreat], movableMoveMode, target)) {
+      if (this.#canTransitionRecords([...forward, ...retreat], movableMoveMode)) {
         this.#applyVersionTransition(
           retreat,
           forward,
@@ -2484,6 +2475,106 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     } else {
       map.set(content.key, cloneRuntimeValue(value));
     }
+  }
+
+  #shallowRootIndex(): ShallowRootIndex | undefined {
+    const store = this.#shallowRootStore;
+    if (store === undefined || store.kind !== "sstable") return undefined;
+    let index = this.#shallowRootIndexes.get(store);
+    if (index === undefined) {
+      index = { maps: new Map(), trees: new Map() };
+      this.#shallowRootIndexes.set(store, index);
+    }
+    return index;
+  }
+
+  #shallowRootContainerState(containerKey: string): ContainerStateSnapshot | undefined {
+    return this.#shallowRootEntryIndex().get(containerKey)?.wrapper.state;
+  }
+
+  #shallowRootTreeNode(
+    tree: LoroTree,
+    nodeKey: string,
+  ): Omit<TreeNodeRecord, "data"> | undefined {
+    const index = this.#shallowRootIndex();
+    const id = tree._codecId;
+    if (index === undefined || id === undefined) return undefined;
+    const containerKey = this.#containerKey(id);
+    let nodes = index.trees.get(containerKey);
+    if (nodes === undefined) {
+      nodes = new Map();
+      const state = this.#shallowRootContainerState(containerKey);
+      if (state?.kind === CodecContainerType.Tree) {
+        const ids = state.nodes.map((node) => ({
+          peer: state.peers[Number(node.peerIndex)]!,
+          counter: node.counter,
+        }));
+        for (const [position, node] of state.nodes.entries()) {
+          const lastMoveId = {
+            peer: state.peers[Number(node.lastSetPeerIndex)]!,
+            counter: node.lastSetCounter,
+          };
+          nodes.set(formatTreeId(ids[position]!), {
+            id: ids[position]!,
+            parent:
+              node.parentIndexPlusTwo >= 2n
+                ? ids[Number(node.parentIndexPlusTwo - 2n)]
+                : undefined,
+            position: state.positions[node.fractionalIndexIndex]!,
+            deleted: node.parentIndexPlusTwo === 1n,
+            writer: {
+              peer: lastMoveId.peer,
+              lamport: node.lastSetCounter + node.lastSetLamportSub,
+            },
+            lastMoveId,
+          });
+        }
+      }
+      index.trees.set(containerKey, nodes);
+    }
+    return nodes.get(nodeKey);
+  }
+
+  #shallowRootMapRecord(map: LoroMap, key: string): MapRecord | undefined {
+    const index = this.#shallowRootIndex();
+    const id = map._codecId;
+    if (index === undefined || id === undefined) return undefined;
+    const containerKey = this.#containerKey(id);
+    let entries = index.maps.get(containerKey);
+    if (entries === undefined) {
+      const state = this.#shallowRootContainerState(containerKey);
+      entries = new Map();
+      if (state?.kind === CodecContainerType.Map) {
+        const values = new Map(state.values);
+        for (const item of state.metadata) {
+          entries.set(item.key, {
+            value: values.get(item.key),
+            writer: {
+              peer: state.peers[Number(item.peerIndex)]!,
+              lamport: Number(item.lamport),
+            },
+          });
+        }
+      }
+      index.maps.set(containerKey, entries);
+    }
+    const entry = entries.get(key);
+    if (entry === undefined) return undefined;
+    if (entry.value === undefined) {
+      return {
+        value: undefined,
+        rawValue: undefined,
+        deleted: true,
+        writer: entry.writer,
+      };
+    }
+    const rawValue = this.#decodeSnapshotValue(entry.value, map);
+    return {
+      value: this.#materializeMapValue(map, key, rawValue),
+      rawValue,
+      deleted: false,
+      writer: entry.writer,
+    };
   }
 
   #previousMapOperation(
@@ -3928,13 +4019,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #canTransitionRecords(
     records: readonly HistoryRecord[],
-    movableMoveMode: MovableMoveTransitionMode,
-    target: VersionVector,
+    movableMoveMode: MovableMoveTransitionMode = "anchors",
   ): boolean {
-    // A shallow history trims the root-time writes of Map keys and Tree nodes.
-    // When the winner at `target` is such a write, only a replay from the
-    // shallow root state restores it.
-    const shallowTarget = this.#shallowRootStore === undefined ? undefined : target;
     const replayedMoveContainers = new Set<string>();
     if (movableMoveMode === "replay") {
       for (const { change } of records) {
@@ -4081,35 +4167,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (recorded < operation.length) return false;
         } else if (content.type === "map-insert" || content.type === "map-delete") {
           if (!(container instanceof LoroMap)) return false;
-          if (
-            shallowTarget !== undefined &&
-            latestIncludedOperation(
-              this.#mapOperationHistory.get(container.id)?.get(content.key),
-              shallowTarget,
-            ) === undefined
-          ) {
-            return false;
-          }
         } else if (
           content.type === "tree-create" ||
           content.type === "tree-move" ||
           content.type === "tree-delete"
         ) {
           if (!(container instanceof LoroTree)) return false;
-          if (shallowTarget !== undefined) {
-            const operations = this.#treeOperationHistory
-              .get(container.id)
-              ?.get(idKey(content.subject));
-            const winner = latestIncludedOperation(operations, shallowTarget);
-            if (
-              winner === undefined ||
-              (winner.operation.content.type === "tree-delete" &&
-                latestIncludedTreePlacement(operations, shallowTarget, winner.writer) ===
-                  undefined)
-            ) {
-              return false;
-            }
-          }
         } else if (content.type === "future") {
           if (
             !(container instanceof LoroCounter) ||
@@ -4543,7 +4606,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
         const indexed = latestIncludedOperation(history?.get(key), target);
         if (indexed === undefined) {
-          map._replaceRecord(key, undefined);
+          // The winner at `target` may be a root-time op trimmed from a shallow
+          // history; the shallow root state still records its value and writer.
+          map._replaceRecord(key, this.#shallowRootMapRecord(map, key));
           continue;
         }
         const content = indexed.operation.content;
@@ -4595,7 +4660,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         const winner = latestIncludedOperation(operations, target);
         const existing = tree._nodes.get(nodeKey);
         if (winner === undefined) {
-          if (existing !== undefined) tree._removeRecord(existing);
+          // As for maps, a shallow root state keeps the placement whose op was
+          // trimmed from the retained history.
+          const rootNode = this.#shallowRootTreeNode(tree, nodeKey);
+          if (rootNode === undefined) {
+            if (existing !== undefined) tree._removeRecord(existing);
+          } else if (existing === undefined) {
+            tree._setRecord({
+              ...rootNode,
+              position: rootNode.position.slice(),
+              data: this.#getOrCreateContainer(
+                { kind: "normal", ...rootNode.id, containerType: CodecContainerType.Map },
+                tree,
+              ) as LoroMap,
+            });
+          } else if (rootNode.deleted) {
+            tree._deleteRecord(existing, rootNode.writer, rootNode.lastMoveId);
+          } else {
+            tree._updateRecord(
+              existing,
+              rootNode.parent,
+              rootNode.position.slice(),
+              rootNode.writer,
+              rootNode.lastMoveId,
+            );
+          }
           continue;
         }
         const winnerContent = winner.operation.content;
@@ -4603,7 +4692,38 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           winnerContent.type === "tree-create" || winnerContent.type === "tree-move"
             ? winner
             : latestIncludedTreePlacement(operations, target, winner.writer);
-        if (placement === undefined) continue;
+        if (placement === undefined) {
+          // A retained delete whose placement was trimmed from a shallow history.
+          const rootNode = this.#shallowRootTreeNode(tree, nodeKey);
+          if (rootNode === undefined || winnerContent.type !== "tree-delete") continue;
+          const deleteId = {
+            peer: winner.record.change.id.peer,
+            counter: winner.operation.counter,
+          };
+          if (existing === undefined) {
+            tree._setRecord({
+              ...rootNode,
+              position: rootNode.position.slice(),
+              deleted: true,
+              writer: winner.writer,
+              lastMoveId: deleteId,
+              data: this.#getOrCreateContainer(
+                { kind: "normal", ...rootNode.id, containerType: CodecContainerType.Map },
+                tree,
+              ) as LoroMap,
+            });
+          } else {
+            tree._updateRecord(
+              existing,
+              rootNode.parent,
+              rootNode.position.slice(),
+              rootNode.writer,
+              rootNode.lastMoveId,
+            );
+            tree._deleteRecord(existing, winner.writer, deleteId);
+          }
+          continue;
+        }
         const placementContent = placement.operation.content;
         if (
           placementContent.type !== "tree-create" &&
@@ -6107,7 +6227,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const forward = this.#withoutContainers(allForward, rebuilds);
     const retreat = this.#withoutContainers(allRetreat, rebuilds);
     const mode = movableMoveTransitionMode(retreat, forward, this.#movableMovePeers);
-    if (!this.#canTransitionRecords([...retreat, ...forward], mode, latest)) {
+    if (!this.#canTransitionRecords([...retreat, ...forward], mode)) {
       return encodeStateSnapshotStore(
         this.forkAt(this.oplogFrontiers()).#buildStateStore(),
         { compression: "auto" },
@@ -6612,9 +6732,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     snapshotVersion: VersionVector | undefined,
   ): void {
     if (store.kind !== "sstable") return;
-    for (const { id } of store.containers) {
-      this.#getOrCreateContainer(id, undefined, false);
+    // The root store keys are formatted here anyway; keep them for the shallow
+    // root fallbacks (#shallowRootEntryIndex).
+    const rootEntries =
+      store === this.#shallowRootStore && this.#shallowRootEntries === undefined
+        ? new Map<string, StateSnapshotContainerEntry>()
+        : undefined;
+    for (const entry of store.containers) {
+      rootEntries?.set(this.#getOrCreateContainer(entry.id, undefined, false).id, entry);
     }
+    if (rootEntries !== undefined) this.#shallowRootEntries = rootEntries;
     for (const { id, wrapper } of store.containers) {
       const container = this.#getOrCreateContainer(id, undefined, false);
       const parent =
@@ -7804,6 +7931,17 @@ function lowerBoundWriter(
     else high = middle;
   }
   return low;
+}
+
+interface ShallowRootIndex {
+  readonly maps: Map<
+    string,
+    Map<
+      string,
+      { readonly value: EncodedLoroValue | undefined; readonly writer: LastWriter }
+    >
+  >;
+  readonly trees: Map<string, Map<string, Omit<TreeNodeRecord, "data">>>;
 }
 
 function latestIncludedOperation(
