@@ -41,15 +41,32 @@ which includes the metadata of deleted nodes.
 
 ## Locking
 
-The creator resolver takes the change store's locks, then parses, which takes
-the arena's lock. So:
+The creator resolver is the only access to the change store that does not hold
+the document's op log lock. `is_deleted`, `has_container`,
+`get_path_to_container`, and `ContainerWrapper::new` reach it under the state
+lock, and event emission (`with_ancestors`) under no document lock. So:
 
-- the arena calls it without holding its own lock. `ArenaContainers::get_depth`
-  runs under the arena lock, so `SharedArena::get_depth` first resolves the
-  missing links of the ancestor chain;
-- the change store never resolves an arena parent while holding `inner`.
+- `ChangeStore` takes its locks in one order, documented on the struct:
+  `root_history_names`, `external_kv`, `inner`, `external_vv`, and the arena's
+  lock last (parsing registers containers). Before loro-dev/loro#1159's review,
+  `get_parsed_block_in`, `flush_and_compact`, and `get_change_by_lamport_lte`
+  took `inner` before `external_kv`, which was harmless while the op log lock
+  serialized every caller. With the resolver, `is_deleted` on one thread and
+  `len_changes`, `export`, or `vv_to_frontiers` on another deadlocked.
+  `ChangeStore::load_parsed_block` looks for a cached block under `inner`
+  alone, then takes `external_kv` and `inner` in order and looks again before
+  it loads the block from the KV store.
+- The arena calls the resolver without holding its own lock.
+  `ArenaContainers::get_depth` runs under the arena lock, so
+  `SharedArena::get_depth` first resolves the missing links of the ancestor
+  chain. It fails fast on a cycle, which would otherwise loop.
+- The change store never resolves an arena parent while holding `inner`.
   `ChangeStore::visit_all_changes` runs its callback under that lock; none of
   its callers resolve parents.
+- Another thread can register a container at any time without its parent, for
+  example by creating a handler. Code that looks a container up twice must not
+  assume the answer stayed the same: `DocState::does_container_exist` decides
+  from its first lookup.
 
 It holds weak references to the change store, so the arena does not keep the
 store alive. `SharedArena::fork` drops it (it would read the source document's
@@ -57,29 +74,80 @@ op log).
 
 ## When there is no parent
 
-With the creator resolver installed, `get_parent` returns `None` for a normal
-container that no source knows: no op in the history creates it (an ID from
-the user that is not a container, or an op not received yet), or it is a
-shallow document whose creating op was trimmed and whose state does not hold
-the container (shallow export keeps everything that can be alive or revived,
-so such a container is dead at the root). No path leads to it, so callers
-treat it like a deleted container: `is_deleted` answers `true` (and does not
-cache it), `get_path` and `get_depth` answer `None`. An arena without a
-creator resolver (not owned by an op log) still panics.
+The resolver answers `CreatorOp::Loaded` when a change block holds the op (it
+is parsed now, so the parent of every container the op creates is registered)
+and `CreatorOp::Absent` when none does. `get_parent` returns `None` for a
+normal container that no source knows:
+
+- no op in the history creates it: an ID from the user that is not a
+  container, or an op not received yet;
+- a shallow document whose creating op was trimmed and whose state does not
+  hold the container. Shallow export keeps everything that can be alive or
+  revived, so such a container is dead at the root.
+
+No path leads to it, so callers treat it like a deleted container:
+`is_deleted` answers `true` (and does not cache it), and `get_path` and
+`get_depth` answer `None`. Broken invariants still fail fast:
+
+- The resolver panics when a block holds the op but cannot be decoded or
+  parsed, instead of answering `Absent`.
+- An arena without a creator resolver (not owned by an op log) panics.
+- `ContainerWrapper::new` panics for a container without a parent, so a
+  container never gets state without one.
+- A local op's containers are linked by the transaction
+  (`set_container_parent_by_raw_op`) before the change reaches the op log, so
+  the resolver cannot supply a link that a local op path forgot. Debug builds
+  check the links when a local change is committed
+  (`parent::assert_local_parent_links_registered`).
+
+## Cost of looking up an ID
+
+`has_container` / `get_container` / `getContainerById` for a normal ID that is
+not registered ask the resolver:
+
+- No block holds the op (beyond the history, an unknown peer, before a shallow
+  root): a KV scan and one block header, with no parse. About 0.5 µs per ID.
+- A block holds the op: the block is parsed once and stays cached, like any
+  other lazy access to that part of the history. This happens even when the op
+  creates no container, because only the op's content tells. The version vector
+  or DAG can tell only whether the op is in the history, not what it creates.
+
+Measured with 2k IDs on a 20k-node, 100k-op document, `main` vs the resolver:
+
+| IDs | `main` | resolver |
+|---|---|---|
+| in the history, first pass | 1.3 ms | 6.1 ms |
+| in the history, second pass | 0.66 ms | 0.78 ms |
+| beyond the history | 1.1 ms | 2.1 ms |
+
+A vv shortcut for IDs beyond the history would have to be exact for every path
+that writes the KV store, or a live container would read as deleted. Measured
+2026-09-28 (loro-dev/loro#1159).
 
 ## Import rollback
 
 A failed import can parse old change blocks while it computes its diff
 (including through the creator resolver) or validates movable-list ops
-(`OpLog::resolve_movable_list_elem`), which registers containers. The arena
-rollback (`SharedArena::rollback`) drops registrations made during the import,
-so `ChangeStore::rollback_import`, after truncating and evicting blocks (see
+(`OpLog::resolve_movable_list_elem`), which registers containers and allocates
+their values. The arena rollback (`SharedArena::rollback`) drops registrations
+and values made during the import, so `ChangeStore::rollback_import`, after
+truncating and evicting blocks (see
 [movable-list-op-validation.md](movable-list-op-validation.md)), drops the
 parsed changes of every kept block that still has its encoded bytes; the next
 access parses again and registers again. Blocks without bytes were built from
 changes inserted before the import, so their containers were registered then.
-Before 2026-09-28 the parsed ops kept indices that later registrations reuse,
-and exporting the history hit `unreachable!` in the JSON encoder.
+Before 2026-09-28 the parsed ops kept indices and value slices past the
+truncated arena: exporting the history hit `unreachable!` in the JSON encoder,
+and a later checkout panicked on a missing value (loro-dev/loro#1161).
+
+`ChangeStore::rollback_import` also rolls back the arena, under `inner`. The
+resolver parses under `inner` without the op log lock, so otherwise it could
+parse a block between the two rollbacks and keep indices that the arena
+rollback then drops.
+
+`DocState` is not rolled back: its store and dead-container cache keep entries
+at the freed indices, and the next container registered at one inherits them
+(loro-dev/loro#1164, pre-existing).
 
 ## Testing pitfall
 
@@ -92,7 +160,12 @@ the real path.
 
 - `crates/loro/tests/unregistered_container_parent.rs`: repros for every entry
   point with snapshot, fork, and shallow sources, the dumped state from the
-  review harness, the import rollback, and a random comparison of every tree
+  review harness, the import rollbacks (including #1161's missing values), a
+  thread stress of queries against history readers
+  (`UNREGISTERED_PARENT_THREAD_TRIALS`), and a random comparison of every tree
   meta against a full-history import (`UNREGISTERED_PARENT_SEEDS=0..300`).
-- Unit tests in `arena.rs`: the resolver runs outside the arena lock, and the
-  `None` / panic cases.
+- `crates/loro/tests/multi_thread_test.rs`
+  (`resolving_a_meta_parent_while_another_thread_reads_the_history`, run by
+  `pnpm test-loom`): the lock order, as a loom model.
+- Unit tests in `arena.rs` (the resolver runs outside the arena lock, the
+  `None` / panic / cycle cases) and `parent.rs` (the local link check).
