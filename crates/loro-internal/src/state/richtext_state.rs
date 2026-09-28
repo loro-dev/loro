@@ -991,6 +991,11 @@ impl RichtextState {
         self.state.get_mut().len_unicode()
     }
 
+    #[cfg(test)]
+    pub(crate) fn inner_state_mut(&mut self) -> &mut InnerState {
+        self.state.get_mut()
+    }
+
     #[inline]
     pub(crate) fn get_entity_index_for_text_insert(
         &mut self,

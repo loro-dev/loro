@@ -10,7 +10,7 @@ use loro_common::{ContainerType, IdLp, IdSpan, LoroResult};
 use loro_delta::{array_vec::ArrayVec, DeltaRopeBuilder};
 use rle::{HasLength, Mergable, RleVec, Sliceable};
 use rustc_hash::FxHashMap;
-use smallvec::{smallvec, SmallVec};
+use smallvec::SmallVec;
 
 use crate::{
     change::{Change, Lamport, Timestamp},
@@ -27,7 +27,7 @@ use crate::{
     id::{Counter, PeerID, ID},
     lock::{LoroMutex, LoroMutexGuard},
     loro::CommitOptions,
-    op::{Op, RawOp, RawOpContent},
+    op::{InnerContent, Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
     span::HasIdSpan,
     version::Frontiers,
@@ -784,31 +784,32 @@ fn change_to_diff(
                 unreachable!("Missing hint for op");
             };
 
-            // Collect ops that belong to this hint
-            let mut ops_for_hint: SmallVec<[Op; 1]> = smallvec![container_ops[op_index].clone()];
-            let mut total_len = container_ops[op_index].atom_len();
-
-            // If hint spans multiple ops, collect them
+            // Collect the ops that belong to this hint. Ops and hints merge by
+            // different rules (text delete hints use UTF-16 spans in WASM), so a
+            // hint can cover several ops and an op can cover several hints.
+            let mut ops_for_hint: SmallVec<[Op; 1]> = SmallVec::new();
+            let mut total_len = 0;
             while total_len < hint.rle_len() {
-                op_index += 1;
-                let next_op_len = container_ops[op_index].atom_len();
-                let op = if next_op_len + total_len > hint.rle_len() {
-                    let new_len = hint.rle_len() - total_len;
-                    let left = container_ops[op_index].slice(0, new_len);
-                    let right = container_ops[op_index].slice(new_len, next_op_len);
-                    container_ops[op_index] = right;
-                    op_index -= 1;
-                    left
-                } else {
-                    container_ops[op_index].clone()
+                let Some(op) = container_ops.get_mut(op_index) else {
+                    unreachable!("Op/hint length mismatch: {hint:?}");
                 };
-
-                total_len += op.atom_len();
-                ops_for_hint.push(op);
+                let op_len = op.atom_len();
+                let needed = hint.rle_len() - total_len;
+                if op_len > needed {
+                    ops_for_hint.push(op.slice(0, needed));
+                    *op = op.slice(needed, op_len);
+                    total_len += needed;
+                } else {
+                    total_len += op_len;
+                    ops_for_hint.push(op.clone());
+                    op_index += 1;
+                }
             }
 
-            op_index += 1;
-            assert_eq!(total_len, hint.rle_len(), "Op/hint length mismatch");
+            debug_assert!(
+                ops_for_hint.iter().all(|op| op_matches_hint(op, &hint)),
+                "Op/hint kind mismatch: {hint:?} {ops_for_hint:?}"
+            );
 
             // Move to next hint
             current_hint = hint_iter.next();
@@ -987,9 +988,40 @@ fn change_to_diff(
                 .map(|x| x.content_len() as Lamport)
                 .sum::<Lamport>();
         }
+
+        debug_assert!(
+            current_hint.is_none(),
+            "Unused event hint: {current_hint:?}"
+        );
     }
 
     ans
+}
+
+/// Whether `op` is the kind of op `hint` was recorded for.
+fn op_matches_hint(op: &Op, hint: &EventHint) -> bool {
+    match &op.content {
+        InnerContent::List(list_op) => matches!(
+            (list_op, hint),
+            (InnerListOp::StyleStart { .. }, EventHint::Mark { .. })
+                | (InnerListOp::StyleEnd, EventHint::MarkEnd)
+                | (InnerListOp::InsertText { .. }, EventHint::InsertText { .. })
+                | (
+                    InnerListOp::Delete(_),
+                    EventHint::DeleteText { .. } | EventHint::DeleteList(_)
+                )
+                | (InnerListOp::Insert { .. }, EventHint::InsertList { .. })
+                | (InnerListOp::Move { .. }, EventHint::Move { .. })
+                | (InnerListOp::Set { .. }, EventHint::SetList { .. })
+        ),
+        InnerContent::Map(_) => matches!(hint, EventHint::Map { .. }),
+        InnerContent::Tree(_) => matches!(hint, EventHint::Tree(_)),
+        #[cfg(feature = "counter")]
+        InnerContent::Future(crate::op::FutureInnerContent::Counter(_)) => {
+            matches!(hint, EventHint::Counter(_))
+        }
+        InnerContent::Future(_) => false,
+    }
 }
 
 #[cfg(test)]
