@@ -1061,9 +1061,7 @@ impl DocState {
         }
 
         if !is_mergeable {
-            // A document loaded from a snapshot parses its changes lazily, so a container that
-            // an op created may not be registered yet.
-            if let Some(idx) = self.arena.find_created_container(id) {
+            if let Some(idx) = self.arena.id_to_idx(id) {
                 if self.arena.get_depth(idx).is_some() {
                     return true;
                 }
@@ -1072,6 +1070,16 @@ impl DocState {
 
         if self.store.contains_id(id) {
             return true;
+        }
+
+        if !is_mergeable && self.arena.id_to_idx(id).is_none() {
+            // A document loaded from a snapshot parses its changes lazily, so a container that
+            // an op created may not be registered yet.
+            if let Some(idx) = self.arena.find_created_container(id) {
+                if self.arena.get_depth(idx).is_some() {
+                    return true;
+                }
+            }
         }
 
         // An ensured-but-empty mergeable child has no ops or KV state of its own yet;
