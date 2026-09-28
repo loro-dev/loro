@@ -68,8 +68,7 @@ describe("text interoperability with Rust", () => {
 
   test("orders a concurrent insert after a sibling subtree of several ID runs", () => {
     // z goes after the whole subtree of peer 2's first "a": its later run of a,
-    // the B run, and peer 4's c run, whose starts are the only elements
-    // `fugueSubtreeEnd` checks.
+    // the B run, and peer 4's c run.
     const scenario = ({ LoroDoc: Doc }: { LoroDoc: typeof LoroDoc }): string => {
       const make = (peer: number): LoroDoc => {
         const created = new Doc();

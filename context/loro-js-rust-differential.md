@@ -86,7 +86,7 @@ can check out a document imported from a snapshot (loro-dev/loro#1126).
 ## Data written by loro.js 0.2
 
 loro.js 0.2 ordered some concurrent text inserts differently from Rust (a
-concurrent insert after a sibling's subtree, now `fugueSubtreeEnd`) and encoded
+concurrent insert after a sibling's subtree, fixed by loro-dev/loro#1139) and encoded
 text cursors by UTF-16 position. Decision (2026-09-28): later versions read all
 data with Rust's semantics and add no version marker. The same bytes must mean
 the same thing in both runtimes, documents shared with `loro-crdt` peers had
