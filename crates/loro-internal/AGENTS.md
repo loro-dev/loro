@@ -19,6 +19,9 @@ over graceful degradation.
   or op/value encoding.
 - `src/oplog/` and `src/dag/`: change storage, dependency ordering, pending
   changes, version vectors/frontiers, shallow roots, and history traversal.
+- `src/arena.rs`: container IDs, indices, and parent links. How a parent is
+  found in a lazily loaded document, and the locking rules:
+  [../../context/arena-parent-links.md](../../context/arena-parent-links.md).
 - `src/state.rs` and `src/state/`: materialized document state, container stores,
   diff application, checkout/replay, deep value, dead-container tracking, and
   mergeable container visibility. Read `src/state/AGENTS.md` and

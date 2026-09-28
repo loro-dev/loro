@@ -948,6 +948,50 @@ mod tests {
         );
     }
 
+    /// The creator resolver parses changes, which registers containers in the arena, so
+    /// `get_parent` and `get_depth` must call it without holding the arena lock.
+    #[test]
+    fn creator_resolver_runs_outside_the_arena_lock() {
+        let arena = SharedArena::new();
+        let root = ContainerID::new_root("tree", ContainerType::Tree);
+        let meta = ContainerID::new_normal(ID::new(1, 3), ContainerType::Map);
+        let meta_for_resolver = meta.clone();
+        arena.set_creator_resolver(move |arena: &SharedArena, id: ID| {
+            assert_eq!(id, ID::new(1, 3));
+            // What parsing the change does: register the container and its parent.
+            let parent = arena.register_container(&root);
+            let child = arena.register_container(&meta_for_resolver);
+            arena.set_parent(child, Some(parent));
+        });
+
+        let meta_idx = arena.register_container(&meta);
+        assert_eq!(arena.get_depth(meta_idx).map(|d| d.get()), Some(2));
+        let root_idx = arena.id_to_idx(&ContainerID::new_root("tree", ContainerType::Tree));
+        assert_eq!(arena.get_parent(meta_idx), root_idx);
+    }
+
+    #[test]
+    fn a_container_that_no_op_creates_has_no_parent() {
+        let arena = SharedArena::new();
+        arena.set_creator_resolver(|_: &SharedArena, _: ID| {});
+        let id = ContainerID::new_normal(ID::new(1, 3), ContainerType::Map);
+        let idx = arena.register_container(&id);
+        assert_eq!(arena.get_parent(idx), None);
+        assert_eq!(arena.get_depth(idx), None);
+        let missing = ContainerID::new_normal(ID::new(1, 4), ContainerType::Text);
+        assert_eq!(arena.find_created_container(&missing), None);
+    }
+
+    /// Without an op log to ask, an unknown parent is still an internal error.
+    #[test]
+    #[should_panic(expected = "Parent is not registered")]
+    fn unknown_parent_without_a_creator_resolver_panics() {
+        let arena = SharedArena::new();
+        let idx =
+            arena.register_container(&ContainerID::new_normal(ID::new(1, 3), ContainerType::Map));
+        arena.get_parent(idx);
+    }
+
     #[test]
     fn set_parent_does_not_resolve_missing_parent_depth() {
         let arena = SharedArena::new();

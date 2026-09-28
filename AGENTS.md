@@ -46,6 +46,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).
+- How the arena learns a container's parent (parsed changes, state KV, the op
+  log's creator resolver), its locking, and import rollback:
+  [context/arena-parent-links.md](context/arena-parent-links.md).
 - Which deletions `DocState::is_deleted` caches, and how tree/movable-list
   children are revived: [context/dead-container-cache.md](context/dead-container-cache.md).
 - Movable-list `apply_diff`/undo: delete + re-insert of a child becomes a move,
