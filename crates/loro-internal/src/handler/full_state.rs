@@ -12,7 +12,10 @@ use crate::{
     delta::{ResolvedMapDelta, ResolvedMapValue, TreeDiff, TreeDiffItem, TreeExternalDiff},
     event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta},
     state::TreeParentId,
-    utils::string_slice::StringSlice,
+    utils::{
+        string_slice::StringSlice,
+        utf16::{count_unicode_chars, count_utf16_len},
+    },
 };
 use fractional_index::FractionalIndex;
 use loro_common::{ContainerID, InternalString, LoroResult, LoroValue, TreeID};
@@ -107,17 +110,17 @@ fn align_map(
     (!updated.is_empty()).then_some(ResolvedMapDelta { updated })
 }
 
-/// Length of one char in the units of text diffs (see `StringSlice::rle_len`).
-fn char_len(c: char) -> usize {
+/// Length of `s` in the units of text diffs (see `StringSlice::rle_len`).
+fn text_len(s: &str) -> usize {
     if cfg!(feature = "wasm") {
-        c.len_utf16()
+        count_utf16_len(s.as_bytes())
     } else {
-        1
+        count_unicode_chars(s.as_bytes())
     }
 }
 
-/// `None` if `diff` is not a pure insertion.
-fn text_chars(diff: &TextDiff) -> Option<Vec<(char, &TextMeta)>> {
+/// Style runs of a pure-insertion text diff, or `None` if it is not one.
+fn text_runs(diff: &TextDiff) -> Option<Vec<(&str, &TextMeta)>> {
     let mut ans = Vec::new();
     for item in diff.iter() {
         let DeltaItem::Replace {
@@ -128,9 +131,27 @@ fn text_chars(diff: &TextDiff) -> Option<Vec<(char, &TextMeta)>> {
         else {
             return None;
         };
-        ans.extend(value.as_str().chars().map(|c| (c, attr)));
+        ans.push((value.as_str(), attr));
     }
     Some(ans)
+}
+
+/// The pieces of `runs` that cover the byte range `range` of their concatenated text.
+fn slice_runs<'a>(
+    runs: &[(&'a str, &'a TextMeta)],
+    range: std::ops::Range<usize>,
+) -> Vec<(&'a str, &'a TextMeta)> {
+    let mut ans = Vec::new();
+    let mut offset = 0;
+    for &(text, attr) in runs {
+        let (start, end) = (offset, offset + text.len());
+        offset = end;
+        let (from, to) = (range.start.max(start), range.end.min(end));
+        if from < to {
+            ans.push((&text[from - start..to - start], attr));
+        }
+    }
+    ans
 }
 
 /// Lengths of the longest common prefix and of the longest common suffix of the rest.
@@ -165,65 +186,75 @@ fn style_change(current: &TextMeta, target: &TextMeta) -> TextMeta {
     change
 }
 
-/// Retains `current[i]` for each `(current[i], target[i])` pair, restyling chars whose styles
-/// differ.
+/// Retains a kept text range given as the `current` and `target` runs over the same text,
+/// re-marking the pieces whose styles differ.
 fn push_restyled_retain(
     edit: &mut TextDiff,
-    current: &[(char, &TextMeta)],
-    target: &[(char, &TextMeta)],
+    current: &[(&str, &TextMeta)],
+    target: &[(&str, &TextMeta)],
 ) {
-    let same_style = |i: usize| current[i].1 == target[i].1;
-    let mut i = 0;
-    while i < current.len() {
-        let start = i;
-        let mut len = 0;
-        if same_style(i) {
-            while i < current.len() && same_style(i) {
-                len += char_len(current[i].0);
-                i += 1;
-            }
-            edit.push_retain(len, TextMeta::default());
+    let (mut ci, mut ti) = (0, 0);
+    let (mut c_off, mut t_off) = (0, 0);
+    while ci < current.len() && ti < target.len() {
+        let (c_text, c_attr) = current[ci];
+        let (t_text, t_attr) = target[ti];
+        let take = (c_text.len() - c_off).min(t_text.len() - t_off);
+        let piece = &c_text[c_off..c_off + take];
+        let change = if c_attr == t_attr {
+            TextMeta::default()
         } else {
-            let (from, to) = (current[i].1, target[i].1);
-            while i < current.len() && current[i].1 == from && target[i].1 == to {
-                len += char_len(current[i].0);
-                i += 1;
-            }
-            debug_assert!(i > start);
-            edit.push_retain(len, style_change(from, to));
+            style_change(c_attr, t_attr)
+        };
+        edit.push_retain(text_len(piece), change);
+        c_off += take;
+        t_off += take;
+        if c_off == c_text.len() {
+            ci += 1;
+            c_off = 0;
+        }
+        if t_off == t_text.len() {
+            ti += 1;
+            t_off = 0;
         }
     }
 }
 
-/// Keeps the chars of the common prefix and suffix (compared by content; differing styles are
-/// re-marked) and replaces the middle.
+/// Keeps the text of the common prefix and suffix (compared by content; differing styles are
+/// re-marked) and replaces the middle. Works on style runs, so its cost is a byte comparison
+/// of the two texts plus the number of runs.
 fn align_text(target: &TextDiff, current: &TextDiff) -> Option<TextDiff> {
-    let target = text_chars(target)?;
-    let current = text_chars(current)?;
-    let (prefix, suffix) = common_ends_by(&target, &current, |(a, _), (b, _)| a == b);
-    let mut edit = TextDiff::new();
-    push_restyled_retain(&mut edit, &current[..prefix], &target[..prefix]);
-    let delete: usize = current[prefix..current.len() - suffix]
+    let target = text_runs(target)?;
+    let current = text_runs(current)?;
+    let target_text: String = target.iter().map(|(s, _)| *s).collect();
+    let current_text: String = current.iter().map(|(s, _)| *s).collect();
+    let (t, c) = (target_text.as_bytes(), current_text.as_bytes());
+    let mut prefix = t.iter().zip(c).take_while(|(x, y)| x == y).count();
+    while !target_text.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let mut suffix = t[prefix..]
         .iter()
-        .map(|(c, _)| char_len(*c))
-        .sum();
-    edit.push_delete(delete);
-    let middle = &target[prefix..target.len() - suffix];
-    let mut i = 0;
-    while i < middle.len() {
-        let attr = middle[i].1;
-        let run: String = middle[i..]
-            .iter()
-            .take_while(|(_, a)| *a == attr)
-            .map(|(c, _)| *c)
-            .collect();
-        i += run.chars().count();
-        edit.push_insert(StringSlice::from(run), attr.clone());
+        .rev()
+        .zip(c[prefix..].iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count();
+    while !target_text.is_char_boundary(t.len() - suffix) {
+        suffix -= 1;
+    }
+    let mut edit = TextDiff::new();
+    push_restyled_retain(
+        &mut edit,
+        &slice_runs(&current, 0..prefix),
+        &slice_runs(&target, 0..prefix),
+    );
+    edit.push_delete(text_len(&current_text[prefix..c.len() - suffix]));
+    for (text, attr) in slice_runs(&target, prefix..t.len() - suffix) {
+        edit.push_insert(StringSlice::from(text), attr.clone());
     }
     push_restyled_retain(
         &mut edit,
-        &current[current.len() - suffix..],
-        &target[target.len() - suffix..],
+        &slice_runs(&current, c.len() - suffix..c.len()),
+        &slice_runs(&target, t.len() - suffix..t.len()),
     );
     Some(edit)
 }

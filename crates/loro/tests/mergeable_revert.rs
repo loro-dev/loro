@@ -1323,3 +1323,66 @@ fn perf_commit_many_mergeable_children_with_subscriber() {
         println!("{n} children: commit {:?}", start.elapsed());
     }
 }
+
+/// Text alignment with multi-byte chars (emoji, combining marks, CJK) and styles, against the
+/// same hidden text, a different one, and none.
+#[test]
+fn public_diff_aligns_non_ascii_styled_text() {
+    let cases: [(&str, &str); 6] = [
+        ("a😀b", "a😀c"),
+        ("😀😀", "😀😃"),
+        ("é中文x", "é中文"),
+        ("👍🏽ok", "👍🏾ok"),
+        ("", "😀"),
+        ("😀", ""),
+    ];
+    for (target_text, hidden_text) in cases {
+        let d = doc();
+        let t = d.get_map("m").ensure_mergeable_text("s").unwrap();
+        t.insert(0, target_text).unwrap();
+        if !target_text.is_empty() {
+            t.mark(0..1, "bold", true).unwrap();
+        }
+        d.commit();
+        let target = d.state_frontiers();
+        let expected = t.get_richtext_value().to_json_value();
+        t.delete(0, t.len_unicode()).unwrap();
+        t.insert(0, hidden_text).unwrap();
+        d.commit();
+        delete_s(&d);
+        d.commit();
+        let diff = || d.diff(&d.state_frontiers(), &target).unwrap();
+        let what = format!("{target_text:?} over {hidden_text:?}");
+
+        let same = d.fork();
+        same.apply_diff(diff()).unwrap();
+        same.commit();
+        let (other, _, _) = deleted_after_divergence(
+            |d| {
+                d.get_map("m")
+                    .ensure_mergeable_text("s")
+                    .unwrap()
+                    .insert(0, "x😀y")
+                    .unwrap();
+            },
+            |_| {},
+        );
+        other.config_default_text_style(Some(StyleConfig {
+            expand: ExpandType::After,
+        }));
+        other.apply_diff(diff()).unwrap();
+        other.commit();
+        let absent = doc();
+        absent.get_map("m");
+        absent.apply_diff(diff()).unwrap();
+        absent.commit();
+        for (name, r) in [("same", &same), ("different", &other), ("absent", &absent)] {
+            let text = r.get_map("m").ensure_mergeable_text("s").unwrap();
+            assert_eq!(
+                text.get_richtext_value().to_json_value(),
+                expected,
+                "{what}: {name}"
+            );
+        }
+    }
+}

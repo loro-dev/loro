@@ -450,4 +450,34 @@ describe("mergeable containers (WASM bindings)", () => {
     expect(d.toJSON()).toEqual(expected);
     expect(mirror.toJSON()).toEqual(expected);
   });
+  test("fullState applyDiff aligns emoji and styled text in UTF-16 units", () => {
+    const cases: [string, string][] = [
+      ["a😀b", "a😀c"],
+      ["😀😀", "😀😃"],
+      ["é中文x", "é中文"],
+      ["👍🏽ok", "👍🏾ok"],
+    ];
+    for (const [targetText, hiddenText] of cases) {
+      const d = new LoroDoc();
+      d.setPeerId(1);
+      d.configTextStyle({ bold: { expand: "after" } });
+      const t = d.getMap("m").ensureMergeableText("s");
+      t.insert(0, targetText);
+      t.mark({ start: 0, end: 1 }, "bold", true);
+      d.commit();
+      const target = d.frontiers();
+      const expected = t.toDelta();
+      t.delete(0, t.length);
+      t.insert(0, hiddenText);
+      d.commit();
+      d.getMap("m").delete("s");
+      d.commit();
+      const same = d.fork();
+      same.applyDiff(d.diff(d.frontiers(), target), { fullState: true });
+      same.commit();
+      expect(same.getMap("m").ensureMergeableText("s").toDelta()).toEqual(
+        expected,
+      );
+    }
+  });
 });
