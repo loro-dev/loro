@@ -5,12 +5,9 @@
 
 use loro::{
     event::{Diff, DiffBatch, ListDiffItem, MapDelta},
-    ContainerID, ContainerTrait, ContainerType, Frontiers, JsonFutureOp, JsonListOp, JsonMapOp,
-    JsonMovableListOp, JsonOpContent, LoroCounter, LoroDoc, LoroError, LoroList, LoroMap,
-    LoroMovableList, LoroResult, LoroValue, ToJson, TreeParentId, UndoManager, ValueOrContainer,
-    ID,
+    ContainerID, ContainerTrait, ContainerType, Frontiers, LoroDoc, LoroList, LoroMap, LoroResult,
+    LoroValue, UndoManager, ValueOrContainer,
 };
-use rand::{rngs::StdRng, Rng, SeedableRng};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
@@ -779,4 +776,247 @@ fn redo_after_a_rejected_redo_step() {
     assert_rejected_atomically(&doc, |_| undo.redo());
     assert!(undo.redo().unwrap());
     assert_eq!(t.to_string(), "ac");
+}
+
+// Reproductions from the third review of #1142.
+
+/// Where a mergeable movable list `k = [U, "x"]` sits: in a map in a list, in
+/// a tree node's meta, or one level deeper in a mergeable map of that map.
+#[derive(Clone, Copy, Debug)]
+enum RemappedHost {
+    ListElement,
+    TreeMeta,
+    Nested,
+}
+
+/// One step moves U inside `k` and hides `k`; the next deletes the host. Undo
+/// recreates the host under a new id (the undo manager remaps it), and a
+/// remote peer fills the new host's `k`. Undoing the first step writes `k`'s
+/// marker on the new host, where U is not: it would create U. The check used
+/// to look into the old hidden `k`, accept the move, and undo returned
+/// `Ok(true)` half applied.
+#[test]
+fn undo_into_a_host_the_undo_manager_recreated_is_rejected() {
+    for host in [
+        RemappedHost::ListElement,
+        RemappedHost::TreeMeta,
+        RemappedHost::Nested,
+    ] {
+        for remote_fill in [true, false] {
+            let doc = forge(|doc| {
+                let h = match host {
+                    RemappedHost::TreeMeta => {
+                        let t = doc.get_tree("T");
+                        t.get_meta(t.create(None).unwrap()).unwrap()
+                    }
+                    _ => doc
+                        .get_list("L")
+                        .insert_container(0, LoroMap::new())
+                        .unwrap(),
+                };
+                h.insert("v", 1).unwrap();
+                let h = match host {
+                    RemappedHost::Nested => h.ensure_mergeable_map("s").unwrap(),
+                    _ => h,
+                };
+                let k = h.ensure_mergeable_movable_list("k").unwrap();
+                k.push("x").unwrap();
+                edited_counter(k.insert_container(0, counter()).unwrap());
+            });
+            let holder = |doc: &LoroDoc| -> LoroMap {
+                let h = match host {
+                    RemappedHost::TreeMeta => {
+                        let t = doc.get_tree("T");
+                        t.get_meta(t.roots()[0]).unwrap()
+                    }
+                    _ => doc
+                        .get_list("L")
+                        .get(0)
+                        .unwrap()
+                        .into_container()
+                        .unwrap()
+                        .into_map()
+                        .unwrap(),
+                };
+                match host {
+                    RemappedHost::Nested => h.ensure_mergeable_map("s").unwrap(),
+                    _ => h,
+                }
+            };
+            let mut undo = UndoManager::new(&doc);
+            let h = holder(&doc);
+            h.ensure_mergeable_movable_list("k")
+                .unwrap()
+                .mov(0, 1)
+                .unwrap();
+            h.delete("k").unwrap();
+            doc.commit();
+            match host {
+                RemappedHost::TreeMeta => {
+                    let t = doc.get_tree("T");
+                    t.delete(t.roots()[0]).unwrap();
+                }
+                _ => doc.get_list("L").delete(0, 1).unwrap(),
+            }
+            doc.commit();
+            assert!(undo.undo().unwrap());
+            if remote_fill {
+                let remote = doc.fork();
+                remote.set_peer_id(3).unwrap();
+                let k = holder(&remote).ensure_mergeable_movable_list("k").unwrap();
+                k.push("y").unwrap();
+                k.push("z").unwrap();
+                remote.commit();
+                doc.import(
+                    &remote
+                        .export(loro::ExportMode::updates(&doc.oplog_vv()))
+                        .unwrap(),
+                )
+                .unwrap();
+            }
+            assert_rejected_atomically(&doc, |_| undo.undo());
+        }
+    }
+}
+
+/// A Map entry that writes the mergeable child of key `k` under key `q`
+/// (only a hand-built batch does this), then moves U inside it. The loop
+/// writes `q`'s marker, which isn't where U is. Used to write the marker (or
+/// clear `q` with a full state) before failing.
+#[test]
+fn mergeable_value_under_another_key_is_rejected_atomically() {
+    for full_state in [false, true] {
+        let doc = forge(|doc| {
+            let a = doc.get_map("A");
+            let k = a.ensure_mergeable_movable_list("k").unwrap();
+            k.push("x").unwrap();
+            edited_counter(k.insert_container(0, counter()).unwrap());
+            let q = a.ensure_mergeable_movable_list("q").unwrap();
+            q.push("y").unwrap();
+            q.push("z").unwrap();
+        });
+        let a = doc.get_map("A");
+        let k = a.ensure_mergeable_movable_list("k").unwrap();
+        let u = k.get(0).unwrap().into_container().unwrap();
+        let moved_u = if full_state {
+            vec![ListDiffItem::Insert {
+                insert: vec![
+                    ValueOrContainer::Container(u),
+                    ValueOrContainer::Value("x".into()),
+                ],
+                is_move: true,
+            }]
+        } else {
+            vec![
+                ListDiffItem::Retain { retain: 1 },
+                ListDiffItem::Insert {
+                    insert: vec![ValueOrContainer::Container(u)],
+                    is_move: true,
+                },
+            ]
+        };
+        let mut diff = batch(vec![
+            (
+                a.id(),
+                Diff::Map(MapDelta {
+                    updated: FxHashMap::from_iter([(
+                        Cow::Borrowed("q"),
+                        Some(ValueOrContainer::Container(loro::Container::MovableList(
+                            k.clone(),
+                        ))),
+                    )]),
+                }),
+            ),
+            (k.id(), Diff::List(moved_u)),
+        ]);
+        diff.set_full_state(full_state);
+        assert_rejected_atomically(&doc, |d| d.apply_diff(diff));
+    }
+}
+
+/// A full-state batch in which the entry of a hidden mergeable map `a.b`
+/// comes before the entry that revives it (JS `applyDiff` takes any order).
+/// The loop skips `b`'s entry, so `b.ml` is not aligned but applied as is,
+/// creating U. The plan used to count `b`'s marker writes; the batch applied
+/// half before failing.
+#[test]
+fn reordered_full_state_revival_is_rejected_atomically() {
+    let doc = forge(|doc| {
+        let a = doc.get_map("r").ensure_mergeable_map("a").unwrap();
+        let b = a.ensure_mergeable_map("b").unwrap();
+        b.insert("v", 1).unwrap();
+        let ml = b.ensure_mergeable_movable_list("ml").unwrap();
+        ml.push("a").unwrap();
+        edited_counter(ml.insert_container(0, counter()).unwrap());
+    });
+    let v0 = doc.state_frontiers();
+    let expected = state(&doc).0;
+    let a = doc.get_map("r").ensure_mergeable_map("a").unwrap();
+    a.delete("b").unwrap();
+    doc.commit();
+    let natural = doc.diff(&doc.state_frontiers(), &v0).unwrap();
+    let entries: Vec<_> = natural
+        .iter()
+        .map(|(id, d)| (id.clone(), d.clone()))
+        .collect();
+    let a_id = a.id();
+    let b_id = ContainerID::new_mergeable(&a_id, "b", ContainerType::Map);
+    let pos = |id: &ContainerID| entries.iter().position(|(c, _)| c == id).unwrap();
+    assert!(pos(&a_id) < pos(&b_id));
+
+    // `b` before `a`
+    let mut reordered = entries.clone();
+    reordered.swap(pos(&a_id), pos(&b_id));
+    let mut reordered = batch(reordered);
+    reordered.set_full_state(true);
+    assert_rejected_atomically(&doc, |d| d.apply_diff(reordered));
+
+    // The natural order keeps U
+    doc.apply_diff(natural).unwrap();
+    assert_eq!(state(&doc).0, expected);
+}
+
+/// The steps before a rejected step are rebased over its changes like over
+/// remote changes, including their limits: if the rejected step moved an
+/// element an earlier step inserted, undoing that earlier step no longer
+/// finds it (an undo of a no-op falls through to the step before). Undo then
+/// behaves exactly as if a remote peer had made the move.
+#[test]
+fn undo_after_a_rejected_move_matches_a_remote_move() {
+    let undo_all = |rejected_local_move: bool| -> Vec<(bool, serde_json::Value)> {
+        let doc = forge(|doc| {
+            edited_counter(doc.get_list("us").push_container(counter()).unwrap());
+        });
+        let remote = doc.fork();
+        remote.set_peer_id(3).unwrap();
+        let mut undo = UndoManager::new(&doc);
+        let ml = doc.get_movable_list("ml");
+        ml.insert(0, "x").unwrap();
+        ml.insert(1, "y").unwrap();
+        doc.commit();
+        ml.insert(0, "L1").unwrap();
+        doc.commit();
+        if rejected_local_move {
+            ml.mov(0, 2).unwrap();
+            doc.get_list("us").delete(0, 1).unwrap();
+            doc.commit();
+            assert_rejected_atomically(&doc, |_| undo.undo());
+        } else {
+            let sync = |a: &LoroDoc, b: &LoroDoc| {
+                b.import(&a.export(loro::ExportMode::updates(&b.oplog_vv())).unwrap())
+                    .unwrap();
+            };
+            sync(&doc, &remote);
+            remote.get_movable_list("ml").mov(0, 2).unwrap();
+            remote.commit();
+            sync(&remote, &doc);
+        }
+        (0..3)
+            .map(|_| {
+                let r = undo.undo().unwrap();
+                (r, loro::ToJson::to_json_value(&ml.get_value()))
+            })
+            .collect()
+    };
+    assert_eq!(undo_all(true), undo_all(false));
 }

@@ -5,12 +5,18 @@
 //! rejected without changing it, or succeed with the same result as on the
 //! twin. The atomicity check alone can't see an `Ok` with a wrong state.
 //!
+//! `unknown_containers_match_their_known_twin_in_collaboration` adds a remote
+//! peer, undo/redo interleaved with edits and syncs, reordered batches (JS
+//! `applyDiff` takes any order) and 3-level mergeable chains.
+//!
 //! `LORO_UNKNOWN_TWIN_SEEDS` / `LORO_UNKNOWN_TWIN_START` run more seeds.
 
 mod unknown_container_support;
 
 use loro::{
-    LoroDoc, LoroList, LoroMap, LoroMovableList, LoroResult, LoroTree, TreeID, UndoManager,
+    event::{Diff, DiffBatch},
+    ContainerID, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroResult, LoroTree, TreeID,
+    UndoManager,
 };
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use unknown_container_support::*;
@@ -617,4 +623,418 @@ fn undo_keeps_exactly_the_rejected_steps() {
         while undo.redo().unwrap() {}
         assert_eq!(t.to_string(), full, "seed {seed}: after redo");
     }
+}
+
+// Collaboration: remote edits, interleaved undo/redo, reordered batches
+
+fn fill_n3(root: &LoroMap, with_counters: bool) {
+    // mergeable map -> mergeable map -> mergeable movable list [U, "a"] and mergeable list [U]
+    let a = root.ensure_mergeable_map("a").unwrap();
+    let b = a.ensure_mergeable_map("b").unwrap();
+    let ml = b.ensure_mergeable_movable_list("ml").unwrap();
+    ml.push("a").unwrap();
+    if with_counters {
+        edited_counter(ml.insert_container(0, counter()).unwrap());
+    }
+    ml.push("b").unwrap();
+    let l = b.ensure_mergeable_list("l").unwrap();
+    if with_counters {
+        edited_counter(l.insert_container(0, counter()).unwrap());
+    }
+    l.push(1).unwrap();
+}
+
+fn build_collab(doc: &LoroDoc) {
+    build(doc);
+    // nested mergeable under a root map
+    fill_n3(&doc.get_map("n3"), true);
+    // list of normal maps holding 3-level mergeable chains
+    let l3 = doc.get_list("l3");
+    for i in 0..2 {
+        let e = l3.insert_container(i, LoroMap::new()).unwrap();
+        fill_n3(&e, true);
+        fill_nm(&e, true);
+    }
+    // tree whose node metas hold a mergeable ML with U, children too
+    let t2 = doc.get_tree("t2");
+    let r = t2.create(None).unwrap();
+    let c = t2.create(r).unwrap();
+    for n in [r, c] {
+        let meta = t2.get_meta(n).unwrap();
+        meta.insert("n", 1).unwrap();
+        let mv = meta.ensure_mergeable_movable_list("mv").unwrap();
+        mv.push("p").unwrap();
+        edited_counter(mv.insert_container(0, counter()).unwrap());
+        mv.push("q").unwrap();
+        fill_n3(&meta, true);
+    }
+}
+
+/// Maps that hold nm-like mergeable children (k, s, mv) and n3 chains.
+fn holder_maps(doc: &LoroDoc) -> Vec<LoroMap> {
+    let mut ans = Vec::new();
+    let m = doc.get_map("m");
+    if let Some(Ok(nm)) = m
+        .get("nm")
+        .and_then(|v| v.into_container().ok())
+        .map(|c| c.into_map())
+    {
+        ans.push(nm);
+    }
+    for name in ["l2", "l3"] {
+        let l = doc.get_list(name);
+        for i in 0..l.len() {
+            if let Some(Ok(e)) = l
+                .get(i)
+                .and_then(|v| v.into_container().ok())
+                .map(|c| c.into_map())
+            {
+                ans.push(e);
+            }
+        }
+    }
+    let mlm = doc.get_movable_list("mlm");
+    for i in 0..mlm.len() {
+        if let Some(Ok(e)) = mlm
+            .get(i)
+            .and_then(|v| v.into_container().ok())
+            .map(|c| c.into_map())
+        {
+            ans.push(e);
+        }
+    }
+    for tn in ["tree", "t2"] {
+        let t = doc.get_tree(tn);
+        for n in alive_nodes(&t) {
+            ans.push(t.get_meta(n).unwrap());
+        }
+    }
+    ans.push(doc.get_map("n3"));
+    ans
+}
+
+fn edit_mv_burst(h: &LoroMap, rng: &mut StdRng) {
+    // move inside the mergeable movable list, then maybe hide it (R3-1 ingredient)
+    let mv = h.ensure_mergeable_movable_list("mv").unwrap();
+    let len = mv.len();
+    if len >= 2 {
+        mv.mov(rng.gen_range(0..len), rng.gen_range(0..len))
+            .unwrap();
+    } else {
+        mv.push("w").unwrap();
+    }
+    if rng.gen_bool(0.6) {
+        h.delete("mv").unwrap();
+    }
+}
+
+fn edit_n3(h: &LoroMap, rng: &mut StdRng) {
+    match rng.gen_range(0..6) {
+        0 => {
+            h.delete("a").unwrap();
+        }
+        1 => {
+            let a = h.ensure_mergeable_map("a").unwrap();
+            a.delete("b").unwrap();
+        }
+        2 => {
+            let b = h
+                .ensure_mergeable_map("a")
+                .unwrap()
+                .ensure_mergeable_map("b")
+                .unwrap();
+            b.delete(if rng.gen_bool(0.5) { "ml" } else { "l" })
+                .unwrap();
+        }
+        3 => {
+            let b = h
+                .ensure_mergeable_map("a")
+                .unwrap()
+                .ensure_mergeable_map("b")
+                .unwrap();
+            let ml = b.ensure_mergeable_movable_list("ml").unwrap();
+            let len = ml.len();
+            if len >= 2 {
+                ml.mov(rng.gen_range(0..len), rng.gen_range(0..len))
+                    .unwrap();
+            } else {
+                ml.push("n").unwrap();
+            }
+            if rng.gen_bool(0.5) {
+                b.delete("ml").unwrap();
+            }
+        }
+        4 => {
+            let b = h
+                .ensure_mergeable_map("a")
+                .unwrap()
+                .ensure_mergeable_map("b")
+                .unwrap();
+            let l = b.ensure_mergeable_list("l").unwrap();
+            if !l.is_empty() && rng.gen_bool(0.5) {
+                l.delete(rng.gen_range(0..l.len()), 1).unwrap();
+            } else {
+                l.push(rng.gen_range(0..10)).unwrap();
+            }
+        }
+        _ => {
+            let b = h
+                .ensure_mergeable_map("a")
+                .unwrap()
+                .ensure_mergeable_map("b")
+                .unwrap();
+            let ml = b.ensure_mergeable_movable_list("ml").unwrap();
+            ml.push(rng.gen_range(0..10)).unwrap();
+        }
+    }
+}
+
+fn random_edit_collab(doc: &LoroDoc, rng: &mut StdRng) {
+    match rng.gen_range(0..10) {
+        0..=4 => random_edit(doc, rng),
+        5 | 6 => {
+            let hs = holder_maps(doc);
+            if let Some(h) = pick(rng, &hs) {
+                if rng.gen_bool(0.5) {
+                    edit_mv_burst(&h, rng);
+                } else {
+                    edit_n3(&h, rng);
+                }
+            }
+        }
+        7 => {
+            // delete / recreate holders
+            match rng.gen_range(0..4) {
+                0 => {
+                    let l3 = doc.get_list("l3");
+                    if !l3.is_empty() {
+                        l3.delete(rng.gen_range(0..l3.len()), 1).unwrap();
+                    }
+                }
+                1 => {
+                    let l3 = doc.get_list("l3");
+                    let e = l3
+                        .insert_container(rng.gen_range(0..=l3.len()), LoroMap::new())
+                        .unwrap();
+                    fill_n3(&e, false);
+                }
+                2 => {
+                    let t2 = doc.get_tree("t2");
+                    let alive = alive_nodes(&t2);
+                    if let Some(n) = pick(rng, &alive) {
+                        t2.delete(n).unwrap();
+                    }
+                }
+                _ => {
+                    let t2 = doc.get_tree("t2");
+                    let alive = alive_nodes(&t2);
+                    if alive.len() >= 2 {
+                        let a = pick(rng, &alive).unwrap();
+                        let b = pick(rng, &alive).unwrap();
+                        let _ = t2.mov(a, b);
+                    } else {
+                        let n = t2.create(None).unwrap();
+                        t2.get_meta(n)
+                            .unwrap()
+                            .ensure_mergeable_movable_list("mv")
+                            .unwrap()
+                            .push("r")
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        _ => {
+            let t = doc.get_text("t");
+            let pos = rng.gen_range(0..=t.len_unicode());
+            t.insert(pos, "y").unwrap();
+        }
+    }
+}
+
+fn shuffled(b: &DiffBatch, seed: u64, mode: u8) -> DiffBatch {
+    let mut items: Vec<(ContainerID, Diff<'static>)> =
+        b.iter().map(|(c, d)| (c.clone(), d.clone())).collect();
+    match mode {
+        0 => {}
+        1 => items.reverse(),
+        _ => {
+            let mut r = StdRng::seed_from_u64(seed);
+            for i in (1..items.len()).rev() {
+                let j = r.gen_range(0..=i);
+                items.swap(i, j);
+            }
+        }
+    }
+    let mut out = DiffBatch::default();
+    for (c, d) in items {
+        out.push(c, d).unwrap();
+    }
+    out.set_full_state(b.is_full_state());
+    out
+}
+
+fn sync(a: &LoroDoc, b: &LoroDoc) {
+    a.commit();
+    b.commit();
+    let ua = a.export(loro::ExportMode::updates(&b.oplog_vv())).unwrap();
+    let ub = b.export(loro::ExportMode::updates(&a.oplog_vv())).unwrap();
+    b.import(&ua).unwrap();
+    a.import(&ub).unwrap();
+}
+
+/// Outcome of an operation on the forged doc, compared with its twin.
+/// Returns whether the twins diverged (their stacks or states differ from now on).
+fn record(
+    label: &str,
+    counts: &mut Counts,
+    u: &LoroDoc,
+    ru: Outcome,
+    k: &LoroDoc,
+    rk: &Outcome,
+) -> bool {
+    match (ru, rk) {
+        (Outcome::Ok, Outcome::Ok) => {
+            counts.ok += 1;
+            assert_eq!(
+                nstate(u),
+                nstate(k),
+                "{label}: Ok but differs from the twin"
+            );
+            false
+        }
+        (Outcome::Ok, _) => {
+            counts.ok += 1;
+            true
+        }
+        (Outcome::Rejected, _) => {
+            counts.rejected += 1;
+            true
+        }
+        (Outcome::OtherErr, rk) => !matches!(rk, Outcome::OtherErr),
+    }
+}
+
+fn collab_case(seed: u64, counts: &mut Counts) {
+    let u = forge_as(build_collab, true);
+    let k = forge_as(build_collab, false);
+    assert_eq!(nstate(&u), nstate(&k));
+    let remote_u = u.fork();
+    remote_u.set_peer_id(3).unwrap();
+    let remote_k = k.fork();
+    remote_k.set_peer_id(3).unwrap();
+    let mut uu = UndoManager::new(&u);
+    let mut ku = UndoManager::new(&k);
+    let mut rng_u = StdRng::seed_from_u64(seed);
+    let mut rng_k = StdRng::seed_from_u64(seed);
+    let mut versions = vec![u.state_frontiers()];
+    let n: i32 = rng_u.gen_range(10..40i32);
+    let _: i32 = rng_k.gen_range(10..40i32);
+    // Once the twins diverge (a rejection), only atomicity is checked
+    let mut diverged = false;
+    for step in 0..n {
+        let action = rng_u.gen_range(0..100);
+        rng_k.gen_range(0..100);
+        let label = format!("seed {seed} step {step}");
+        match action {
+            0..=34 => {
+                let times = rng_u.gen_range(1..4);
+                rng_k.gen_range(1..4);
+                for _ in 0..times {
+                    random_edit_collab(&u, &mut rng_u);
+                    random_edit_collab(&k, &mut rng_k);
+                }
+                u.commit();
+                k.commit();
+                versions.push(u.state_frontiers());
+            }
+            35..=49 => {
+                random_edit_collab(&remote_u, &mut rng_u);
+                random_edit_collab(&remote_k, &mut rng_k);
+                remote_u.commit();
+                remote_k.commit();
+            }
+            50..=61 => {
+                let label = format!("{label} sync");
+                let r_u = run(&label, &u, |d| {
+                    sync(d, &remote_u);
+                    Ok(())
+                });
+                let r_k = run(&label, &k, |d| {
+                    sync(d, &remote_k);
+                    Ok(())
+                });
+                if !diverged {
+                    diverged = record(&label, counts, &u, r_u, &k, &r_k);
+                }
+                versions.push(u.state_frontiers());
+            }
+            62..=89 => {
+                let redo = action >= 80;
+                let label = format!("{label} {}", if redo { "redo" } else { "undo" });
+                let r_u = run(&label, &u, |_| if redo { uu.redo() } else { uu.undo() });
+                let r_k = run(&label, &k, |_| if redo { ku.redo() } else { ku.undo() });
+                if diverged {
+                    continue;
+                }
+                diverged = record(&label, counts, &u, r_u, &k, &r_k);
+            }
+            _ => {
+                // apply_diff / revert_to on forks, in natural, reversed or shuffled order
+                let vi = rng_u.gen_range(0..versions.len());
+                rng_k.gen_range(0..versions.len());
+                let mode = rng_u.gen_range(0..3u8);
+                rng_k.gen_range(0..3u8);
+                let target = versions[vi].clone();
+                let latest = u.state_frontiers();
+                let order_seed = seed * 1000 + step as u64;
+                for full_state in [true, false] {
+                    let label =
+                        format!("{label} apply_diff v{vi} full_state={full_state} order={mode}");
+                    let apply = |d: &LoroDoc| {
+                        let mut batch = d.diff(&latest, &target)?;
+                        batch.set_full_state(full_state);
+                        d.apply_diff(shuffled(&batch, order_seed, mode))
+                    };
+                    let (du, dk) = (u.fork(), k.fork());
+                    du.set_peer_id(10).unwrap();
+                    dk.set_peer_id(10).unwrap();
+                    let r_u = run(&label, &du, apply);
+                    if !diverged {
+                        let r_k = run(&label, &dk, apply);
+                        record(&label, counts, &du, r_u, &dk, &r_k);
+                    }
+                }
+                let label = format!("{label} revert_to v{vi}");
+                let (du, dk) = (u.fork(), k.fork());
+                du.set_peer_id(10).unwrap();
+                dk.set_peer_id(10).unwrap();
+                let r_u = run(&label, &du, |d| d.revert_to(&target));
+                if !diverged {
+                    let r_k = run(&label, &dk, |d| d.revert_to(&target));
+                    record(&label, counts, &du, r_u, &dk, &r_k);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unknown_containers_match_their_known_twin_in_collaboration() {
+    let start = env_u64("LORO_UNKNOWN_TWIN_START", 0);
+    let seeds = env_u64("LORO_UNKNOWN_TWIN_SEEDS", 60);
+    let mut counts = Counts::default();
+    for seed in start..start + seeds {
+        collab_case(seed, &mut counts);
+    }
+    println!(
+        "collaboration: ok {} rejected {}",
+        counts.ok, counts.rejected
+    );
+    assert!(counts.ok > 3 * seeds as usize, "ok {}", counts.ok);
+    assert!(
+        counts.rejected > seeds as usize,
+        "rejected {}",
+        counts.rejected
+    );
 }
