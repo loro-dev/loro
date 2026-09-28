@@ -623,6 +623,51 @@ describe("runtime indexes", () => {
     }
   });
 
+  test("finds physical ID run starts", () => {
+    const sequence = new SequenceIndex<TestElement>();
+    const physical: TestElement[] = [];
+    let random = 0x51_7c_c1_b7;
+    const nextRandom = (): number => {
+      random ^= random << 13;
+      random ^= random >>> 17;
+      random ^= random << 5;
+      return random >>> 0;
+    };
+    const nextCounter = new Map<bigint, number>();
+    for (let step = 0; step < 400; step += 1) {
+      const peer = BigInt(nextRandom() % 3);
+      const length = 1 + (nextRandom() % 40);
+      const start = nextCounter.get(peer) ?? 0;
+      nextCounter.set(peer, start + length);
+      const elements = Array.from({ length }, (_, offset) => ({
+        id: { peer, counter: start + offset },
+        deleted: false,
+        deletedBy: [],
+        value: "x",
+      }));
+      const position = nextRandom() % (physical.length + 1);
+      sequence.insertAtPhysical(position, elements);
+      physical.splice(position, 0, ...elements);
+    }
+
+    const startsRun = (index: number): boolean => {
+      if (index === 0) return true;
+      const previous = physical[index - 1]!.id;
+      const current = physical[index]!.id;
+      return previous.peer !== current.peer || previous.counter + 1 !== current.counter;
+    };
+    for (let start = 0; start <= physical.length; start += 1) {
+      const limit = start + (nextRandom() % 200);
+      let expected = start;
+      while (expected < Math.min(limit, physical.length) && !startsRun(expected)) {
+        expected += 1;
+      }
+      expect(sequence.nextPhysicalIdRunStart(start, limit)).toBe(
+        Math.min(expected, limit, physical.length),
+      );
+    }
+  });
+
   test("ranges across an excluded element", () => {
     const sequence = new SequenceIndex<TestElement>();
     const base = Array.from({ length: 6 }, (_, counter) => ({

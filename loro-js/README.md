@@ -123,6 +123,47 @@ Treat the package as experimental when data can be produced by untrusted or olde
 clients. Keep a `loro-crdt` interoperability test for the formats and operations your
 application depends on.
 
+## Upgrading from 0.2
+
+1.0 reads every document the way Rust (`loro-crdt`) does, including documents
+written by 0.2. The data has no version marker, so a document edited only with 0.2
+can read differently after the upgrade:
+
+- **Concurrent text inserts.** 0.2 could order an insert after a sibling's subtree
+  differently from Rust. 1.0 orders it like Rust, so such a history can give other
+  text (`bé9a` in 0.2, `béa9` in 1.0 and Rust).
+- **Cursors.** 0.2 encoded the UTF-16 position of a cursor's target; Rust and 1.0 use
+  the Unicode position. A cursor encoded by 0.2 can resolve to another offset (on
+  `ab😀`, 4 in 0.2 and 2 in 1.0). Get new cursors from the upgraded document.
+
+Documents also edited by `loro-crdt` peers already disagreed with Rust in these cases;
+1.0 makes them agree.
+
+How 1.0 reads data written by 0.2 (measured on the example above):
+
+| 0.2 data              | Current text in 1.0     | History in 1.0                                                             |
+| --------------------- | ----------------------- | -------------------------------------------------------------------------- |
+| Updates, JSON         | Rust's reading (`béa9`) | Rust's reading                                                             |
+| Full/shallow snapshot | Kept (`bé9a`)           | Rust's reading: exported updates and checkouts of older versions follow it |
+
+**Migrate every replica the same way.** Replicas loaded from the same 0.2 snapshot
+agree with each other, but a replica loaded from 0.2 updates holds other text, and
+the two stay different after exchanging new edits (`béQ9aZ` and `béQa9Z`). A peer that
+later joins through exported updates instead of a snapshot diverges the same way.
+
+Recommended paths:
+
+1. **Keep the content, drop the history (safest).** With 0.2, check out the latest
+   version and read the final state (`doc.toJSON()`, or `text.toDelta()` for rich
+   text). In 1.0, build one new document from it and share that document with every
+   replica. Do not import old updates or snapshots into it.
+2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not snapshots)
+   on every replica, and check the content, because it can differ from what 0.2
+   showed.
+
+A 0.2 snapshot keeps its current text, so loading it is only safe when every replica
+loads that snapshot and new peers join through snapshots, never through updates.
+
 ## Development checks
 
 From this directory:

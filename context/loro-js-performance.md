@@ -115,6 +115,10 @@ JavaScript constant factor.
   the origin-right bound: when that bound is only the next causally included
   element, later concurrent elements of an ancestor's subtree can sit before it.
   The walk stops at the first element whose origin-left precedes the sibling.
+  Inside a physical ID run every element's origin-left is its predecessor, so
+  the walk jumps between run starts (`SequenceIndex.nextPhysicalIdRunStart`,
+  skipping single-run treap subtrees): O((runs in the subtree + 1) log n), and
+  O(log n) after a long typed run (`text-concurrent-insert-after-long-run`).
 - An imported Text delete is resolved by its position in the op's causal view,
   like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
   `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
