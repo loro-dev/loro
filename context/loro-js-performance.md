@@ -302,6 +302,17 @@ build takes 7.1/19/362 ms to retreat 1k/4k/16k such marks, and building the 16k
 history takes 402 s in loro.js and 542 s in Rust. Every other
 `bench:complexity` entry stays flat from 1k to 8k.
 
+These costs were reviewed and accepted (loro-dev/loro#1137). The review measured,
+on Node 26 at 1-minute load 25–40, typing 1,000 characters inside a 64k bold
+range at 2.9–4.4 ms (1.9 ms on `main`) and the 8k repeated-mark tail retreat and
+restore at 8.0–8.1 and 11.6–13.2 ms (0.4–0.6 ms on `main`). Re-measured after the
+review fixes (Node 22, interleaved with `main`, 1-minute load 5–25): the repeated-
+mark tail retreat takes 0.51/1.18/2.25/6.11 ms and its restore 0.47/1.16/2.08/5.89
+ms at 1k/2k/4k/8k (0.08–0.41 ms on `main`); a 64k full-range mark applies in
+0.11–0.15 ms (0.06–0.12), retreats in 0.22–0.27 ms (0.12–0.14), and restores in
+0.11–0.14 ms (0.02–0.03); typing 1,000 characters inside it varies with load
+(2.4–6.6 ms here, 2.6–4.3 ms on `main` in the same alternating runs).
+
 A subscribed forward checkout that combines a full-range delete and mark takes
 0.41 ms at 1k characters and 0.16 ms at 8k after warmup. Historical mark
 positions are converted directly to causal ID runs, and removed ID runs are
