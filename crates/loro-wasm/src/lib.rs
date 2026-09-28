@@ -2400,6 +2400,12 @@ impl LoroDoc {
         let diff = self.doc.diff(&from, &to)?;
         let arr = js_sys::Array::new();
         for (id, d) in diff.iter() {
+            // A container of a type unknown to this version (created by a
+            // newer loro-crdt) has no readable diff. Applying its entry is a
+            // no-op, also for a full state, so it can be left out.
+            if matches!(d, loro_internal::event::Diff::Unknown) {
+                continue;
+            }
             let entry = js_sys::Array::new();
             let id_str = id.to_string();
             let v = resolved_diff_to_js(d, for_json.unwrap_or(true))?;

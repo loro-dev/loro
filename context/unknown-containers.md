@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-28 (after #1134).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -67,12 +67,26 @@ an unknown container, and of a container whose diff holds an unknown child that
 can't be turned into a JS value (logged with `console.error`). The other events
 of the batch are still delivered.
 
-## Mergeable full-state alignment (#1134)
+## Full-state batches
 
-If `apply_diff` gets an opt-in mode that aligns a revived mergeable child's
-full-state diff with its current content before applying it, the pre-check has
-to look at the aligned diff (or skip those targets). Otherwise it rejects
-re-applying a full state that already holds an unknown element.
+A batch with `full_state` set (from `LoroDoc::diff`; JS `applyDiff(diff, {
+fullState: true })`) is applied with `align_revived_mergeable`. The loop replaces
+the full state of a re-activated mergeable child, and of the children that
+alignment keeps, with an edit of the state this doc kept for it
+(`handler/full_state.rs`). Keeping an unknown container there creates nothing,
+so the raw full state must not be checked.
+
+`LoroDoc::plan_full_state_batch` replays the loop's `full_state_targets`
+bookkeeping and calls `align_full_state` with `dry_run` (no counter increment,
+nothing written). The pre-check then runs on the planned edits, and treats the
+aligned targets as never skipped: the loop applies them even when they are
+unreachable before the batch. A child that alignment has to create (the doc
+kept no state for it, or a plain list recreates it) is still rejected. The
+reproductions are the `full_state_revival_*` tests in
+`crates/loro/tests/unknown_container_atomicity.rs`.
+
+When changing the full-state loop in `_apply_diff` or `align_full_state`, keep
+`plan_full_state_batch` in sync.
 
 ## Forging unknown containers in tests
 

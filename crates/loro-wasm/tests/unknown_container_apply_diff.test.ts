@@ -8,6 +8,7 @@ import {
   LoroText,
   UndoManager,
 } from "../bundler/index";
+import { UNKNOWN_MERGEABLE_HOLDERS } from "./fixtures/unknown_mergeable_holders";
 
 // `applyDiff` used to trap the wasm instance (`unreachable!()` in
 // `Handler::new_unattached`) when a diff asked it to create a container whose
@@ -273,4 +274,59 @@ describe("applyDiff with unknown container types", () => {
     expect(targets.some((t) => t.includes("Unknown"))).toBe(false);
     expect(doc.toJSON()).toStrictEqual({ m: { u: null }, t: "hi" });
   });
+
+  // Full-state batches from `doc.diff()` (`{ fullState: true }`) align a
+  // re-activated mergeable child with the state this doc kept for it.
+  // Keeping an unknown container there creates nothing.
+  const HOLDERS = ["map", "list", "movableList", "treeMeta"] as const;
+  type Holder = (typeof HOLDERS)[number];
+
+  /** A doc whose mergeable `m.s` holds an unknown container. JSON updates
+   * can't carry the binary mergeable markers, so it is forged in Rust. */
+  function forgeHolder(holder: Holder): LoroDoc {
+    const bytes = Uint8Array.from(atob(UNKNOWN_MERGEABLE_HOLDERS[holder]), (c) =>
+      c.charCodeAt(0),
+    );
+    const doc = new LoroDoc();
+    doc.setPeerId(2);
+    doc.import(bytes);
+    expect(Object.keys(doc.toJSON().m)).toStrictEqual(["s"]);
+    return doc;
+  }
+
+  for (const holder of HOLDERS) {
+    it(`fullState applyDiff keeps an existing unknown container in a mergeable ${holder}`, () => {
+      const doc = forgeHolder(holder);
+      const target = doc.frontiers();
+      const expected = doc.toJSON().m;
+      doc.getText("t").insert(0, "x");
+      doc.getMap("m").delete("s");
+      doc.commit();
+      // Used to be rejected as creating the unknown container
+      doc.applyDiff(doc.diff(doc.frontiers(), target), { fullState: true });
+      expect(doc.toJSON().m).toStrictEqual(expected);
+    });
+
+    it(`fullState applyDiff that has to create an unknown container in a mergeable ${holder} is rejected`, () => {
+      const src = forgeHolder(holder);
+      const target = src.frontiers();
+      src.getMap("m").delete("s");
+      src.commit();
+      const diff = src.diff(src.frontiers(), target);
+
+      // `m.s` has no hidden state here
+      const doc = new LoroDoc();
+      doc.getText("t").insert(0, "x");
+      doc.commit();
+      const before = state(doc);
+      const witness: [ContainerID, unknown] = [
+        "cid:root-t:Text",
+        { type: "text", diff: [{ insert: "partial" }] },
+      ];
+      expect(() =>
+        doc.applyDiff([witness, ...diff] as never, { fullState: true }),
+      ).toThrowError(/Unknown\(9\)/);
+      expect(state(doc)).toStrictEqual(before);
+    });
+  }
 });

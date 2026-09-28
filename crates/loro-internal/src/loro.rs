@@ -1473,6 +1473,8 @@ impl LoroDoc {
                     containers: Box::new(vec![id]),
                 });
             };
+            // `plan_full_state_batch` replays this alignment for the unknown
+            // container check; keep them in sync
             let diff = if is_full_state {
                 let current = self.state.lock().container_full_diff(h.container_idx());
                 match crate::handler::align_full_state(
