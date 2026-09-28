@@ -119,11 +119,11 @@ describe("tree checkout between old versions", () => {
     }
     doc.commit();
 
-    const versions = [
-      [{ peer: "1" as const, counter: 200 }],
-      [{ peer: "1" as const, counter: 260 }],
-      [{ peer: "1" as const, counter: 900 }],
-    ];
+    // Rejected moves record no op, so pick versions from the last counter.
+    const last = doc.frontiers()[0].counter;
+    const versions = [0.2, 0.25, 0.7].map((f) => [
+      { peer: "1" as const, counter: Math.floor(last * f) },
+    ]);
     const expected = versions.map((v) => {
       const fresh = new LoroDoc();
       fresh.import(doc.export({ mode: "update" }));
