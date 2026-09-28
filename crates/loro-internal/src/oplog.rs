@@ -322,15 +322,8 @@ impl OpLog {
                 continue;
             }
 
-            if self
-                .dag
-                .get_change_lamport_from_deps(&change.deps)
-                .is_none()
-            {
-                continue;
-            }
-
-            ans.applies_to_dag = true;
+            // Inspect the ops even when the deps are not in the DAG yet: they may be
+            // earlier changes of this same import, which then unlock this one.
             if change.ops.iter().any(|op| {
                 matches!(
                     op.container.get_type(),
@@ -338,6 +331,14 @@ impl OpLog {
                 )
             }) {
                 ans.needs_state_apply_rollback = true;
+            }
+
+            if self
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_some()
+            {
+                ans.applies_to_dag = true;
             }
         }
 
@@ -1229,9 +1230,16 @@ impl OpLog {
 
         // History before a shallow root is trimmed. An op after the root can only
         // see pre-root elements that are still alive at the root.
+        let is_shallow = !self.dag.shallow_since_vv().is_empty();
         let in_shallow_root = || {
-            self.with_history_cache(|h| h.shallow_root_has_movable_list_elem(container, elem_id))
+            is_shallow
+                && self.with_history_cache(|h| {
+                    h.shallow_root_has_movable_list_elem(container, elem_id)
+                })
         };
+        // `idlp_to_id` searches both parsed and KV-only blocks of the peer, so `None`
+        // means the lamport is not in the stored history: either it never existed or
+        // it was trimmed before a shallow root.
         let Some(target) = self.idlp_to_id(elem_id) else {
             return in_shallow_root();
         };
@@ -1253,7 +1261,8 @@ impl OpLog {
                         InnerContent::List(list_op::InnerListOp::Insert { .. })
                     )
             }
-            None => in_shallow_root(),
+            None if self.dag.shallow_since_vv().includes_id(target) => in_shallow_root(),
+            None => false,
         }
     }
 

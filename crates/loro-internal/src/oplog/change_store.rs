@@ -355,13 +355,31 @@ impl ChangeStore {
         // The name set may already include names from changes this rollback removes. That is
         // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
         let mut inner = self.inner.lock();
+        let mut touched_peers = FxHashSet::default();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
-            id.counter < old_end
+            let keep = id.counter < old_end;
+            if !keep {
+                touched_peers.insert(id.peer);
+            }
+            keep
         });
 
         for (id, block) in rollback.blocks_before_mutation {
+            touched_peers.insert(id.peer);
             inner.mem_parsed_kv.insert(id, block);
+        }
+
+        // `insert_change_inner` merges a change into the cached block right before it.
+        // A read during the scope (e.g. an lamport lookup) may have cached an older
+        // KV block of a touched peer, and removing the scope's newer blocks leaves it
+        // in front of the next insert with a counter gap ("counter should be
+        // continuous"). Blocks that are flushed are identical to their KV copy, so
+        // evict them; they are reloaded on demand.
+        if !touched_peers.is_empty() {
+            inner
+                .mem_parsed_kv
+                .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
     }
 
@@ -2030,6 +2048,72 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    /// Peer 1 history split into many blocks, encoded into a fresh store's KV only
+    /// (nothing parsed into `mem_parsed_kv`), plus the change that comes next.
+    fn kv_only_store_and_next_change() -> (ChangeStore, Counter, Change) {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        for i in 0..100 {
+            let text = doc.get_text(format!("t{i}").as_str());
+            text.insert(0, &"x".repeat(30), PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+        }
+        let (bytes, end) = {
+            let oplog = doc.oplog().lock();
+            let end = oplog.vv().get(&1).copied().unwrap();
+            let bytes = oplog
+                .change_store
+                .encode_all(oplog.vv(), oplog.dag.frontiers());
+            (bytes, end)
+        };
+        doc.get_text("t0").insert(0, "y", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        let next = {
+            let oplog = doc.oplog().lock();
+            let change = oplog.get_change_at(ID::new(1, end)).unwrap();
+            (*change).clone()
+        };
+        let store = ChangeStore::new_for_test();
+        let _ = store.import_all(bytes).unwrap();
+        // Test builds of `import_all` parse each peer's last block; release builds do not.
+        store.inner.lock().mem_parsed_kv.clear();
+        (store, end, next)
+    }
+
+    #[test]
+    fn lamport_lookup_reads_kv_only_blocks() {
+        // Regression: `decode_block_range` read a version varint the block encoding
+        // does not have, shifting every field. KV-only blocks that did not start at
+        // counter 0 were skipped and block `0@P` got its lamport length as its start.
+        let (store, end, _) = kv_only_store_and_next_change();
+        for l in (0..end as Lamport).step_by(13) {
+            store.inner.lock().mem_parsed_kv.clear();
+            let change = store
+                .get_change_by_lamport_lte(IdLp::new(1, l))
+                .unwrap_or_else(|| panic!("lamport {l} should be found"));
+            assert!(change.lamport <= l);
+            assert!(l < change.lamport + change.atom_len() as Lamport);
+        }
+    }
+
+    #[test]
+    fn rollback_evicts_older_blocks_cached_during_the_scope() {
+        // An import creates the peer's newest block without loading the older ones,
+        // then a read caches an old KV block (the element lookup of the movable-list
+        // validator does this). Rolling back removes the newest block; the cached old
+        // block must not end up right before the next insert of the same change.
+        let (store, end, next) = kv_only_store_and_next_change();
+        let mut old_vv = VersionVector::new();
+        old_vv.insert(1, end);
+        let mut rollback = ChangeStoreRollback::new(old_vv);
+        store.insert_change_with_rollback(next.clone(), true, false, &mut rollback);
+        assert!(store.get_change(ID::new(1, 0)).is_some());
+        store.rollback_import(rollback);
+        store.insert_change(next, true, false);
+        assert!(store.get_change(ID::new(1, end)).is_some());
+        assert!(store.get_change(ID::new(1, 0)).is_some());
     }
 
     #[test]

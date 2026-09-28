@@ -419,3 +419,223 @@ fn move_of_element_deleted_before_shallow_root_is_rejected() {
         json!({"list": ["A", "c"]})
     );
 }
+
+/// Two changes after `base()`: `C1` edits only a map, and `C2` holds `forged_op` on
+/// `container` and depends on `C1`. When the import started, `C2`'s deps were not in
+/// the DAG yet, and the import preflight used to skip its ops, so no rollback scope
+/// (and no validation) was opened. With `two_peers`, `C1` is by peer 2 and `C2` by
+/// peer 3.
+fn forged_after_map_change(container: &str, forged_op: Value, two_peers: bool) -> String {
+    let (peers, c1_id, c2_id, c2_deps, c2_counter) = if two_peers {
+        (json!(["1", "2", "3"]), "0@1", "0@2", "0@1", 0)
+    } else {
+        (json!(["1"]), "4@0", "5@0", "4@0", 5)
+    };
+    let c1_counter = if two_peers { 0 } else { 4 };
+    json!({
+        "schema_version": 1,
+        "start_version": {},
+        "peers": peers,
+        "changes": [
+            {
+                "id": c1_id, "timestamp": 0, "deps": ["3@0"], "lamport": 4, "msg": null,
+                "ops": [{
+                    "container": "cid:root-meta:Map",
+                    "content": {"type": "insert", "key": "k", "value": 1},
+                    "counter": c1_counter
+                }]
+            },
+            {
+                "id": c2_id, "timestamp": 0, "deps": [c2_deps], "lamport": 5, "msg": null,
+                "ops": [{"container": container, "content": forged_op, "counter": c2_counter}]
+            }
+        ]
+    })
+    .to_string()
+}
+
+#[test]
+fn forged_op_depending_on_a_change_in_the_same_import_is_rejected() {
+    let other = "cid:root-other:MovableList";
+    // The last field says whether the op is invalid without looking at state, so
+    // a detached import (which never touches state) can reject it too.
+    let cases = [
+        (
+            "list",
+            json!({"type": "move", "from": 0, "to": 1, "elem_id": "L99@0"}),
+            true,
+        ),
+        (
+            "list",
+            json!({"type": "set", "elem_id": "L99@0", "value": "z"}),
+            true,
+        ),
+        (
+            "list",
+            json!({"type": "move", "from": 9, "to": 0, "elem_id": "L0@0"}),
+            false,
+        ),
+        // `L0@0` is an element of `list`, not of `other`.
+        (
+            "other",
+            json!({"type": "move", "from": 0, "to": 0, "elem_id": "L0@0"}),
+            true,
+        ),
+    ];
+    for (target, op, history_only) in cases {
+        let container = if target == "list" {
+            "cid:root-list:MovableList"
+        } else {
+            other
+        };
+        for two_peers in [false, true] {
+            let json = forged_after_map_change(container, op.clone(), two_peers);
+            assert_rejected(&base(), json.clone());
+            assert_rejected(&base_with_concurrent_edit(), json.clone());
+            if !history_only {
+                continue;
+            }
+
+            let detached = base();
+            detached.detach();
+            let before = Snapshot::of(&detached);
+            detached.import_json_updates(json).unwrap_err();
+            before.assert_unchanged(&detached);
+            detached.attach();
+            assert_usable(&detached);
+        }
+    }
+}
+
+#[test]
+fn cross_container_move_is_not_applied_to_two_lists() {
+    // Used to be accepted silently when it rode behind a same-import dependency:
+    // the element ended up in both lists and a full replay rejected the history.
+    let doc = base();
+    doc.get_movable_list("other").push("o").unwrap();
+    doc.commit();
+    let before = Snapshot::of(&doc);
+    // `other`'s element is `L4@0`; move it inside `list`.
+    let json = json!({
+        "schema_version": 1,
+        "start_version": {},
+        "peers": ["1"],
+        "changes": [
+            {
+                "id": "5@0", "timestamp": 0, "deps": ["4@0"], "lamport": 5, "msg": null,
+                "ops": [{
+                    "container": "cid:root-meta:Map",
+                    "content": {"type": "insert", "key": "k", "value": 1},
+                    "counter": 5
+                }]
+            },
+            {
+                "id": "6@0", "timestamp": 0, "deps": ["5@0"], "lamport": 6, "msg": null,
+                "ops": [{
+                    "container": "cid:root-list:MovableList",
+                    "content": {"type": "move", "from": 0, "to": 1, "elem_id": "L4@0"},
+                    "counter": 6
+                }]
+            }
+        ]
+    })
+    .to_string();
+    doc.import_json_updates(json).unwrap_err();
+    before.assert_unchanged(&doc);
+    assert_usable(&doc);
+}
+
+#[test]
+fn huge_positions_are_rejected_before_diff_calculation() {
+    // Positions at or past the diff tracker's placeholder span used to panic inside
+    // the tracker with the doc locks held.
+    let edge = (u32::MAX / 4) as u64;
+    let ops = [
+        json!({"type": "move", "from": edge, "to": 0, "elem_id": "L0@0"}),
+        json!({"type": "move", "from": 0, "to": edge, "elem_id": "L0@0"}),
+        json!({"type": "move", "from": 0, "to": u32::MAX, "elem_id": "L0@0"}),
+        json!({"type": "insert", "pos": edge, "value": ["z"]}),
+        json!({"type": "delete", "pos": edge, "len": 1, "start_id": "0@0"}),
+        json!({"type": "delete", "pos": 0, "len": edge + 1, "start_id": "0@0"}),
+        // Just below the limit: an ordinary out-of-bounds error from state validation.
+        json!({"type": "move", "from": 0, "to": edge - 1, "elem_id": "L0@0"}),
+        json!({"type": "move", "from": edge - 1, "to": 0, "elem_id": "L0@0"}),
+    ];
+    for op in ops {
+        assert_rejected(&base(), forged(op.clone()));
+        assert_rejected(&base_with_concurrent_edit(), forged(op.clone()));
+        assert_rejected(
+            &base(),
+            forged_after_map_change("cid:root-list:MovableList", op, false),
+        );
+    }
+
+    let doc = base();
+    doc.get_list("plain").push("p").unwrap();
+    doc.get_text("text").insert(0, "t").unwrap();
+    doc.commit();
+    for (container, op) in [
+        (
+            "cid:root-plain:List",
+            json!({"type": "insert", "pos": edge, "value": ["z"]}),
+        ),
+        (
+            "cid:root-text:Text",
+            json!({"type": "insert", "pos": edge, "text": "z"}),
+        ),
+        (
+            "cid:root-text:Text",
+            json!({"type": "delete", "pos": edge, "len": 1, "start_id": "5@0"}),
+        ),
+    ] {
+        let json = json!({
+            "schema_version": 1, "start_version": {}, "peers": ["1"],
+            "changes": [{"id": "6@0", "timestamp": 0, "deps": ["5@0"], "lamport": 6, "msg": null,
+                "ops": [{"container": container, "content": op, "counter": 6}]}]
+        })
+        .to_string();
+        assert_rejected(&doc, json);
+    }
+}
+
+#[test]
+fn reversed_delete_at_start_is_still_accepted() {
+    let doc = base();
+    let json = forged(json!({"type": "delete", "pos": 0, "len": -1, "start_id": "0@0"}));
+    doc.import_json_updates(json).unwrap();
+    assert_eq!(doc.get_deep_value().to_json_value(), json!({"list": ["c"]}));
+}
+
+#[test]
+fn move_and_set_of_old_element_import_on_snapshot_loaded_doc() {
+    // The element's insert lives only in a KV block of the loaded snapshot. The
+    // lamport lookup used to misread KV-only blocks, so this honest update was
+    // rejected as "not in the list's causal history".
+    for set in [false, true] {
+        let p2 = LoroDoc::new();
+        p2.set_peer_id(2).unwrap();
+        let l = p2.get_movable_list("list");
+        l.insert(0, "a").unwrap();
+        l.insert(1, "b").unwrap();
+        p2.commit();
+        let p1 = LoroDoc::new();
+        p1.set_peer_id(1).unwrap();
+        p1.import(&p2.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        p1.get_movable_list("list").push("x").unwrap();
+        p1.commit();
+
+        let b = LoroDoc::new();
+        b.import(&p1.export(ExportMode::Snapshot).unwrap()).unwrap();
+        let vv = b.oplog_vv();
+        if set {
+            p1.get_movable_list("list").set(0, "A").unwrap();
+        } else {
+            p1.get_movable_list("list").mov(0, 2).unwrap();
+        }
+        p1.commit();
+        b.import(&p1.export(ExportMode::updates(&vv)).unwrap())
+            .unwrap();
+        assert_eq!(b.get_deep_value(), p1.get_deep_value());
+    }
+}
