@@ -361,3 +361,205 @@ fn failed_import_that_loads_an_old_change() {
     assert_eq!(history(&dst), history(&a));
     assert!(dst.get_tree("tree").get_meta(child).unwrap().is_deleted());
 }
+
+mod random {
+    use super::*;
+    use loro::{LoroText, TreeID};
+    use rand::{rngs::StdRng, seq::SliceRandom, Rng, SeedableRng};
+
+    fn random_history(seed: u64) -> LoroDoc {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let peers: Vec<LoroDoc> = (1..=3)
+            .map(|p| {
+                let d = LoroDoc::new();
+                d.set_peer_id(p).unwrap();
+                d
+            })
+            .collect();
+        for _ in 0..60 {
+            let i = rng.gen_range(0..peers.len());
+            let doc = &peers[i];
+            let tree = doc.get_tree("tree");
+            let nodes = tree.nodes();
+            let pick = |rng: &mut StdRng| nodes.choose(rng).copied();
+            let _ = match rng.gen_range(0..10) {
+                0..=2 => {
+                    let parent = match pick(&mut rng) {
+                        Some(n) if rng.gen_bool(0.7) => TreeParentId::Node(n),
+                        _ => TreeParentId::Root,
+                    };
+                    tree.create(parent).map(|_| ())
+                }
+                3 => match (pick(&mut rng), pick(&mut rng)) {
+                    (Some(t), Some(p)) => tree.mov(t, p),
+                    _ => Ok(()),
+                },
+                4 => match pick(&mut rng) {
+                    Some(t) => tree.delete(t),
+                    None => Ok(()),
+                },
+                5 => match pick(&mut rng) {
+                    Some(t) => tree
+                        .get_meta(t)
+                        .and_then(|m| m.insert("k", rng.gen::<i32>())),
+                    None => Ok(()),
+                },
+                6 => match pick(&mut rng) {
+                    Some(t) => tree
+                        .get_meta(t)
+                        .and_then(|m| m.insert_container("text", LoroText::new())?.insert(0, "t")),
+                    None => Ok(()),
+                },
+                7 => {
+                    // Later history, so earlier changes end up in older blocks.
+                    for k in 0..rng.gen_range(50..300) {
+                        doc.get_map("filler")
+                            .insert(&format!("k{}", k % 20), k)
+                            .unwrap();
+                        doc.commit();
+                    }
+                    Ok(())
+                }
+                _ => {
+                    let j = rng.gen_range(0..peers.len());
+                    if i != j {
+                        let u = peers[j]
+                            .export(ExportMode::updates(&doc.oplog_vv()))
+                            .unwrap();
+                        doc.import(&u).unwrap();
+                    }
+                    Ok(())
+                }
+            };
+            doc.commit();
+        }
+        let all = LoroDoc::new();
+        for p in peers.iter() {
+            all.import(&p.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
+        }
+        all
+    }
+
+    /// What a document says about the metadata of `node`.
+    fn observe(doc: &LoroDoc, node: TreeID) -> String {
+        let tree = doc.get_tree("tree");
+        let meta_id = node.associated_meta_container();
+        let meta = tree.get_meta(node).unwrap();
+        format!(
+            "node_deleted={:?} meta_deleted={} has={} by_id={:?} path={:?} value={:?}",
+            tree.is_node_deleted(&node),
+            meta.is_deleted(),
+            doc.has_container(&meta_id),
+            doc.get_container(meta_id.clone()).map(|c| c.is_deleted()),
+            doc.get_path_to_container(&meta_id),
+            meta.get_deep_value(),
+        )
+    }
+
+    fn check(seed: u64) {
+        let src = random_history(seed);
+        let mut rng = StdRng::seed_from_u64(seed ^ 0x5eed);
+        let reference = import(&src.export(ExportMode::all_updates()).unwrap());
+        let nodes = reference.get_tree("tree").nodes();
+        if nodes.is_empty() {
+            return;
+        }
+        let vv = src.oplog_vv();
+        let peers: Vec<_> = vv.iter().filter(|(_, n)| **n > 0).collect();
+        let (peer, end) = peers.choose(&mut rng).unwrap();
+        let root = src.vv_to_frontiers(
+            &src.frontiers_to_vv(&ID::new(**peer, rng.gen_range(0..**end)).into())
+                .unwrap(),
+        );
+        let fork = src.fork();
+        fork.set_peer_id(9).unwrap();
+        let loaded = [
+            (
+                "snapshot",
+                import(&src.export(ExportMode::Snapshot).unwrap()),
+            ),
+            ("fork", fork),
+            (
+                "shallow",
+                import(&src.export(ExportMode::shallow_snapshot(&root)).unwrap()),
+            ),
+            (
+                "state_only",
+                import(&src.export(ExportMode::state_only(None)).unwrap()),
+            ),
+        ];
+        // Visit the nodes in a random order: resolving one meta must not change the
+        // answer for another.
+        let mut order = nodes.clone();
+        order.shuffle(&mut rng);
+        for (how, doc) in loaded.iter() {
+            for &node in order.iter() {
+                // Every source has the latest version, where every node exists.
+                assert!(
+                    doc.get_tree("tree").contains(node),
+                    "seed {seed} {how} {node}"
+                );
+                assert_eq!(
+                    observe(doc, node),
+                    observe(&reference, node),
+                    "seed {seed} {how} node {node}"
+                );
+            }
+        }
+
+        // Edit every meta, then revive some nodes and edit again.
+        let mut revive = nodes.clone();
+        revive.shuffle(&mut rng);
+        revive.truncate(3);
+        for doc in std::iter::once(&reference).chain(loaded.iter().map(|(_, d)| d)) {
+            for &node in order.iter() {
+                let r = doc
+                    .get_tree("tree")
+                    .get_meta(node)
+                    .unwrap()
+                    .insert("probe", 1);
+                assert!(
+                    r.is_ok() || matches!(r, Err(LoroError::ContainerDeleted { .. })),
+                    "seed {seed}: {r:?}"
+                );
+            }
+            doc.commit();
+            for &node in revive.iter() {
+                let _ = doc.get_tree("tree").mov(node, TreeParentId::Root);
+            }
+            doc.commit();
+            for &node in order.iter() {
+                let _ = doc
+                    .get_tree("tree")
+                    .get_meta(node)
+                    .unwrap()
+                    .insert("after", 2);
+            }
+            doc.commit();
+        }
+        for (how, doc) in loaded.iter() {
+            for &node in order.iter() {
+                assert_eq!(
+                    observe(doc, node),
+                    observe(&reference, node),
+                    "seed {seed} {how} node {node} after edits"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn metas_after_loading_match_a_full_history_import() {
+        let seeds: Vec<u64> = match std::env::var("UNREGISTERED_PARENT_SEEDS") {
+            Ok(r) => {
+                let (a, b) = r.split_once("..").unwrap();
+                (a.parse().unwrap()..b.parse().unwrap()).collect()
+            }
+            Err(_) => (0..20).collect(),
+        };
+        for seed in seeds {
+            check(seed);
+        }
+    }
+}
