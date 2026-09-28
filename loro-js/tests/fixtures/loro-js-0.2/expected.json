@@ -1,4 +1,15 @@
 {
   "text-concurrent": "bé9a",
-  "cursor-emoji": 4
+  "cursor-emoji": 4,
+  "richtext-positions": [
+    {
+      "insert": "a",
+      "attributes": {
+        "bold": true
+      }
+    },
+    {
+      "insert": "cXd"
+    }
+  ]
 }

@@ -98,7 +98,11 @@ Remote ops:
 - A mark's event is emitted with its end anchor and covers the text whose
   resolved value changed (`LoroText._styleChangeRuns`).
 - Checkout toggles anchors like inserted text and reports style changes through
-  `TextStyleIndex.transitions` over the style's member runs.
+  `TextStyleIndex.transitions` over the style's member runs. Anchors take the
+  bulk path of `#applyVersionTransition`, which records no event, so the text's
+  event baseline is started when an anchor op is collected; without it, a
+  version with a start anchor but no end anchor was diffed against an empty
+  text and reported the whole text as inserted.
 - Undoing a mark gives back, wherever it changed the value, the value from just
   before its op (`LoroText._undoStyle`). That matches Rust for local histories;
   loro.js undo still does not transform against remote edits the way Rust's
@@ -112,7 +116,16 @@ document order. A start anchor is a zero-length span followed by its mark entry;
 an end anchor is a span of length -1 at the start counter + 1 that keeps the
 start's lamport offset. Contiguous text is merged into one span.
 `#hydrateContainerState` rebuilds the same elements and each style's range
-(`LoroText._appendElements`).
+(`LoroText._appendElements`). A Text loaded from a snapshot hydrates lazily;
+every position lookup (`#entityFrom`, `#insertPosition`) hydrates first, because
+the anchors decide where inserted text goes.
+
+Shallow snapshots null the value of every style with no text between its anchors
+at the shallow root, except both-expand styles, and null the same styles in the
+latest state (`redactDeadStyleValues` in `document.ts`, Rust's
+`redact_dead_style_values`; see
+[shallow-snapshot-style-redaction.md](shallow-snapshot-style-redaction.md)).
+Anchors and IDs stay, so positions do not move.
 
 ## Complexity
 
@@ -123,6 +136,22 @@ start's lamport offset. Contiguous text is merged into one span.
   contiguous range is O(log n + ID runs), as before.
 - Inserting inside styled text intersects two style histories per insert, which
   is proportional to the number of styles covering that position.
+
+## Data written by loro.js 0.2
+
+loro.js 0.2 wrote and read Text positions without the anchors. Decision
+(2026-09-28): later versions read all data with Rust's positions and add no
+version marker, like the plain-text changes in
+[loro-js-rust-differential.md](loro-js-rust-differential.md). Reasons: a Text
+op position must mean the same thing in both runtimes; documents shared with
+`loro-crdt` peers had already diverged (each runtime read the other's ops at
+other positions); and a marker would need an encoding change that Rust does
+not have. The cost: in a document edited only with 0.2, every op after a mark
+can apply elsewhere, and a 0.2 snapshot keeps its 0.2 state while its history
+reads like Rust (a checkout there and back switches to Rust's reading). The
+package version is major; `loro-js/README.md` ("Upgrading from 0.2") gives the
+migration paths, and `loro-js/tests/legacy-data.test.ts` pins the readings of
+0.2 fixtures in both runtimes.
 
 ## Testing
 

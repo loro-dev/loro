@@ -132,6 +132,11 @@ can read differently after the upgrade:
 - **Concurrent text inserts.** 0.2 could order an insert after a sibling's subtree
   differently from Rust. 1.0 orders it like Rust, so such a history can give other
   text (`bé9a` in 0.2, `béa9` in 1.0 and Rust).
+- **Rich text.** 0.2 counted text positions without a mark's start and end anchors;
+  Rust and 1.0 count them. Every insert, delete, and mark op that 0.2 wrote after a
+  mark can therefore apply elsewhere (with bold on `ab` in `abcd`, inserting `X` at
+  3 and deleting 1 gave `acXd` in 0.2; its ops read as `bXcd` in 1.0 and Rust), and
+  styles can cover other text.
 - **Cursors.** 0.2 encoded the UTF-16 position of a cursor's target; Rust and 1.0 use
   the Unicode position. A cursor encoded by 0.2 can resolve to another offset (on
   `ab😀`, 4 in 0.2 and 2 in 1.0). Get new cursors from the upgraded document.
@@ -139,12 +144,12 @@ can read differently after the upgrade:
 Documents also edited by `loro-crdt` peers already disagreed with Rust in these cases;
 1.0 makes them agree.
 
-How 1.0 reads data written by 0.2 (measured on the example above):
+How 1.0 reads data written by 0.2 (measured on the examples above):
 
-| 0.2 data              | 1.0 reads                                                               |
-| --------------------- | ----------------------------------------------------------------------- |
-| Updates, JSON updates | Rust's reading: `béa9`                                                  |
-| Full/shallow snapshot | The 0.2 text (`bé9a`) as current state, but the history reads like Rust |
+| 0.2 data              | 1.0 reads                                                                       |
+| --------------------- | ------------------------------------------------------------------------------- |
+| Updates, JSON updates | Rust's reading: `béa9`, `bXcd`                                                  |
+| Full/shallow snapshot | The 0.2 text (`bé9a`, `acXd`) as current state, but the history reads like Rust |
 
 A document loaded from a 0.2 snapshot therefore holds a current state that its own
 history disagrees with. Its current state is safe to read right after the import,

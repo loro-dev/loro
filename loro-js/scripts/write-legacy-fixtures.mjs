@@ -62,4 +62,24 @@ function sync(from, to) {
   expected["cursor-emoji"] = owner.getCursorPos(cursor).offset;
 }
 
+// Marks whose anchors 0.2 left out of text positions: with bold on "ab" in
+// "abcd", inserting X at 3 and deleting 1 gave "acXd" in 0.2 (and Rust), but
+// the ops 0.2 wrote mean "bXcd" to Rust.
+{
+  const owner = doc(1);
+  owner.configTextStyle({ bold: { expand: "after" } });
+  const text = owner.getText("t");
+  text.insert(0, "abcd");
+  owner.commit();
+  text.mark({ start: 0, end: 2 }, "bold", true);
+  owner.commit();
+  text.insert(3, "X");
+  text.delete(1, 1);
+  owner.commit();
+  write("richtext-positions.update.blob", owner.export({ mode: "update" }));
+  write("richtext-positions.snapshot.blob", owner.export({ mode: "snapshot" }));
+  write("richtext-positions.json", JSON.stringify(owner.exportJsonUpdates(), null, 2));
+  expected["richtext-positions"] = text.toDelta();
+}
+
 write("expected.json", `${JSON.stringify(expected, null, 2)}\n`);
