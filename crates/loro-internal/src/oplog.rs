@@ -267,6 +267,10 @@ impl OpLog {
         self.history_cache
             .lock()
             .insert_by_new_change(&change, true, true);
+        #[cfg(debug_assertions)]
+        if from_local {
+            crate::parent::assert_local_parent_links_registered(&self.arena, &change);
+        }
         self.register_container_and_parent_link(&change);
         if let Some(rollback) = self.import_rollback.as_mut() {
             for op in change.ops.iter() {
