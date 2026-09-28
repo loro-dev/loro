@@ -6,6 +6,7 @@ import {
   LoroEventBatch,
   LoroList,
   LoroMap,
+  LoroMovableList,
   LoroText,
   UndoManager,
 } from "../bundler/index";
@@ -390,5 +391,32 @@ describe("applyDiff with unknown container types", () => {
     expect(t.toString()).toBe("b");
     expect(undo.redo()).toBe(true);
     expect(t.toString()).toBe("ba");
+  });
+
+  // Third review of #1142
+  it("rejects an undo into a host the undo manager recreated, without trapping", () => {
+    const doc = loadReviewDoc("recreatedHost");
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const l = doc.getList("L");
+    const p = l.get(0) as LoroMap;
+    const k = p.get("k") as LoroMovableList;
+    k.move(0, 1);
+    p.delete("k");
+    doc.commit();
+    l.delete(0, 1);
+    doc.commit();
+    // Recreates the map under a new id
+    expect(undo.undo()).toBe(true);
+    const remote = doc.fork();
+    remote.setPeerId(3);
+    const k2 = (remote.getList("L").get(0) as LoroMap).ensureMergeableMovableList("k");
+    k2.push("y");
+    k2.push("z");
+    remote.commit();
+    doc.import(remote.export({ mode: "update", from: doc.oplogVersion() }));
+    const before = state(doc);
+    // Used to trap (debug build) or return true half applied
+    expect(() => undo.undo()).toThrowError(/Unknown\(9\)/);
+    expect(state(doc)).toStrictEqual(before);
   });
 });

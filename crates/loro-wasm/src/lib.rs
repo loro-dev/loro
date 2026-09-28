@@ -5685,7 +5685,9 @@ impl UndoManager {
     ///
     /// Throws without changing the doc if the step would have to recreate a
     /// container of a type unknown to this version (created by a newer
-    /// loro-crdt). That step is dropped; the next call undoes the one before it.
+    /// loro-crdt). That step, with every edit merged into it, is dropped and its
+    /// edits stay; the next call undoes the step before it, rebased over the
+    /// dropped step's edits like over a remote peer's.
     pub fn undo(&mut self) -> JsResult<bool> {
         let executed = self.undo.lock().undo()?;
         Ok(executed)

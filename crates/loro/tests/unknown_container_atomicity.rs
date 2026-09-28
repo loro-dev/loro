@@ -479,7 +479,7 @@ fn wasm_fixture() -> String {
     out.push_str("} as const;\n\n");
 
     // Reproductions from the second review of #1142
-    let docs: [(&str, &str, fn(&LoroDoc)); 3] = [
+    let docs: [(&str, &str, fn(&LoroDoc)); 4] = [
         (
             "recreatedParent",
             "normal map `r.m` holding a mergeable list `k` = [U, 1]",
@@ -506,6 +506,20 @@ fn wasm_fixture() -> String {
         ("unknownList", "list `us` = [U]", |doc| {
             edited_counter(doc.get_list("us").push_container(counter()).unwrap());
         }),
+        (
+            "recreatedHost",
+            "list `L` = [map { v: 1, k: mergeable movable list [U, \"x\"] }]",
+            |doc| {
+                let p = doc
+                    .get_list("L")
+                    .insert_container(0, LoroMap::new())
+                    .unwrap();
+                p.insert("v", 1).unwrap();
+                let k = p.ensure_mergeable_movable_list("k").unwrap();
+                k.push("x").unwrap();
+                edited_counter(k.insert_container(0, counter()).unwrap());
+            },
+        ),
     ];
     out.push_str("export const UNKNOWN_REVIEW_DOCS = {\n");
     for (name, what, build) in docs {

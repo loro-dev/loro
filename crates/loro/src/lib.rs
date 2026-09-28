@@ -3873,8 +3873,9 @@ impl UndoManager {
     ///
     /// Returns `Err(LoroError::ArgErr)` without changing the doc if the step
     /// would have to recreate a container of a type unknown to this version
-    /// (written by a newer Loro). That step is dropped; the next call undoes
-    /// the step before it.
+    /// (written by a newer Loro). That step is dropped and its edits stay; the
+    /// next call undoes the step before it, rebased over the dropped step's
+    /// edits like over a remote peer's.
     pub fn undo(&mut self) -> LoroResult<bool> {
         self.0.undo()
     }

@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-09-28 (after #1134, #1152, #1153).
+Verified against code 2026-09-28 (after #1134, #1152, #1153; third review of #1142).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -35,7 +35,10 @@ so the check predicts that from the whole batch:
   (`container_remap`). Their entries apply to new, empty containers and are
   never skipped.
 - *revived*: writing a mergeable child's marker makes it and its descendants
-  reachable again.
+  reachable again. The loop writes the marker of `mergeable(parent, key)`,
+  with the parent as the loop resolves it, and remaps the value to it. When
+  that isn't the value's own id (a parent the undo manager already remapped,
+  or a value under another key), the child is checked as new and empty.
 - *removed*: deleting a child container (map key overwrite/delete, list delete
   not re-inserted as a MovableList move, tree node delete) makes it and its
   descendants unreachable for the later entries, which the loop then skips.
@@ -52,9 +55,10 @@ targeting an unknown container is a no-op in `Handler::apply_diff` and is not
 checked.
 
 The check returns the entries holding unknown containers that it predicted to
-be skipped. In debug builds the loop asserts that it skips them, and that it
-never applies unknown containers from an entry the plan below didn't check as
-applied.
+be skipped. In debug builds the loop asserts that it skips them, that it never
+applies unknown containers from an entry the plan below didn't check as
+applied, and that no entry of an accepted batch fails on creating an unknown
+container (`handler::is_unknown_container_creation_err`).
 
 ## Full-state batches
 
@@ -70,7 +74,10 @@ computes the alignment of the whole batch before anything is applied:
 `align_full_state` has no side effects (a counter gets an increment diff). The
 check runs on the planned edits, and the loop applies them instead of aligning
 again, so alignment runs once. Batches without unknown values skip the plan and
-the loop aligns each entry itself, as before. The loop still
+the loop aligns each entry itself, as before. The plan doesn't count the marker
+writes of an entry whose target is unreachable before the batch, because the
+loop skips it (an entry that revives it would have come first; the batch order
+is up to the caller). The loop still
 keeps its own `full_state_targets`, because only it follows `container_remap`
 as containers are recreated. It uses a planned edit only when it aligns the
 container the plan aligned. The other case is a mergeable child of a container
@@ -82,13 +89,19 @@ the loop aligns it against the new child.
 An undo/redo step that would recreate an unknown container is rejected as a
 whole: `undo()` returns that `ArgErr`, the doc is unchanged, and the step is
 dropped (`UndoManager::perform` in `undo.rs`). The next call undoes the step
-before it. The other edits of a rejected step can't be undone any more.
+before it. The other edits of a rejected step can't be undone any more. With a
+merge interval, the step is every edit merged into it (loro-crdt's default is
+1 s).
 
 - The step's `before_diff` (which rebases the manager's other steps over this
   one) runs only once the step is accepted.
 - The rejected step's own changes stay in the doc, so `undo_internal_with`
   returns them and `perform` composes them into the remote diff of the step's
   row: the steps before it are rebased over them like over remote changes.
+  That includes the limits of rebasing: if the rejected step moved an element
+  an earlier step inserted, undoing the earlier step finds nothing to do and
+  falls through to the step before it, exactly as after the same move by a
+  remote peer (`undo_after_a_rejected_move_matches_a_remote_move`).
 - Applying the rest of a rejected step would mean dropping the unknown inserts
   from the diff, and a wrongly predicted MovableList move would then delete an
   existing unknown element for good.
@@ -125,7 +138,11 @@ the ignored `write_wasm_fixture` test in
 - `crates/loro/tests/unknown_container_twin_oracle.rs`: random edits on a
   forged doc and on a twin holding Counters. Every `apply_diff` (full state and
   incremental), `revert_to` and undo/redo must be rejected without changes or
-  match the twin. `LORO_UNKNOWN_TWIN_SEEDS` runs more than the default 60.
+  match the twin. One variant adds a remote peer, undo/redo interleaved with
+  edits and syncs, reordered batches and 3-level mergeable chains (fork peer
+  ids are pinned so failures reproduce). `LORO_UNKNOWN_TWIN_SEEDS` runs more
+  than the default 60; run it in release with
+  `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` to keep the loop's asserts.
 - `crates/loro/tests/perf_unknown_container_apply_diff.rs`: ignored benchmarks.
 
 ## Forging unknown containers in tests
