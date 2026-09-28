@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-29.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -63,6 +63,8 @@ lock, and event emission (`with_ancestors`) under no document lock. So:
 - The change store never resolves an arena parent while holding `inner`.
   `ChangeStore::visit_all_changes` runs its callback under that lock; none of
   its callers resolve parents.
+- Import rollbacks run under the state lock and roll the arena back under
+  `inner`; see "Import rollback" below.
 - Another thread can register a container at any time without its parent, for
   example by creating a handler. Code that looks a container up twice must not
   assume the answer stayed the same: `DocState::does_container_exist` decides
@@ -140,14 +142,34 @@ Before 2026-09-28 the parsed ops kept indices and value slices past the
 truncated arena: exporting the history hit `unreachable!` in the JSON encoder,
 and a later checkout panicked on a missing value (loro-dev/loro#1161).
 
-`ChangeStore::rollback_import` also rolls back the arena, under `inner`. The
-resolver parses under `inner` without the op log lock, so otherwise it could
-parse a block between the two rollbacks and keep indices that the arena
-rollback then drops.
+The resolver can run during any import, because it does not take the op log
+lock. So every arena rollback of a failed import goes through the change store
+and runs under the state lock:
 
-`DocState` is not rolled back: its store and dead-container cache keep entries
-at the freed indices, and the next container registered at one inherits them
-(loro-dev/loro#1164, pre-existing).
+- Under `inner`: `ChangeStore::rollback_arena` rolls the arena back and drops
+  the parsed changes of blocks with bytes. `rollback_import` ends with it. The
+  early returns of `LoroDoc::import_changes_and_apply_delta_to_state_if_needed`
+  (a decode error, or updates that depend on history before the shallow root)
+  call it through `OpLog::rollback_arena`; they used to call
+  `SharedArena::rollback` directly. Blocks are parsed under `inner`, so a
+  block the resolver loads is either dropped by the rollback or parsed against
+  the rolled-back arena. A failed snapshot import replaces the change store:
+  `ChangeStore::retire` rolls the arena back and makes the old store answer
+  `Absent`, so a resolver that reached it before the swap does not register the
+  discarded history.
+- Under the state lock: `OpLog::rollback_import`, `rollback_arena`, and
+  `reset_to_empty_for_failed_snapshot_import` take `&DocState` as proof. A
+  state-locked query (`has_container`, `is_deleted`, `get_path_to_container`)
+  can register containers through the resolver and then use their indices
+  before it returns; the rollback must not free them in between. Without the
+  state lock, a loom model hit `get_depth` on a freed index.
+
+Only the state-locked queries are covered. A handler created on another thread
+during the import keeps its index, and `DocState` is not rolled back: its store
+and dead-container cache keep entries at the freed indices, and the next
+container registered at one inherits them. `get_path_to_container` answers
+`None` if its registration is already gone. See loro-dev/loro#1164
+(pre-existing).
 
 ## Testing pitfall
 
@@ -164,8 +186,13 @@ the real path.
   thread stress of queries against history readers
   (`UNREGISTERED_PARENT_THREAD_TRIALS`), and a random comparison of every tree
   meta against a full-history import (`UNREGISTERED_PARENT_SEEDS=0..300`).
-- `crates/loro/tests/multi_thread_test.rs`
-  (`resolving_a_meta_parent_while_another_thread_reads_the_history`, run by
-  `pnpm test-loom`): the lock order, as a loom model.
+- `crates/loro/tests/unregistered_container_parent.rs`
+  `queries_race_with_failing_imports`: queries against imports that fail at
+  decode or depend on history before a shallow root, swept across the import's
+  measured duration.
+- `crates/loro/tests/multi_thread_test.rs` (run by `pnpm test-loom`): the lock
+  order (`resolving_a_meta_parent_while_another_thread_reads_the_history`) and
+  an import that fails at decode
+  (`resolving_a_meta_parent_while_an_import_fails`), as loom models.
 - Unit tests in `arena.rs` (the resolver runs outside the arena lock, the
   `None` / panic / cycle cases) and `parent.rs` (the local link check).
