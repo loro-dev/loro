@@ -400,6 +400,107 @@ fn failed_import_that_loads_an_old_change() {
     assert!(dst.get_tree("tree").get_meta(child).unwrap().is_deleted());
 }
 
+/// Querying these metas resolves their parents through the change store without the op
+/// log lock, while other threads read the store under it. A lock-order inversion inside
+/// the store deadlocked (about every other run of 3000 trials hit it);
+/// `multi_thread_test.rs` has the loom model. Trials: `UNREGISTERED_PARENT_THREAD_TRIALS`
+/// (default 500).
+#[test]
+fn queries_race_with_history_readers() {
+    use std::sync::{mpsc, Barrier};
+    use std::time::Duration;
+
+    // Peer 2 creates 32 children, spread over change blocks, under parents that peer 1
+    // deletes concurrently.
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let tree = a.get_tree("tree");
+    let parents: Vec<_> = (0..4)
+        .map(|_| tree.create(TreeParentId::Root).unwrap())
+        .collect();
+    a.commit();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let mut children = vec![];
+    for p in parents.iter() {
+        for _ in 0..8 {
+            children.push(b.get_tree("tree").create(*p).unwrap());
+            b.commit();
+            for k in 0..30 {
+                b.get_map("filler").insert("k", k).unwrap();
+                b.commit();
+            }
+        }
+    }
+    for p in parents.iter() {
+        tree.delete(*p).unwrap();
+    }
+    a.commit();
+    a.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    for i in 0..1000 {
+        a.get_map("m").insert("k", i).unwrap();
+        a.commit();
+    }
+    let snapshot = a.export(ExportMode::Snapshot).unwrap();
+
+    let trials: usize = std::env::var("UNREGISTERED_PARENT_THREAD_TRIALS")
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(500);
+    let (progress, rx) = mpsc::channel();
+    let runner = std::thread::spawn(move || {
+        for _ in 0..trials {
+            let doc = import(&snapshot);
+            let barrier = Arc::new(Barrier::new(3));
+            let spawn = |f: Box<dyn FnOnce(&LoroDoc) + Send>| {
+                let (doc, barrier) = (doc.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    f(&doc)
+                })
+            };
+            let metas = children.clone();
+            let ids = children.clone();
+            let threads = [
+                spawn(Box::new(move |doc| {
+                    let tree = doc.get_tree("tree");
+                    for c in metas {
+                        assert!(tree.get_meta(c).unwrap().is_deleted());
+                    }
+                })),
+                spawn(Box::new(move |doc| {
+                    for c in ids {
+                        let id = c.associated_meta_container();
+                        assert!(doc.has_container(&id));
+                        assert_eq!(doc.get_path_to_container(&id), None);
+                    }
+                })),
+                spawn(Box::new(|doc| {
+                    for _ in 0..3 {
+                        assert!(doc.len_changes() > 0);
+                        doc.export(ExportMode::all_updates()).unwrap();
+                        doc.frontiers_to_vv(&doc.oplog_frontiers()).unwrap();
+                    }
+                })),
+            ];
+            for t in threads {
+                t.join().unwrap();
+            }
+            progress.send(()).unwrap();
+        }
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(()) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => panic!("no progress for 30 s: deadlock"),
+        }
+    }
+    runner.join().unwrap();
+}
+
 mod random {
     use super::*;
     use loro::{LoroText, TreeID};

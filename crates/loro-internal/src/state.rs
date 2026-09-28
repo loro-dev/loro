@@ -1060,11 +1060,14 @@ impl DocState {
             return true;
         }
 
-        if !is_mergeable {
-            if let Some(idx) = self.arena.id_to_idx(id) {
-                if self.arena.get_depth(idx).is_some() {
-                    return true;
-                }
+        let registered = if is_mergeable {
+            None
+        } else {
+            self.arena.id_to_idx(id)
+        };
+        if let Some(idx) = registered {
+            if self.arena.get_depth(idx).is_some() {
+                return true;
             }
         }
 
@@ -1072,7 +1075,9 @@ impl DocState {
             return true;
         }
 
-        if !is_mergeable && self.arena.id_to_idx(id).is_none() {
+        // Decided by the first lookup: another thread (e.g. creating a handler) may register
+        // the container in between, without its parent.
+        if !is_mergeable && registered.is_none() {
             // A document loaded from a snapshot parses its changes lazily, so a container that
             // an op created may not be registered yet.
             if let Some(idx) = self.arena.find_created_container(id) {

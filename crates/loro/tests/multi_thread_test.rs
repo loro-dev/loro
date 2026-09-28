@@ -338,4 +338,62 @@ mod loom_test {
             assert_eq!(doc.get_text("text").len_utf8(), 2);
         });
     }
+
+    /// A snapshot where peer 2 created node `0@2` under a parent that peer 1 deleted
+    /// concurrently, then more history. A document loaded from it finds the parent of the
+    /// node's meta only by parsing the change that created the node (loro-dev/loro#1158).
+    fn deleted_parent_snapshot() -> (Vec<u8>, loro::TreeID) {
+        let a = LoroDoc::new();
+        a.set_peer_id(1).unwrap();
+        let parent = a.get_tree("tree").create(loro::TreeParentId::Root).unwrap();
+        a.commit();
+        let b = LoroDoc::new();
+        b.set_peer_id(2).unwrap();
+        b.import(&a.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        let child = b.get_tree("tree").create(parent).unwrap();
+        b.commit();
+        a.get_tree("tree").delete(parent).unwrap();
+        a.commit();
+        a.import(&b.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        for i in 0..3 {
+            a.get_map("m").insert("k", i).unwrap();
+            a.commit();
+        }
+        (a.export(ExportMode::Snapshot).unwrap(), child)
+    }
+
+    /// The creator resolver reaches the change store without the op log lock (here under the
+    /// state lock, from `is_deleted` and `has_container`), while another thread reads the
+    /// store under the op log lock. Both must take the store's locks in the same order.
+    #[test]
+    fn resolving_a_meta_parent_while_another_thread_reads_the_history() {
+        for reader in 0..3 {
+            loom::model(move || {
+                let (snapshot, child) = deleted_parent_snapshot();
+                let doc = LoroDoc::new();
+                doc.import(&snapshot).unwrap();
+                let meta = doc.get_tree("tree").get_meta(child).unwrap();
+                let meta_id = loro::ContainerTrait::id(&meta);
+                let doc2 = doc.clone();
+                let h0 = loom::thread::spawn(move || {
+                    if reader == 2 {
+                        assert!(doc.has_container(&meta_id));
+                    } else {
+                        assert!(loro::ContainerTrait::is_deleted(&meta));
+                    }
+                });
+                let h1 = loom::thread::spawn(move || {
+                    if reader == 0 {
+                        assert!(doc2.len_changes() > 0);
+                    } else {
+                        doc2.export(ExportMode::all_updates()).unwrap();
+                    }
+                });
+                h0.join().unwrap();
+                h1.join().unwrap();
+            });
+        }
+    }
 }

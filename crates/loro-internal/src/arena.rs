@@ -27,8 +27,20 @@ pub(crate) struct LoadAllFlag;
 type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 /// Loads the change holding the op with the given ID, if the op log has it. Parsing a change
 /// registers the parent link of every container its ops create, and a normal container's ID is
-/// the ID of the op that created it. See `context/arena-parent-links.md`.
-type CreatorResolver = dyn Fn(&SharedArena, ID) + Send + Sync + 'static;
+/// the ID of the op that created it. It panics if the op log has the change but cannot parse
+/// it. See `context/arena-parent-links.md`.
+type CreatorResolver = dyn Fn(&SharedArena, ID) -> CreatorOp + Send + Sync + 'static;
+
+/// What the op log's history knows about an op ID, answered by the [`CreatorResolver`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CreatorOp {
+    /// The change holding the op is parsed, so the parent of every container the op creates
+    /// is registered.
+    Loaded,
+    /// The history has no op with this ID: it was not received or committed yet, or it is
+    /// before the shallow root.
+    Absent,
+}
 
 #[derive(Default)]
 struct ArenaContainers {
@@ -57,8 +69,9 @@ struct ArenaContainers {
     /// unknown, e.g. the meta of a tree node that was never alive in a document loaded from a
     /// snapshot, whose change blocks are parsed lazily.
     ///
-    /// Locking: it parses changes, which registers containers in this arena, so it must be
-    /// called without holding the arena lock.
+    /// Locking: it takes the change store's locks and parses changes, which registers
+    /// containers in this arena, so it must be called without holding the arena lock. It runs
+    /// without the op log lock; see `ChangeStore::creator_resolver`.
     creator_resolver: Option<Arc<CreatorResolver>>,
 }
 
@@ -451,7 +464,8 @@ impl SharedArena {
     /// Also `None` for a normal container that no op in the history creates (an ID from the
     /// user that is not a container, an op not received yet, or a container that is not in
     /// the state of a shallow document and whose creating op was trimmed): no path leads to
-    /// it, so it is treated like a container whose parent no longer holds it.
+    /// it, so it is treated like a container whose parent no longer holds it. A history that
+    /// has the op but cannot parse it panics instead (see [`CreatorResolver`]).
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
         match self.resolve_parent(child) {
             Some(parent) => parent,
@@ -503,8 +517,11 @@ impl SharedArena {
         if let (Some(resolver), ContainerID::Normal { peer, counter, .. }) =
             (creator_resolver, &child_id)
         {
-            resolver(self, ID::new(*peer, *counter));
-            return self.get_registered_parent(child);
+            return match resolver(self, ID::new(*peer, *counter)) {
+                // Registered unless the op does not create this container.
+                CreatorOp::Loaded => self.get_registered_parent(child),
+                CreatorOp::Absent => None,
+            };
         }
 
         None
@@ -520,8 +537,10 @@ impl SharedArena {
             return None;
         };
         let resolver = self.inner.containers.read().creator_resolver.clone()?;
-        resolver(self, ID::new(*peer, *counter));
-        self.id_to_idx(id)
+        match resolver(self, ID::new(*peer, *counter)) {
+            CreatorOp::Loaded => self.id_to_idx(id),
+            CreatorOp::Absent => None,
+        }
     }
 
     /// Return the parent edge already stored in the arena without invoking the lazy resolver.
@@ -776,7 +795,15 @@ impl SharedArena {
         // `ArenaContainers::get_depth` runs under the arena lock, where the creator resolver
         // cannot run, so resolve the missing parent links first.
         let mut c = container;
+        // Every step goes one level up, and no valid chain is deeper than `u16::MAX`.
+        let mut steps = 0usize;
         loop {
+            steps += 1;
+            assert!(
+                steps <= u16::MAX as usize + 1,
+                "InternalError: the parent links of {:?} form a cycle",
+                self.idx_to_id(container)
+            );
             {
                 let containers = self.inner.containers.read();
                 if containers.depth[c.to_index() as usize].is_some() {
@@ -877,7 +904,7 @@ impl SharedArena {
     /// Register the op log's [`CreatorResolver`]. See `creator_resolver` in `ArenaContainers`.
     pub(crate) fn set_creator_resolver<F>(&self, resolver: F)
     where
-        F: Fn(&SharedArena, ID) + Send + Sync + 'static,
+        F: Fn(&SharedArena, ID) -> CreatorOp + Send + Sync + 'static,
     {
         self.inner.containers.write().creator_resolver = Some(Arc::new(resolver));
     }
@@ -962,6 +989,7 @@ mod tests {
             let parent = arena.register_container(&root);
             let child = arena.register_container(&meta_for_resolver);
             arena.set_parent(child, Some(parent));
+            CreatorOp::Loaded
         });
 
         let meta_idx = arena.register_container(&meta);
@@ -972,14 +1000,30 @@ mod tests {
 
     #[test]
     fn a_container_that_no_op_creates_has_no_parent() {
+        for answer in [CreatorOp::Loaded, CreatorOp::Absent] {
+            // `Loaded`: the op exists but creates something else.
+            let arena = SharedArena::new();
+            arena.set_creator_resolver(move |_: &SharedArena, _: ID| answer);
+            let id = ContainerID::new_normal(ID::new(1, 3), ContainerType::Map);
+            let idx = arena.register_container(&id);
+            assert_eq!(arena.get_parent(idx), None);
+            assert_eq!(arena.get_depth(idx), None);
+            let missing = ContainerID::new_normal(ID::new(1, 4), ContainerType::Text);
+            assert_eq!(arena.find_created_container(&missing), None);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "form a cycle")]
+    fn a_parent_cycle_fails_fast() {
         let arena = SharedArena::new();
-        arena.set_creator_resolver(|_: &SharedArena, _: ID| {});
-        let id = ContainerID::new_normal(ID::new(1, 3), ContainerType::Map);
-        let idx = arena.register_container(&id);
-        assert_eq!(arena.get_parent(idx), None);
-        assert_eq!(arena.get_depth(idx), None);
-        let missing = ContainerID::new_normal(ID::new(1, 4), ContainerType::Text);
-        assert_eq!(arena.find_created_container(&missing), None);
+        let a =
+            arena.register_container(&ContainerID::new_normal(ID::new(1, 0), ContainerType::Map));
+        let b =
+            arena.register_container(&ContainerID::new_normal(ID::new(1, 1), ContainerType::Map));
+        arena.set_parent(a, Some(b));
+        arena.set_parent(b, Some(a));
+        arena.get_depth(a);
     }
 
     /// Without an op log to ask, an unknown parent is still an internal error.

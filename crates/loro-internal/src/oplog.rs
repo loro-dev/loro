@@ -408,11 +408,12 @@ impl OpLog {
             return;
         };
 
-        self.change_store.rollback_import(rollback.change_store);
+        // Also rolls back the arena; see `ChangeStore::rollback_import`.
+        self.change_store
+            .rollback_import(rollback.change_store, rollback.arena);
         self.dag.rollback_import();
         rollback.pending.rollback(&mut self.pending_changes);
         self.history_cache.lock().free_all();
-        self.arena.rollback(rollback.arena);
         self.refresh_visible_op_count();
     }
 
