@@ -126,8 +126,11 @@ JavaScript constant factor.
   search takes 7.3 ms versus 11.1 ms, but on a deep chain of explicit links
   (two positions typed alternately, 64k elements) 60.6 ms versus 15.5 ms,
   because each of its O(log n) probes walks the chain. Realistic traces favor
-  the binary search. `text-concurrent-insert-after-long-run` covers the long
-  typed run.
+  the binary search. With a warm origin index, importing one concurrent
+  character after a 512k-character typed run takes 0.28–0.31 ms (0.29–0.30 ms
+  on `main`, which misorders other cases; a per-scalar walk took 9.7–10.7 ms),
+  and `text-concurrent-insert-after-long-run` stays at 0.18–0.30 ms from 64k to
+  512k characters (September 28, Node 22, interleaved, 1-minute load 7–17).
 - An imported Text delete is resolved by its position in the op's causal view,
   like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
   `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
