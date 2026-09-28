@@ -14,98 +14,8 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
-const UNKNOWN: ContainerType = ContainerType::Unknown(9);
-
-fn forge_value(v: &mut LoroValue) {
-    match v {
-        LoroValue::Container(c) => forge_id(c),
-        LoroValue::List(l) => l.make_mut().iter_mut().for_each(forge_value),
-        LoroValue::Map(m) => m.make_mut().values_mut().for_each(forge_value),
-        _ => {}
-    }
-}
-
-fn forge_id(id: &mut ContainerID) {
-    if id.container_type() == ContainerType::Counter {
-        *id = match id {
-            ContainerID::Root { name, .. } => ContainerID::new_root(name, UNKNOWN),
-            ContainerID::Normal { peer, counter, .. } => {
-                ContainerID::new_normal(ID::new(*peer, *counter), UNKNOWN)
-            }
-        };
-    }
-}
-
-/// Replays `build`'s history into a new doc with every Counter turned into an
-/// `Unknown(9)` container, as if a newer Loro had written it. Mergeable
-/// markers survive because the typed JSON is edited in memory.
-fn forge(build: impl FnOnce(&LoroDoc)) -> LoroDoc {
-    forge_as(build, true)
-}
-
-fn forge_as(build: impl FnOnce(&LoroDoc), unknown: bool) -> LoroDoc {
-    let src = LoroDoc::new();
-    src.set_peer_id(1).unwrap();
-    build(&src);
-    src.commit();
-    let mut json =
-        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
-    for change in json.changes.iter_mut().filter(|_| unknown) {
-        for op in change.ops.iter_mut() {
-            forge_id(&mut op.container);
-            match &mut op.content {
-                JsonOpContent::Future(f) => {
-                    if let JsonFutureOp::Counter(v) = &f.value {
-                        f.value = JsonFutureOp::Unknown(v.clone());
-                    }
-                }
-                JsonOpContent::Map(JsonMapOp::Insert { value, .. }) => forge_value(value),
-                JsonOpContent::List(JsonListOp::Insert { value, .. })
-                | JsonOpContent::MovableList(JsonMovableListOp::Insert { value, .. }) => {
-                    value.iter_mut().for_each(forge_value)
-                }
-                JsonOpContent::MovableList(JsonMovableListOp::Set { value, .. }) => {
-                    forge_value(value)
-                }
-                _ => {}
-            }
-        }
-    }
-    let doc = LoroDoc::new();
-    doc.set_peer_id(2).unwrap();
-    doc.import_json_updates(json).unwrap();
-    doc
-}
-
-fn counter() -> LoroCounter {
-    LoroCounter::new()
-}
-
-fn edited_counter(c: LoroCounter) {
-    c.increment(1.0).unwrap();
-}
-
-fn state(doc: &LoroDoc) -> (serde_json::Value, loro::VersionVector) {
-    doc.commit();
-    (doc.get_deep_value().to_json_value(), doc.oplog_vv())
-}
-
-fn is_unknown_err(e: &LoroError) -> bool {
-    matches!(e, LoroError::ArgErr(msg) if msg.contains("Unknown(9)") && msg.contains("unknown to this version"))
-}
-
-/// Runs `f` and checks it either succeeds or fails without changing `doc`.
-/// Returns whether it failed on an unknown container.
-fn atomic<T>(doc: &LoroDoc, f: impl FnOnce(&LoroDoc) -> LoroResult<T>) -> bool {
-    let before = state(doc);
-    match f(doc) {
-        Ok(_) => false,
-        Err(e) => {
-            assert_eq!(state(doc), before, "partially applied before {e:?}");
-            is_unknown_err(&e)
-        }
-    }
-}
+mod unknown_container_support;
+use unknown_container_support::*;
 
 /// `m.k = List[U, 1]`, then `m.k` deleted.
 fn deleted_list_holding_unknown() -> (LoroDoc, Frontiers, Frontiers) {
@@ -352,237 +262,6 @@ fn diffs_skipped_by_apply_are_not_rejected() {
     assert_eq!(state(&doc).0, serde_json::json!({"m": {"c": null}}));
 }
 
-/// Random edits on a doc holding unknown containers in lists, movable lists,
-/// maps, nested containers, tree metas, a mergeable list and a mergeable map. Every
-/// `apply_diff(diff(a, b))`, `revert_to` and undo/redo must be atomic.
-#[test]
-fn random_edits_never_partially_apply() {
-    let mut rejected = 0;
-    let mut accepted = 0;
-    for seed in 0..200u64 {
-        let (r, a) = random_case(seed);
-        rejected += r;
-        accepted += a;
-    }
-    // Both outcomes must be exercised
-    assert!(rejected > 100, "rejected {rejected}");
-    assert!(accepted > 100, "accepted {accepted}");
-}
-
-fn random_case(seed: u64) -> (usize, usize) {
-    random_case_as(seed, true)
-}
-
-fn random_case_as(seed: u64, unknown: bool) -> (usize, usize) {
-    let doc = forge_as(
-        |doc| {
-            let m = doc.get_map("m");
-            let l = m.insert_container("l", LoroList::new()).unwrap();
-            edited_counter(l.insert_container(0, counter()).unwrap());
-            l.push(1).unwrap();
-            l.insert_container(2, counter()).unwrap();
-            let ml = m.insert_container("ml", LoroMovableList::new()).unwrap();
-            ml.push("a").unwrap();
-            edited_counter(ml.insert_container(1, counter()).unwrap());
-            ml.push("b").unwrap();
-            ml.insert_container(3, counter()).unwrap();
-            let mm = m.insert_container("mm", LoroMap::new()).unwrap();
-            edited_counter(mm.insert_container("u", counter()).unwrap());
-            mm.insert("x", 1).unwrap();
-            let nested = m.insert_container("nested", LoroList::new()).unwrap();
-            let inner = nested.insert_container(0, LoroMap::new()).unwrap();
-            inner.insert_container("u", counter()).unwrap();
-            let merge = m.ensure_mergeable_list("merge").unwrap();
-            merge.push(2).unwrap();
-            edited_counter(merge.insert_container(0, counter()).unwrap());
-            let smap = m.ensure_mergeable_map("smap").unwrap();
-            edited_counter(smap.insert_container("u", counter()).unwrap());
-            smap.insert("x", 1).unwrap();
-            // A regular child of `smap`, kept when `smap` is re-activated
-            let sl = smap.insert_container("l", LoroList::new()).unwrap();
-            edited_counter(sl.insert_container(0, counter()).unwrap());
-            sl.push(1).unwrap();
-            let tree = doc.get_tree("tree");
-            let n1 = tree.create(None).unwrap();
-            let n2 = tree.create(n1).unwrap();
-            for n in [n1, n2] {
-                let meta = tree.get_meta(n).unwrap();
-                meta.insert_container("u", counter()).unwrap();
-                meta.insert("n", 1).unwrap();
-            }
-            doc.get_list("l2").insert_container(0, counter()).unwrap();
-        },
-        unknown,
-    );
-
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut undo = UndoManager::new(&doc);
-    let mut versions = vec![doc.state_frontiers()];
-    for _ in 0..rng.gen_range(3..12) {
-        random_edit(&doc, &mut rng);
-        if rng.gen_bool(0.6) {
-            doc.commit();
-            versions.push(doc.state_frontiers());
-        }
-    }
-    doc.commit();
-    versions.push(doc.state_frontiers());
-
-    let mut rejected = 0;
-    let mut accepted = 0;
-    let mut count = |failed: bool| {
-        if failed {
-            rejected += 1
-        } else {
-            accepted += 1
-        }
-    };
-    // A diff only applies to the doc at its start version, so diff from the
-    // latest version to an earlier one
-    let latest = doc.state_frontiers();
-    for _ in 0..3 {
-        let target = &versions[rng.gen_range(0..versions.len())];
-        // `diff` batches are full states (aligned with the hidden state of
-        // re-activated mergeable children); also apply them incrementally
-        for full_state in [true, false] {
-            let d = doc.fork();
-            count(atomic(&d, |d| {
-                let mut batch = d.diff(&latest, target)?;
-                assert!(batch.is_full_state());
-                batch.set_full_state(full_state);
-                d.apply_diff(batch)
-            }));
-        }
-        let d = doc.fork();
-        count(atomic(&d, |d| d.revert_to(target)));
-    }
-    for _ in 0..versions.len() {
-        count(atomic(&doc, |_| undo.undo()));
-    }
-    for _ in 0..versions.len() {
-        count(atomic(&doc, |_| undo.redo()));
-    }
-    (rejected, accepted)
-}
-
-fn random_edit(doc: &LoroDoc, rng: &mut StdRng) {
-    let m = doc.get_map("m");
-    let child = |key: &str| m.get(key).and_then(|v| v.into_container().ok());
-    match rng.gen_range(0..10) {
-        0 => {
-            let lists = ["l", "nested"]
-                .into_iter()
-                .filter_map(|k| child(k).and_then(|c| c.into_list().ok()))
-                .chain([doc.get_list("l2")])
-                .collect::<Vec<_>>();
-            let l = &lists[rng.gen_range(0..lists.len())];
-            if !l.is_empty() {
-                l.delete(rng.gen_range(0..l.len()), 1).unwrap();
-            } else {
-                l.push(rng.gen_range(0..10)).unwrap();
-            }
-        }
-        1 | 2 => {
-            if let Some(ml) = child("ml").and_then(|c| c.into_movable_list().ok()) {
-                let len = ml.len();
-                match (len, rng.gen_range(0..3)) {
-                    (0, _) => ml.push("z").unwrap(),
-                    (_, 0) => ml.delete(rng.gen_range(0..len), 1).unwrap(),
-                    (_, 1) => ml.set(rng.gen_range(0..len), rng.gen_range(0..10)).unwrap(),
-                    _ => ml
-                        .mov(rng.gen_range(0..len), rng.gen_range(0..len))
-                        .unwrap(),
-                }
-            }
-        }
-        3 => {
-            let keys = ["l", "ml", "mm", "nested"];
-            m.delete(keys[rng.gen_range(0..keys.len())]).unwrap();
-        }
-        4 => {
-            if let Some(mm) = child("mm").and_then(|c| c.into_map().ok()) {
-                if rng.gen_bool(0.5) {
-                    mm.delete("u").unwrap();
-                } else {
-                    mm.insert("x", rng.gen_range(0..10)).unwrap();
-                }
-            }
-        }
-        5 => {
-            let tree = doc.get_tree("tree");
-            let nodes = tree.nodes();
-            let alive: Vec<_> = nodes
-                .into_iter()
-                .filter(|n| !tree.is_node_deleted(n).unwrap())
-                .collect();
-            match rng.gen_range(0..3) {
-                0 if !alive.is_empty() => {
-                    tree.delete(alive[rng.gen_range(0..alive.len())]).unwrap()
-                }
-                1 if alive.len() >= 2 => {
-                    let _ = tree.mov(alive[0], TreeParentId::Root);
-                }
-                _ => {
-                    let n = tree.create(None).unwrap();
-                    tree.get_meta(n).unwrap().insert("n", 2).unwrap();
-                }
-            }
-        }
-        6 => {
-            let merge = m.ensure_mergeable_list("merge").unwrap();
-            if !merge.is_empty() && rng.gen_bool(0.6) {
-                merge.delete(rng.gen_range(0..merge.len()), 1).unwrap();
-            } else if rng.gen_bool(0.5) {
-                m.delete("merge").unwrap();
-            } else {
-                merge.push(rng.gen_range(0..10)).unwrap();
-            }
-        }
-        7 => {
-            if let Some(nested) = child("nested").and_then(|c| c.into_list().ok()) {
-                if let Some(inner) = nested.get(0).and_then(|v| v.into_container().ok()) {
-                    if let Ok(inner) = inner.into_map() {
-                        inner.delete("u").unwrap();
-                    }
-                }
-            }
-        }
-        8 => {
-            // Deleting and re-ensuring re-activates the hidden `smap`
-            let smap = m.ensure_mergeable_map("smap").unwrap();
-            match rng.gen_range(0..4) {
-                0 => m.delete("smap").unwrap(),
-                1 => smap.delete("u").unwrap(),
-                2 => {
-                    if let Some(Ok(sl)) = smap
-                        .get("l")
-                        .and_then(|v| v.into_container().ok())
-                        .map(|c| c.into_list())
-                    {
-                        if !sl.is_empty() {
-                            sl.delete(0, 1).unwrap();
-                        }
-                    }
-                }
-                _ => smap.insert("x", rng.gen_range(0..10)).unwrap(),
-            }
-        }
-        _ => {
-            let t = doc.get_text("t");
-            t.insert(t.len_unicode(), "x").unwrap();
-        }
-    }
-}
-
-/// The same edits with the placeholders left as Counters: nothing is
-/// rejected, so the rejections above come from the unknown containers.
-#[test]
-fn random_edits_without_unknown_containers_are_accepted() {
-    for seed in 0..200u64 {
-        assert_eq!(random_case_as(seed, false).0, 0, "seed {seed}");
-    }
-}
-
 // Full-state batches (`LoroDoc::diff`) align a re-activated mergeable child
 // with the state this doc kept for it. Keeping an unknown container there
 // creates nothing, so it must be accepted; only the edits that alignment
@@ -817,4 +496,248 @@ fn wasm_fixture_is_up_to_date() {
         wasm_fixture(),
         "run the ignored `write_wasm_fixture` test"
     );
+}
+
+// Reproductions from the second review of #1142.
+
+/// `f` fails on an unknown container and leaves `doc` unchanged.
+fn assert_rejected_atomically<T: std::fmt::Debug>(
+    doc: &LoroDoc,
+    f: impl FnOnce(&LoroDoc) -> LoroResult<T>,
+) {
+    let before = state(doc);
+    let err = f(doc).unwrap_err();
+    assert!(is_unknown_err(&err), "{err:?}");
+    assert_eq!(state(doc), before);
+}
+
+/// `batch` with the MovableList inserts marked as moves.
+fn as_moves(batch: &DiffBatch) -> DiffBatch {
+    let mut ans = DiffBatch::default();
+    for (id, diff) in batch.iter() {
+        let diff = match diff {
+            Diff::List(items) if id.container_type() == ContainerType::MovableList => Diff::List(
+                items
+                    .iter()
+                    .map(|item| match item {
+                        ListDiffItem::Insert { insert, .. } => ListDiffItem::Insert {
+                            insert: insert.clone(),
+                            is_move: true,
+                        },
+                        item => item.clone(),
+                    })
+                    .collect(),
+            ),
+            diff => diff.clone(),
+        };
+        ans.push(id.clone(), diff).unwrap();
+    }
+    ans.set_full_state(batch.is_full_state());
+    ans
+}
+
+/// Recreating a container recreates its mergeable children under new ids.
+/// Aligning such a child's full state with the new, empty child can't keep
+/// U, even though the doc kept U in the old child. Used to write the parent
+/// before failing.
+#[test]
+fn revival_under_a_recreated_parent_is_rejected_atomically() {
+    for host in ["map", "list", "tree"] {
+        let doc = forge(|doc| {
+            let parent = match host {
+                "map" => doc
+                    .get_map("r")
+                    .insert_container("m", LoroMap::new())
+                    .unwrap(),
+                "list" => doc
+                    .get_list("l")
+                    .insert_container(0, LoroMap::new())
+                    .unwrap(),
+                _ => {
+                    let tree = doc.get_tree("tree");
+                    let meta = tree.get_meta(tree.create(None).unwrap()).unwrap();
+                    meta.insert("a", 1).unwrap();
+                    meta
+                }
+            };
+            let k = parent.ensure_mergeable_movable_list("k").unwrap();
+            k.push("a").unwrap();
+            edited_counter(k.insert_container(1, counter()).unwrap());
+        });
+        let v0 = doc.state_frontiers();
+        match host {
+            "map" => doc.get_map("r").delete("m").unwrap(),
+            "list" => doc.get_list("l").delete(0, 1).unwrap(),
+            _ => {
+                let tree = doc.get_tree("tree");
+                tree.delete(tree.roots()[0]).unwrap();
+            }
+        }
+        doc.commit();
+        let v1 = doc.state_frontiers();
+
+        for full_state in [true, false] {
+            let mut batch = doc.diff(&v1, &v0).unwrap();
+            batch.set_full_state(full_state);
+            // Crafted: the child's entries marked as moves
+            let moves = as_moves(&batch);
+            assert_rejected_atomically(&doc, |d| d.apply_diff(batch));
+            assert_rejected_atomically(&doc, |d| d.apply_diff(moves));
+        }
+        assert_rejected_atomically(&doc, |d| d.revert_to(&v0));
+    }
+}
+
+/// One step deletes U inside a regular child of a mergeable container (or
+/// its tree node meta) and hides the container. Undoing it revives the
+/// container first, so the child is applied and would have to recreate U.
+/// Undo used to return `Ok(true)` with U silently gone.
+#[test]
+fn undo_that_revives_a_mergeable_parent_of_a_deleted_unknown_is_rejected() {
+    for tree in [false, true] {
+        let doc = forge(|doc| {
+            let m = doc.get_map("m");
+            if tree {
+                let st = m.ensure_mergeable_tree("st").unwrap();
+                let meta = st.get_meta(st.create(None).unwrap()).unwrap();
+                edited_counter(meta.insert_container("u", counter()).unwrap());
+                meta.insert("a", 1).unwrap();
+            } else {
+                let s = m.ensure_mergeable_map("s").unwrap();
+                let l = s.insert_container("l", LoroList::new()).unwrap();
+                edited_counter(l.insert_container(0, counter()).unwrap());
+                l.push(1).unwrap();
+            }
+        });
+        let v0 = doc.state_frontiers();
+        let mut undo = UndoManager::new(&doc);
+        let m = doc.get_map("m");
+        if tree {
+            let st = m.ensure_mergeable_tree("st").unwrap();
+            st.get_meta(st.roots()[0]).unwrap().delete("u").unwrap();
+        } else {
+            let s = m.ensure_mergeable_map("s").unwrap();
+            let l = s.get("l").unwrap().into_container().unwrap();
+            l.into_list().unwrap().delete(0, 1).unwrap();
+        }
+        doc.get_text("t").insert(0, "x").unwrap();
+        m.delete(if tree { "st" } else { "s" }).unwrap();
+        doc.commit();
+        let v1 = doc.state_frontiers();
+
+        assert_rejected_atomically(&doc, |_| undo.undo());
+        assert_rejected_atomically(&doc, |d| d.revert_to(&v0));
+        for full_state in [true, false] {
+            let mut batch = doc.diff(&v1, &v0).unwrap();
+            batch.set_full_state(full_state);
+            assert_rejected_atomically(&doc, |d| d.apply_diff(batch));
+        }
+    }
+}
+
+/// A rejected undo step stays in the doc. The steps before it are rebased
+/// over its changes, like over remote ones. Used to undo `b` instead of `a`.
+#[test]
+fn undo_after_a_rejected_step_undoes_the_right_edits() {
+    for b_in_front in [false, true] {
+        let doc = forge(|doc| {
+            let list = doc
+                .get_map("m")
+                .insert_container("k", LoroList::new())
+                .unwrap();
+            edited_counter(list.insert_container(0, counter()).unwrap());
+            list.push(1).unwrap();
+        });
+        let mut undo = UndoManager::new(&doc);
+        let t = doc.get_text("t");
+        t.insert(0, "a").unwrap();
+        doc.commit();
+        t.insert(if b_in_front { 0 } else { 1 }, "b").unwrap();
+        doc.get_map("m").delete("k").unwrap();
+        doc.commit();
+
+        assert_rejected_atomically(&doc, |_| undo.undo());
+        assert!(undo.undo().unwrap());
+        assert_eq!(t.to_string(), "b");
+        assert!(undo.redo().unwrap());
+        assert_eq!(t.to_string(), if b_in_front { "ba" } else { "ab" });
+    }
+}
+
+/// The same with a remote edit after the steps: undoing "A" used to be out
+/// of bounds, swallowed, and the step lost.
+#[test]
+fn undo_after_a_rejected_step_with_remote_edits() {
+    let doc = forge(|doc| {
+        let list = doc
+            .get_map("m")
+            .insert_container("k", LoroList::new())
+            .unwrap();
+        edited_counter(list.insert_container(0, counter()).unwrap());
+        list.push(1).unwrap();
+        doc.get_text("t").insert(0, "0123").unwrap();
+    });
+    let mut undo = UndoManager::new(&doc);
+    let t = doc.get_text("t");
+    t.insert(4, "A").unwrap();
+    doc.commit();
+    t.delete(0, 2).unwrap();
+    doc.get_map("m").delete("k").unwrap();
+    doc.commit();
+    let remote = doc.fork();
+    remote.set_peer_id(77).unwrap();
+    remote.get_text("t").insert(3, "R").unwrap();
+    remote.commit();
+    doc.import(
+        &remote
+            .export(loro::ExportMode::updates(&doc.oplog_vv()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(t.to_string(), "23AR");
+
+    assert_rejected_atomically(&doc, |_| undo.undo());
+    assert!(undo.undo().unwrap());
+    assert_eq!(t.to_string(), "23R");
+}
+
+/// Redo mirrors undo: a rejected redo step (its U was deleted remotely) must
+/// not make the next redo miss its edit. Used to leave "a" instead of "ac".
+#[test]
+fn redo_after_a_rejected_redo_step() {
+    let doc = forge(|doc| {
+        let ml = doc.get_movable_list("ml");
+        edited_counter(ml.push_container(counter()).unwrap());
+        ml.push("x").unwrap();
+        ml.push("y").unwrap();
+    });
+    let mut undo = UndoManager::new(&doc);
+    let t = doc.get_text("t");
+    t.insert(0, "a").unwrap();
+    doc.commit();
+    t.insert(1, "b").unwrap();
+    doc.get_movable_list("ml").mov(0, 2).unwrap();
+    doc.commit();
+    t.insert(2, "c").unwrap();
+    doc.commit();
+    for _ in 0..3 {
+        assert!(undo.undo().unwrap());
+    }
+    assert_eq!(t.to_string(), "");
+    let remote = doc.fork();
+    remote.set_peer_id(77).unwrap();
+    remote.get_movable_list("ml").delete(0, 1).unwrap();
+    remote.commit();
+    doc.import(
+        &remote
+            .export(loro::ExportMode::updates(&doc.oplog_vv()))
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert!(undo.redo().unwrap());
+    assert_eq!(t.to_string(), "a");
+    assert_rejected_atomically(&doc, |_| undo.redo());
+    assert!(undo.redo().unwrap());
+    assert_eq!(t.to_string(), "ac");
 }

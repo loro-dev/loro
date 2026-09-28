@@ -1237,6 +1237,27 @@ impl LoroDoc {
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
     ) -> LoroResult<CommitWhenDrop<'_>> {
+        self.undo_internal_with(
+            id_span,
+            container_remap,
+            post_transform_base,
+            before_diff,
+            &mut None,
+        )
+    }
+
+    /// [`Self::undo_internal`]. When the step is rejected because it would
+    /// recreate a container of an unknown type, `rejected_step` is set to the
+    /// step's own changes, which stay in the doc: the undo manager treats them
+    /// like remote changes for the steps before it.
+    pub(crate) fn undo_internal_with(
+        &self,
+        id_span: IdSpan,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        post_transform_base: Option<&DiffBatch>,
+        before_diff: &mut dyn FnMut(&DiffBatch),
+        rejected_step: &mut Option<DiffBatch>,
+    ) -> LoroResult<CommitWhenDrop<'_>> {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -1255,49 +1276,67 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().split_span_based_on_deps(id_span);
+        let calc_diff = |from: &Frontiers, to: &Frontiers| {
+            self._checkout_without_emitting(from, false, false).unwrap();
+            {
+                let mut state = self.state.lock();
+                state.start_recording();
+                state.set_record_changes_only(true);
+            }
+            self._checkout_without_emitting(to, false, false).unwrap();
+            let mut state = self.state.lock();
+            state.set_record_changes_only(false);
+            let e = state.take_events();
+            state.stop_and_clear_recording();
+            // Applied to this doc, which kept the state of re-activated mergeable children.
+            DiffBatch::from_changes(e)
+        };
+        // `before_diff` rebases the undo manager's other steps over this one,
+        // so it only runs once the step is accepted
+        let mut last_event_a = None;
         let diff = crate::undo::undo(
-            spans,
+            spans.clone(),
             match post_transform_base {
                 Some(d) => Either::Right(d),
                 None => Either::Left(&latest_frontiers),
             },
-            |from, to| {
-                self._checkout_without_emitting(from, false, false).unwrap();
-                {
-                    let mut state = self.state.lock();
-                    state.start_recording();
-                    state.set_record_changes_only(true);
-                }
-                self._checkout_without_emitting(to, false, false).unwrap();
-                let mut state = self.state.lock();
-                state.set_record_changes_only(false);
-                let e = state.take_events();
-                state.stop_and_clear_recording();
-                // Applied to this doc, which kept the state of re-activated mergeable children.
-                DiffBatch::from_changes(e)
-            },
-            before_diff,
+            &calc_diff,
+            &mut |d| last_event_a = Some(d.clone()),
         );
-
-        // println!("\nundo_internal: diff: {:?}", diff);
-        // println!("container remap: {:?}", container_remap);
 
         self._checkout_without_emitting(&latest_frontiers, false, false)?;
         self.set_detached(false);
+        // A step that would recreate an unknown container is rejected as a
+        // whole, before anything is applied
+        let rejected = self
+            .check_apply_diff_creates_no_unknown_container(&diff, None, container_remap, true)
+            .err();
+        if rejected.is_some() {
+            let mut changes = DiffBatch::default();
+            for (span, deps) in spans.iter() {
+                changes.compose(&calc_diff(deps, &span.id_last().into()));
+            }
+            self._checkout_without_emitting(&latest_frontiers, false, false)?;
+            self.set_detached(false);
+            *rejected_step = Some(changes);
+        } else if let Some(event_a) = &last_event_a {
+            before_diff(event_a);
+        }
+
         if was_recording {
             self.state.lock().start_recording();
         }
         drop(txn);
         self.start_auto_commit();
-        // A step that would recreate an unknown container is rejected as a
-        // whole, before anything is applied
-        let rejected =
-            self.check_apply_diff_creates_no_unknown_container(&diff, container_remap, true, false);
-        // Otherwise try applying the diff, but ignore the error if it happens.
-        // MovableList's undo behavior is too tricky to handle in a collaborative env
-        // so in edge cases this may be an Error
-        if rejected.is_ok() {
+        if rejected.is_none() {
+            // Try applying the diff, but ignore the error if it happens.
+            // MovableList's undo behavior is too tricky to handle in a collaborative env
+            // so in edge cases this may be an Error
             if let Err(e) = self._apply_diff(diff, container_remap, true, false) {
+                debug_assert!(
+                    !matches!(e, LoroError::ArgErr(_)),
+                    "the unknown container check missed {e:?}"
+                );
                 warn!("Undo Failed {:?}", e);
             }
         }
@@ -1305,7 +1344,9 @@ impl LoroDoc {
         if let Some(options) = options {
             self.set_next_commit_options(options);
         }
-        rejected?;
+        if let Some(e) = rejected {
+            return Err(e);
+        }
         Ok(CommitWhenDrop {
             doc: self,
             default_options: CommitOptions::new().origin("undo"),
@@ -1450,13 +1491,20 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
+        // Full states are aligned for the whole batch before anything is
+        // applied; the loop below applies the planned edits.
+        let mut plan = if align_revived_mergeable {
+            self.plan_full_state_batch(&diff, container_remap)
+        } else {
+            FullStatePlan::default()
+        };
         // There is no rollback for the local ops applied below, so reject the
         // diff before touching the doc if it needs an unknown container.
-        self.check_apply_diff_creates_no_unknown_container(
+        let predicted_skips = self.check_apply_diff_creates_no_unknown_container(
             &diff,
+            align_revived_mergeable.then_some(&plan),
             container_remap,
             skip_unreachable,
-            align_revived_mergeable,
         )?;
 
         let mut ans: LoroResult<()> = Ok(());
@@ -1467,6 +1515,7 @@ impl LoroDoc {
         let mut full_state_targets: FxHashSet<ContainerID> = FxHashSet::default();
         let mut applied: FxHashSet<ContainerID> = FxHashSet::default();
         for (mut id, diff) in diff.into_iter() {
+            let batch_id = id.clone();
             let mut remapped = false;
             while let Some(rid) = container_remap.get(&id) {
                 remapped = true;
@@ -1496,31 +1545,51 @@ impl LoroDoc {
             {
                 continue;
             }
+            debug_assert!(
+                !predicted_skips.contains(&batch_id),
+                "{batch_id} holds an unknown container and was predicted to be skipped"
+            );
 
             let Some(h) = self.get_handler(id.clone()) else {
                 return Err(LoroError::ContainersNotFound {
                     containers: Box::new(vec![id]),
                 });
             };
-            // `plan_full_state_batch` replays this alignment for the unknown
-            // container check; keep them in sync
+            let planned = plan.aligned.remove(&batch_id);
             let diff = if is_full_state {
-                let current = self.state.lock().container_full_diff(h.container_idx());
-                match crate::handler::align_full_state(
-                    &h,
-                    diff,
-                    current,
-                    &mut full_state_targets,
-                    false,
-                ) {
-                    Ok(Some(diff)) => diff,
-                    Ok(None) => continue,
-                    Err(e) => {
-                        ans = Err(e);
-                        continue;
+                match planned {
+                    // The plan aligned this entry against the same container
+                    Some(p) if p.target == id => {
+                        full_state_targets.extend(p.kept);
+                        match p.edit {
+                            Some(edit) => edit,
+                            None => continue,
+                        }
+                    }
+                    _ => {
+                        // A mergeable child of a container this batch recreated:
+                        // new and empty, which the plan checked as such
+                        debug_assert!(
+                            plan.fresh.contains(&batch_id) || !diff_has_unknown_value(&diff),
+                            "{batch_id} holds an unknown container and was not planned"
+                        );
+                        let current = self.state.lock().container_full_diff(h.container_idx());
+                        match crate::handler::align_full_state(
+                            &h,
+                            &diff,
+                            current,
+                            &mut full_state_targets,
+                        ) {
+                            Some(diff) => diff,
+                            None => continue,
+                        }
                     }
                 }
             } else {
+                debug_assert!(
+                    planned.is_none() || !diff_has_unknown_value(&diff),
+                    "{batch_id} holds an unknown container and was planned as a full state"
+                );
                 diff
             };
             if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
@@ -1558,6 +1627,98 @@ impl LoroDoc {
         ans
     }
 
+    /// How `_apply_diff` treats a full-state batch, planned before anything is
+    /// applied: which entries it aligns with the state this doc kept, and the
+    /// edits they turn into. The loop applies these edits, so alignment is
+    /// computed once, and the unknown container check sees what is applied.
+    ///
+    /// The loop still keeps its own `full_state_targets`, because it follows
+    /// `container_remap` as it grows. It uses a planned edit only when it
+    /// aligns the same container as the plan did.
+    fn plan_full_state_batch(
+        &self,
+        diff: &DiffBatch,
+        container_remap: &FxHashMap<ContainerID, ContainerID>,
+    ) -> FullStatePlan {
+        let mut plan = FullStatePlan::default();
+        // The loop's `full_state_targets`
+        let mut targets: FxHashSet<ContainerID> = FxHashSet::default();
+        // Containers the loop may recreate under a new id: container values of
+        // Map/List diffs and the metas of created or moved tree nodes. Errs
+        // towards "recreated", which only makes the check stricter.
+        let mut recreated: FxHashSet<ContainerID> = FxHashSet::default();
+        // Mergeable children of recreated containers: the loop aligns them
+        // against a new, empty container
+        let mut fresh_targets: FxHashSet<ContainerID> = FxHashSet::default();
+        for (id, diff) in diff.iter() {
+            let (target, _) = resolve_container_remap(id.clone(), container_remap);
+            match diff {
+                crate::event::Diff::Map(map) => recreated.extend(
+                    map.updated
+                        .values()
+                        .filter_map(|v| v.value.as_ref().and_then(diff_value_container_id))
+                        .filter(|c| !c.is_mergeable()),
+                ),
+                crate::event::Diff::List(delta) => {
+                    recreated.extend(inserted_container_ids(delta));
+                }
+                crate::event::Diff::Tree(tree) => recreated.extend(
+                    tree.diff
+                        .iter()
+                        .filter(|item| {
+                            !matches!(item.action, crate::delta::TreeExternalDiff::Delete { .. })
+                        })
+                        .map(|item| item.target.associated_meta_container()),
+                ),
+                _ => {}
+            }
+
+            let effective = if fresh_targets.remove(&target) {
+                targets.remove(&target);
+                plan.always_applied.insert(target.clone());
+                plan.fresh.insert(id.clone());
+                recreated.insert(target.clone());
+                Some(diff)
+            } else if targets.remove(&target) {
+                plan.always_applied.insert(target.clone());
+                let Some(h) = self.get_handler(target.clone()) else {
+                    // `_apply_diff` stops here with `ContainersNotFound`
+                    continue;
+                };
+                let current = self.state.lock().container_full_diff(h.container_idx());
+                let mut kept = FxHashSet::default();
+                let edit = crate::handler::align_full_state(&h, diff, current, &mut kept);
+                targets.extend(kept.iter().cloned());
+                let entry = plan.aligned.entry(id.clone()).or_insert(PlannedAlignment {
+                    target: target.clone(),
+                    edit,
+                    kept,
+                });
+                entry.edit.as_ref()
+            } else {
+                Some(diff)
+            };
+
+            // A mergeable marker written by a Map diff makes its child a target
+            if let Some(crate::event::Diff::Map(map)) = effective {
+                for (key, v) in map.updated.iter() {
+                    if let Some(c) = v.value.as_ref().and_then(diff_value_container_id) {
+                        if c.is_mergeable() {
+                            let child =
+                                ContainerID::new_mergeable(&target, key, c.container_type());
+                            if recreated.contains(&target) {
+                                fresh_targets.insert(child);
+                            } else {
+                                targets.insert(child);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        plan
+    }
+
     /// `_apply_diff` recreates the containers inserted by a diff, but this
     /// version cannot create a container whose type it doesn't know
     /// ([ContainerType::Unknown], e.g. `cid:0@1:Unknown(9)`). Such values may
@@ -1566,115 +1727,47 @@ impl LoroDoc {
     /// list, diffs targeting an unknown container (a no-op), and diffs that
     /// `_apply_diff` skips because their target is unreachable.
     ///
-    /// Nothing is applied here, but the apply loop changes its own inputs as it
-    /// goes, so this predicts those changes from the whole batch:
+    /// With a full-state `plan`, the planned edits are checked instead of the
+    /// full states. Nothing is applied here, but the apply loop changes its own
+    /// inputs as it goes, so this predicts those changes from the whole batch:
     ///
-    /// - fresh: container values of Map/List diffs and the metas of recreated
-    ///   tree nodes are recreated under a new id (`container_remap`). Their
-    ///   diffs then apply to a new, empty container and are never skipped.
-    /// - revived: writing a mergeable child's marker makes it reachable again.
+    /// - fresh: container values of Map/List diffs, the metas of recreated
+    ///   tree nodes, and mergeable children of those are recreated under a new
+    ///   id (`container_remap`). Their diffs then apply to a new, empty
+    ///   container and are never skipped.
+    /// - revived: writing a mergeable child's marker makes it and its
+    ///   descendants reachable again.
     /// - removed: a diff that deletes a child container makes it and its
     ///   descendants unreachable for the diffs after it.
     ///
     /// Every prediction errs towards checking a diff (a false rejection),
     /// never towards skipping it, so an accepted batch cannot fail on an
-    /// unknown container half way through.
+    /// unknown container half way through. Returns the batch ids of the
+    /// entries holding unknown containers that it predicted to be skipped;
+    /// `_apply_diff` asserts that in debug builds.
     fn check_apply_diff_creates_no_unknown_container(
         &self,
         diff: &DiffBatch,
+        plan: Option<&FullStatePlan>,
         container_remap: &FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
-        align_revived_mergeable: bool,
-    ) -> LoroResult<()> {
+    ) -> LoroResult<FxHashSet<ContainerID>> {
+        let mut predicted_skips = FxHashSet::default();
         if !diff.iter().any(|(_, d)| diff_has_unknown_value(d)) {
-            return Ok(());
+            return Ok(predicted_skips);
         }
-        if align_revived_mergeable {
-            // Check the edits the full states turn into, not the full states
-            let (planned, always_applied) = self.plan_full_state_batch(diff, container_remap);
-            return self.check_batch_creates_no_unknown(
-                &planned,
-                container_remap,
-                skip_unreachable,
-                &always_applied,
-            );
-        }
-        self.check_batch_creates_no_unknown(
-            diff,
-            container_remap,
-            skip_unreachable,
-            &FxHashSet::default(),
-        )
-    }
 
-    /// What `_apply_diff` with `align_revived_mergeable` applies for a batch,
-    /// without applying it: the full-state diffs replaced by the edits
-    /// `align_full_state` turns them into (dropped when there is nothing to
-    /// do), and the targets of those diffs, which the loop never skips.
-    ///
-    /// Mirrors the loop's bookkeeping of `full_state_targets`: a mergeable
-    /// marker written by a Map diff makes its child a target, and aligning a
-    /// container makes the children it keeps targets.
-    fn plan_full_state_batch(
-        &self,
-        diff: &DiffBatch,
-        container_remap: &FxHashMap<ContainerID, ContainerID>,
-    ) -> (DiffBatch, FxHashSet<ContainerID>) {
-        let mut targets: FxHashSet<ContainerID> = FxHashSet::default();
-        let mut always_applied: FxHashSet<ContainerID> = FxHashSet::default();
-        let mut planned = DiffBatch::default();
-        for (id, diff) in diff.iter() {
-            let (target, _) = resolve_container_remap(id.clone(), container_remap);
-            let diff = if targets.remove(&target) {
-                always_applied.insert(target.clone());
-                let Some(h) = self.get_handler(target.clone()) else {
-                    // `_apply_diff` stops here with `ContainersNotFound`
-                    planned.cid_to_events.insert(id.clone(), diff.clone());
-                    planned.order.push(id.clone());
-                    continue;
-                };
-                let current = self.state.lock().container_full_diff(h.container_idx());
-                match crate::handler::align_full_state(
-                    &h,
-                    diff.clone(),
-                    current,
-                    &mut targets,
-                    true,
-                ) {
-                    Ok(Some(diff)) => diff,
-                    Ok(None) | Err(_) => continue,
-                }
-            } else {
-                diff.clone()
-            };
-            if let crate::event::Diff::Map(map) = &diff {
-                for (key, v) in map.updated.iter() {
-                    if let Some(c) = v.value.as_ref().and_then(diff_value_container_id) {
-                        if c.is_mergeable() {
-                            targets.insert(ContainerID::new_mergeable(
-                                &target,
-                                key,
-                                c.container_type(),
-                            ));
-                        }
-                    }
-                }
-            }
-            planned.cid_to_events.insert(id.clone(), diff);
-            planned.order.push(id.clone());
-        }
-        (planned, always_applied)
-    }
+        // The batch as the loop applies it
+        let entries: Vec<(&ContainerID, &crate::event::Diff)> = diff
+            .iter()
+            .filter_map(|(id, d)| match plan.and_then(|p| p.aligned.get(id)) {
+                Some(p) => p.edit.as_ref().map(|edit| (id, edit)),
+                None => Some((id, d)),
+            })
+            .collect();
+        let empty = FxHashSet::default();
+        let always_applied = plan.map_or(&empty, |p| &p.always_applied);
 
-    /// See [`Self::check_apply_diff_creates_no_unknown_container`]. The
-    /// diffs of `always_applied` targets are never skipped by `_apply_diff`.
-    fn check_batch_creates_no_unknown(
-        &self,
-        diff: &DiffBatch,
-        container_remap: &FxHashMap<ContainerID, ContainerID>,
-        skip_unreachable: bool,
-        always_applied: &FxHashSet<ContainerID>,
-    ) -> LoroResult<()> {
         // A handler for an existing container, without materializing roots
         // that have no state yet
         let existing = |id: &ContainerID| -> Option<Handler> {
@@ -1685,11 +1778,11 @@ impl LoroDoc {
                 .then(|| Handler::new_attached(id.clone(), self.clone()))
         };
 
-        let mut fresh: FxHashSet<ContainerID> = FxHashSet::default();
+        let mut fresh: FxHashSet<ContainerID> = plan.map(|p| p.fresh.clone()).unwrap_or_default();
         let mut revived: FxHashSet<ContainerID> = FxHashSet::default();
         // Container -> index of the first diff in the batch that removes it
         let mut removed: FxHashMap<ContainerID, usize> = FxHashMap::default();
-        for (i, (id, diff)) in diff.iter().enumerate() {
+        for (i, &(id, diff)) in entries.iter().enumerate() {
             let (target, _) = resolve_container_remap(id.clone(), container_remap);
             let handler = if fresh.contains(id) || target.is_unknown() {
                 None
@@ -1709,6 +1802,10 @@ impl LoroDoc {
                         }
                         if let Some(c) = v.value.as_ref().and_then(diff_value_container_id) {
                             if c.is_mergeable() {
+                                // The mergeable child of a recreated map is new
+                                if fresh.contains(id) {
+                                    fresh.insert(c.clone());
+                                }
                                 revived.insert(c);
                             } else {
                                 fresh.insert(c);
@@ -1764,7 +1861,7 @@ impl LoroDoc {
             }
         }
 
-        for (i, (id, diff)) in diff.iter().enumerate() {
+        for (i, &(id, diff)) in entries.iter().enumerate() {
             if !diff_has_unknown_value(diff) {
                 continue;
             }
@@ -1784,16 +1881,13 @@ impl LoroDoc {
                 && !remapped
                 && !always_applied.contains(&target)
             {
-                let mut chain: Vec<ContainerID> = self
-                    .get_path_to_container(&target)
-                    .map(|path| path.into_iter().map(|(c, _)| c).collect())
-                    .unwrap_or_default();
-                chain.push(target.clone());
+                let chain = self.arena_ancestors_and_self(&target);
                 let skipped = !chain.iter().any(|c| revived.contains(c))
                     && (!self.state.lock().get_reachable(&target)
                         || chain.iter().any(|c| removed.get(c).is_some_and(|&j| j < i)));
                 if skipped {
                     // `_apply_diff` skips this diff
+                    predicted_skips.insert(id.clone());
                     continue;
                 }
             }
@@ -1821,7 +1915,35 @@ impl LoroDoc {
             }
         }
 
-        Ok(())
+        Ok(predicted_skips)
+    }
+
+    /// `id` and its ancestors by arena parent, whether they are visible or
+    /// not (a hidden mergeable child has no path from a root, but its
+    /// descendants become reachable again when a batch revives it).
+    fn arena_ancestors_and_self(&self, id: &ContainerID) -> Vec<ContainerID> {
+        let mut ans = Vec::new();
+        let idx = match self.arena.id_to_idx(id) {
+            Some(idx) => Some(idx),
+            None => {
+                let mut state = self.state.lock();
+                if state.does_container_exist(id) {
+                    state.ensure_container(id);
+                }
+                drop(state);
+                self.arena.id_to_idx(id)
+            }
+        };
+        if let Some(mut idx) = idx {
+            while let Some(parent) = self.arena.get_parent(idx) {
+                if let Some(parent_id) = self.arena.idx_to_id(parent) {
+                    ans.push(parent_id);
+                }
+                idx = parent;
+            }
+        }
+        ans.push(id.clone());
+        ans
     }
 
     /// This is for debugging purpose. It will travel the whole oplog
@@ -3950,4 +4072,25 @@ fn diff_has_unknown_value(diff: &crate::event::Diff) -> bool {
         crate::event::Diff::List(delta) => inserted_container_ids(delta).any(|c| c.is_unknown()),
         _ => false,
     }
+}
+
+/// See `LoroDoc::plan_full_state_batch`.
+#[derive(Default)]
+struct FullStatePlan {
+    /// Batch id -> how the loop applies that full-state entry
+    aligned: FxHashMap<ContainerID, PlannedAlignment>,
+    /// Targets the loop applies even when they are unreachable before the batch
+    always_applied: FxHashSet<ContainerID>,
+    /// Batch ids of mergeable children of containers this batch recreates.
+    /// They are new and empty when the loop reaches them.
+    fresh: FxHashSet<ContainerID>,
+}
+
+struct PlannedAlignment {
+    /// The container the full state was aligned with
+    target: ContainerID,
+    /// `None` when there is nothing to do
+    edit: Option<crate::event::Diff>,
+    /// Children kept by the alignment, whose own entries are full states too
+    kept: FxHashSet<ContainerID>,
 }

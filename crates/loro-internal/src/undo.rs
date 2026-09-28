@@ -926,7 +926,8 @@ impl UndoManager {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
-                let commit = match doc.undo_internal(
+                let mut rejected_step = None;
+                let commit = match doc.undo_internal_with(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
@@ -940,13 +941,23 @@ impl UndoManager {
                             get_stack(&mut inner.borrow_mut()).transform_based_on_this_delta(diff);
                         });
                     },
+                    &mut rejected_step,
                 ) {
                     Ok(c) => c,
                     // The step would recreate a container of an unknown type
                     // (the only `ArgErr` of `undo_internal`). Nothing was
                     // applied; drop the step instead of retrying it forever or
                     // undoing the next step in its place.
-                    Err(e @ LoroError::ArgErr(_)) => return Err(e),
+                    Err(e @ LoroError::ArgErr(_)) => {
+                        // Its changes stay in the doc: rebase the steps before
+                        // it over them, like over remote changes
+                        if let Some(mut changes) = rejected_step {
+                            let mut remote = remote_diff.lock();
+                            changes.compose(&remote);
+                            *remote = changes;
+                        }
+                        return Err(e);
+                    }
                     Err(e) => {
                         get_stack(&mut self.inner.lock().borrow_mut())
                             .push(span.span, span.meta);
