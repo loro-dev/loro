@@ -185,10 +185,15 @@ JavaScript constant factor.
   incremental, and a later move or set by element id resolves. Replaying the
   list to the current version and then retreating instead (as round 3 did)
   carried loro.js's MovableList non-convergence at the latest version into
-  older versions. Until the MovableList model work (loro-dev/loro#1132 and
-  follow-ups) hydrates element ids, a MovableList whose loro.js replay differs
-  from Rust can change its latest state at the first such transition, also as
-  on main.
+  older versions. Completing only lists whose snapshot names elements by insert
+  ids was also tried: it makes a snapshot document transition like a
+  full-history one, and loro.js's incremental MovableList transitions have
+  their own bugs with concurrent moves and sets (a full-history document on
+  main shows them too), so random Rust histories got 167 mismatching versions
+  against main's 91; leaving every MovableList on main's path gives 56. Until
+  the MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates
+  element ids, a MovableList whose loro.js replay differs from Rust can change
+  its latest state at the first such transition, also as on main.
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
   `forkAt`) first checks the snapshot-hydrated styled Text containers,
   including lazily encoded ones, and then rebuilds unreplayable containers the
