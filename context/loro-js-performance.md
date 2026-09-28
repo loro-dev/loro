@@ -118,7 +118,12 @@ JavaScript constant factor.
   Inside a physical ID run every element's origin-left is its predecessor, so
   the walk jumps between run starts (`SequenceIndex.nextPhysicalIdRunStart`,
   skipping single-run treap subtrees): O((runs in the subtree + 1) log n), and
-  O(log n) after a long typed run (`text-concurrent-insert-after-long-run`).
+  O(log n) after a long typed run. With a warm origin index, importing one
+  concurrent character after a 512k-character run takes 0.2–0.3 ms (0.2–0.45 ms
+  on `main`, which stopped at the origin-right bound and could misorder; 8.9–14.8
+  ms for the per-scalar walk), and `text-concurrent-insert-after-long-run` stays
+  at 0.15–0.24 ms from 64k to 512k characters (2.4 → 12.8 ms per-scalar;
+  September 28, Node 22, 1-minute load 5–25, interleaved).
 - An imported Text delete is resolved by its position in the op's causal view,
   like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
   `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
