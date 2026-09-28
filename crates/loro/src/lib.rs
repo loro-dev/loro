@@ -1473,6 +1473,12 @@ impl LoroDoc {
     /// Apply a diff to the current document state.
     ///
     /// Internally, it will apply the diff to the current state.
+    ///
+    /// A mergeable child that the batch makes visible again is handled according to
+    /// [`DiffBatch::is_full_state`]. Batches from [`LoroDoc::diff`] carry the child's full state
+    /// and are aligned with whatever hidden state this doc keeps for it, so they apply to any
+    /// doc. Other batches (e.g. built from events) are applied as increments, which is right
+    /// when this doc shares the source's hidden state.
     #[inline]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
         diff.validate_for_apply()?;

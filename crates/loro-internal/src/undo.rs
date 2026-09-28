@@ -13,7 +13,7 @@ use crate::{
     change::{get_sys_timestamp, Timestamp},
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
-    event::{Diff, EventTriggerKind},
+    event::{Diff, EventTriggerKind, KeptChange},
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
@@ -25,6 +25,15 @@ use crate::{
 pub struct DiffBatch {
     pub cid_to_events: FxHashMap<ContainerID, Diff>,
     pub order: Vec<ContainerID>,
+    /// Set on batches from [`LoroDoc::diff`]: a mergeable child the batch re-activates carries
+    /// its full state (no entry means empty), which `apply_diff` aligns with whatever hidden
+    /// state the target doc keeps at that deterministic cid. Unset batches (local events,
+    /// hand-built ones) are applied incrementally, as a doc that shares the source's hidden
+    /// state needs. Local events must stay unset: a plain re-ensure has no child entry because
+    /// the child is unchanged, which a full-state batch would read as "empty". Import and
+    /// checkout events do carry full states for revived children, so they may be set. See
+    /// context/mergeable-containers.md.
+    pub full_state: bool,
 }
 
 impl DiffBatch {
@@ -42,13 +51,60 @@ impl DiffBatch {
         Self {
             cid_to_events: map,
             order,
+            full_state: false,
         }
     }
 
+    /// Like [`DiffBatch::new`], but a container that kept its state while its event reports a
+    /// full-state revival contributes its actual change. Use it for a batch applied to the doc
+    /// it was computed on (revert, undo). See [`crate::event::KeptChange`].
+    pub(crate) fn from_changes(diff: Vec<DocDiff>) -> Self {
+        let mut map: FxHashMap<ContainerID, Diff> = Default::default();
+        let mut order: Vec<ContainerID> = Vec::with_capacity(diff.len());
+        for d in diff.into_iter() {
+            for item in d.diff.into_iter() {
+                let change = match item.kept {
+                    None => item.diff,
+                    Some(KeptChange::Unchanged) => continue,
+                    Some(KeptChange::Changed(change)) => change,
+                };
+                let old = map.insert(item.id.clone(), change);
+                assert!(old.is_none(), "Duplicate container ID in diff events");
+                order.push(item.id);
+            }
+        }
+
+        Self {
+            cid_to_events: map,
+            order,
+            full_state: false,
+        }
+    }
+
+    /// Composes `other` after `self`.
+    ///
+    /// [`DiffBatch::full_state`] composes as follows. An empty batch is the identity, so
+    /// composing into one adopts `other`'s flag. Two full-state batches stay full-state: a
+    /// mergeable child that `other` re-activates was hidden at the version where the batches
+    /// meet, so `self` has no entry for it, and a child `self` re-activated followed by
+    /// increments is still a full state. Two incremental batches stay incremental. A
+    /// full-state batch and an incremental one cannot be composed: re-activated children would
+    /// mix full states and increments on hidden state, which neither mode can apply.
+    ///
+    /// # Panics
+    ///
+    /// If both batches are non-empty and exactly one of them is full-state.
     pub fn compose(&mut self, other: &Self) {
         if other.cid_to_events.is_empty() {
             return;
         }
+        if self.cid_to_events.is_empty() {
+            self.full_state = other.full_state;
+        }
+        assert_eq!(
+            self.full_state, other.full_state,
+            "cannot compose a full-state DiffBatch with an incremental one"
+        );
 
         for (id, diff) in other.iter() {
             if let Some(this_diff) = self.cid_to_events.get_mut(id) {
@@ -75,6 +131,7 @@ impl DiffBatch {
     pub fn clear(&mut self) {
         self.cid_to_events.clear();
         self.order.clear();
+        self.full_state = false;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {
@@ -424,12 +481,17 @@ impl Stack {
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
         let mut remote_diff = remote_diff.lock();
         for e in diff {
+            // Transform against what actually changed. A re-activated mergeable child's event
+            // is its full state, but its content (and the undo items' positions in it) stayed.
+            let Some(change) = e.change() else {
+                continue;
+            };
             if let Some(d) = remote_diff.cid_to_events.get_mut(&e.id) {
-                d.compose_ref(&e.diff);
+                d.compose_ref(change);
             } else {
                 remote_diff
                     .cid_to_events
-                    .insert(e.id.clone(), e.diff.clone());
+                    .insert(e.id.clone(), change.clone());
                 remote_diff.order.push(e.id.clone());
             }
         }
