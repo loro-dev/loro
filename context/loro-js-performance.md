@@ -173,16 +173,22 @@ JavaScript constant factor.
   state after a checkout round trip in 57 of 90 seeds and the PR in none.
   The anchor model (loro-dev/loro#1137) makes such text replayable and removes
   both costs.
-- A MovableList is never `unreplayable`. Its snapshot state names each element
-  by its Rust position id (`#hydrateContainerState` takes `listItemIds` in
-  order, and after a move they include invisible positions), while a replay
-  names elements by their insert ids, and Rust encodes element ids as
-  (peer, lamport). No comparison is meaningful, so the replay replaces the
-  snapshot state on the first transition that crosses a snapshot operation, as
-  on main; a later move or set by element id then resolves. Until the
-  MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates element
-  ids, a MovableList whose loro.js replay really differs from Rust can change
-  its latest state at that point, also as on main.
+- A MovableList is not a snapshot sequence at all (`#markSnapshotSequence`);
+  it behaves as on main. Its snapshot state names each element by its Rust
+  position id (`#hydrateContainerState` takes `listItemIds` in order, and after
+  a move they include invisible positions), while a replay names elements by
+  their insert ids, and Rust encodes element ids as (peer, lamport), so no
+  comparison with a replay is meaningful. The hydrated state also has no move
+  or value history (`_moveHistoryComplete`, `_valueHistoryComplete`), so
+  `#canTransitionRecords` refuses to cross its snapshot moves, sets, and
+  deletes, and the transition replays to the target; later transitions are
+  incremental, and a later move or set by element id resolves. Replaying the
+  list to the current version and then retreating instead (as round 3 did)
+  carried loro.js's MovableList non-convergence at the latest version into
+  older versions. Until the MovableList model work (loro-dev/loro#1132 and
+  follow-ups) hydrates element ids, a MovableList whose loro.js replay differs
+  from Rust can change its latest state at the first such transition, also as
+  on main.
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
   `forkAt`) first checks the snapshot-hydrated styled Text containers,
   including lazily encoded ones, and then rebuilds unreplayable containers the
