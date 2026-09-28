@@ -199,3 +199,61 @@ fn perf_plain_diffs() {
         |(doc, batch)| doc.apply_diff(batch).unwrap(),
     );
 }
+
+/// A mergeable list `m.s` of `N` numbers, with an unknown element in the
+/// middle if `unknown`, forged from a Text without ops in the typed JSON (a
+/// string round trip would lose the mergeable marker).
+fn doc_with_mergeable_list(unknown: bool) -> LoroDoc {
+    let src = LoroDoc::new();
+    src.set_peer_id(1).unwrap();
+    let list = src.get_map("m").ensure_mergeable_list("s").unwrap();
+    for i in 0..N {
+        list.push(i as i64).unwrap();
+    }
+    if unknown {
+        list.insert_container(N / 2, LoroText::new()).unwrap();
+    }
+    src.commit();
+    let mut json =
+        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
+    for change in json.changes.iter_mut() {
+        for op in change.ops.iter_mut() {
+            if let loro::JsonOpContent::List(loro::JsonListOp::Insert { value, .. }) =
+                &mut op.content
+            {
+                for v in value.iter_mut() {
+                    if let LoroValue::Container(ContainerID::Normal { peer, counter, .. }) = v {
+                        *v = LoroValue::Container(ContainerID::new_normal(
+                            loro::ID::new(*peer, *counter),
+                            ContainerType::Unknown(9),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let doc = LoroDoc::new();
+    doc.set_peer_id(2).unwrap();
+    doc.import_json_updates(json).unwrap();
+    doc
+}
+
+#[test]
+#[ignore]
+fn perf_full_state_revival() {
+    for unknown in [false, true] {
+        let base = doc_with_mergeable_list(unknown);
+        bench(
+            &format!("full-state revive 100k mergeable list (unknown element: {unknown})"),
+            || {
+                let doc = base.fork();
+                let target = doc.state_frontiers();
+                doc.get_map("m").delete("s").unwrap();
+                doc.commit();
+                let diff = doc.diff(&doc.state_frontiers(), &target).unwrap();
+                (doc, diff)
+            },
+            |(doc, diff)| doc.apply_diff(diff).unwrap(),
+        );
+    }
+}

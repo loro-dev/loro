@@ -93,6 +93,12 @@ kept no state for it, or a plain list recreates it) is still rejected. The
 reproductions are the `full_state_revival_*` tests in
 `crates/loro/tests/unknown_container_atomicity.rs`.
 
+The plan runs only when the batch holds an unknown container value, and then
+aligns every full-state target twice (reviving a 100k-element mergeable list:
+about 5.8 ms on main, 10 ms with the plan; `perf_full_state_revival` in
+`crates/loro/tests/perf_unknown_container_apply_diff.rs`). Reusing the plan in
+the loop would save that, at the price of coupling the two further.
+
 When changing the full-state loop in `_apply_diff` or `align_full_state`, keep
 `plan_full_state_batch` in sync.
 
