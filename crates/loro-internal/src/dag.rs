@@ -83,6 +83,7 @@ pub(crate) trait DagUtils: Dag {
     /// that need every other op to be before or after the result, such as the
     /// shallow snapshot root, must use
     /// [`Self::latest_single_head_critical_version`] (loro-dev/loro#1095).
+    #[allow(unused)]
     fn find_replay_base(&self, a_id: &Frontiers, b_id: &Frontiers) -> (Frontiers, DiffMode);
     /// Like [`Self::find_replay_base`], but leaves the conservative
     /// fallback to the caller: on [`MeetAsBase::NeedsCriticalRetreat`] the

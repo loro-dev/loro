@@ -538,10 +538,6 @@ impl OpLog {
         self.dag.cmp_frontiers(a, b)
     }
 
-    pub(crate) fn get_min_lamport_at(&self, id: ID) -> Lamport {
-        self.get_change_at(id).map(|c| c.lamport).unwrap_or(0)
-    }
-
     pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
         self.get_change_at(id)
             .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
