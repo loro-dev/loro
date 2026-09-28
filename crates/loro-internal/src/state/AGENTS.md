@@ -22,8 +22,10 @@ before changing mergeable child behavior.
   [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
   before changing the richtext snapshot codec or that pass.
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
-- `dead_containers_cache.rs`: dead/alive tracking and marker-driven mergeable
-  reactivation.
+- `dead_containers_cache.rs`: dead/alive tracking. Map/list deletions are
+  final; tree and movable-list ones are dropped whenever a move could revive
+  them; mergeable ones are never cached:
+  [../../../../context/dead-container-cache.md](../../../../context/dead-container-cache.md).
 - `unknown_state.rs` and `../diff_calc/unknown.rs`: forward compatibility for
   unknown container types.
 
