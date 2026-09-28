@@ -1,31 +1,49 @@
-use super::*;
+//! `MovableListHandler::apply_delta`: turn a list delta into local movable-list
+//! ops.
+//!
+//! A delete of a child container followed by an insert of the same container
+//! id is applied as a move, so the child keeps its identity and content. The
+//! delta is applied in three passes:
+//!
+//! 1. Plan: record the delete ranges in original indices and decide which
+//!    deleted children are re-inserted ("claimed").
+//! 2. Delete every unclaimed element of the delete ranges, right to left, so
+//!    the remaining original indices stay valid.
+//! 3. Walk the delta again with a cursor in live indices. Every inserted value
+//!    is placed right after the previously placed target element: new values
+//!    and containers are inserted there, claimed children are moved there.
+//!
+//! In pass 3, `live[cursor..]` is always the unplaced claimed children of the
+//! current delete gap followed by the unmoved original elements at or after
+//! the delta position. A retain therefore skips those pending children plus
+//! the retained run. A claimed child found before the cursor was left behind by
+//! an earlier retain; moving it to `cursor - 1` keeps the cursor in place.
 
-#[derive(Debug)]
-struct ReplacementContext<'a> {
-    index: &'a mut usize,
-    index_shift: &'a mut usize,
-    to_delete: &'a mut FxHashMap<ContainerID, usize>,
-    container_remap: &'a mut FxHashMap<ContainerID, ContainerID>,
-    deleted_indices: &'a mut Vec<usize>,
-    next_deleted: &'a mut BinaryHeap<Reverse<usize>>,
+use super::*;
+use crate::{event::Index, state::ContainerState};
+use std::ops::Range;
+
+/// Pass 1 output of [`MovableListHandler::apply_delta`].
+struct MovePlan {
+    /// Delete ranges of the delta in original indices, ascending.
+    deleted: Vec<Range<usize>>,
+    /// Original indices of the deleted children that the delta re-inserts,
+    /// ascending.
+    claimed: Vec<usize>,
+    /// One entry per inserted container value, in delta order: the original
+    /// index and id of the deleted child it claims, if any.
+    claims: Vec<Option<(usize, ContainerID)>>,
 }
 
 impl MovableListHandler {
-    /// Applies a delta to the movable list handler.
+    /// Applies a list delta to the movable list.
     ///
-    /// This function processes the given delta, performing the necessary insertions,
-    /// deletions, and moves to update the list accordingly. It handles container elements,
-    /// maintains a map for remapping container IDs, and ensures proper indexing throughout
-    /// the operation.
-    ///
-    /// # Arguments
-    ///
-    /// * `delta` - A delta representing the changes to apply.
-    /// * `container_remap` - A map used to remap container IDs during the operation.
-    ///
-    /// # Returns
-    ///
-    /// * `LoroResult<()>` - Returns `Ok(())` if successful, or an error if something goes wrong.
+    /// Container values inserted by the delta move the matching child out of a
+    /// deleted range of the same delta when there is one, following
+    /// `container_remap` for children recreated by earlier undo/apply_diff
+    /// calls. Other container values create new children and record the
+    /// `old id -> new id` mapping in `container_remap`. An insert with
+    /// `from_move` whose child still exists elsewhere in the list is skipped.
     #[tracing::instrument(level = "debug", skip_all)]
     pub fn apply_delta(
         &self,
@@ -59,316 +77,225 @@ impl MovableListHandler {
             }
         }
 
-        match &self.inner {
-            MaybeDetached::Detached(_) => {
-                unimplemented!();
-            }
-            MaybeDetached::Attached(_) => {
-                // use tracing::debug;
-                // debug!(
-                //     "Movable list value before apply_delta: {:#?}",
-                //     self.get_deep_value_with_id()
-                // );
-                // debug!("Applying delta: {:#?}", &delta);
-
-                // Preprocess deletions to build a map of containers to delete.
-                let mut to_delete = self.preprocess_deletions(&delta);
-                // Process insertions and moves.
-                let mut index = 0;
-                let mut index_shift = 0;
-                let mut deleted_indices = Vec::new();
-                let mut next_deleted = BinaryHeap::new();
-                // - positive values are retain
-                // - negative values are deletions
-                let mut delta_change: Vec<isize> = Vec::new();
-
-                for delta_item in delta.iter() {
-                    match delta_item {
-                        loro_delta::DeltaItem::Retain { len, .. } => {
-                            index += len;
-                            delta_change.push(*len as isize);
-                        }
-                        loro_delta::DeltaItem::Replace {
-                            value,
-                            delete,
-                            attr,
-                        } => {
-                            // Handle deletions in the current replace operation.
-                            let old_index = index;
-                            self.handle_deletions_in_replace(
-                                *delete,
-                                &mut index,
-                                index_shift,
-                                &mut next_deleted,
-                            );
-                            delta_change.push(-((index - old_index) as isize));
-
-                            // Process the insertions and moves.
-                            let mut context = ReplacementContext {
-                                index: &mut index,
-                                index_shift: &mut index_shift,
-                                to_delete: &mut to_delete,
-                                container_remap,
-                                deleted_indices: &mut deleted_indices,
-                                next_deleted: &mut next_deleted,
-                            };
-
-                            self.process_replacements(value, attr, &mut context)?;
-                            delta_change.push(value.len() as isize);
-                        }
-                    }
-                }
-
-                // Apply any remaining deletions.
-                self.apply_remaining_deletions(delta_change, &mut deleted_indices)?;
-                Ok(())
-            }
+        if let MaybeDetached::Detached(_) = &self.inner {
+            unimplemented!();
         }
+
+        let plan = self.plan_moves(&delta, container_remap)?;
+        self.delete_unclaimed(&plan)?;
+        self.place_inserted_values(&delta, container_remap, plan)
     }
 
-    /// Preprocess deletions to build a map of containers to delete.
-    ///
-    /// # Arguments
-    ///
-    /// * `delta` - The delta containing the deletions.
-    ///
-    /// # Returns
-    ///
-    /// * `FxHashMap<ContainerID, usize>` - A map of containers to their indices that need to be deleted.
-    fn preprocess_deletions(
+    fn plan_moves(
         &self,
         delta: &loro_delta::DeltaRope<
             loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
             crate::event::ListDeltaMeta,
         >,
-    ) -> FxHashMap<ContainerID, usize> {
-        let mut index = 0;
-        let mut to_delete = FxHashMap::default();
+        container_remap: &FxHashMap<ContainerID, ContainerID>,
+    ) -> LoroResult<MovePlan> {
+        let mut deleted = Vec::new();
+        let mut deleted_children: FxHashMap<ContainerID, usize> = FxHashMap::default();
+        self.with_state(|state| {
+            let list = state.as_movable_list_state().unwrap();
+            let mut index = 0;
+            for delta_item in delta.iter() {
+                match delta_item {
+                    loro_delta::DeltaItem::Retain { len, .. } => {
+                        index += *len;
+                    }
+                    loro_delta::DeltaItem::Replace { delete, .. } => {
+                        if *delete == 0 {
+                            continue;
+                        }
 
-        for delta_item in delta.iter() {
-            match delta_item {
-                loro_delta::DeltaItem::Retain { len, .. } => {
-                    index += len;
-                }
-                loro_delta::DeltaItem::Replace { delete, .. } => {
-                    if *delete > 0 {
                         for i in index..index + *delete {
-                            if let Some(LoroValue::Container(c)) = self.get(i) {
-                                to_delete.insert(c, i);
+                            if let Some(LoroValue::Container(c)) = list.get(i, IndexType::ForUser) {
+                                deleted_children.insert(c.clone(), i);
                             }
                         }
+                        deleted.push(index..index + *delete);
                         index += *delete;
                     }
                 }
             }
-        }
+            Ok(())
+        })?;
 
-        to_delete
-    }
-
-    /// Handles deletions' effect on the index within a replace operation.
-    /// It will not perform the deletions.
-    ///
-    /// # Arguments
-    ///
-    /// * `delete_len` - The number of deletions.
-    /// * `index` - The current index in the list.
-    /// * `index_shift` - The current index shift due to previous operations.
-    /// * `next_deleted` - A heap of indices scheduled for deletion.
-    fn handle_deletions_in_replace(
-        &self,
-        delete_len: usize,
-        index: &mut usize,
-        index_shift: usize,
-        next_deleted: &mut BinaryHeap<Reverse<usize>>,
-    ) {
-        if delete_len > 0 {
-            let mut remaining_deletes = delete_len;
-            while let Some(Reverse(old_index)) = next_deleted.peek() {
-                if *old_index + index_shift < *index + remaining_deletes {
-                    assert!(*index <= *old_index + index_shift);
-                    assert!(remaining_deletes > 0);
-                    next_deleted.pop();
-                    remaining_deletes -= 1;
-                } else {
-                    break;
+        let mut claimed = Vec::new();
+        let mut claims = Vec::new();
+        if !deleted_children.is_empty() {
+            for delta_item in delta.iter() {
+                let loro_delta::DeltaItem::Replace { value, .. } = delta_item else {
+                    continue;
+                };
+                for v in value.iter() {
+                    let Some(mut id) = inserted_container_id(v) else {
+                        continue;
+                    };
+                    if !deleted_children.contains_key(&id) {
+                        while let Some(new_id) = container_remap.get(&id) {
+                            id = new_id.clone();
+                            if deleted_children.contains_key(&id) {
+                                break;
+                            }
+                        }
+                    }
+                    let claim = deleted_children.remove(&id).map(|i| (i, id));
+                    if let Some((i, _)) = &claim {
+                        claimed.push(*i);
+                    }
+                    claims.push(claim);
                 }
             }
-
-            // Increase the index by the number of deletions handled.
-            *index += remaining_deletes;
-        }
-    }
-
-    /// Processes replacements, handling insertions and moves.
-    ///
-    /// # Arguments
-    ///
-    /// * `values` - The values to insert or move.
-    /// * `attr` - Additional attributes for the delta item.
-    /// * `context` - A context struct containing related parameters.
-    fn process_replacements(
-        &self,
-        values: &loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
-        attr: &crate::event::ListDeltaMeta,
-        context: &mut ReplacementContext,
-    ) -> LoroResult<()> {
-        for v in values.iter() {
-            match v {
-                ValueOrHandler::Value(LoroValue::Container(old_id)) => {
-                    self.apply_insertion(attr, context, old_id.clone())?;
-                }
-                ValueOrHandler::Handler(handler) => {
-                    let old_id = handler.id();
-                    self.apply_insertion(attr, context, old_id)?;
-                }
-                ValueOrHandler::Value(value) => {
-                    self.insert(*context.index, value.clone())?;
-                    Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-                    *context.index += 1;
-                    *context.index_shift += 1;
-                }
-            }
+            claimed.sort_unstable();
         }
 
-        Ok(())
-    }
-
-    fn apply_insertion(
-        &self,
-        attr: &crate::event::ListDeltaMeta,
-        context: &mut ReplacementContext<'_>,
-        mut old_id: ContainerID,
-    ) -> Result<(), LoroError> {
-        if !context.to_delete.contains_key(&old_id) {
-            while let Some(new_id) = context.container_remap.get(&old_id) {
-                old_id = new_id.clone();
-                if context.to_delete.contains_key(&old_id) {
-                    break;
-                }
-            }
-        }
-        if let Some(old_index) = context.to_delete.remove(&old_id) {
-            if old_index > *context.index {
-                ensure_cov::notify_cov(
-                    "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_0",
-                );
-                self.mov(old_index, *context.index)?;
-                context.next_deleted.push(Reverse(old_index));
-                *context.index += 1;
-                *context.index_shift += 1;
-            } else {
-                ensure_cov::notify_cov(
-                    "loro_internal::handler::movable_list_apply_delta::process_replacements::mov_1",
-                );
-                self.mov(old_index, *context.index - 1)?;
-            }
-            context.deleted_indices.push(old_index);
-            Self::update_positions_on_delete(context.to_delete, old_index);
-            Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-        } else if !attr.from_move || !self.contains_container(&old_id) {
-            // Insert a new container if not moved.
-            let new_handler = self.insert_container(
-                *context.index,
-                Handler::new_unattached(old_id.container_type())?,
-            )?;
-            let new_id = new_handler.id();
-            context.container_remap.insert(old_id, new_id);
-            Self::update_positions_on_insert(context.to_delete, *context.index, 1);
-            *context.index += 1;
-            *context.index_shift += 1;
-        }
-        Ok(())
-    }
-
-    fn contains_container(&self, id: &ContainerID) -> bool {
-        (0..self.len()).any(|index| {
-            matches!(
-                self.get(index),
-                Some(LoroValue::Container(container_id)) if container_id == *id
-            )
+        Ok(MovePlan {
+            deleted,
+            claimed,
+            claims,
         })
     }
 
-    /// Applies any remaining deletions after processing insertions and moves.
-    ///
-    /// # Arguments
-    ///
-    /// * `delta` - The delta containing the deletions.
-    /// * `deleted_indices` - A list of indices that have been deleted.
-    fn apply_remaining_deletions(
-        &self,
-        delta: Vec<isize>,
-        deleted_indices: &mut Vec<usize>,
-    ) -> LoroResult<()> {
-        // Sort deleted indices from largest to smallest.
-        deleted_indices.sort_by_key(|&x| std::cmp::Reverse(x));
-
-        let mut index: usize = 0;
-        for delta_item in delta.iter() {
-            match *delta_item {
-                x if x > 0 => {
-                    index += x as usize;
+    fn delete_unclaimed(&self, plan: &MovePlan) -> LoroResult<()> {
+        let mut claimed = plan.claimed.iter().rev().peekable();
+        for range in plan.deleted.iter().rev() {
+            let mut end = range.end;
+            while let Some(&&i) = claimed.peek() {
+                if i < range.start {
+                    break;
                 }
-                neg_delete => {
-                    let delete = neg_delete.unsigned_abs();
-                    let mut remaining_deletes = delete;
-                    while let Some(&last) = deleted_indices.last() {
-                        if last < index {
-                            deleted_indices.pop();
-                            continue;
-                        }
-
-                        if last < index + remaining_deletes {
-                            deleted_indices.pop();
-                            remaining_deletes -= 1;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    self.delete(index, remaining_deletes)?;
+                debug_assert!(i < range.end);
+                claimed.next();
+                if end > i + 1 {
+                    self.delete(i + 1, end - i - 1)?;
                 }
+                end = i;
+            }
+            if end > range.start {
+                self.delete(range.start, end - range.start)?;
             }
         }
 
         Ok(())
     }
 
-    /// Updates positions in the map after an insertion.
-    ///
-    /// Increments positions that are greater than or equal to the insertion index.
-    ///
-    /// # Arguments
-    ///
-    /// * `positions` - The map of positions to update.
-    /// * `index` - The index where the insertion occurred.
-    /// * `len` - The length of the insertion.
-    fn update_positions_on_insert(
-        positions: &mut FxHashMap<ContainerID, usize>,
-        index: usize,
-        len: usize,
-    ) {
-        for pos in positions.values_mut() {
-            if *pos >= index {
-                *pos += len;
+    fn place_inserted_values(
+        &self,
+        delta: &loro_delta::DeltaRope<
+            loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
+            crate::event::ListDeltaMeta,
+        >,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        plan: MovePlan,
+    ) -> LoroResult<()> {
+        let MovePlan {
+            claimed, claims, ..
+        } = plan;
+        let mut claims = claims.into_iter();
+        let mut placed = vec![false; claimed.len()];
+        // Live index where the next target element goes
+        let mut cursor = 0;
+        // Delta position in original indices
+        let mut orig = 0;
+        // Start of the deletions since the last retain, in original indices
+        let mut gap_start = 0;
+        // Unplaced claimed children of the current gap; they are at
+        // `live[cursor..cursor + pending]`
+        let mut pending = 0;
+        for delta_item in delta.iter() {
+            match delta_item {
+                loro_delta::DeltaItem::Retain { len, .. } => {
+                    cursor += pending + *len;
+                    pending = 0;
+                    orig += *len;
+                    gap_start = orig;
+                }
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    delete,
+                    attr,
+                } => {
+                    if *delete > 0 {
+                        let start = claimed.partition_point(|&i| i < orig);
+                        let end = claimed.partition_point(|&i| i < orig + *delete);
+                        pending += placed[start..end].iter().filter(|&&p| !p).count();
+                        orig += *delete;
+                    }
+
+                    for v in value.iter() {
+                        let id = match v {
+                            ValueOrHandler::Value(LoroValue::Container(id)) => id.clone(),
+                            ValueOrHandler::Handler(h) => h.id(),
+                            ValueOrHandler::Value(v) => {
+                                self.insert(cursor, v.clone())?;
+                                cursor += 1;
+                                continue;
+                            }
+                        };
+
+                        match claims.next().flatten() {
+                            Some((orig_index, child)) => {
+                                let k = claimed.binary_search(&orig_index).unwrap();
+                                placed[k] = true;
+                                if gap_start <= orig_index && orig_index < orig {
+                                    pending -= 1;
+                                }
+                                let from = self.child_index(&child)?;
+                                if from >= cursor {
+                                    self.mov(from, cursor)?;
+                                    cursor += 1;
+                                } else {
+                                    self.mov(from, cursor - 1)?;
+                                }
+                            }
+                            None => {
+                                let mut id = id;
+                                while let Some(new_id) = container_remap.get(&id) {
+                                    id = new_id.clone();
+                                }
+                                if !attr.from_move || !self.contains_child(&id)? {
+                                    let new_handler = self.insert_container(
+                                        cursor,
+                                        Handler::new_unattached(id.container_type())?,
+                                    )?;
+                                    container_remap.insert(id, new_handler.id());
+                                    cursor += 1;
+                                }
+                            }
+                        }
+                    }
+                }
             }
+        }
+
+        debug_assert_eq!(pending, 0);
+        debug_assert!(placed.iter().all(|&p| p));
+        Ok(())
+    }
+
+    /// Live index of a child container that must be in the list.
+    fn child_index(&self, id: &ContainerID) -> LoroResult<usize> {
+        let index = self.with_state(|state| Ok(state.get_child_index(id)))?;
+        match index {
+            Some(Index::Seq(i)) => Ok(i),
+            _ => panic!(
+                "moved child {id} is missing from movable list {}",
+                self.id()
+            ),
         }
     }
 
-    /// Updates positions in the map after a deletion.
-    ///
-    /// Decrements positions that are greater than or equal to the deletion index.
-    ///
-    /// # Arguments
-    ///
-    /// * `positions` - The map of positions to update.
-    /// * `index` - The index where the deletion occurred.
-    fn update_positions_on_delete(positions: &mut FxHashMap<ContainerID, usize>, index: usize) {
-        for pos in positions.values_mut() {
-            if *pos >= index {
-                *pos -= 1;
-            }
-        }
+    fn contains_child(&self, id: &ContainerID) -> LoroResult<bool> {
+        self.with_state(|state| Ok(state.contains_child(id)))
+    }
+}
+
+fn inserted_container_id(v: &ValueOrHandler) -> Option<ContainerID> {
+    match v {
+        ValueOrHandler::Value(LoroValue::Container(id)) => Some(id.clone()),
+        ValueOrHandler::Handler(h) => Some(h.id()),
+        ValueOrHandler::Value(_) => None,
     }
 }
