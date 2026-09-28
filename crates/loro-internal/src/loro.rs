@@ -1334,7 +1334,7 @@ impl LoroDoc {
             // so in edge cases this may be an Error
             if let Err(e) = self._apply_diff(diff, container_remap, true, false) {
                 debug_assert!(
-                    !matches!(e, LoroError::ArgErr(_)),
+                    !crate::handler::is_unknown_container_creation_err(&e),
                     "the unknown container check missed {e:?}"
                 );
                 warn!("Undo Failed {:?}", e);
@@ -1597,6 +1597,10 @@ impl LoroDoc {
                 diff
             };
             if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
+                debug_assert!(
+                    !crate::handler::is_unknown_container_creation_err(&e),
+                    "the unknown container check missed {e:?} in {batch_id}"
+                );
                 ans = Err(e);
             }
         }
@@ -1700,8 +1704,18 @@ impl LoroDoc {
                     kept,
                 });
                 entry.edit.as_ref()
-            } else {
+            } else if recreated.contains(&target)
+                || container_remap.contains_key(id)
+                || !self.has_container(&target)
+                || self.state.lock().get_reachable(&target)
+            {
                 Some(diff)
+            } else {
+                // The loop skips an entry whose target is unreachable before the
+                // batch, unless an earlier entry revived it, which would have
+                // made it a target above. So its marker writes don't count (the
+                // batch order is up to the caller).
+                None
             };
 
             // A mergeable marker written by a Map diff makes its child a target
@@ -1807,8 +1821,18 @@ impl LoroDoc {
                         }
                         if let Some(c) = v.value.as_ref().and_then(diff_value_container_id) {
                             if c.is_mergeable() {
-                                // The mergeable child of a recreated map is new
-                                if fresh.contains(id) {
+                                // The loop writes the marker of `mergeable(target,
+                                // key)` and remaps `c` to it. Unless that is `c`
+                                // itself, the child is another container: new (under a
+                                // recreated map) or one this check can't see into (a
+                                // parent the undo manager already remapped, or a value
+                                // under another key). Check it as new and empty.
+                                let effective =
+                                    ContainerID::new_mergeable(&target, key, c.container_type());
+                                if fresh.contains(id)
+                                    || effective
+                                        != resolve_container_remap(c.clone(), container_remap).0
+                                {
                                     fresh.insert(c.clone());
                                 }
                                 revived.insert(c);

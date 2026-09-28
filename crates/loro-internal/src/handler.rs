@@ -232,15 +232,20 @@ fn ensure_handler_not_attached_to_other_doc(handler: &Handler, doc: &LoroDoc) ->
     }
 }
 
+const UNKNOWN_CONTAINER_CREATION_ERR_SUFFIX: &str = ": the type is unknown to this version of Loro";
+
 /// The error for operations that would create a container of a type this
 /// version doesn't know ([ContainerType::Unknown], written by a newer Loro).
 pub(crate) fn unknown_container_creation_err(kind: ContainerType) -> LoroError {
     LoroError::ArgErr(
-        format!(
-            "Cannot create a container of type {kind}: the type is unknown to this version of Loro"
-        )
-        .into_boxed_str(),
+        format!("Cannot create a container of type {kind}{UNKNOWN_CONTAINER_CREATION_ERR_SUFFIX}")
+            .into_boxed_str(),
     )
+}
+
+/// Whether `e` is [`unknown_container_creation_err`].
+pub(crate) fn is_unknown_container_creation_err(e: &LoroError) -> bool {
+    matches!(e, LoroError::ArgErr(msg) if msg.ends_with(UNKNOWN_CONTAINER_CREATION_ERR_SUFFIX))
 }
 
 /// Attaching an attached container copies its content, which is impossible for
