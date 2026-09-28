@@ -97,3 +97,44 @@ describe("tree checkout path", () => {
     expect(doc.toJSON()).toStrictEqual(direct.toJSON());
   });
 });
+
+describe("tree checkout between old versions", () => {
+  it("matches a direct checkout after scrubbing back and forth", () => {
+    const doc = docWithPeer(1n);
+    const tree = doc.getTree("tree");
+    const nodes = Array.from({ length: 30 }, () => tree.createNode().id);
+    doc.commit();
+    let seed = 7;
+    const next = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    for (let i = 0; i < 1200; i++) {
+      try {
+        tree.move(nodes[next(nodes.length)], nodes[next(nodes.length)]);
+      } catch {
+        // moving a node under its own descendant is rejected
+      }
+      if (i % 20 === 19) doc.commit();
+    }
+    doc.commit();
+
+    const versions = [
+      [{ peer: "1" as const, counter: 200 }],
+      [{ peer: "1" as const, counter: 260 }],
+      [{ peer: "1" as const, counter: 900 }],
+    ];
+    const expected = versions.map((v) => {
+      const fresh = new LoroDoc();
+      fresh.import(doc.export({ mode: "update" }));
+      fresh.checkout(v);
+      return fresh.getTree("tree").toJSON();
+    });
+    for (let round = 0; round < 3; round++) {
+      for (const [i, v] of versions.entries()) {
+        doc.checkout(v);
+        expect(doc.getTree("tree").toJSON()).toStrictEqual(expected[i]);
+      }
+    }
+  });
+});

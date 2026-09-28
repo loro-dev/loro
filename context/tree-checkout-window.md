@@ -31,6 +31,14 @@ Ops below the window are in both versions and stay as they are. Both passes
 walk `TreeOpGroup::ops` (ordered by `IdLp`), which also holds the seeded
 shallow-root entries, so they never scan nodes that did not change.
 
+The retreat pass ends at `TreeCacheForDiff::max_lamport`: no cached op has a
+greater lamport (`apply` and the shallow-root seeding raise it,
+`retreated_from` lowers it to just below the window). The group holds the
+whole history, so without that bound a checkout between two old versions
+walked every later tree op and grew linearly with the history (about 3.8 ms
+per checkout at 300k later moves). The forward pass ends at the target's max
+lamport.
+
 ## Why not the replay base
 
 Until 2026-09-28 the window started at the change-start lamport of
@@ -59,6 +67,9 @@ IDs, which is why `current_vv` has to be replaced.
 ## Tests
 
 - `crates/loro/tests/tree_checkout_path.rs`: the two repros.
+- `retreat_bound_follows_the_cached_version` (unit test in `tree.rs`) and the
+  ignored `crates/loro/tests/perf_tree_checkout_old_versions.rs` (run with
+  `--release -- --ignored`): the retreat bound.
 - `crates/fuzz/tests/checkout_path.rs`: random concurrent edits on all
   container kinds, every ordered pair of versions (including heads no peer
   had), compared with a document that imported only that version's changes,

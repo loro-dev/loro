@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, ops::RangeInclusive, sync::Arc};
 
 use fractional_index::FractionalIndex;
 use loro_common::{ContainerID, IdFull, IdLp, Lamport, PeerID, TreeID, ID};
@@ -178,9 +178,11 @@ impl TreeDiffCalculator {
             };
 
             let ops = tree_ops.ops();
-            for (idlp, op) in ops.range(IdLp::new(0, min_lamport)..) {
+            let retreat = tree_cache.retreat_range(min_lamport);
+            for (idlp, op) in retreat.map(|r| ops.range(r)).into_iter().flatten() {
                 tree_cache.take(IdFull::new(idlp.peer, op.counter, idlp.lamport), &op.value);
             }
+            tree_cache.retreated_from(min_lamport);
 
             let max_lamport = self
                 .get_max_lamport_by_frontiers(to_frontiers, oplog)
@@ -233,7 +235,8 @@ impl TreeDiffCalculator {
 
             let mut diffs = vec![];
             // retreat, newest first
-            for (idlp, op) in ops.range(IdLp::new(0, min_lamport)..).rev() {
+            let retreat = tree_cache.retreat_range(min_lamport);
+            for (idlp, op) in retreat.map(|r| ops.range(r)).into_iter().flatten().rev() {
                 let Some(op) =
                     tree_cache.take(IdFull::new(idlp.peer, op.counter, idlp.lamport), &op.value)
                 else {
@@ -279,6 +282,8 @@ impl TreeDiffCalculator {
                     );
                 }
             }
+
+            tree_cache.retreated_from(min_lamport);
 
             // forward, oldest first
             for (idlp, op) in
@@ -411,6 +416,10 @@ pub(crate) struct TreeCacheForDiff {
     /// at the shallow root (seeded with its state, or empty when the tree had
     /// no nodes there), which `current_vv` does not express yet.
     current_vv_initialized: bool,
+    /// No cached op has a greater lamport. Bounds the retreat so it does not
+    /// walk the ops above the cached version, which can be most of the
+    /// history when checking out between two old versions.
+    max_lamport: Lamport,
 }
 
 impl std::fmt::Debug for TreeCacheForDiff {
@@ -433,6 +442,19 @@ impl TreeCacheForDiff {
             op: op.clone(),
             effected: false,
         })
+    }
+
+    /// The `IdLp` range holding every cached op whose lamport is at least
+    /// `min_lamport`, or `None` when there is none.
+    fn retreat_range(&self, min_lamport: Lamport) -> Option<RangeInclusive<IdLp>> {
+        (self.max_lamport >= min_lamport)
+            .then(|| IdLp::new(0, min_lamport)..=IdLp::new(PeerID::MAX, self.max_lamport))
+    }
+
+    /// Records that every cached op whose lamport is at least `min_lamport`
+    /// has been retreated.
+    fn retreated_from(&mut self, min_lamport: Lamport) {
+        self.max_lamport = self.max_lamport.min(min_lamport.saturating_sub(1));
     }
 
     fn init_current_vv(&mut self, oplog: &OpLog) {
@@ -500,6 +522,7 @@ impl TreeCacheForDiff {
             effected = false;
         }
         node.effected = effected;
+        self.max_lamport = self.max_lamport.max(node.id.lamport);
         self.current_vv.set_last(node.id.id());
         self.tree.entry(node.op.target()).or_default().insert(node);
         effected
@@ -512,6 +535,7 @@ impl TreeCacheForDiff {
 
         debug_assert!(self.tree.is_empty());
         for node in nodes.into_iter() {
+            self.max_lamport = self.max_lamport.max(node.id.lamport);
             self.current_vv.extend_to_include_last_id(node.id.id());
             self.current_vv
                 .extend_to_include_last_id(node.op.target().id());
@@ -648,5 +672,54 @@ impl TreeParentToChildrenCache {
             }
         }
         self.cache.entry(new_parent).or_default().insert(target);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use loro_common::{TreeID, ID};
+
+    use crate::{state::TreeParentId, version::Frontiers, HandlerTrait, LoroDoc};
+
+    /// Checking out between two old versions must retreat only what the cache
+    /// holds: `max_lamport` bounds every cached op, and stays at the cached
+    /// version instead of the end of the history.
+    #[test]
+    fn retreat_bound_follows_the_cached_version() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let tree = doc.get_tree("tree");
+        let nodes: Vec<TreeID> = (0..20)
+            .map(|_| tree.create(TreeParentId::Root).unwrap())
+            .collect();
+        doc.commit_then_renew();
+        let mut versions = vec![];
+        for i in 0..400 {
+            let _ = tree.mov(nodes[i % 20], TreeParentId::Node(nodes[(i * 7 + 3) % 20]));
+            doc.commit_then_renew();
+            versions.push(doc.oplog_frontiers());
+        }
+
+        let (v1, v2) = (&versions[10], &versions[20]);
+        let lamport_of = |f: &Frontiers| {
+            let id: ID = f.as_single().unwrap();
+            doc.oplog().lock().dag.get_lamport(&id).unwrap()
+        };
+        for v in [v1, v2, v1, v2] {
+            doc.checkout(v).unwrap();
+            let (cached_max, bound) = doc.oplog().lock().with_history_cache(|h| {
+                let mark = h.ensure_importing_caches_exist();
+                let cache = h.get_tree(&tree.idx(), mark).unwrap().tree().lock();
+                let cached_max = cache
+                    .tree
+                    .values()
+                    .flat_map(|ops| ops.iter().map(|op| op.id.lamport))
+                    .max()
+                    .unwrap();
+                (cached_max, cache.max_lamport)
+            });
+            assert!(cached_max <= bound);
+            assert!(bound <= lamport_of(v));
+        }
     }
 }
