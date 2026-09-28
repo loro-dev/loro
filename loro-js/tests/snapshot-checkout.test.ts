@@ -8,9 +8,11 @@ import {
   LoroMap,
   LoroText,
   type Delta,
+  type Diff,
   type Frontiers,
   type LoroEventBatch,
 } from "../src/index";
+import { SequenceIndex } from "../src/runtime/sequence-index";
 
 /**
  * A snapshot import keeps non-root containers encoded until they are first read.
@@ -314,6 +316,105 @@ describe("checkout after a Rust rich-text snapshot import", () => {
     expect(mirror.getText("both").toDelta()).toEqual(versions[1]!.both);
     expect(mirror.getText("after").toDelta()).toEqual(versions[1]!.after);
   });
+
+  test("forks an older version from the fork's own history", () => {
+    const { bytes, versions } = styledText();
+    const deltas = (doc: LoroDoc): unknown => [
+      doc.getText("both").toDelta(),
+      doc.getText("after").toDelta(),
+    ];
+    const doc = new LoroDoc();
+    doc.import(bytes);
+    doc.checkout(versions[4]!.frontiers);
+    doc.checkoutToLatest();
+    for (const index of [0, 3, 4, 5]) {
+      const frontiers = versions[index]!.frontiers;
+      doc.checkout(frontiers);
+      const checkedOut = doc.fork();
+      doc.checkoutToLatest();
+      for (const fork of [doc.forkAt(frontiers), checkedOut]) {
+        // The fork has no operation after its version, so its state is the
+        // replay of its own operations: exports, imports, and local edits agree
+        // with a document that only replays them.
+        const replay = new LoroDoc();
+        replay.configTextStyle({ keep: { expand: "both" }, bold: { expand: "after" } });
+        replay.import(fork.export({ mode: "update" }));
+        expect(deltas(fork)).toEqual(deltas(replay));
+        fork.import(bytes);
+        replay.import(bytes);
+        expect(deltas(fork)).toEqual(deltas(replay));
+        fork.getText("after").insert(0, "Q");
+        fork.commit();
+        replay.import(fork.export({ mode: "update", from: replay.oplogVersion() }));
+        expect(deltas(fork)).toEqual(deltas(replay));
+      }
+    }
+    // Before the insert next to the mark, the replay matches Rust.
+    expect(doc.forkAt(versions[4]!.frontiers).getText("after").toDelta()).toEqual(
+      versions[4]!.after,
+    );
+  });
+
+  test("keeps the snapshot state when checking a replay throws", () => {
+    const { bytes, versions } = styledText();
+    const latest = versions.at(-1)!;
+    const failOnce = (
+      target: object,
+      method: "visibleIdRuns" | "_swapState",
+      call: number,
+    ): (() => void) => {
+      const original = (target as Record<string, (...args: unknown[]) => unknown>)[
+        method
+      ]!;
+      let calls = 0;
+      const spy = vi
+        .spyOn(target as Record<string, (...args: unknown[]) => unknown>, method)
+        .mockImplementation(function (this: unknown, ...args: unknown[]) {
+          calls += 1;
+          if (calls === call) throw new Error("injected");
+          return original.apply(this, args);
+        });
+      return () => spy.mockRestore();
+    };
+    const failures: unknown[] = [];
+    for (const operation of ["checkout", "diff"] as const) {
+      for (const method of ["visibleIdRuns", "_swapState"] as const) {
+        for (let call = 1; call <= 4; call += 1) {
+          const doc = new LoroDoc();
+          doc.import(bytes);
+          const text = doc.getText("after");
+          const restore = failOnce(
+            method === "visibleIdRuns" ? SequenceIndex.prototype : text,
+            method,
+            call,
+          );
+          try {
+            if (operation === "checkout") doc.checkout(versions[4]!.frontiers);
+            else doc.diff(latest.frontiers, versions[4]!.frontiers, false);
+          } catch (error) {
+            failures.push({
+              message: (error as Error).message,
+              detached: doc.isDetached(),
+              after: text.toDelta(),
+            });
+          } finally {
+            restore();
+          }
+          // A retry and the export still see the snapshot state.
+          doc.checkout(versions[4]!.frontiers);
+          doc.checkoutToLatest();
+          expect(text.toDelta()).toEqual(latest.after);
+          const again = new LoroDoc();
+          again.import(doc.export({ mode: "snapshot" }));
+          expect(again.getText("after").toDelta()).toEqual(latest.after);
+        }
+      }
+    }
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures).toEqual(
+      failures.map(() => ({ message: "injected", detached: false, after: latest.after })),
+    );
+  });
 });
 
 /**
@@ -416,6 +517,131 @@ describe("latest state of Rust rich text across checkouts", () => {
       }
     });
   }
+});
+
+/**
+ * `movable-moves.json` is a Rust history of MovableList `ml` (peer 1): insert
+ * 0, 1, 2 (version 0); move(0, 2) (version 1, snapshot `moved`); insert(0, 9)
+ * (version 2, snapshot `inserted`). `values` are Rust's values at each version.
+ * `update` is peer 2's move(2, 0) and set(1, 7) on `moved`, and `merged` is
+ * Rust's value after it.
+ */
+interface MovableMoves {
+  readonly moved: string;
+  readonly inserted: string;
+  readonly update: string;
+  readonly versions: readonly Frontiers[];
+  readonly values: readonly (readonly number[])[];
+  readonly merged: readonly number[];
+}
+
+const applyListDiff = (values: readonly unknown[], diff: Diff): unknown[] => {
+  if (diff.type !== "list") throw new Error(`unexpected ${diff.type} diff`);
+  const result: unknown[] = [];
+  let index = 0;
+  for (const item of diff.diff) {
+    if ("retain" in item) {
+      result.push(...values.slice(index, index + item.retain));
+      index += item.retain;
+    } else if ("delete" in item) {
+      index += item.delete;
+    } else {
+      result.push(...item.insert);
+    }
+  }
+  return [...result, ...values.slice(index)];
+};
+
+describe("checkout after a Rust MovableList snapshot with a move", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/rust/movable-moves.json", import.meta.url), "utf8"),
+  ) as MovableMoves;
+  const { versions, values } = fixture;
+  const load = (snapshot = fixture.moved): LoroDoc => {
+    const doc = new LoroDoc();
+    doc.import(decodeBase64(snapshot));
+    return doc;
+  };
+
+  // The hydrated state names a moved element by its Rust position id, so the
+  // list takes the replay of its history, as on main.
+  test("checks out, diffs, forks, and reverts to the version before the move", () => {
+    const doc = load();
+    const list = doc.getMovableList("ml");
+    let mirror: unknown[] = list.toJSON();
+    doc.subscribe((batch: LoroEventBatch) => {
+      for (const event of batch.events) {
+        if (event.target === list.id) mirror = applyListDiff(mirror, event.diff);
+      }
+    });
+    for (const [frontiers, value] of [
+      [versions[0]!, values[0]!],
+      [versions[1]!, values[1]!],
+      [versions[0]!, values[0]!],
+    ] as const) {
+      doc.checkout(frontiers);
+      expect(list.toJSON()).toEqual(value);
+      expect(mirror).toEqual(value);
+    }
+    doc.checkoutToLatest();
+    expect(list.toJSON()).toEqual(values[1]);
+    expect(mirror).toEqual(values[1]);
+
+    const diffed = load();
+    const diff = diffed
+      .diff(versions[1]!, versions[0]!, false)
+      .find(([id]) => id === diffed.getMovableList("ml").id);
+    expect(applyListDiff(values[1]!, diff![1])).toEqual(values[0]);
+    expect(diffed.getMovableList("ml").toJSON()).toEqual(values[1]);
+
+    expect(load().forkAt(versions[0]!).getMovableList("ml").toJSON()).toEqual(values[0]);
+
+    const reverted = load();
+    reverted.revertTo(versions[0]!);
+    reverted.commit();
+    expect(reverted.getMovableList("ml").toJSON()).toEqual(values[0]);
+    const again = new LoroDoc();
+    again.import(reverted.export({ mode: "snapshot" }));
+    expect(again.getMovableList("ml").toJSON()).toEqual(values[0]);
+  });
+
+  test("applies a later move by element after a checkout round trip", () => {
+    const doc = load();
+    doc.checkout(versions[0]!);
+    doc.checkoutToLatest();
+    doc.import(decodeBase64(fixture.update));
+    expect(doc.getMovableList("ml").toJSON()).toEqual(fixture.merged);
+  });
+
+  test("moves by delta once the first checkout replayed it", () => {
+    const doc = load();
+    const list = doc.getMovableList("ml");
+    doc.checkout(versions[0]!);
+    doc.checkoutToLatest();
+    const reset = vi.spyOn(list, "_reset");
+    for (let round = 0; round < 3; round += 1) {
+      doc.checkout(versions[0]!);
+      expect(list.toJSON()).toEqual(values[0]);
+      doc.checkoutToLatest();
+      expect(list.toJSON()).toEqual(values[1]);
+    }
+    expect(reset).not.toHaveBeenCalled();
+  });
+
+  test("forks before the move from the fork's own history", () => {
+    for (const roundTrip of [false, true]) {
+      const doc = load(fixture.inserted);
+      if (roundTrip) {
+        doc.checkout(versions[0]!);
+        doc.checkoutToLatest();
+      }
+      const fork = doc.forkAt(versions[0]!);
+      expect(fork.getMovableList("ml").toJSON()).toEqual(values[0]);
+      fork.import(decodeBase64(fixture.inserted));
+      expect(fork.getMovableList("ml").toJSON()).toEqual(values[2]);
+      expect(fork.oplogFrontiers()).toEqual(doc.oplogFrontiers());
+    }
+  });
 });
 
 describe("checkout events after a lazy snapshot import", () => {
