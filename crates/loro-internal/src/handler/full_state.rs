@@ -28,11 +28,15 @@ use rustc_hash::{FxHashMap, FxHashSet};
 ///
 /// Child containers that keep their id are added to `full_state_targets`: their own diffs in
 /// the batch are full states as well.
+///
+/// A counter is aligned by incrementing it here, unless `dry_run` is set. The dry run lets
+/// `LoroDoc::_apply_diff` see which edits a full-state batch turns into before applying any.
 pub(crate) fn align_full_state(
     handler: &Handler,
     target: Diff,
     current: Diff,
     full_state_targets: &mut FxHashSet<ContainerID>,
+    #[cfg_attr(not(feature = "counter"), allow(unused_variables))] dry_run: bool,
 ) -> LoroResult<Option<Diff>> {
     match (target, current) {
         (Diff::Map(target), Diff::Map(current)) => {
@@ -42,7 +46,7 @@ pub(crate) fn align_full_state(
         (Diff::Counter(target), Diff::Counter(current)) => {
             if let Handler::Counter(counter) = handler {
                 let delta = target - current;
-                if delta != 0.0 {
+                if delta != 0.0 && !dry_run {
                     counter.increment(delta)?;
                 }
             }

@@ -546,3 +546,195 @@ fn random_edits_without_unknown_containers_are_accepted() {
         assert_eq!(random_case_as(seed, false).0, 0, "seed {seed}");
     }
 }
+
+// Full-state batches (`LoroDoc::diff`) align a re-activated mergeable child
+// with the state this doc kept for it. Keeping an unknown container there
+// creates nothing, so it must be accepted; only the edits that alignment
+// actually applies may be rejected.
+
+/// The four places an unknown container can sit in a mergeable child `m.s`.
+#[derive(Clone, Copy, Debug)]
+enum Holder {
+    Map,
+    List,
+    MovableList,
+    TreeMeta,
+}
+
+const HOLDERS: [Holder; 4] = [
+    Holder::Map,
+    Holder::List,
+    Holder::MovableList,
+    Holder::TreeMeta,
+];
+
+/// Builds `m.s` of the given kind holding an edited unknown container U and
+/// a plain value.
+fn build_holder(doc: &LoroDoc, holder: Holder) {
+    let m = doc.get_map("m");
+    match holder {
+        Holder::Map => {
+            let s = m.ensure_mergeable_map("s").unwrap();
+            edited_counter(s.insert_container("u", counter()).unwrap());
+            s.insert("x", 1).unwrap();
+        }
+        Holder::List => {
+            let s = m.ensure_mergeable_list("s").unwrap();
+            edited_counter(s.insert_container(0, counter()).unwrap());
+            s.push(1).unwrap();
+        }
+        Holder::MovableList => {
+            let s = m.ensure_mergeable_movable_list("s").unwrap();
+            s.push("a").unwrap();
+            edited_counter(s.insert_container(1, counter()).unwrap());
+        }
+        Holder::TreeMeta => {
+            let s = m.ensure_mergeable_tree("s").unwrap();
+            let node = s.create(None).unwrap();
+            let meta = s.get_meta(node).unwrap();
+            edited_counter(meta.insert_container("u", counter()).unwrap());
+            meta.insert("x", 1).unwrap();
+        }
+    }
+}
+
+/// Adds a plain value to the (visible) `m.s`.
+fn add_plain_value(doc: &LoroDoc, holder: Holder) {
+    let m = doc.get_map("m");
+    match holder {
+        Holder::Map => m.ensure_mergeable_map("s").unwrap().insert("y", 2).unwrap(),
+        Holder::List => m.ensure_mergeable_list("s").unwrap().push(2).unwrap(),
+        Holder::MovableList => m
+            .ensure_mergeable_movable_list("s")
+            .unwrap()
+            .push("b")
+            .unwrap(),
+        Holder::TreeMeta => {
+            m.ensure_mergeable_tree("s").unwrap().create(None).unwrap();
+        }
+    }
+}
+
+/// The id of the unknown container U in the visible `m.s`.
+fn unknown_in_holder(doc: &LoroDoc, holder: Holder) -> ContainerID {
+    let m = doc.get_map("m");
+    let v = match holder {
+        Holder::Map => m.ensure_mergeable_map("s").unwrap().get("u"),
+        Holder::List => m.ensure_mergeable_list("s").unwrap().get(0),
+        Holder::MovableList => m.ensure_mergeable_movable_list("s").unwrap().get(1),
+        Holder::TreeMeta => {
+            let tree = m.ensure_mergeable_tree("s").unwrap();
+            tree.get_meta(tree.roots()[0]).unwrap().get("u")
+        }
+    };
+    let id = v.unwrap().into_container().unwrap().id();
+    assert!(id.is_unknown(), "{holder:?}: {id}");
+    id
+}
+
+/// With the target state `same` as the hidden one, or hidden `m.s` holding
+/// an extra plain value (`different`), re-activating `m.s` from a full-state
+/// batch only keeps U. It used to be rejected as creating U.
+#[test]
+fn full_state_revival_keeps_existing_unknown_containers() {
+    for holder in HOLDERS {
+        for different in [false, true] {
+            let doc = forge(|doc| build_holder(doc, holder));
+            let target = doc.state_frontiers();
+            let expected = state(&doc).0;
+            let unknown = unknown_in_holder(&doc, holder);
+            if different {
+                add_plain_value(&doc, holder);
+            }
+            doc.get_text("t").insert(0, "x").unwrap();
+            doc.get_map("m").delete("s").unwrap();
+            doc.commit();
+
+            let batch = doc.diff(&doc.state_frontiers(), &target).unwrap();
+            assert!(batch.is_full_state());
+            doc.apply_diff(batch)
+                .unwrap_or_else(|e| panic!("{holder:?} different={different}: {e:?}"));
+            assert_eq!(
+                state(&doc).0["m"],
+                expected["m"],
+                "{holder:?} different={different}"
+            );
+            assert_eq!(
+                unknown_in_holder(&doc, holder),
+                unknown,
+                "{holder:?} different={different}"
+            );
+        }
+    }
+}
+
+/// Applied to a doc that has no hidden state for `m.s`, the same full-state
+/// batch would have to create U: rejected before anything is written.
+#[test]
+fn full_state_revival_without_hidden_unknown_is_rejected_atomically() {
+    for holder in HOLDERS {
+        let src = forge(|doc| {
+            doc.get_map("m").insert("k", 0).unwrap();
+            build_holder(doc, holder)
+        });
+        let target = src.state_frontiers();
+        src.get_map("m").delete("s").unwrap();
+        src.commit();
+        let batch = src.diff(&src.state_frontiers(), &target).unwrap();
+        assert!(batch.is_full_state());
+
+        // Same visible state as `src`, but `m.s` never existed
+        let doc = LoroDoc::new();
+        doc.get_map("m").insert("k", 0).unwrap();
+        doc.get_text("t").insert(0, "x").unwrap();
+        doc.commit();
+        let mut with_witness = DiffBatch::default();
+        with_witness
+            .push(
+                ContainerID::new_root("t", ContainerType::Text),
+                Diff::Text(vec![loro::TextDelta::Insert {
+                    insert: "partial".into(),
+                    attributes: None,
+                }]),
+            )
+            .unwrap();
+        for (id, diff) in batch.iter() {
+            with_witness.push(id.clone(), diff.clone()).unwrap();
+        }
+        with_witness.set_full_state(true);
+        assert!(
+            atomic(&doc, |d| d.apply_diff(with_witness)),
+            "{holder:?} was not rejected"
+        );
+    }
+}
+
+/// A hidden child that full-state alignment keeps (`m.s.l`) is still aligned
+/// although it is unreachable before the batch. If its aligned edit has to
+/// create U, the batch is rejected before anything is written.
+#[test]
+fn full_state_revival_that_recreates_unknown_in_a_kept_child_is_rejected_atomically() {
+    let doc = forge(|doc| {
+        let s = doc.get_map("m").ensure_mergeable_map("s").unwrap();
+        let l = s.insert_container("l", LoroList::new()).unwrap();
+        edited_counter(l.insert_container(0, counter()).unwrap());
+        l.push(1).unwrap();
+    });
+    let target = doc.state_frontiers();
+    let s = doc.get_map("m").ensure_mergeable_map("s").unwrap();
+    let l = s
+        .get("l")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_list()
+        .unwrap();
+    l.delete(0, 1).unwrap();
+    doc.get_text("t").insert(0, "x").unwrap();
+    doc.get_map("m").delete("s").unwrap();
+    doc.commit();
+
+    let batch = doc.diff(&doc.state_frontiers(), &target).unwrap();
+    assert!(batch.is_full_state());
+    assert!(atomic(&doc, |d| d.apply_diff(batch)));
+}
