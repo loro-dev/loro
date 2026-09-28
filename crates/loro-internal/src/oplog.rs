@@ -31,7 +31,7 @@ use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
 use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
@@ -71,6 +71,13 @@ pub(crate) struct ImportRollback {
     /// Movable-list `Move`/`Set` element references inserted in this scope and not
     /// validated yet (`OpLog::validate_movable_list_elem_refs_in_import_scope`).
     movable_list_refs: Vec<MovableListElemRef>,
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedElem {
+    target: ID,
+    container: ContainerIdx,
+    is_insert: bool,
 }
 
 struct MovableListElemRef {
@@ -1197,8 +1204,14 @@ impl OpLog {
             return Ok(());
         };
         let refs = std::mem::take(&mut rollback.movable_list_refs);
+        // Moves and sets keep hitting the same elements, and what an element id
+        // resolves to does not depend on the op, so resolve each one once.
+        let mut elems: FxHashMap<IdLp, Option<ResolvedElem>> = FxHashMap::default();
         for r in refs {
-            if !self.is_visible_movable_list_elem(r.container, r.op_id, r.op_lamport, r.elem_id) {
+            let elem = *elems
+                .entry(r.elem_id)
+                .or_insert_with(|| self.resolve_movable_list_elem(r.elem_id));
+            if !self.is_visible_movable_list_elem(&r, elem) {
                 return Err(LoroError::DecodeError(
                     format!(
                         "Movable list op {} targets element {}, which is not in the list's \
@@ -1213,58 +1226,58 @@ impl OpLog {
         Ok(())
     }
 
-    fn is_visible_movable_list_elem(
-        &self,
-        container: ContainerIdx,
-        op_id: ID,
-        op_lamport: Lamport,
-        elem_id: IdLp,
-    ) -> bool {
-        if elem_id.lamport >= op_lamport {
-            return false;
-        }
-
-        // History before a shallow root is trimmed. An op after the root can only
-        // see pre-root elements that are still alive at the root.
-        let is_shallow = !self.dag.shallow_since_vv().is_empty();
-        let in_shallow_root = || {
-            is_shallow
-                && self.with_history_cache(|h| {
-                    h.shallow_root_has_movable_list_elem(container, elem_id)
-                })
-        };
-        // The lookup searches both parsed and KV-only blocks of the peer, so a miss
-        // means the lamport is not in the stored history: either it never existed or
-        // it was trimmed before a shallow root.
-        let Some(change) = self.change_store.get_change_by_lamport_lte(elem_id) else {
-            return in_shallow_root();
-        };
+    /// Where `elem_id`'s insert op lives, or `None` if its lamport is not in the stored
+    /// history. The lookup searches both parsed and KV-only blocks of the peer, so
+    /// `None` means the element never existed or was trimmed before a shallow root.
+    fn resolve_movable_list_elem(&self, elem_id: IdLp) -> Option<ResolvedElem> {
+        let change = self.change_store.get_change_by_lamport_lte(elem_id)?;
         if change.lamport_end() <= elem_id.lamport {
-            return in_shallow_root();
+            return None;
         }
         let target = ID::new(
             change.id.peer,
             (elem_id.lamport - change.lamport) as Counter + change.id.counter,
         );
+        let op = change.get_op_with_counter(target.counter)?;
+        Some(ResolvedElem {
+            target,
+            container: op.container,
+            is_insert: matches!(
+                op.content,
+                InnerContent::List(list_op::InnerListOp::Insert { .. })
+            ),
+        })
+    }
 
-        let causal = (target.peer == op_id.peer && target.counter < op_id.counter)
-            || self
-                .dag
-                .get_vv(op_id)
-                .is_some_and(|vv| vv.includes_id(target));
-        if !causal {
+    fn is_visible_movable_list_elem(
+        &self,
+        r: &MovableListElemRef,
+        elem: Option<ResolvedElem>,
+    ) -> bool {
+        if r.elem_id.lamport >= r.op_lamport {
             return false;
         }
 
-        change
-            .get_op_with_counter(target.counter)
-            .is_some_and(|op| {
-                op.container == container
-                    && matches!(
-                        op.content,
-                        InnerContent::List(list_op::InnerListOp::Insert { .. })
-                    )
-            })
+        let Some(elem) = elem else {
+            // History before a shallow root is trimmed. An op after the root can
+            // only see pre-root elements that are still alive at the root.
+            return !self.dag.shallow_since_vv().is_empty()
+                && self.with_history_cache(|h| {
+                    h.shallow_root_has_movable_list_elem(r.container, r.elem_id)
+                });
+        };
+        if !elem.is_insert || elem.container != r.container {
+            return false;
+        }
+
+        // Earlier ops of the op's own DAG node are by the same peer, so the node's
+        // start version covers every other peer's part of its causal history.
+        let target = elem.target;
+        (target.peer == r.op_id.peer && target.counter < r.op_id.counter)
+            || self
+                .dag
+                .get(r.op_id)
+                .is_some_and(|node| self.dag.ensure_vv_for(&node).includes_id(target))
     }
 
     #[allow(unused)]
