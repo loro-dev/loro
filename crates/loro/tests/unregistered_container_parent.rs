@@ -400,6 +400,77 @@ fn failed_import_that_loads_an_old_change() {
     assert!(dst.get_tree("tree").get_meta(child).unwrap().is_deleted());
 }
 
+/// loro-dev/loro#1161: parsing a change also allocates its ops' values in the arena, and
+/// the rollback of a failed import truncates them. A change the failed import loaded kept
+/// value slices past the end, and a later checkout that read them panicked.
+#[test]
+fn failed_import_that_loads_old_movable_list_values() {
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let list = a.get_movable_list("ml");
+    for i in 0..20 {
+        list.insert(i, format!("v{i}")).unwrap();
+        a.commit();
+    }
+    let inserted = a.oplog_frontiers();
+    for i in 0..20 {
+        list.set(i, format!("s{i}")).unwrap();
+        a.commit();
+    }
+    for i in 0..3000 {
+        a.get_map("m").insert("k", i).unwrap();
+        a.commit();
+    }
+    let snapshot = a.export(ExportMode::Snapshot).unwrap();
+    let vv = a.oplog_vv();
+
+    for edit in ["set", "move"] {
+        // Peer 4 edits the movable list, whose history the import's diff loads, then
+        // inserts a list element far out of bounds, which the state rejects.
+        let e = import(&snapshot);
+        e.set_peer_id(4).unwrap();
+        match edit {
+            "set" => e.get_movable_list("ml").set(3, "x").unwrap(),
+            _ => e.get_movable_list("ml").mov(2, 7).unwrap(),
+        }
+        e.get_list("list").insert(0, 1).unwrap();
+        e.get_list("list").insert(1, 2).unwrap();
+        e.commit();
+        let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+        let last_op = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap();
+        last_op["content"]["pos"] = 1000.into();
+        let carrier = import(&snapshot);
+        carrier.detach();
+        carrier
+            .import_json_updates(serde_json::to_string(&json).unwrap())
+            .unwrap();
+        let bad = carrier.export(ExportMode::updates(&vv)).unwrap();
+
+        let dst = import(&snapshot);
+        let reference = import(&snapshot);
+        for doc in [&dst, &reference] {
+            // Registered before the import, so only the values are rolled back.
+            doc.get_movable_list("ml");
+            doc.get_map("m");
+        }
+        dst.import(&bad)
+            .expect_err("the out-of-bounds list insert must fail the import");
+        for doc in [&dst, &reference] {
+            doc.checkout(&inserted).unwrap();
+        }
+        let value = |doc: &LoroDoc| doc.get_deep_value().to_json_value();
+        assert_eq!(value(&dst), value(&reference), "{edit}");
+        for doc in [&dst, &reference] {
+            doc.checkout_to_latest();
+        }
+        assert_eq!(value(&dst), value(&reference), "{edit}");
+    }
+}
+
 /// Querying these metas resolves their parents through the change store without the op
 /// log lock, while other threads read the store under it. A lock-order inversion inside
 /// the store deadlocked (about every other run of 3000 trials hit it);
