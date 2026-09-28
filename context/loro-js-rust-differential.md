@@ -33,7 +33,10 @@ per runtime with the same peer ID. Actions:
 - `sync` by binary or JSON updates, within a runtime or crossed (Rust imports
   the loro.js peer's updates and loro.js imports Rust's), so each side reads
   the other's positions;
-- `checkout` to a recorded version and back;
+- `checkout` to two versions in a row, then back to the latest: each is a
+  recorded commit version or the version right after a random op, which can
+  split a change or an op (a mark with only its start anchor, for example), so
+  transitions also run between historical and mid-change versions;
 - full and shallow snapshot export from either runtime, imported into both;
 - cursor creation, then cursor resolution after every later step;
 - `revertTo` and undo/redo.
