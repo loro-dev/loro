@@ -65,7 +65,6 @@ pub struct OpLog {
 }
 
 pub(crate) struct ImportRollback {
-    old_vv: VersionVector,
     arena: SharedArenaRollback,
     change_store: ChangeStoreRollback,
     pending: PendingChangesRollback,
@@ -253,7 +252,8 @@ impl OpLog {
         let rollback_old_vv = self
             .import_rollback
             .as_ref()
-            .and_then(|x| (!x.old_vv.is_empty()).then_some(&x.old_vv));
+            .map(|x| x.change_store.old_vv())
+            .filter(|vv| !vv.is_empty());
         self.dag
             .handle_new_change(&change, from_local, rollback_old_vv);
         self.history_cache
@@ -297,12 +297,10 @@ impl OpLog {
 
     pub(crate) fn begin_import_rollback_with_arena(&mut self, arena: SharedArenaRollback) {
         debug_assert!(self.import_rollback.is_none());
-        let old_vv = self.vv().clone();
         self.dag.begin_import_rollback();
         self.import_rollback = Some(ImportRollback {
-            old_vv: old_vv.clone(),
             arena,
-            change_store: ChangeStoreRollback::new(old_vv),
+            change_store: ChangeStoreRollback::new(self.vv().clone()),
             pending: Default::default(),
             movable_list_refs: Vec::new(),
         });
@@ -1239,12 +1237,19 @@ impl OpLog {
                     h.shallow_root_has_movable_list_elem(container, elem_id)
                 })
         };
-        // `idlp_to_id` searches both parsed and KV-only blocks of the peer, so `None`
+        // The lookup searches both parsed and KV-only blocks of the peer, so a miss
         // means the lamport is not in the stored history: either it never existed or
         // it was trimmed before a shallow root.
-        let Some(target) = self.idlp_to_id(elem_id) else {
+        let Some(change) = self.change_store.get_change_by_lamport_lte(elem_id) else {
             return in_shallow_root();
         };
+        if change.lamport_end() <= elem_id.lamport {
+            return in_shallow_root();
+        }
+        let target = ID::new(
+            change.id.peer,
+            (elem_id.lamport - change.lamport) as Counter + change.id.counter,
+        );
 
         let causal = (target.peer == op_id.peer && target.counter < op_id.counter)
             || self
@@ -1255,17 +1260,15 @@ impl OpLog {
             return false;
         }
 
-        match self.get_op_that_includes(target) {
-            Some(op) => {
+        change
+            .get_op_with_counter(target.counter)
+            .is_some_and(|op| {
                 op.container == container
                     && matches!(
                         op.content,
                         InnerContent::List(list_op::InnerListOp::Insert { .. })
                     )
-            }
-            None if self.dag.shallow_since_vv().includes_id(target) => in_shallow_root(),
-            None => false,
-        }
+            })
     }
 
     #[allow(unused)]

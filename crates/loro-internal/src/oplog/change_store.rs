@@ -164,6 +164,11 @@ impl ChangeStoreRollback {
         }
     }
 
+    /// The version when the import scope began.
+    pub(crate) fn old_vv(&self) -> &VersionVector {
+        &self.old_vv
+    }
+
     fn record_block_before_mutation(&mut self, id: ID, block: &ChangesBlock) {
         let old_end = self.old_vv.get(&id.peer).copied().unwrap_or(0);
         if id.counter >= old_end {
