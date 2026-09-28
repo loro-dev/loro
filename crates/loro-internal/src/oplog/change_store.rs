@@ -133,7 +133,27 @@ struct ChangeStoreInner {
 #[derive(Debug)]
 pub(crate) struct ChangeStoreRollback {
     old_vv: VersionVector,
-    blocks_before_mutation: BTreeMap<ID, Arc<ChangesBlock>>,
+    /// Pre-scope blocks that an import appended to, keyed by block id. `None` means the
+    /// block was flushed, so its KV copy is the pre-scope version.
+    blocks_before_mutation: BTreeMap<ID, Option<BlockShape>>,
+}
+
+/// What an unflushed block looked like before an import appended to it.
+///
+/// Imports only append to a block (`ChangesBlock::push_change`): they push changes,
+/// or push ops onto its last change, where an op may merge into the last op. So the
+/// shape only needs the change count, the last change's op count and its last op.
+/// Keeping an `Arc` of the whole block instead made the next append copy the block's
+/// changes, and cloning the last change costs as much once remote changes keep
+/// merging into it.
+#[derive(Debug)]
+struct BlockShape {
+    counter_end: Counter,
+    lamport_end: Lamport,
+    estimated_size: usize,
+    n_changes: usize,
+    /// `(merged op count, last op)` of the last change.
+    last_change_ops: Option<(usize, Option<Op>)>,
 }
 
 impl ChangeStoreRollback {
@@ -144,13 +164,28 @@ impl ChangeStoreRollback {
         }
     }
 
-    fn record_block_before_mutation(&mut self, id: ID, block: Arc<ChangesBlock>) {
+    fn record_block_before_mutation(&mut self, id: ID, block: &ChangesBlock) {
         let old_end = self.old_vv.get(&id.peer).copied().unwrap_or(0);
         if id.counter >= old_end {
             return;
         }
 
-        self.blocks_before_mutation.entry(id).or_insert(block);
+        self.blocks_before_mutation.entry(id).or_insert_with(|| {
+            if block.flushed {
+                return None;
+            }
+            let changes = block
+                .content
+                .try_changes()
+                .expect("an unflushed block always holds parsed changes");
+            Some(BlockShape {
+                counter_end: block.counter_range.1,
+                lamport_end: block.lamport_range.1,
+                estimated_size: block.estimated_size,
+                n_changes: changes.len(),
+                last_change_ops: changes.last().map(|c| (c.ops.len(), c.ops.last().cloned())),
+            })
+        });
     }
 }
 
@@ -365,9 +400,35 @@ impl ChangeStore {
             keep
         });
 
-        for (id, block) in rollback.blocks_before_mutation {
+        for (id, shape) in rollback.blocks_before_mutation {
             touched_peers.insert(id.peer);
-            inner.mem_parsed_kv.insert(id, block);
+            let Some(shape) = shape else {
+                // Flushed before the scope: the KV copy is the pre-scope block.
+                inner.mem_parsed_kv.remove(&id);
+                continue;
+            };
+            let block = inner
+                .mem_parsed_kv
+                .get_mut(&id)
+                .expect("a block appended to during the scope stays cached");
+            let block = Arc::make_mut(block);
+            let changes = Arc::make_mut(
+                block
+                    .content
+                    .changes_mut(&self.arena)
+                    .expect("an unflushed block always holds parsed changes"),
+            );
+            changes.truncate(shape.n_changes);
+            if let Some((n_ops, last_op)) = shape.last_change_ops {
+                let ops = changes.last_mut().unwrap().ops.vec_mut();
+                ops.truncate(n_ops);
+                if let Some(last_op) = last_op {
+                    *ops.last_mut().unwrap() = last_op;
+                }
+            }
+            block.counter_range.1 = shape.counter_end;
+            block.lamport_range.1 = shape.lamport_end;
+            block.estimated_size = shape.estimated_size;
         }
 
         // `insert_change_inner` merges a change into the cached block right before it.
@@ -1019,7 +1080,7 @@ mod mut_inner_kv {
                     }
 
                     if let Some(rollback) = &mut rollback {
-                        rollback.record_block_before_mutation(*_id, block.clone());
+                        rollback.record_block_before_mutation(*_id, block);
                     }
 
                     match block.push_change(
@@ -2114,6 +2175,70 @@ mod test {
         store.insert_change(next, true, false);
         assert!(store.get_change(ID::new(1, end)).is_some());
         assert!(store.get_change(ID::new(1, 0)).is_some());
+    }
+
+    #[test]
+    fn rollback_restores_unflushed_block_that_was_appended_to() {
+        // The rollback keeps only the shape of a block an import appended to and
+        // truncates back to it. Appends both push changes and merge ops into the last
+        // change, so the restored store must encode exactly like one that never saw
+        // the rolled-back changes.
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // Keep the commits as separate changes; the store below merges them itself.
+        doc.set_change_merge_interval(-1);
+        let text = doc.get_text("t");
+        for i in 0..40 {
+            text.insert(i, "a", PosType::Unicode).unwrap();
+            if i % 3 == 0 {
+                doc.get_map("m").insert("k", i as i64).unwrap();
+            }
+            doc.commit_then_renew();
+        }
+        let mut changes = Vec::new();
+        let arena = {
+            let oplog = doc.oplog().lock();
+            oplog
+                .change_store
+                .visit_all_changes(&mut |c| changes.push(c.clone()));
+            oplog.arena.clone()
+        };
+        // The changes reference the doc's containers and values.
+        let new_store = || ChangeStore::new_mem(&arena, Arc::new(AtomicI64::new(0)));
+        assert!(changes.len() > 10);
+        let (first, rest) = changes.split_at(changes.len() / 2);
+        let vv_of = |cs: &[Change]| {
+            let mut vv = VersionVector::new();
+            vv.insert(1, cs.last().unwrap().ctr_end());
+            vv
+        };
+
+        let rolled_back = new_store();
+        for c in first {
+            rolled_back.insert_change(c.clone(), true, false);
+        }
+        let mut rollback = ChangeStoreRollback::new(vv_of(first));
+        for c in &rest[..rest.len() / 2] {
+            rolled_back.insert_change_with_rollback(c.clone(), true, false, &mut rollback);
+        }
+        rolled_back.rollback_import(rollback);
+        assert!(rolled_back
+            .get_change(ID::new(1, vv_of(first)[&1]))
+            .is_none());
+        for c in rest {
+            rolled_back.insert_change(c.clone(), true, false);
+        }
+
+        let direct = new_store();
+        for c in &changes {
+            direct.insert_change(c.clone(), true, false);
+        }
+        let vv = vv_of(&changes);
+        let frontiers = Frontiers::from_id(changes.last().unwrap().id_last());
+        assert_eq!(
+            rolled_back.encode_all(&vv, &frontiers),
+            direct.encode_all(&vv, &frontiers)
+        );
     }
 
     #[test]

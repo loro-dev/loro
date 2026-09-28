@@ -69,6 +69,16 @@ pub(crate) struct ImportRollback {
     arena: SharedArenaRollback,
     change_store: ChangeStoreRollback,
     pending: PendingChangesRollback,
+    /// Movable-list `Move`/`Set` element references inserted in this scope and not
+    /// validated yet (`OpLog::validate_movable_list_elem_refs_in_import_scope`).
+    movable_list_refs: Vec<MovableListElemRef>,
+}
+
+struct MovableListElemRef {
+    container: ContainerIdx,
+    op_id: ID,
+    op_lamport: Lamport,
+    elem_id: IdLp,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -251,6 +261,23 @@ impl OpLog {
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
         if let Some(rollback) = self.import_rollback.as_mut() {
+            for op in change.ops.iter() {
+                if op.container.get_type() != ContainerType::MovableList {
+                    continue;
+                }
+                if let InnerContent::List(
+                    list_op::InnerListOp::Move { elem_id, .. }
+                    | list_op::InnerListOp::Set { elem_id, .. },
+                ) = &op.content
+                {
+                    rollback.movable_list_refs.push(MovableListElemRef {
+                        container: op.container,
+                        op_id: ID::new(change.id.peer, op.counter),
+                        op_lamport: change.lamport + (op.counter - change.id.counter) as Lamport,
+                        elem_id: *elem_id,
+                    });
+                }
+            }
             self.change_store.insert_change_with_rollback(
                 change,
                 true,
@@ -277,6 +304,7 @@ impl OpLog {
             arena,
             change_store: ChangeStoreRollback::new(old_vv),
             pending: Default::default(),
+            movable_list_refs: Vec::new(),
         });
     }
 
@@ -1159,62 +1187,36 @@ impl OpLog {
         ))
     }
 
-    /// Reject movable-list `Move`/`Set` ops added since `from` whose `elem_id` is not
-    /// an element inserted into the same list within the op's causal history.
+    /// Reject the movable-list `Move`/`Set` ops inserted since the open import rollback
+    /// scope began whose `elem_id` is not an element inserted into the same list within
+    /// the op's causal history.
     ///
     /// Honest peers can only target elements they can see, and the movable-list diff
-    /// calculator relies on it (`last_pos`/`last_value` lookups). See
+    /// calculator relies on it (`last_pos`/`last_value` lookups). The refs are recorded
+    /// by `insert_new_change` while the scope is open, which covers directly imported
+    /// changes, unlocked pending changes and every blob of an `import_batch`. See
     /// `context/movable-list-op-validation.md`.
-    pub(crate) fn validate_movable_list_elem_refs_since(
-        &self,
-        from: &VersionVector,
+    pub(crate) fn validate_movable_list_elem_refs_in_import_scope(
+        &mut self,
     ) -> Result<(), LoroError> {
-        for (&peer, &end) in self.vv().iter() {
-            let start = from.get(&peer).copied().unwrap_or(0);
-            if end <= start {
-                continue;
-            }
-
-            for change in self
-                .change_store
-                .iter_changes(IdSpan::new(peer, start, end))
-            {
-                for op in change.ops.iter() {
-                    if op.counter < start || op.container.get_type() != ContainerType::MovableList {
-                        continue;
-                    }
-
-                    let elem_id = match &op.content {
-                        InnerContent::List(list_op::InnerListOp::Move { elem_id, .. })
-                        | InnerContent::List(list_op::InnerListOp::Set { elem_id, .. }) => *elem_id,
-                        _ => continue,
-                    };
-                    let op_id = ID::new(peer, op.counter);
-                    let op_lamport = change.lamport + (op.counter - change.id.counter) as Lamport;
-                    if !self.is_visible_movable_list_elem(op.container, op_id, op_lamport, elem_id)
-                    {
-                        return Err(LoroError::DecodeError(
-                            format!(
-                                "Movable list op {op_id} targets element {elem_id}, which is not \
-                                 in the list's causal history"
-                            )
-                            .into_boxed_str(),
-                        ));
-                    }
-                }
+        let Some(rollback) = self.import_rollback.as_mut() else {
+            return Ok(());
+        };
+        let refs = std::mem::take(&mut rollback.movable_list_refs);
+        for r in refs {
+            if !self.is_visible_movable_list_elem(r.container, r.op_id, r.op_lamport, r.elem_id) {
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "Movable list op {} targets element {}, which is not in the list's \
+                         causal history",
+                        r.op_id, r.elem_id
+                    )
+                    .into_boxed_str(),
+                ));
             }
         }
 
         Ok(())
-    }
-
-    /// [`Self::validate_movable_list_elem_refs_since`] for everything imported since
-    /// the open rollback scope began.
-    pub(crate) fn validate_movable_list_elem_refs_in_import_scope(&self) -> Result<(), LoroError> {
-        match &self.import_rollback {
-            Some(rollback) => self.validate_movable_list_elem_refs_since(&rollback.old_vv),
-            None => Ok(()),
-        }
     }
 
     fn is_visible_movable_list_elem(

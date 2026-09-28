@@ -785,13 +785,12 @@ impl LoroDoc {
             // reattaches (`BatchImportGuard::finish`).
             let owns_rollback =
                 preflight.needs_state_apply_rollback && !oplog.has_import_rollback();
-            let old_vv = oplog.vv().clone();
             if owns_rollback {
                 oplog.begin_import_rollback_with_arena(arena_checkpoint);
             }
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if owns_rollback {
-                if let Err(e) = oplog.validate_movable_list_elem_refs_since(&old_vv) {
+                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
                     oplog.rollback_import();
                     return Err(e);
                 }
@@ -842,7 +841,7 @@ impl LoroDoc {
             // The preflight enables rollback whenever the imported or unlocked
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
-                if let Err(e) = oplog.validate_movable_list_elem_refs_since(&old_vv) {
+                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
                     oplog.rollback_import();
                     return Err(e);
                 }
