@@ -423,51 +423,16 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
     });
   }
 
-  /** Visits elements in physical order from `start` until `visit` returns false. */
-  forEachPhysicalFrom(
-    start: number,
-    visit: (element: T, index: number) => boolean | void,
-  ): void {
-    if (!Number.isSafeInteger(start) || start < 0 || start >= this.allLength) return;
-    const stack: SequenceNode<T>[] = [];
-    let node = this.#root;
-    let base = 0;
-    let current: SequenceNode<T> | undefined;
-    let offset = 0;
-    while (node !== undefined) {
-      const leftCount = allCount(node.left);
-      if (start < base + leftCount) {
-        stack.push(node);
-        node = node.left;
-        continue;
-      }
-      const ownStart = base + leftCount;
-      if (start < ownStart + nodeLength(node)) {
-        current = node;
-        offset = start - ownStart;
-        break;
-      }
-      base = ownStart + nodeLength(node);
-      node = node.right;
-    }
-    let index = start;
-    while (current !== undefined) {
-      for (; offset < nodeLength(current); offset += 1) {
-        if (visit(nodeElement(current, offset), index) === false) return;
-        index += 1;
-      }
-      let next = current.right;
-      if (next === undefined) {
-        current = stack.pop();
-      } else {
-        while (next.left !== undefined) {
-          stack.push(next);
-          next = next.left;
-        }
-        current = next;
-      }
-      offset = 0;
-    }
+  /**
+   * Returns the first physical index in `[start, limit)` whose element does not
+   * continue the ID run of the element before it, or `limit` if there is none.
+   * Expected O(log n): treap subtrees that are one ID run are skipped whole.
+   */
+  nextPhysicalIdRunStart(start: number, limit = this.allLength): number {
+    const end = Math.min(limit, this.allLength);
+    if (start >= end) return end;
+    const found = findPhysicalIdRunStart(this.#root, 0, start, undefined);
+    return found === undefined || found > end ? end : found;
   }
 
   findNextIncludedPhysical(
@@ -2231,6 +2196,47 @@ function nodeCounter<T extends IndexedSequenceElement>(
     : Array.isArray(node.element)
       ? (node.element as T[])[offset]!.id.counter
       : (node.element as T).id.counter;
+}
+
+/**
+ * Finds the first index `>= start` in this subtree whose element starts an ID
+ * run. `before` is the ID of the element physically before the subtree.
+ */
+function findPhysicalIdRunStart<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+  nodeStart: number,
+  start: number,
+  before: SequenceId | undefined,
+): number | undefined {
+  if (node === undefined || nodeStart + node.allCount <= start) return undefined;
+  if (node.idRunCount === 1) {
+    return start <= nodeStart &&
+      (before === undefined || !sequenceIdsContinue(before, node.firstId))
+      ? nodeStart
+      : undefined;
+  }
+
+  const fromLeft = findPhysicalIdRunStart(node.left, nodeStart, start, before);
+  if (fromLeft !== undefined) return fromLeft;
+
+  const ownStart = nodeStart + allCount(node.left);
+  let previous = node.left?.lastId ?? before;
+  const length = nodeLength(node);
+  const firstOffset = Math.max(0, start - ownStart);
+  if (firstOffset < length) {
+    if (firstOffset > 0) previous = nodeId(node, firstOffset - 1);
+    for (let offset = firstOffset; offset < length; offset += 1) {
+      const id = nodeId(node, offset);
+      if (previous === undefined || !sequenceIdsContinue(previous, id)) {
+        return ownStart + offset;
+      }
+      // The rest of a single-run node continues this element.
+      if (node.ownIdRunCount === 1) break;
+      previous = id;
+    }
+  }
+
+  return findPhysicalIdRunStart(node.right, ownStart + length, start, node.ownLastId);
 }
 
 function findNextIncludedPhysical<T extends IndexedSequenceElement>(

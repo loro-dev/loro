@@ -509,6 +509,24 @@ for (const size of sizes) {
   });
   unsubscribeImport();
 
+  // A concurrent character that Fugue orders after a sibling's whole run of
+  // 64 * size characters. Peer 1's character first builds the origin index.
+  const concurrentUpdate = (peer, text) => {
+    const doc = new LoroDoc();
+    doc.setPeerId(peer);
+    doc.getText("text").insert(0, text);
+    doc.commit();
+    return doc.export({ mode: "update" });
+  };
+  const concurrentTarget = new LoroDoc();
+  concurrentTarget.import(concurrentUpdate(2, "x".repeat(size * 64)));
+  concurrentTarget.import(concurrentUpdate(1, "y"));
+  const concurrentTail = concurrentUpdate(3, "z");
+  measure("text-concurrent-insert-after-long-run", size, () => {
+    concurrentTarget.import(concurrentTail);
+    return concurrentTarget.getText("text").length;
+  });
+
   const checkoutTextDoc = new LoroDoc();
   checkoutTextDoc.setPeerId(3);
   checkoutTextDoc.getText("text").insert(0, "x".repeat(size));

@@ -3139,30 +3139,32 @@ function indexedFugueInsertion<T extends SequenceElement>(
  * the next causally included element, later concurrent elements that belong to
  * an ancestor's subtree can sit before it. An element is a descendant exactly
  * when its origin-left lies inside the scanned subtree.
+ *
+ * Only the first element of a physical ID run needs that check. An element
+ * right after its ID predecessor has that predecessor as origin-left: the op
+ * was placed right after its origin-left in its causal view, the predecessor
+ * is in that view, and only concurrent elements can come between an element
+ * and its origin-left. So the walk jumps from run start to run start and costs
+ * O((runs in the subtree + 1) log n), not one step per scalar.
  */
 function fugueSubtreeEnd<T extends SequenceElement>(
   sequence: SequenceIndex<T>,
   rootIndex: number,
   limit: number,
 ): number {
-  let end = rootIndex + 1;
-  if (end >= limit) return limit;
-  let previous = sequence.atPhysicalRaw(rootIndex)!.id;
-  sequence.forEachPhysicalFrom(end, (element, index) => {
-    if (index >= limit) return false;
-    const left = element.originLeft;
-    if (left === undefined) return false;
-    if (left.peer !== previous.peer || left.counter !== previous.counter) {
-      const leftElement = sequence.findByIdRaw(left);
-      const leftIndex =
-        leftElement === undefined ? undefined : sequence.physicalIndexOf(leftElement);
-      if (leftIndex === undefined || leftIndex < rootIndex) return false;
-    }
-    previous = element.id;
-    end = index + 1;
-    return undefined;
-  });
-  return end;
+  let index = rootIndex + 1;
+  while (index < limit) {
+    const start = sequence.nextPhysicalIdRunStart(index, limit);
+    if (start >= limit) return limit;
+    const left = sequence.atPhysicalRaw(start)!.originLeft;
+    if (left === undefined) return start;
+    const leftElement = sequence.findByIdRaw(left);
+    const leftIndex =
+      leftElement === undefined ? undefined : sequence.physicalIndexOf(leftElement);
+    if (leftIndex === undefined || leftIndex < rootIndex) return start;
+    index = start + 1;
+  }
+  return limit;
 }
 
 function getFugueOriginIndex<T extends SequenceElement>(

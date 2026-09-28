@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 
 import { LoroDoc, type Delta, type JsonSchema } from "../src/index";
 import { applyDelta, normalizeDelta } from "./support/richtext-differential";
+import { loadRustReference, type RustReference } from "./support/rust-reference";
 
 const fixture = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(new URL(`./fixtures/rust/${name}`, import.meta.url)));
@@ -63,6 +64,44 @@ describe("text interoperability with Rust", () => {
       }
       expect(target.getText("t").toString()).toBe("béa9");
     }
+  });
+
+  test("orders a concurrent insert after a sibling subtree of several ID runs", () => {
+    // z goes after the whole subtree of peer 2's first "a": its later run of a,
+    // the B run, and peer 4's c run, whose starts are the only elements
+    // `fugueSubtreeEnd` checks.
+    const scenario = ({ LoroDoc: Doc }: { LoroDoc: typeof LoroDoc }): string => {
+      const make = (peer: number): LoroDoc => {
+        const created = new Doc();
+        created.setPeerId(peer);
+        return created;
+      };
+      const [p1, p2, p3, p4, target] = [1, 2, 3, 4, 9].map(make) as [
+        LoroDoc,
+        LoroDoc,
+        LoroDoc,
+        LoroDoc,
+        LoroDoc,
+      ];
+      p2.getText("t").insert(0, "a".repeat(100));
+      p2.commit();
+      sync(p2, p4);
+      p2.getText("t").insert(50, "B".repeat(40));
+      p2.commit();
+      p4.getText("t").insert(80, "c".repeat(30));
+      p4.commit();
+      p1.getText("t").insert(0, "y");
+      p1.commit();
+      p3.getText("t").insert(0, "z");
+      p3.commit();
+      for (const source of [p2, p4, p1, p3]) sync(source, target);
+      return target.getText("t").toString();
+    };
+    const expected = `ya${"a".repeat(49)}${"B".repeat(40)}${"a".repeat(30)}${"c".repeat(30)}${"a".repeat(20)}z`;
+    expect(scenario({ LoroDoc })).toBe(expected);
+    // The same edits in Rust, when its WASM build is available.
+    const rust: RustReference | undefined = loadRustReference();
+    expect(rust === undefined ? expected : scenario(rust)).toBe(expected);
   });
 
   test("writes multi-run deletes last run first, like Rust", () => {
