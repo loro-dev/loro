@@ -1,6 +1,6 @@
 # Movable List `Move`/`Set` Validation on Import
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-28 (merged with main `6e294c87`).
 
 Imported movable-list `Move { from, to, elem_id }` and `Set { elem_id, value }` ops
 come from other peers, so they are external input. Several shapes of them used
@@ -29,10 +29,19 @@ Tests:
    - Positions past it panicked inside the tracker before `validate_diff` could run.
    - This check needs no history, so it covers every import path, including
      detached imports.
+   - **It is a hard document limit, not only an import check.** `decode_op` is also
+     how a doc parses its own stored change blocks and snapshot blocks
+     (`block_encode.rs`), so a sequence position ≥ 1,073,741,822 is rejected there
+     too. That is deliberate:
+     - Snapshot and update blocks are external input as well.
+     - A sequence that long (≈1.07e9 items, ≥1 GB of text) cannot be diffed or
+       imported by any peer anyway: the tracker panics before this check existed.
+     - Skipping the check for "own" blocks would need a trust flag threaded through
+       block decoding.
 2. **Unknown or out-of-history element.** `OpLog::validate_movable_list_elem_refs_in_import_scope`
    (`src/oplog.rs`) checks each `Move`/`Set`. `elem_id` must be an `Insert` op in the
-   same container that lies in the op's causal history (`AppDag::get_vv`, with a
-   same-peer shortcut). It returns `LoroError::DecodeError`.
+   same container that lies in the op's causal history (see the causal check below).
+   It returns `LoroError::DecodeError`.
    - The references are recorded by `OpLog::insert_new_change` into the open
      `ImportRollback`, so they cover:
      - directly imported changes,
@@ -40,9 +49,14 @@ Tests:
      - every blob of an `import_batch`.
    - The validator reads the recorded list, so it never re-reads the imported range
      from the change store.
-   - The element is found with one `ChangeStore::get_change_by_lamport_lte` lookup.
-     That lookup scans both parsed and KV-only blocks, so a miss means the lamport is
-     not in the stored history.
+   - `OpLog::resolve_movable_list_elem` finds the element with one
+     `ChangeStore::get_change_by_lamport_lte` lookup. That lookup scans both parsed
+     and KV-only blocks, so a miss means the lamport is not in the stored history.
+   - What an element resolves to (insert op, container) does not depend on the op, so
+     each pass caches it per `elem_id`. Moves/sets keep hitting the same elements.
+   - The causal check reads the cached start version of the op's DAG node
+     (`AppDag::ensure_vv_for`); earlier ops of the same node are by the same peer.
+     `AppDag::get_vv` would clone and insert into a version vector per op.
    - Only on a shallow doc does a miss fall back to the shallow-root state
      (`ContainerHistoryCache::shallow_root_has_movable_list_elem`): an op after the
      root can only see pre-root elements that are still alive at the root.
@@ -106,7 +120,14 @@ from the element in `DocState`. Detection and fallback:
 
 - **`decode_block_range` read a version varint that blocks do not have.**
   `encode_block` writes a postcard `EncodedBlock` with no version prefix, so every
-  field was read one position off. Consequences:
+  field was read one position off.
+  - History: `3d2d9d9c` (2024-09, "refactor: optimize block encoder") removed the
+    `version` field from the block, its encoder and the full decoder, but not from
+    `decode_block_range`.
+  - Every `loro-crdt@1.0.0*` release contains that commit, so no 1.x build ever wrote
+    version-prefixed blocks and the fix cannot make stored data unreadable.
+
+  Consequences:
   - Blocks that do not start at counter 0 were skipped.
   - Block `0@P` got its lamport length as its lamport start.
   - Lamport lookups on KV-only blocks were wrong:
