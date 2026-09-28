@@ -479,6 +479,45 @@ fn wasm_fixture() -> String {
         let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
         out.push_str(&format!("  {name}:\n    \"{b64}\",\n"));
     }
+    out.push_str("} as const;\n\n");
+
+    // Reproductions from the second review of #1142
+    let docs: [(&str, &str, fn(&LoroDoc)); 3] = [
+        (
+            "recreatedParent",
+            "normal map `r.m` holding a mergeable list `k` = [U, 1]",
+            |doc| {
+                let m = doc
+                    .get_map("r")
+                    .insert_container("m", LoroMap::new())
+                    .unwrap();
+                let k = m.ensure_mergeable_list("k").unwrap();
+                edited_counter(k.insert_container(0, counter()).unwrap());
+                k.push(1).unwrap();
+            },
+        ),
+        (
+            "hiddenMergeableChild",
+            "mergeable map `m.s` holding a list `l` = [U, 1]",
+            |doc| {
+                let s = doc.get_map("m").ensure_mergeable_map("s").unwrap();
+                let l = s.insert_container("l", LoroList::new()).unwrap();
+                edited_counter(l.insert_container(0, counter()).unwrap());
+                l.push(1).unwrap();
+            },
+        ),
+        ("unknownList", "list `us` = [U]", |doc| {
+            edited_counter(doc.get_list("us").push_container(counter()).unwrap());
+        }),
+    ];
+    out.push_str("export const UNKNOWN_REVIEW_DOCS = {\n");
+    for (name, what, build) in docs {
+        let bytes = forge(build)
+            .export(loro::ExportMode::all_updates())
+            .unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+        out.push_str(&format!("  // {what}\n  {name}:\n    \"{b64}\",\n"));
+    }
     out.push_str("} as const;\n");
     out
 }

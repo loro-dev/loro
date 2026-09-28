@@ -5,10 +5,14 @@ import {
   LoroDoc,
   LoroEventBatch,
   LoroList,
+  LoroMap,
   LoroText,
   UndoManager,
 } from "../bundler/index";
-import { UNKNOWN_MERGEABLE_HOLDERS } from "./fixtures/unknown_mergeable_holders";
+import {
+  UNKNOWN_MERGEABLE_HOLDERS,
+  UNKNOWN_REVIEW_DOCS,
+} from "./fixtures/unknown_mergeable_holders";
 
 // `applyDiff` used to trap the wasm instance (`unreachable!()` in
 // `Handler::new_unattached`) when a diff asked it to create a container whose
@@ -329,4 +333,62 @@ describe("applyDiff with unknown container types", () => {
       expect(state(doc)).toStrictEqual(before);
     });
   }
+
+  // Reproductions from the second review of #1142
+  function loadReviewDoc(name: keyof typeof UNKNOWN_REVIEW_DOCS): LoroDoc {
+    const doc = new LoroDoc();
+    doc.setPeerId(2);
+    doc.import(
+      Uint8Array.from(atob(UNKNOWN_REVIEW_DOCS[name]), (c) => c.charCodeAt(0)),
+    );
+    return doc;
+  }
+
+  it("rejects reviving a mergeable child of a recreated map atomically", () => {
+    const doc = loadReviewDoc("recreatedParent");
+    const v0 = doc.frontiers();
+    doc.getMap("r").delete("m");
+    doc.commit();
+    const diff = doc.diff(doc.frontiers(), v0);
+    for (const fullState of [true, false]) {
+      const before = state(doc);
+      // Used to write `r.m = { k: [] }` before failing
+      expect(() => doc.applyDiff(diff, { fullState })).toThrowError(
+        /Unknown\(9\)/,
+      );
+      expect(state(doc)).toStrictEqual(before);
+    }
+  });
+
+  it("rejects an undo that revives a mergeable parent of a deleted unknown container", () => {
+    const doc = loadReviewDoc("hiddenMergeableChild");
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const s = doc.getMap("m").get("s") as LoroMap;
+    (s.get("l") as LoroList).delete(0, 1);
+    doc.getText("t").insert(0, "x");
+    doc.getMap("m").delete("s");
+    doc.commit();
+    const before = state(doc);
+    // Used to return true with U silently gone
+    expect(() => undo.undo()).toThrowError(/Unknown\(9\)/);
+    expect(state(doc)).toStrictEqual(before);
+  });
+
+  it("undoes the right edits after a rejected undo step", () => {
+    const doc = loadReviewDoc("unknownList");
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    const t = doc.getText("t");
+    t.insert(0, "a");
+    doc.commit();
+    t.insert(0, "b");
+    doc.getList("us").delete(0, 1);
+    doc.commit();
+    expect(() => undo.undo()).toThrowError(/Unknown\(9\)/);
+    expect(t.toString()).toBe("ba");
+    // Used to delete "b" instead of "a"
+    expect(undo.undo()).toBe(true);
+    expect(t.toString()).toBe("b");
+    expect(undo.redo()).toBe(true);
+    expect(t.toString()).toBe("ba");
+  });
 });

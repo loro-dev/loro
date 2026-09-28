@@ -1300,7 +1300,7 @@ impl LoroDoc {
                 Some(d) => Either::Right(d),
                 None => Either::Left(&latest_frontiers),
             },
-            &calc_diff,
+            calc_diff,
             &mut |d| last_event_a = Some(d.clone()),
         );
 
