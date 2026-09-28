@@ -1491,13 +1491,16 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
-        // Full states are aligned for the whole batch before anything is
-        // applied; the loop below applies the planned edits.
-        let mut plan = if align_revived_mergeable {
-            self.plan_full_state_batch(&diff, container_remap)
-        } else {
-            FullStatePlan::default()
-        };
+        // When the batch holds unknown containers, its full states are aligned
+        // before anything is applied, so the check sees what is applied; the
+        // loop below then applies the planned edits. Otherwise the loop aligns
+        // each full state itself.
+        let mut plan =
+            if align_revived_mergeable && diff.iter().any(|(_, d)| diff_has_unknown_value(d)) {
+                self.plan_full_state_batch(&diff, container_remap)
+            } else {
+                FullStatePlan::default()
+            };
         // There is no rollback for the local ops applied below, so reject the
         // diff before touching the doc if it needs an unknown container.
         let predicted_skips = self.check_apply_diff_creates_no_unknown_container(
@@ -1567,8 +1570,9 @@ impl LoroDoc {
                         }
                     }
                     _ => {
-                        // A mergeable child of a container this batch recreated:
-                        // new and empty, which the plan checked as such
+                        // Not planned (the batch holds no unknown container),
+                        // or a mergeable child of a container this batch
+                        // recreated: new and empty, which the plan checked as such
                         debug_assert!(
                             plan.fresh.contains(&batch_id) || !diff_has_unknown_value(&diff),
                             "{batch_id} holds an unknown container and was not planned"
@@ -1627,10 +1631,11 @@ impl LoroDoc {
         ans
     }
 
-    /// How `_apply_diff` treats a full-state batch, planned before anything is
-    /// applied: which entries it aligns with the state this doc kept, and the
-    /// edits they turn into. The loop applies these edits, so alignment is
-    /// computed once, and the unknown container check sees what is applied.
+    /// How `_apply_diff` treats a full-state batch holding unknown containers,
+    /// planned before anything is applied: which entries it aligns with the
+    /// state this doc kept, and the edits they turn into. The loop applies
+    /// these edits, so alignment is computed once, and the unknown container
+    /// check sees what is applied.
     ///
     /// The loop still keeps its own `full_state_targets`, because it follows
     /// `container_remap` as it grows. It uses a planned edit only when it

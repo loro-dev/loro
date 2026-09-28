@@ -257,3 +257,115 @@ fn perf_full_state_revival() {
         );
     }
 }
+
+/// Replays `src` with the ids of its Text containers (which must have no ops)
+/// turned into `Unknown(9)`, editing the typed JSON so mergeable markers stay.
+fn forge_texts(src: &LoroDoc) -> LoroDoc {
+    let mut json =
+        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
+    let forge = |v: &mut LoroValue| {
+        if let LoroValue::Container(ContainerID::Normal {
+            peer,
+            counter,
+            container_type: ContainerType::Text,
+        }) = v
+        {
+            *v = LoroValue::Container(ContainerID::new_normal(
+                loro::ID::new(*peer, *counter),
+                ContainerType::Unknown(9),
+            ));
+        }
+    };
+    for change in json.changes.iter_mut() {
+        for op in change.ops.iter_mut() {
+            match &mut op.content {
+                loro::JsonOpContent::List(loro::JsonListOp::Insert { value, .. }) => {
+                    value.iter_mut().for_each(forge)
+                }
+                loro::JsonOpContent::Map(loro::JsonMapOp::Insert { value, .. }) => forge(value),
+                _ => {}
+            }
+        }
+    }
+    let doc = LoroDoc::new();
+    doc.set_peer_id(2).unwrap();
+    doc.import_json_updates(json).unwrap();
+    doc
+}
+
+/// Many small full-state targets (from the second review of #1142): 2000
+/// mergeable maps with 50 keys each, and one mergeable map with 100k keys,
+/// optionally holding one unknown container each.
+#[test]
+#[ignore]
+fn perf_many_full_state_targets() {
+    for unknown in [false, true] {
+        let src = LoroDoc::new();
+        src.set_peer_id(1).unwrap();
+        let m = src.get_map("m");
+        for i in 0..2000 {
+            let s = m.ensure_mergeable_map(&format!("s{i}")).unwrap();
+            for k in 0..50 {
+                s.insert(&format!("k{k}"), k as i64).unwrap();
+            }
+            if unknown {
+                s.insert_container("u", LoroText::new()).unwrap();
+            }
+        }
+        src.commit();
+        let base = forge_texts(&src);
+        let hide_all = |doc: &LoroDoc| {
+            let m = doc.get_map("m");
+            for i in 0..2000 {
+                m.delete(&format!("s{i}")).unwrap();
+            }
+            doc.commit();
+        };
+        bench(
+            &format!("full-state revive 2000 mergeable maps x50 keys (unknown: {unknown})"),
+            || {
+                let doc = base.fork();
+                let target = doc.state_frontiers();
+                hide_all(&doc);
+                let diff = doc.diff(&doc.state_frontiers(), &target).unwrap();
+                (doc, diff)
+            },
+            |(doc, diff)| doc.apply_diff(diff).unwrap(),
+        );
+        bench(
+            &format!("undo of hiding 2000 mergeable maps (unknown: {unknown})"),
+            || {
+                let doc = base.fork();
+                let undo = UndoManager::new(&doc);
+                hide_all(&doc);
+                (doc, undo)
+            },
+            |(_doc, mut undo)| assert!(undo.undo().unwrap()),
+        );
+    }
+    for unknown in [false, true] {
+        let src = LoroDoc::new();
+        src.set_peer_id(1).unwrap();
+        let s = src.get_map("m").ensure_mergeable_map("s").unwrap();
+        for k in 0..100_000 {
+            s.insert(&format!("k{k}"), k as i64).unwrap();
+        }
+        if unknown {
+            s.insert_container("u", LoroText::new()).unwrap();
+        }
+        src.commit();
+        let base = forge_texts(&src);
+        bench(
+            &format!("full-state revive mergeable map 100k keys (unknown: {unknown})"),
+            || {
+                let doc = base.fork();
+                let target = doc.state_frontiers();
+                doc.get_map("m").delete("s").unwrap();
+                doc.commit();
+                let diff = doc.diff(&doc.state_frontiers(), &target).unwrap();
+                (doc, diff)
+            },
+            |(doc, diff)| doc.apply_diff(diff).unwrap(),
+        );
+    }
+}

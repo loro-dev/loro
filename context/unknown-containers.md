@@ -65,10 +65,12 @@ becomes an edit of the state this doc kept for it (`handler/full_state.rs`).
 Keeping an unknown container there creates nothing, so the raw full state must
 not be checked.
 
-`LoroDoc::plan_full_state_batch` computes the alignment of the whole batch
-before anything is applied: `align_full_state` has no side effects (a counter
-gets an increment diff). The check runs on the planned edits, and the loop
-applies them instead of aligning again, so alignment runs once. The loop still
+When the batch holds an unknown container value, `LoroDoc::plan_full_state_batch`
+computes the alignment of the whole batch before anything is applied:
+`align_full_state` has no side effects (a counter gets an increment diff). The
+check runs on the planned edits, and the loop applies them instead of aligning
+again, so alignment runs once. Batches without unknown values skip the plan and
+the loop aligns each entry itself, as before. The loop still
 keeps its own `full_state_targets`, because only it follows `container_remap`
 as containers are recreated. It uses a planned edit only when it aligns the
 container the plan aligned. The other case is a mergeable child of a container
