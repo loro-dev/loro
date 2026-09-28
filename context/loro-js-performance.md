@@ -103,20 +103,24 @@ JavaScript constant factor.
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
   future ID run while finding the next causally included element. Ordinary local
   edits keep the smaller unindexed path. MovableList continues to use the scan
-  because moves break the origin-tree physical preorder. After the last sibling
-  the new element goes after that sibling's subtree (`fugueSubtreeEnd`), not at
-  the origin-right bound: when that bound is only the next causally included
-  element, later concurrent elements of an ancestor's subtree can sit before it.
-  The walk stops at the first element whose origin-left precedes the sibling.
-  Inside a physical ID run every element's origin-left is its predecessor, so
-  the walk jumps between run starts (`SequenceIndex.nextPhysicalIdRunStart`,
-  skipping single-run treap subtrees): O((runs in the subtree + 1) log n), and
-  O(log n) after a long typed run. With a warm origin index, importing one
-  concurrent character after a 512k-character run takes 0.2–0.3 ms (0.2–0.45 ms
-  on `main`, which stopped at the origin-right bound and could misorder; 8.9–14.8
-  ms for the per-scalar walk), and `text-concurrent-insert-after-long-run` stays
-  at 0.15–0.24 ms from 64k to 512k characters (2.4 → 12.8 ms per-scalar;
-  September 28, Node 22, 1-minute load 5–25, interleaved).
+  because moves break the origin-tree physical preorder. Sibling subtrees are
+  contiguous, so the gap between two direct children belongs to the earlier
+  child. After the last child the interval can also hold concurrent elements
+  whose origin is left of `originLeft`; Rust's scan stops before them. The index
+  therefore checks whether the interval's last element descends from
+  `originLeft` and otherwise binary-searches the boundary. The descent test
+  walks origin-left links but jumps over each implicit run through per-peer
+  sorted counters of explicit (non-consecutive) elements, so it costs
+  O(explicit links · log n), like Rust's span-based scan, instead of one probe
+  per scalar in a long concurrent run (loro-dev/loro#1139). A walk over the
+  physical ID runs of the last sibling's subtree finds the same boundary in
+  O((runs + 1) log n) and was measured against it (September 28, Node 22,
+  1-minute load 8–17): with the B4 trace as the sibling subtree the binary
+  search takes 7.3 ms versus 11.1 ms, but on a deep chain of explicit links
+  (two positions typed alternately, 64k elements) 60.6 ms versus 15.5 ms,
+  because each of its O(log n) probes walks the chain. Realistic traces favor
+  the binary search. `text-concurrent-insert-after-long-run` covers the long
+  typed run.
 - An imported Text delete is resolved by its position in the op's causal view,
   like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
   `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
