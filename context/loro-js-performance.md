@@ -149,32 +149,59 @@ JavaScript constant factor.
 - loro.js does not count Rust rich-text style anchors in Text operation
   positions, so a replay of Rust-created styled text can differ from its
   snapshot state (for example, an insert right after a mark's end anchor). The
-  completion therefore compares the replay with the snapshot state (visible ids,
-  plus the delta when styled). When they differ, the replay is discarded and the
-  container becomes `unreplayable`: it keeps its snapshot state, encoded once,
-  and is never given a replay. A transition that touches it runs without its
-  operations and then moves it separately (`#planSnapshotStates`): when the
-  installed state already has every forward operation (tracked as `applied`),
-  a Text is toggled by id and style version, O(delta) as for a state without
-  history; otherwise (for example an update imported while detached) it is
-  rebuilt from the snapshot state plus the later operations the target
-  includes (`#rebuildFromSnapshotState`, O(container size + its operations)).
-  Events come from the transition's recording, or from whole-container values
-  when style operations are crossed, since their ranges come from positions.
-  So the latest state, imports, and exports always equal the snapshot state
-  plus later operations; an older version cannot restore text deleted before
-  the snapshot. A full `#rebuildFromHistory` (the non-incremental fallback,
-  shallow export, `forkAt`) first checks the snapshot-hydrated styled Text and
-  MovableList containers, including lazily encoded ones, and then rebuilds
-  unreplayable containers the same way. Only the root state of a shallow
-  export uses the replay, since the snapshot state is later than the root.
-  `tests/snapshot-checkout.test.ts` checks random checkouts, detaches, and
-  imports on Rust rich-text histories (`rich-text-history.json`) against a
-  document that only imports.
+  completion therefore compares the replay of a Text or List with the snapshot
+  state (visible ids, plus the delta when styled). When they differ, the replay
+  is discarded and the container becomes `unreplayable`: it keeps its snapshot
+  state, encoded once, and is never given a replay. A transition that touches
+  it runs without its operations and then moves it separately
+  (`#planSnapshotStates`): when the installed state already has every forward
+  operation (tracked as `applied`), a Text is toggled by id and style version,
+  O(delta) as for a state without history; otherwise (for example an update
+  imported while detached) it is rebuilt from the snapshot state plus the later
+  operations the target includes (`#rebuildFromSnapshotState`, O(container
+  size + its operations)). Events come from the transition's recording, or from
+  whole-container values when style operations are crossed, since their ranges
+  come from positions.
+- What that guarantees: the latest state, imports, and exports equal the
+  snapshot state plus the later operations, as loro.js applies them. A later
+  operation concurrent with a delete that the snapshot already applied can
+  still land at another position than in Rust, as on main (loro-dev/loro#1163).
+  An older version is approximate: the snapshot state cannot restore text
+  deleted before it. In the round-3 review's random Rust histories, older
+  versions and `revertTo` differed from Rust more often than on main (437 vs
+  317 checked versions, 287 vs 151 reverts), while main corrupted the latest
+  state after a checkout round trip in 57 of 90 seeds and the PR in none.
+  The anchor model (loro-dev/loro#1137) makes such text replayable and removes
+  both costs.
+- A MovableList is never `unreplayable`. Its snapshot state names each element
+  by its Rust position id (`#hydrateContainerState` takes `listItemIds` in
+  order, and after a move they include invisible positions), while a replay
+  names elements by their insert ids, and Rust encodes element ids as
+  (peer, lamport). No comparison is meaningful, so the replay replaces the
+  snapshot state on the first transition that crosses a snapshot operation, as
+  on main; a later move or set by element id then resolves. Until the
+  MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates element
+  ids, a MovableList whose loro.js replay really differs from Rust can change
+  its latest state at that point, also as on main.
+- A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
+  `forkAt`) first checks the snapshot-hydrated styled Text containers,
+  including lazily encoded ones, and then rebuilds unreplayable containers the
+  same way. Only the root state of a shallow export uses the replay, since the
+  snapshot state is later than the root. `forkAt` keeps a snapshot state only
+  in a fork whose version includes that state's version; an older fork has
+  none of the operations needed to undo later ones in that state, so it keeps
+  the replay of its own history, as on main, and stays consistent with its own
+  operations. `tests/snapshot-checkout.test.ts` checks random checkouts,
+  detaches, and imports on Rust rich-text histories (`rich-text-history.json`)
+  against a document that only imports, plus forks and Rust MovableList moves
+  (`movable-moves.json`).
 - Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
   packed Text span returns a new wrapper per lookup, so two concurrent deletes
-  of one character used to delete it twice. A checkout that throws restores its
-  previous version and state (`#transitionTo`).
+  of one character used to delete it twice. A completion that throws
+  reinstalls the snapshot state and leaves the container hydrated. A checkout
+  that throws restores its previous version and state (`#transitionTo`, which
+  also prepares inside its `try`), and `diff` restores the current state with a
+  full rebuild when it or its move back throws.
 - First checkout after importing a 262,144-operation single-peer Text snapshot
   takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
   versus about 148 ms for the earlier whole-document replay; 65,536 operations

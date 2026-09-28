@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import { LoroDoc } from "../src/runtime/document";
+import { SequenceIndex } from "../src/runtime/sequence-index";
 import type { LoroEventBatch } from "../src/runtime/types";
 
 describe("indexed version transitions", () => {
@@ -897,5 +898,62 @@ describe("indexed version transitions", () => {
     expect(doc.toJSON()).toEqual({ t: "abc", m: { k: 1 } });
     doc.attach();
     expect(doc.toJSON()).toEqual({ t: "bc", m: { k: 2 } });
+  });
+
+  test("leaves the state unchanged when a diff or its move back throws", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const text = doc.getText("t");
+    const list = doc.getList("l");
+    text.insert(0, "abc");
+    list.push(1);
+    list.push(2);
+    doc.commit();
+    const base = doc.frontiers();
+    text.delete(0, 1);
+    list.delete(0, 1);
+    list.push(3);
+    doc.commit();
+    const latest = doc.frontiers();
+    const value = doc.toJSON();
+
+    // The diff shows elements with setIdRunsVisible and hides them again with
+    // setIdRunsDeleted and setDeleted, so this covers both directions.
+    const failures: string[] = [];
+    for (const method of [
+      "setIdRunsVisible",
+      "setIdRunsDeleted",
+      "setDeleted",
+    ] as const) {
+      const original = SequenceIndex.prototype[method] as (...args: unknown[]) => unknown;
+      for (let call = 1; call <= 3; call += 1) {
+        let calls = 0;
+        const failure = vi
+          .spyOn(SequenceIndex.prototype, method)
+          .mockImplementation(function (this: unknown, ...args: unknown[]) {
+            calls += 1;
+            if (calls === call) throw new Error(`${method} failed`);
+            return original.apply(this, args);
+          } as never);
+        try {
+          doc.diff(latest, base, false);
+        } catch (error) {
+          failures.push((error as Error).message);
+        } finally {
+          failure.mockRestore();
+        }
+        expect(doc.frontiers()).toEqual(latest);
+        expect(doc.toJSON()).toEqual(value);
+      }
+    }
+    expect(new Set(failures)).toEqual(
+      new Set([
+        "setIdRunsVisible failed",
+        "setIdRunsDeleted failed",
+        "setDeleted failed",
+      ]),
+    );
+    doc.checkout(base);
+    expect(doc.toJSON()).toEqual({ t: "abc", l: [1, 2] });
   });
 });
