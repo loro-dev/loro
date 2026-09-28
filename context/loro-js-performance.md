@@ -172,7 +172,11 @@ JavaScript constant factor.
   317 checked versions, 287 vs 151 reverts), while main corrupted the latest
   state after a checkout round trip in 57 of 90 seeds and the PR in none.
   The anchor model (loro-dev/loro#1137) makes such text replayable and removes
-  both costs.
+  both costs. Two more gaps are also on main: after an update imported while
+  detached, a shallow export on the live document can change its latest state
+  (plain text too; loro-dev/loro#1136 fixes the plain-text case), and a shallow
+  export that throws midway leaves the live document at the root or in
+  between, since `#encodeShallowSnapshot` rebuilds it without a restore.
 - A MovableList is not a snapshot sequence at all (`#markSnapshotSequence`);
   it behaves as on main. Its snapshot state names each element by its Rust
   position id (`#hydrateContainerState` takes `listItemIds` in order, and after
@@ -193,19 +197,30 @@ JavaScript constant factor.
   against main's 91; leaving every MovableList on main's path gives 56. Until
   the MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates
   element ids, a MovableList whose loro.js replay differs from Rust can change
-  its latest state at the first such transition, also as on main.
+  its latest state at the first such transition, also as on main. Once the
+  list is replayed, later transitions are incremental and can still show a
+  wrong older version where main, which replays on every such checkout, is
+  right (round-4 review, seed 22: after checking out v11, v12, then v13, the
+  list shows `[11]` where Rust, main, and a full-history document show `[9]`;
+  the latest state and `revertTo` are right). This is loro.js's MovableList
+  transition gap, left to loro-dev/loro#1132.
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
-  `forkAt`) first checks the snapshot-hydrated styled Text containers,
-  including lazily encoded ones, and then rebuilds unreplayable containers the
-  same way. Only the root state of a shallow export uses the replay, since the
+  `forkAt`) first checks the snapshot-hydrated Text containers that have or
+  had styles, including lazily encoded ones, and then rebuilds unreplayable
+  containers the same way. "Had" matters: when every marked character was
+  deleted, the snapshot state has no style, but the mark's anchors still shift
+  later Rust positions, so the replay differs (`#hasStyleHistory`: a mark
+  operation in the history, indexed as `#markedTexts`, or styles in the shallow
+  root state). Plain text is not checked, so it pays no extra replay. Only the root state of a shallow export uses the replay, since the
   snapshot state is later than the root. `forkAt` keeps a snapshot state only
   in a fork whose version includes that state's version; an older fork has
   none of the operations needed to undo later ones in that state, so it keeps
   the replay of its own history, as on main, and stays consistent with its own
   operations. `tests/snapshot-checkout.test.ts` checks random checkouts,
   detaches, and imports on Rust rich-text histories (`rich-text-history.json`)
-  against a document that only imports, plus forks and Rust MovableList moves
-  (`movable-moves.json`).
+  against a document that only imports, plus forks, Rust MovableList moves
+  (`movable-moves.json`), and a Rust text whose marked characters were deleted
+  (`deleted-mark.json`).
 - Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
   packed Text span returns a new wrapper per lookup, so two concurrent deletes
   of one character used to delete it twice. A completion that throws

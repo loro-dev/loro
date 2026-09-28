@@ -644,6 +644,62 @@ describe("checkout after a Rust MovableList snapshot with a move", () => {
   });
 });
 
+/**
+ * `deleted-mark.json` is a Rust snapshot (peer 1, `bold` expands after). Text
+ * `t` gets "hello", bold on 1..3, and "X" at 4, then loses 1..3, so no style is
+ * left: "hlXo" (`textDone`). MovableList `ml` then gets 0, 1, 2 (`beforeMove`)
+ * and one move, so a checkout across the move replays the whole document.
+ */
+interface DeletedMark {
+  readonly snapshot: string;
+  readonly textDone: Frontiers;
+  readonly beforeMove: Frontiers;
+  readonly text: Delta<string>[];
+  readonly list: readonly number[];
+}
+
+describe("full rebuilds of a Rust text whose marked characters were deleted", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/rust/deleted-mark.json", import.meta.url), "utf8"),
+  ) as DeletedMark;
+  const load = (bytes = decodeBase64(fixture.snapshot)): LoroDoc => {
+    const doc = new LoroDoc();
+    doc.configTextStyle({ bold: { expand: "after" } });
+    doc.import(bytes);
+    return doc;
+  };
+
+  // The mark's anchors still shift the Rust insert of "X", which loro.js does
+  // not count, so a replay gives "hloX"; the snapshot state must stay.
+  test("keeps the snapshot text through checkout, shallow export, and forkAt", () => {
+    for (const frontiers of [fixture.beforeMove, fixture.textDone]) {
+      const doc = load();
+      doc.checkout(frontiers);
+      doc.attach();
+      expect(doc.getText("t").toDelta()).toEqual(fixture.text);
+      expect(
+        load(doc.export({ mode: "snapshot" }))
+          .getText("t")
+          .toDelta(),
+      ).toEqual(fixture.text);
+
+      const exported = load();
+      const shallow = exported.export({ mode: "shallow-snapshot", frontiers });
+      expect(exported.getText("t").toDelta()).toEqual(fixture.text);
+      expect(load(shallow).getText("t").toDelta()).toEqual(fixture.text);
+    }
+    const doc = load();
+    const fork = doc.forkAt(doc.frontiers());
+    expect(fork.getText("t").toDelta()).toEqual(fixture.text);
+    expect(
+      load(fork.export({ mode: "snapshot" }))
+        .getText("t")
+        .toDelta(),
+    ).toEqual(fixture.text);
+    expect(fork.getMovableList("ml").toJSON()).toEqual(fixture.list);
+  });
+});
+
 describe("checkout events after a lazy snapshot import", () => {
   test("reports an unread nested container change as its delta", () => {
     const build = (): { doc: LoroDoc; before: Frontiers } => {
