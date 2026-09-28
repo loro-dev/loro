@@ -447,6 +447,18 @@ impl ChangeStore {
                 .mem_parsed_kv
                 .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
+
+        // Parsing a block during the import registered the containers its ops use, and the
+        // arena rollback drops those registrations, so a kept block may hold indices that
+        // new registrations reuse. Keep only the encoded bytes of every block that has them
+        // and parse again on the next access. A block without bytes was built in memory
+        // from changes inserted before the import, whose containers were registered then.
+        for block in inner.mem_parsed_kv.values_mut() {
+            if let ChangesBlockContent::Both(_, bytes) = &block.content {
+                let bytes = bytes.clone();
+                Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+            }
+        }
     }
 
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {

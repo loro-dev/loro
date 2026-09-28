@@ -273,3 +273,91 @@ fn review_harness_dump() {
         );
     }
 }
+
+/// A failed import may load old changes while computing its diff, e.g. to find the parent of
+/// a container that only the history knows. Loading a change registers the containers its
+/// ops use, and the rollback of the failed import drops registrations made during it, so the
+/// loaded change must not keep indices into them.
+#[test]
+fn failed_import_that_loads_an_old_change() {
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let tree = a.get_tree("tree");
+    let parent = tree.create(TreeParentId::Root).unwrap();
+    a.commit();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let child = b.get_tree("tree").create(parent).unwrap();
+    // A container only this change mentions: it has no state entry and is only
+    // registered once the change is loaded.
+    b.get_map("b")
+        .insert_container("inner", loro::LoroText::new())
+        .unwrap()
+        .insert(0, "inner")
+        .unwrap();
+    b.get_map("b").delete("inner").unwrap();
+    b.commit();
+    let b_updates = b.export(ExportMode::all_updates()).unwrap();
+    let b_vv = b.oplog_vv();
+    tree.delete(parent).unwrap();
+    a.commit();
+    a.import(&b_updates).unwrap();
+    for i in 0..5000 {
+        a.get_map("m")
+            .insert(&format!("k{}", i % 50), i as i64)
+            .unwrap();
+        a.commit();
+    }
+    let snapshot = a.export(ExportMode::Snapshot).unwrap();
+
+    // Peer 4 (who has not seen the delete) edits `child`'s meta, then inserts a list
+    // element far out of bounds, which the state rejects.
+    let e = LoroDoc::new();
+    e.set_peer_id(4).unwrap();
+    e.import(&b_updates).unwrap();
+    e.get_tree("tree")
+        .get_meta(child)
+        .unwrap()
+        .insert("x", 1)
+        .unwrap();
+    let list = e.get_list("list");
+    list.insert(0, "seed").unwrap();
+    list.insert(1, "tail").unwrap();
+    e.commit();
+    let mut json = serde_json::to_value(e.export_json_updates(&b_vv, &e.oplog_vv())).unwrap();
+    let last_op = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
+        .as_array_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap();
+    assert_eq!(last_op["content"]["type"], "insert");
+    last_op["content"]["pos"] = 1000.into();
+    let carrier = LoroDoc::new();
+    carrier.import(&b_updates).unwrap();
+    carrier.detach();
+    carrier
+        .import_json_updates(serde_json::to_string(&json).unwrap())
+        .unwrap();
+    let bad = carrier.export(ExportMode::updates(&b_vv)).unwrap();
+
+    let dst = import(&snapshot);
+    dst.import(&bad)
+        .expect_err("the out-of-bounds list insert must fail the import");
+
+    // New registrations may reuse the indices the rollback dropped.
+    for i in 0..8 {
+        dst.get_map("fresh")
+            .insert_container(&format!("c{i}"), loro::LoroMap::new())
+            .unwrap();
+    }
+    dst.commit();
+    // The history, including the change the failed import loaded, must still name the
+    // right containers.
+    let history = |doc: &LoroDoc| {
+        serde_json::to_string(&doc.export_json_updates(&Default::default(), &a.oplog_vv())).unwrap()
+    };
+    assert_eq!(history(&dst), history(&a));
+    assert!(dst.get_tree("tree").get_meta(child).unwrap().is_deleted());
+}
