@@ -1,20 +1,37 @@
 use super::DocState;
 use crate::container::idx::ContainerIdx;
-use rustc_hash::FxHashMap;
+use loro_common::ContainerType;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
+/// Containers known to be deleted. See `context/dead-container-cache.md`.
 #[derive(Default, Debug, Clone)]
 pub(super) struct DeadContainersCache {
-    cache: FxHashMap<ContainerIdx, bool>,
+    /// Removed from a Map or List: no later version gives them back.
+    final_deletions: FxHashSet<ContainerIdx>,
+    /// Cut off at a Tree or MovableList edge: a later move can revive them.
+    revivable: FxHashSet<ContainerIdx>,
 }
 
 impl DeadContainersCache {
+    /// Must be called whenever the state may move to a version that is not a
+    /// descendant of the current one (checkout, reset), because that can
+    /// revive any container.
     pub fn clear(&mut self) {
-        self.cache.clear();
+        self.final_deletions.clear();
+        self.revivable.clear();
     }
 
-    pub(crate) fn clear_alive(&mut self) {
-        self.cache.retain(|_, is_deleted| *is_deleted);
+    /// Must be called whenever a tree or movable-list change is applied going
+    /// forward, because it may move a deleted node or element back.
+    pub fn clear_revivable(&mut self) {
+        if !self.revivable.is_empty() {
+            self.revivable.clear();
+        }
+    }
+
+    fn contains(&self, idx: &ContainerIdx) -> bool {
+        self.final_deletions.contains(idx) || self.revivable.contains(idx)
     }
 }
 
@@ -22,8 +39,7 @@ impl DocState {
     pub(crate) fn is_deleted(&mut self, idx: ContainerIdx) -> bool {
         #[cfg(not(debug_assertions))]
         {
-            // Cache stores only deleted containers.
-            if self.dead_containers_cache.cache.contains_key(&idx) {
+            if self.dead_containers_cache.contains(&idx) {
                 return true;
             }
         }
@@ -34,14 +50,15 @@ impl DocState {
         visited.push(idx);
         let mut idx = idx;
         let mut depends_on_mergeable_edge = false;
-        let is_deleted = loop {
+        // The parent that no longer holds the chain, if any.
+        let (is_deleted, cut_at) = loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if id.is_mergeable() {
                 depends_on_mergeable_edge = true;
             }
             if let Some(parent_idx) = self.arena.get_parent(idx) {
                 if !self.contains_logical_child(parent_idx, &id) {
-                    break true;
+                    break (true, Some(parent_idx));
                 }
 
                 idx = parent_idx;
@@ -49,39 +66,34 @@ impl DocState {
             } else {
                 // No parent in the arena: top-level Roots are always alive; anything else
                 // (including a mergeable Root whose parent edge was never wired) is treated
-                // as deleted.
-                break !id.is_root() || id.is_mergeable();
+                // as deleted. A later op can still attach it, so this is never cached.
+                break (!id.is_root() || id.is_mergeable(), None);
             }
         };
 
+        // Every container on the walked chain shares the answer: below the
+        // missing edge all of them are deleted, otherwise all are alive.
         #[cfg(debug_assertions)]
-        {
-            if !depends_on_mergeable_edge {
-                if let Some(cached_is_deleted) = self.dead_containers_cache.cache.get(&idx) {
-                    assert_eq!(is_deleted, *cached_is_deleted);
-                }
-            }
+        for idx in visited.iter() {
+            assert!(
+                is_deleted || !self.dead_containers_cache.contains(idx),
+                "stale dead-container cache entry for {:?}",
+                self.arena.idx_to_id(*idx)
+            );
         }
 
         // A mergeable ancestor can be deleted and later reactivated by changing the parent map's
         // marker. Do not cache deletion for any descendant whose liveness depends on that
         // logical edge, including ordinary children nested inside a mergeable map.
-        if depends_on_mergeable_edge {
-            if !is_deleted {
-                for idx in visited {
-                    self.dead_containers_cache.cache.remove(&idx);
+        if is_deleted && !depends_on_mergeable_edge {
+            match cut_at.map(|parent| parent.get_type()) {
+                Some(ContainerType::Map | ContainerType::List) => {
+                    self.dead_containers_cache.final_deletions.extend(visited)
                 }
-            }
-            return is_deleted;
-        }
-
-        if is_deleted {
-            for idx in visited {
-                self.dead_containers_cache.cache.insert(idx, true);
-            }
-        } else {
-            for idx in visited {
-                self.dead_containers_cache.cache.remove(&idx);
+                Some(ContainerType::Tree | ContainerType::MovableList) => {
+                    self.dead_containers_cache.revivable.extend(visited)
+                }
+                _ => {}
             }
         }
 
@@ -90,7 +102,7 @@ impl DocState {
 
     #[cfg(test)]
     pub(crate) fn dead_cache_entry(&self, idx: ContainerIdx) -> Option<bool> {
-        self.dead_containers_cache.cache.get(&idx).copied()
+        self.dead_containers_cache.contains(&idx).then_some(true)
     }
 }
 
@@ -242,5 +254,101 @@ mod tests {
             None,
             "imported reactivation must drop the stale deleted-cache entry"
         );
+    }
+
+    /// A tree node under a deleted ancestor is revived by moving it out, so a
+    /// local move must drop the cached deletion of its metadata.
+    #[test]
+    fn local_tree_move_drops_revivable_deletions() {
+        use crate::state::TreeParentId;
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let tree = doc.get_tree("tree");
+        let parent = tree.create(TreeParentId::Root).unwrap();
+        let child = tree.create(TreeParentId::Node(parent)).unwrap();
+        let meta = tree.get_meta(child).unwrap();
+        doc.commit_then_renew();
+        tree.delete(parent).unwrap();
+        doc.commit_then_renew();
+
+        let idx = doc.state.lock().arena.id_to_idx(&meta.id()).unwrap();
+        assert!(meta.is_deleted());
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), Some(true));
+
+        tree.mov(child, TreeParentId::Root).unwrap();
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), None);
+        doc.commit_then_renew();
+        assert!(!meta.is_deleted());
+    }
+
+    /// A movable-list element deleted locally is revived by a concurrent move
+    /// with a greater lamport, so importing movable-list changes must drop the
+    /// cached deletion.
+    #[test]
+    fn movable_list_import_drops_revivable_deletions() {
+        use crate::{loro::ExportMode, MapHandler};
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let list = doc.get_movable_list("list");
+        list.insert(0, 0).unwrap();
+        let child = list
+            .insert_container(1, MapHandler::new_detached())
+            .unwrap();
+        doc.commit_then_renew();
+        let other = LoroDoc::new_auto_commit();
+        other.set_peer_id(2).unwrap();
+        other
+            .import(&doc.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        other.get_map("pad").insert("k", 1).unwrap();
+        other.commit_then_renew();
+        other.get_movable_list("list").mov(1, 0).unwrap();
+        other.commit_then_renew();
+
+        list.delete(1, 1).unwrap();
+        doc.commit_then_renew();
+        let idx = doc.state.lock().arena.id_to_idx(&child.id()).unwrap();
+        assert!(child.is_deleted());
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), Some(true));
+
+        doc.import(&other.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), None);
+        assert!(!child.is_deleted());
+    }
+
+    /// Map and list removals are final for every later version, so they are
+    /// cached for the child and everything below it.
+    #[test]
+    fn map_and_list_child_deletions_are_cached() {
+        use crate::{ListHandler, MapHandler};
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let map = doc.get_map("map");
+        let in_map = map
+            .insert_container("k", MapHandler::new_detached())
+            .unwrap();
+        let nested = in_map
+            .insert_container("t", TextHandler::new_detached())
+            .unwrap();
+        let list = doc.get_list("list");
+        let in_list = list
+            .insert_container(0, ListHandler::new_detached())
+            .unwrap();
+        doc.commit_then_renew();
+        map.delete("k").unwrap();
+        list.delete(0, 1).unwrap();
+        doc.commit_then_renew();
+
+        assert!(nested.is_deleted());
+        assert!(in_list.is_deleted());
+        let state = doc.state.lock();
+        for id in [in_map.id(), nested.id(), in_list.id()] {
+            let idx = state.arena.id_to_idx(&id).unwrap();
+            assert_eq!(state.dead_cache_entry(idx), Some(true), "{id:?}");
+        }
     }
 }
