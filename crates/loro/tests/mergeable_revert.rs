@@ -1386,3 +1386,109 @@ fn public_diff_aligns_non_ascii_styled_text() {
         }
     }
 }
+
+fn hidden_hello() -> (LoroDoc, Frontiers) {
+    let d = doc();
+    d.get_map("m")
+        .ensure_mergeable_text("s")
+        .unwrap()
+        .insert(0, "hello")
+        .unwrap();
+    d.commit();
+    let visible = d.state_frontiers();
+    delete_s(&d);
+    d.commit();
+    (d, visible)
+}
+
+/// Composing keeps the full-state flag: an empty batch adopts it, two full-state batches stay
+/// full-state, and `clear` resets it.
+#[test]
+fn diff_batch_compose_keeps_full_state() {
+    use loro_internal::undo::DiffBatch as InnerDiffBatch;
+    let (d, visible) = hidden_hello();
+    let deleted = d.state_frontiers();
+    let full: InnerDiffBatch = d.diff(&deleted, &visible).unwrap().into();
+    assert!(full.full_state);
+
+    let mut joined = InnerDiffBatch::default();
+    joined.compose(&full);
+    assert!(joined.full_state);
+    let mirror = d.fork();
+    mirror.apply_diff(joined.clone().into()).unwrap();
+    mirror.commit();
+    assert_eq!(json(&mirror), json!({"m": {"s": "hello"}}));
+
+    // full-state after full-state: another edit of the visible text.
+    let later = d.fork();
+    later.checkout(&visible).unwrap();
+    let t = later.get_map("m").ensure_mergeable_text("s").unwrap();
+    later.set_detached_editing(true);
+    t.insert(5, "!").unwrap();
+    later.commit();
+    let next: InnerDiffBatch = later
+        .diff(&visible, &later.state_frontiers())
+        .unwrap()
+        .into();
+    assert!(next.full_state);
+    joined.compose(&next);
+    assert!(joined.full_state);
+    let mirror = d.fork();
+    mirror.apply_diff(joined.clone().into()).unwrap();
+    mirror.commit();
+    assert_eq!(json(&mirror), json!({"m": {"s": "hello!"}}));
+
+    joined.clear();
+    assert!(!joined.full_state);
+}
+
+#[test]
+#[should_panic(expected = "cannot compose a full-state DiffBatch with an incremental one")]
+fn diff_batch_compose_rejects_mixed_modes() {
+    use loro_internal::undo::DiffBatch as InnerDiffBatch;
+    let (d, visible) = hidden_hello();
+    let full: InnerDiffBatch = d.diff(&d.state_frontiers(), &visible).unwrap().into();
+    let mut incremental = full.clone();
+    incremental.full_state = false;
+    incremental.compose(&full);
+}
+
+/// Import events report a revived mergeable child with its full state, so a batch built from
+/// them may be applied with the full-state flag, like a `diff` result.
+#[test]
+fn import_events_may_be_applied_as_full_state() {
+    let (d, visible) = hidden_hello();
+    let b = d.fork();
+    b.set_peer_id(2).unwrap();
+    // A re-activates the child; B imports it and forwards its import events.
+    d.revert_to(&visible).unwrap();
+    d.commit();
+    for full_state in [false, true] {
+        let b = b.fork();
+        let mirror = b.fork();
+        let batches: Arc<Mutex<Vec<DiffBatch>>> = Default::default();
+        let sink = batches.clone();
+        let sub = b.subscribe_root(Arc::new(move |e| {
+            let mut batch = DiffBatch::default();
+            for ev in e.events {
+                batch.push(ev.target.clone(), owned_diff(ev.diff)).unwrap();
+            }
+            sink.lock().unwrap().push(batch);
+        }));
+        b.import(&d.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
+        drop(sub);
+        for mut batch in batches.lock().unwrap().drain(..) {
+            batch.set_full_state(full_state);
+            mirror.apply_diff(batch).unwrap();
+        }
+        mirror.commit();
+        assert_eq!(json(&b), json!({"m": {"s": "hello"}}));
+        let expected = if full_state { "hello" } else { "hellohello" };
+        assert_eq!(
+            json(&mirror),
+            json!({"m": {"s": expected}}),
+            "full_state={full_state}"
+        );
+    }
+}

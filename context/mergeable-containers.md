@@ -124,6 +124,19 @@ full-state diff. So the mode is explicit:
 - **UndoManager** composes remote events with `ContainerDiff::change()`, so a peer can still
   undo its edit after a remote undo re-activates the child.
 
+Which batches may carry the flag:
+
+- Results of `diff()` do, including after a JSON round trip with `{ fullState: true }`.
+- Import/checkout events may, because they revive children with full state.
+- **Never** batches built from local events. A local re-ensure has no child entry because
+  the child is unchanged; read as a full state, that means "empty" and clears it (a counter
+  at 7 becomes 0).
+- `DiffBatch::compose` (internal) keeps the flag. An empty side is the identity, and two
+  full-state batches stay full-state: a child that the second batch re-activates was hidden
+  where they meet, so the first has no entry for it. Mixing a full-state and an
+  incremental batch panics, because neither mode can apply the result. `clear` resets the
+  flag.
+
 When to opt in:
 
 - **Mirroring events** (subscribe → `applyDiff`) requires the receiver to share the

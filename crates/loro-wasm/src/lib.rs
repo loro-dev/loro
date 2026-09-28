@@ -2328,7 +2328,8 @@ impl LoroDoc {
     /// `doc.diff(afterDelete, beforeDelete)` to `doc` itself or to a copy of it). The child's
     /// entry is then read as its full content and aligned with that hidden state. Without it
     /// (the default), entries are applied as increments, which is right for events forwarded to
-    /// a document that shares the source's hidden state.
+    /// a document that shares the source's hidden state. Never pass it for events from local
+    /// commits; see `ApplyDiffOptions.fullState`.
     ///
     /// ```ts
     /// const text = doc.getMap("m").ensureMergeableText("t");
@@ -6593,8 +6594,16 @@ export interface ApplyDiffOptions {
      * visible again carries its full content, which is aligned with whatever hidden state the
      * target document keeps for it (none, the same, or different).
      *
-     * Leave it unset (the default) for batches built from events: those entries are
-     * increments, which is right when the target shares the source's hidden state.
+     * Only use it for `doc.diff()` results (also after a JSON round trip), or for events from
+     * `import`/`checkout`, which report a revived child with its full content.
+     *
+     * Never use it for events from local commits. A local re-activation (such as
+     * `ensureMergeableCounter` over a deleted key) reports only the parent map change plus the
+     * commit's own ops, because the child's content did not change. With `fullState`, a
+     * missing child entry means "empty" and an entry means the whole content, so the hidden
+     * child would be cleared or overwritten (e.g. a counter at 7 becomes 0). Leave it unset
+     * (the default) for such events: their entries are increments, which is right when the
+     * target shares the source's hidden state.
      */
     fullState?: boolean;
 }

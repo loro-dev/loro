@@ -27,9 +27,12 @@ pub struct DiffBatch {
     pub order: Vec<ContainerID>,
     /// Set on batches from [`LoroDoc::diff`]: a mergeable child the batch re-activates carries
     /// its full state (no entry means empty), which `apply_diff` aligns with whatever hidden
-    /// state the target doc keeps at that deterministic cid. Unset batches (events, hand-built
-    /// ones) are applied incrementally, as a doc that shares the source's hidden state needs.
-    /// See context/mergeable-containers.md.
+    /// state the target doc keeps at that deterministic cid. Unset batches (local events,
+    /// hand-built ones) are applied incrementally, as a doc that shares the source's hidden
+    /// state needs. Local events must stay unset: a plain re-ensure has no child entry because
+    /// the child is unchanged, which a full-state batch would read as "empty". Import and
+    /// checkout events do carry full states for revived children, so they may be set. See
+    /// context/mergeable-containers.md.
     pub full_state: bool,
 }
 
@@ -78,10 +81,30 @@ impl DiffBatch {
         }
     }
 
+    /// Composes `other` after `self`.
+    ///
+    /// [`DiffBatch::full_state`] composes as follows. An empty batch is the identity, so
+    /// composing into one adopts `other`'s flag. Two full-state batches stay full-state: a
+    /// mergeable child that `other` re-activates was hidden at the version where the batches
+    /// meet, so `self` has no entry for it, and a child `self` re-activated followed by
+    /// increments is still a full state. Two incremental batches stay incremental. A
+    /// full-state batch and an incremental one cannot be composed: re-activated children would
+    /// mix full states and increments on hidden state, which neither mode can apply.
+    ///
+    /// # Panics
+    ///
+    /// If both batches are non-empty and exactly one of them is full-state.
     pub fn compose(&mut self, other: &Self) {
         if other.cid_to_events.is_empty() {
             return;
         }
+        if self.cid_to_events.is_empty() {
+            self.full_state = other.full_state;
+        }
+        assert_eq!(
+            self.full_state, other.full_state,
+            "cannot compose a full-state DiffBatch with an incremental one"
+        );
 
         for (id, diff) in other.iter() {
             if let Some(this_diff) = self.cid_to_events.get_mut(id) {
@@ -108,6 +131,7 @@ impl DiffBatch {
     pub fn clear(&mut self) {
         self.cid_to_events.clear();
         self.order.clear();
+        self.full_state = false;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {

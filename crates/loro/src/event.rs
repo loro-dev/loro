@@ -302,6 +302,18 @@ impl DiffBatch {
     }
 
     /// Sets [`DiffBatch::is_full_state`].
+    ///
+    /// Only set it for batches whose re-activated mergeable children carry their full state:
+    /// results of [`crate::LoroDoc::diff`] (already set), or a batch rebuilt from one, e.g.
+    /// after serialization. Events from an import or a checkout also qualify, since they
+    /// report a revived child with its full state.
+    ///
+    /// Never set it on a batch built from **local** events (commits of this doc). A local
+    /// re-activation (such as `ensure_mergeable_counter` over a deleted key) reports only the
+    /// parent marker plus the transaction's own ops, because the child's content did not
+    /// change. A full-state batch reads a missing child entry as "empty" and an entry as the
+    /// whole content, so applying such a batch would clear or overwrite the hidden child
+    /// (e.g. a counter at 7 becomes 0).
     pub fn set_full_state(&mut self, full_state: bool) {
         self.full_state = full_state;
     }
