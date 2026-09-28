@@ -1432,11 +1432,40 @@ mod mut_inner_kv {
             ans
         }
 
+        /// A callback for [`SharedArena::set_creator_resolver`]: loads and parses the change
+        /// block holding the op with the given ID, if the store has it. Parsing registers the
+        /// parent link of every container the block's ops create.
+        ///
+        /// It holds weak references, so the arena (which this store refers to) does not keep
+        /// the store alive. It takes this store's locks and then the arena's, so the arena must
+        /// call it without holding its own locks, and the store must never resolve an arena
+        /// parent while holding `inner` (see `context/arena-parent-links.md`).
+        pub(crate) fn creator_resolver(&self) -> impl Fn(&SharedArena, ID) + Send + Sync + 'static {
+            let inner = Arc::downgrade(&self.inner);
+            let external_kv = Arc::downgrade(&self.external_kv);
+            move |arena, id| {
+                let (Some(inner), Some(external_kv)) = (inner.upgrade(), external_kv.upgrade())
+                else {
+                    return;
+                };
+                Self::get_parsed_block_in(&inner, &external_kv, arena, id);
+            }
+        }
+
         fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
-            let mut inner = self.inner.lock();
+            Self::get_parsed_block_in(&self.inner, &self.external_kv, &self.arena, id)
+        }
+
+        fn get_parsed_block_in(
+            inner: &Mutex<ChangeStoreInner>,
+            external_kv: &Mutex<dyn KvStore>,
+            arena: &SharedArena,
+            id: ID,
+        ) -> Option<Arc<ChangesBlock>> {
+            let mut inner = inner.lock();
             if let Some((_id, block)) = inner.mem_parsed_kv.range_mut(..=id).next_back() {
                 if block.peer == id.peer && block.counter_range.1 > id.counter {
-                    if let Err(err) = block.ensure_changes(&self.arena) {
+                    if let Err(err) = block.ensure_changes(arena) {
                         warn!(block_id = ?_id, ?err, "failed to parse cached change block");
                         return None;
                     }
@@ -1444,7 +1473,7 @@ mod mut_inner_kv {
                 }
             }
 
-            let store = self.external_kv.lock();
+            let store = external_kv.lock();
             let mut iter = store
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .filter(|(id, _)| id.len() == 12);
@@ -1473,7 +1502,7 @@ mod mut_inner_kv {
                 && block.counter_range.1 > id.counter
             {
                 let mut arc_block = Arc::new(block);
-                if let Err(err) = arc_block.ensure_changes(&self.arena) {
+                if let Err(err) = arc_block.ensure_changes(arena) {
                     warn!(?block_id, ?err, "failed to parse external change block");
                     return None;
                 }

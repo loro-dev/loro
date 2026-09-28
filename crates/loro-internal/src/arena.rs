@@ -14,7 +14,7 @@ use crate::{
     LoroValue,
 };
 use append_only_bytes::BytesSlice;
-use loro_common::PeerID;
+use loro_common::{PeerID, ID};
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::{
@@ -25,6 +25,10 @@ use std::{
 
 pub(crate) struct LoadAllFlag;
 type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
+/// Loads the change holding the op with the given ID, if the op log has it. Parsing a change
+/// registers the parent link of every container its ops create, and a normal container's ID is
+/// the ID of the op that created it. See `context/arena-parent-links.md`.
+type CreatorResolver = dyn Fn(&SharedArena, ID) + Send + Sync + 'static;
 
 #[derive(Default)]
 struct ArenaContainers {
@@ -49,6 +53,13 @@ struct ArenaContainers {
     /// Locking: the resolver may read the state KV store. Code that loads from KV must snapshot
     /// KV data and release the KV lock before taking the arena lock.
     parent_resolver: Option<Arc<ParentResolver>>,
+    /// Set by the op log. Used after `parent_resolver` when a container's parent is still
+    /// unknown, e.g. the meta of a tree node that was never alive in a document loaded from a
+    /// snapshot, whose change blocks are parsed lazily.
+    ///
+    /// Locking: it parses changes, which registers containers in this arena, so it must be
+    /// called without holding the arena lock.
+    creator_resolver: Option<Arc<CreatorResolver>>,
 }
 
 #[derive(Default)]
@@ -267,6 +278,8 @@ impl SharedArena {
                         root_c_idx: containers.root_c_idx.clone(),
                         top_level_root_c_idx: containers.top_level_root_c_idx.clone(),
                         parent_resolver: containers.parent_resolver.clone(),
+                        // It reads the source document's op log.
+                        creator_resolver: None,
                     }
                 }),
                 values: Mutex::new(self.inner.values.lock().clone()),
@@ -433,33 +446,82 @@ impl SharedArena {
             });
     }
 
+    /// The parent of `child`, or `None` for a top-level root.
+    ///
+    /// Also `None` for a normal container that no op in the history creates (an ID from the
+    /// user that is not a container, an op not received yet, or a container that is not in
+    /// the state of a shallow document and whose creating op was trimmed): no path leads to
+    /// it, so it is treated like a container whose parent no longer holds it.
     pub fn get_parent(&self, child: ContainerIdx) -> Option<ContainerIdx> {
-        let (child_id, resolver) = {
+        match self.resolve_parent(child) {
+            Some(parent) => parent,
+            None => {
+                assert!(
+                    self.inner.containers.read().creator_resolver.is_some(),
+                    "InternalError: Parent is not registered"
+                );
+                None
+            }
+        }
+    }
+
+    /// Finds and registers `child`'s parent edge: the registered edge, else the state KV
+    /// (`parent_resolver`), else the change that created it (`creator_resolver`).
+    ///
+    /// Returns `Some(parent)` when the edge is known (`parent` is `None` for a top-level root)
+    /// and `None` when no source knows the container.
+    fn resolve_parent(&self, child: ContainerIdx) -> Option<Option<ContainerIdx>> {
+        let (child_id, resolver, creator_resolver) = {
             let containers = self.inner.containers.read();
             let child_id = containers.container_id(child).unwrap();
             if child_id.is_root() && !child_id.is_mergeable() {
                 // TODO: PERF: we can speed this up by use a special bit in ContainerIdx to indicate
                 // whether the target is a root container
-                return None;
+                return Some(None);
             }
 
             // Try fast path first
             if let Some(p) = containers.parents.get(&child).copied() {
-                return p;
+                return Some(p);
             }
 
-            // Fallback: try to resolve parent lazily via the resolver if provided.
-            (child_id, containers.parent_resolver.clone())
+            // Fallback: try to resolve parent lazily via the resolvers if provided.
+            (
+                child_id,
+                containers.parent_resolver.clone(),
+                containers.creator_resolver.clone(),
+            )
         };
         if let Some(resolver) = resolver {
             if let Some(parent_id) = resolver(child_id.clone()) {
                 let parent_idx = self.register_container(&parent_id);
                 self.set_parent(child, Some(parent_idx));
-                return Some(parent_idx);
+                return Some(Some(parent_idx));
             }
         }
 
-        panic!("InternalError: Parent is not registered")
+        if let (Some(resolver), ContainerID::Normal { peer, counter, .. }) =
+            (creator_resolver, &child_id)
+        {
+            resolver(self, ID::new(*peer, *counter));
+            return self.get_registered_parent(child);
+        }
+
+        None
+    }
+
+    /// The index of a normal container that is not registered yet but that an op in the
+    /// history creates. Loading that op's change registers the container and its parent.
+    pub(crate) fn find_created_container(&self, id: &ContainerID) -> Option<ContainerIdx> {
+        if let Some(idx) = self.id_to_idx(id) {
+            return Some(idx);
+        }
+        let ContainerID::Normal { peer, counter, .. } = id else {
+            return None;
+        };
+        let resolver = self.inner.containers.read().creator_resolver.clone()?;
+        resolver(self, ID::new(*peer, *counter));
+        self.id_to_idx(id)
     }
 
     /// Return the parent edge already stored in the arena without invoking the lazy resolver.
@@ -707,6 +769,33 @@ impl SharedArena {
 
     // TODO: this can return a u16 directly now, since the depths are always valid
     pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
+        if let Some(d) = self.inner.containers.read().depth[container.to_index() as usize] {
+            return Some(d);
+        }
+
+        // `ArenaContainers::get_depth` runs under the arena lock, where the creator resolver
+        // cannot run, so resolve the missing parent links first.
+        let mut c = container;
+        loop {
+            {
+                let containers = self.inner.containers.read();
+                if containers.depth[c.to_index() as usize].is_some() {
+                    break;
+                }
+                match containers.parents.get(&c).copied() {
+                    Some(Some(p)) => {
+                        c = p;
+                        continue;
+                    }
+                    Some(None) => break,
+                    None => {}
+                }
+            }
+            match self.resolve_parent(c) {
+                Some(Some(p)) => c = p,
+                _ => break,
+            }
+        }
         self.inner.containers.write().get_depth(container)
     }
 
@@ -783,6 +872,14 @@ impl SharedArena {
     {
         self.inner.containers.write().parent_resolver =
             resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
+    }
+
+    /// Register the op log's [`CreatorResolver`]. See `creator_resolver` in `ArenaContainers`.
+    pub(crate) fn set_creator_resolver<F>(&self, resolver: F)
+    where
+        F: Fn(&SharedArena, ID) + Send + Sync + 'static,
+    {
+        self.inner.containers.write().creator_resolver = Some(Arc::new(resolver));
     }
 }
 

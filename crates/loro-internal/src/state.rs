@@ -1061,7 +1061,9 @@ impl DocState {
         }
 
         if !is_mergeable {
-            if let Some(idx) = self.arena.id_to_idx(id) {
+            // A document loaded from a snapshot parses its changes lazily, so a container that
+            // an op created may not be registered yet.
+            if let Some(idx) = self.arena.find_created_container(id) {
                 if self.arena.get_depth(idx).is_some() {
                     return true;
                 }

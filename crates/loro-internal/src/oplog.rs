@@ -151,6 +151,7 @@ impl OpLog {
         let arena = SharedArena::new();
         let cfg = Configure::default();
         let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
+        arena.set_creator_resolver(change_store.creator_resolver());
         Self {
             visible_op_count,
             history_cache: Mutex::new(ContainerHistoryCache::new(change_store.clone(), None)),
@@ -423,6 +424,7 @@ impl OpLog {
         let configure = self.configure.clone();
         arena.rollback(arena_checkpoint);
         let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_s.clone());
+        arena.set_creator_resolver(change_store.creator_resolver());
         self.history_cache = Mutex::new(ContainerHistoryCache::new(change_store.clone(), None));
         self.dag = AppDag::new(change_store.clone());
         self.change_store = change_store;
