@@ -16,8 +16,11 @@ container below it on the walked chain, in one of two sets:
 
 - `final_deletions`: the parent that lost the chain is a Map (a key only
   changes to a newer value, so a replaced or deleted child never becomes the
-  value again) or a List (deletes are final). No later version gives these
-  back.
+  value again) or a List (deletes are final). While the state is at the
+  oplog's latest version, no later version gives these back. While it is
+  behind (after `checkout`, or detached while imports arrive), a container
+  created after the state's version is also cut at its map or list parent,
+  and the next checkout forward brings it in.
 - `revivable`: the parent is a Tree or a MovableList. Moving a node, or one of
   its ancestors, out of a deleted subtree revives the node's metadata and
   everything below it (a local `mov`, an imported move, or a concurrent move
@@ -34,8 +37,13 @@ walk and assert that no cached entry on the chain contradicts the result.
 
 ## Invalidation
 
-- `DocState::apply_diff` with direction mode `Checkout` clears both sets:
-  moving backwards can revive anything.
+- `DocState::apply_diff` clears both sets when the direction mode is
+  `Checkout` (moving backwards can revive anything) or the diff comes from a
+  checkout (`EventTriggerKind::Checkout`). The latter covers forward
+  checkouts (`attach`, `checkout_to_latest`, `checkout` to a newer version,
+  and `import_batch`'s reattach), whose direction mode is `Import`, `Linear`,
+  or `ImportGreaterUpdates`. The only checkout triggered as `Import` is the
+  snapshot import into an empty document, whose state is new.
 - `DocState::apply_diff` in any other mode clears `revivable` when the batch
   touches a Tree or MovableList container.
 - `DocState::apply_local_op` clears `revivable` before a tree `Move`. A local
@@ -54,7 +62,13 @@ keep their IDs, and those are not cached.
 Before 2026-09-28 every deletion went into one set that forward transitions
 never cleared (`clear_alive` removed nothing, since only deletions were
 stored), so after `is_deleted()` a revived container still counted as deleted
-in release builds and rejected edits until the document was reloaded.
+in release builds and rejected edits until the document was reloaded. The
+same held for a container queried at an older version and brought in by a
+forward checkout.
+
+The debug assertion runs while the caller holds the state lock, so a stale
+entry aborts the process (the unwinding code locks the poisoned state again),
+like any other internal assertion under that lock.
 
 ## Tests
 

@@ -351,4 +351,33 @@ mod tests {
             assert_eq!(state.dead_cache_entry(idx), Some(true), "{id:?}");
         }
     }
+
+    /// While checked out to an older version, a map child created later is
+    /// cut at its map parent and cached as a final deletion. A forward
+    /// checkout is not a `DiffMode::Checkout` transition, but it must still
+    /// drop that entry.
+    #[test]
+    fn forward_checkout_drops_deletions_cached_behind_the_oplog() {
+        use crate::MapHandler;
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let map = doc.get_map("m");
+        map.insert("a", 1).unwrap();
+        doc.commit_then_renew();
+        let v1 = doc.oplog_frontiers();
+        let child = map
+            .insert_container("c", MapHandler::new_detached())
+            .unwrap();
+        doc.commit_then_renew();
+
+        doc.checkout(&v1).unwrap();
+        let idx = doc.state.lock().arena.id_to_idx(&child.id()).unwrap();
+        assert!(child.is_deleted());
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), Some(true));
+
+        doc.checkout_to_latest();
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), None);
+        assert!(!child.is_deleted());
+    }
 }

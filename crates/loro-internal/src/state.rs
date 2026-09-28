@@ -682,10 +682,13 @@ impl DocState {
         // `diff_mode` here is the DIRECTION mode (`origin_diff_mode` from
         // `calc_diff_internal`), not the mode the calculators computed with:
         // Checkout means the transition may go backwards, which can revive any
-        // container. Every other mode implies a forward transition, where only
-        // a tree or movable-list move can revive one (see
-        // `dead_containers_cache.rs`).
-        if diff_mode == DiffMode::Checkout {
+        // container. Any checkout also clears it, even a forward one
+        // (`attach`, `checkout_to_latest`): while the state was behind the
+        // oplog, a container created later looked cut at its map or list
+        // parent. Every other forward transition keeps the state at the
+        // oplog's latest version, where only a tree or movable-list move can
+        // revive a container (see `dead_containers_cache.rs`).
+        if diff_mode == DiffMode::Checkout || diff.by == EventTriggerKind::Checkout {
             self.dead_containers_cache.clear();
         } else if diffs.iter().any(|d| {
             matches!(

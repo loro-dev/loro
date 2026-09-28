@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LoroDoc, LoroMap } from "../bundler/index";
+import { LoroDoc, LoroMap, LoroText } from "../bundler/index";
 
 // A container that was reported deleted must count as alive again once it is
 // revived. See context/dead-container-cache.md.
@@ -78,5 +78,47 @@ describe("dead container cache", () => {
     expect(child.isDeleted()).toBe(false);
     child.set("y", 2);
     a.commit();
+  });
+});
+
+describe("dead container cache after a forward checkout", () => {
+  it("drops the answer given at an older version", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1n);
+    doc.getMap("m").set("a", 1);
+    doc.commit();
+    const v1 = doc.frontiers();
+    const child = doc.getMap("m").setContainer("c", new LoroMap());
+    doc.commit();
+
+    doc.checkout(v1);
+    expect(child.isDeleted()).toBe(true);
+    doc.checkoutToLatest();
+    expect(child.isDeleted()).toBe(false);
+    child.set("x", 1);
+    doc.commit();
+    expect(child.get("x")).toBe(1);
+  });
+
+  it("drops the answer given while detached after attach", () => {
+    const a = new LoroDoc();
+    a.setPeerId(1n);
+    a.getMap("m").set("a", 1);
+    a.commit();
+    const b = new LoroDoc();
+    b.setPeerId(2n);
+    b.import(a.export({ mode: "update" }));
+    const text = a.getMap("m").setContainer("c", new LoroText());
+    a.commit();
+
+    b.detach();
+    b.import(a.export({ mode: "update" }));
+    const inB = b.getContainerById(text.id) as LoroText;
+    expect(inB.isDeleted()).toBe(true);
+    b.attach();
+    expect(inB.isDeleted()).toBe(false);
+    inB.insert(0, "x");
+    b.commit();
+    expect(inB.toString()).toBe("x");
   });
 });

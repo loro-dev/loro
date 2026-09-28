@@ -8,8 +8,8 @@
 //! as well.
 
 use loro::{
-    ContainerTrait, ExportMode, Frontiers, LoroDoc, LoroMap, LoroMovableList, LoroTree, TreeID,
-    TreeParentId, UndoManager,
+    ContainerTrait, ExportMode, Frontiers, LoroDoc, LoroMap, LoroMovableList, LoroText, LoroTree,
+    TreeID, TreeParentId, UndoManager,
 };
 
 struct DeletedSubtree {
@@ -268,4 +268,77 @@ fn map_and_list_deletions_stay_deleted() {
         assert!(in_map.insert("x", 1).is_err());
         assert!(in_list.insert(0, 1).is_err());
     }
+}
+
+/// While checked out to an older version, a container created later is
+/// reported deleted (it is cut at its map parent in that state). Going
+/// forward again, by `checkout_to_latest`, `attach`, or a checkout to a newer
+/// version, must drop that answer.
+#[test]
+fn forward_checkout_revives_containers_created_after_the_old_version() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_map("m").insert("a", 1).unwrap();
+    let tree = doc.get_tree("tree");
+    let node = tree.create(TreeParentId::Root).unwrap();
+    doc.commit();
+    let v1 = doc.oplog_frontiers();
+    let child = doc
+        .get_map("m")
+        .insert_container("c", LoroMap::new())
+        .unwrap();
+    let title = tree
+        .get_meta(node)
+        .unwrap()
+        .insert_container("title", LoroText::new())
+        .unwrap();
+    doc.commit();
+    let v2 = doc.oplog_frontiers();
+    doc.get_map("m").insert("b", 2).unwrap();
+    doc.commit();
+
+    for forward in [
+        |doc: &LoroDoc, _: &Frontiers| doc.checkout_to_latest(),
+        |doc: &LoroDoc, _: &Frontiers| doc.attach(),
+        |doc: &LoroDoc, v2: &Frontiers| doc.checkout(v2).unwrap(),
+    ] {
+        doc.checkout(&v1).unwrap();
+        assert!(child.is_deleted());
+        assert!(title.is_deleted());
+        forward(&doc, &v2);
+        assert!(!child.is_deleted());
+        assert!(!title.is_deleted());
+    }
+
+    doc.checkout_to_latest();
+    child.insert("x", 1).unwrap();
+    title.insert(0, "x").unwrap();
+    doc.commit();
+}
+
+#[test]
+fn attach_after_detached_import_revives_containers_queried_while_detached() {
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    a.get_map("m").insert("a", 1).unwrap();
+    a.commit();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let text = a
+        .get_map("m")
+        .insert_container("c", LoroText::new())
+        .unwrap();
+    a.commit();
+
+    b.detach();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let in_b = b.get_text(text.id());
+    assert!(in_b.is_deleted(), "not in b's detached state yet");
+    b.attach();
+    assert!(!in_b.is_deleted());
+    in_b.insert(0, "x").unwrap();
+    b.commit();
 }
