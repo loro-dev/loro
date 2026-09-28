@@ -1408,6 +1408,14 @@ mod query {
     }
 }
 
+/// Whether new text inserted right in front of this anchor stays in front of
+/// it: the start of an unmark (case 1 of `find_best_insert_pos`), or an anchor
+/// that prefers inserts before it (case 2).
+fn insert_stays_before_anchor(style: &StyleOp, anchor_type: AnchorType) -> bool {
+    (anchor_type == AnchorType::Start && (style.value.is_null() || style.value.is_false()))
+        || style.info.prefer_insert_before(anchor_type)
+}
+
 impl RichtextState {
     pub(crate) fn from_chunks<I: Iterator<Item = impl Into<RichtextStateChunk>>>(i: I) -> Self {
         Self {
@@ -1428,7 +1436,12 @@ impl RichtextState {
                 return Ok((0, None));
             }
 
-            if let Some(c) = self.try_get_cache_or_clean(pos, pos_type) {
+            // A cached cursor next to a style anchor would skip the anchor
+            // rules of `find_best_insert_pos`.
+            let cached = self
+                .try_get_cache_or_clean(pos, pos_type)
+                .filter(|c| !self.has_styles() || !self.anchor_rules_may_move_insert(*c));
+            if let Some(c) = cached {
                 let entity_index = self.get_cache_entity_index().unwrap();
                 Ok((entity_index + c.offset, Some(c)))
             } else {
@@ -1458,6 +1471,40 @@ impl RichtextState {
         };
         self.check_cache();
         result
+    }
+
+    /// Whether the anchor rules of `find_best_insert_pos` could put an insert
+    /// somewhere other than `cursor`. They cannot inside a text chunk, between
+    /// two text chunks, or at the end of a text chunk followed by an anchor
+    /// that new text stays in front of (the rules stop at that anchor).
+    fn anchor_rules_may_move_insert(&self, cursor: Cursor) -> bool {
+        let Some(elem) = self.tree.get_elem(cursor.leaf) else {
+            return true;
+        };
+        if !matches!(elem, RichtextStateChunk::Text { .. }) {
+            return true;
+        }
+        if cursor.offset == 0 {
+            return self.tree.prev_elem(cursor).is_some_and(|prev| {
+                matches!(
+                    self.tree.get_elem(prev.leaf),
+                    Some(RichtextStateChunk::Style { .. })
+                )
+            });
+        }
+        if cursor.offset < elem.rle_len() {
+            return false;
+        }
+        match self
+            .tree
+            .next_elem(cursor)
+            .and_then(|next| self.tree.get_elem(next.leaf))
+        {
+            Some(RichtextStateChunk::Style { style, anchor_type }) => {
+                !insert_stays_before_anchor(style, *anchor_type)
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn has_styles(&self) -> bool {
@@ -1892,14 +1939,8 @@ impl RichtextState {
             };
 
             visited.push((style, anchor_type, iter, entity_index));
-            if anchor_type == AnchorType::Start && (style.value.is_null() || style.value.is_false())
-            {
-                // case 1. should be before this anchor
-                break;
-            }
-
-            if style.info.prefer_insert_before(anchor_type) {
-                // case 2.
+            if insert_stays_before_anchor(style, anchor_type) {
+                // case 1 or 2.
                 break;
             }
 
@@ -2016,9 +2057,11 @@ impl RichtextState {
                         let event_len = s.entity_range_to_event_range(start..end).len();
                         let id = s.id().inc(start as i32);
                         match ans.last_mut() {
+                            // Every entity of a range is text, so its IDs advance by
+                            // the entity length (not the UTF-16 event length).
                             Some(last)
                                 if last.entity_end == entity_index
-                                    && last.id_start.inc(last.event_len as i32) == id =>
+                                    && last.id_start.inc(last.entity_len() as i32) == id =>
                             {
                                 last.entity_end += len;
                                 last.event_len += event_len;
@@ -3076,6 +3119,9 @@ mod converter {
         }
     }
 }
+
+#[cfg(test)]
+mod insert_pos_cache_test;
 
 #[cfg(test)]
 mod test {
