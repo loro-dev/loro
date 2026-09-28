@@ -24,14 +24,14 @@ use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
-use crate::op::{FutureInnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
+use crate::op::{FutureInnerContent, InnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
 use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
 use rle::{HasLength, RleVec, Sliceable};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
@@ -65,10 +65,26 @@ pub struct OpLog {
 }
 
 pub(crate) struct ImportRollback {
-    old_vv: VersionVector,
     arena: SharedArenaRollback,
     change_store: ChangeStoreRollback,
     pending: PendingChangesRollback,
+    /// Movable-list `Move`/`Set` element references inserted in this scope and not
+    /// validated yet (`OpLog::validate_movable_list_elem_refs_in_import_scope`).
+    movable_list_refs: Vec<MovableListElemRef>,
+}
+
+#[derive(Clone, Copy)]
+struct ResolvedElem {
+    target: ID,
+    container: ContainerIdx,
+    is_insert: bool,
+}
+
+struct MovableListElemRef {
+    container: ContainerIdx,
+    op_id: ID,
+    op_lamport: Lamport,
+    elem_id: IdLp,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -243,7 +259,8 @@ impl OpLog {
         let rollback_old_vv = self
             .import_rollback
             .as_ref()
-            .and_then(|x| (!x.old_vv.is_empty()).then_some(&x.old_vv));
+            .map(|x| x.change_store.old_vv())
+            .filter(|vv| !vv.is_empty());
         self.dag
             .handle_new_change(&change, from_local, rollback_old_vv);
         self.history_cache
@@ -251,6 +268,23 @@ impl OpLog {
             .insert_by_new_change(&change, true, true);
         self.register_container_and_parent_link(&change);
         if let Some(rollback) = self.import_rollback.as_mut() {
+            for op in change.ops.iter() {
+                if op.container.get_type() != ContainerType::MovableList {
+                    continue;
+                }
+                if let InnerContent::List(
+                    list_op::InnerListOp::Move { elem_id, .. }
+                    | list_op::InnerListOp::Set { elem_id, .. },
+                ) = &op.content
+                {
+                    rollback.movable_list_refs.push(MovableListElemRef {
+                        container: op.container,
+                        op_id: ID::new(change.id.peer, op.counter),
+                        op_lamport: change.lamport + (op.counter - change.id.counter) as Lamport,
+                        elem_id: *elem_id,
+                    });
+                }
+            }
             self.change_store.insert_change_with_rollback(
                 change,
                 true,
@@ -270,13 +304,12 @@ impl OpLog {
 
     pub(crate) fn begin_import_rollback_with_arena(&mut self, arena: SharedArenaRollback) {
         debug_assert!(self.import_rollback.is_none());
-        let old_vv = self.vv().clone();
         self.dag.begin_import_rollback();
         self.import_rollback = Some(ImportRollback {
-            old_vv: old_vv.clone(),
             arena,
-            change_store: ChangeStoreRollback::new(old_vv),
+            change_store: ChangeStoreRollback::new(self.vv().clone()),
             pending: Default::default(),
+            movable_list_refs: Vec::new(),
         });
     }
 
@@ -322,22 +355,23 @@ impl OpLog {
                 continue;
             }
 
-            if self
-                .dag
-                .get_change_lamport_from_deps(&change.deps)
-                .is_none()
-            {
-                continue;
-            }
-
-            ans.applies_to_dag = true;
+            // Inspect the ops even when the deps are not in the DAG yet: they may be
+            // earlier changes of this same import, which then unlock this one.
             if change.ops.iter().any(|op| {
                 matches!(
                     op.container.get_type(),
-                    ContainerType::List | ContainerType::Tree
+                    ContainerType::List | ContainerType::MovableList | ContainerType::Tree
                 )
             }) {
                 ans.needs_state_apply_rollback = true;
+            }
+
+            if self
+                .dag
+                .get_change_lamport_from_deps(&change.deps)
+                .is_some()
+            {
+                ans.applies_to_dag = true;
             }
         }
 
@@ -1152,6 +1186,98 @@ impl OpLog {
             change.id.peer,
             (id.lamport - change.lamport) as Counter + change.id.counter,
         ))
+    }
+
+    /// Reject the movable-list `Move`/`Set` ops inserted since the open import rollback
+    /// scope began whose `elem_id` is not an element inserted into the same list within
+    /// the op's causal history.
+    ///
+    /// Honest peers can only target elements they can see, and the movable-list diff
+    /// calculator relies on it (`last_pos`/`last_value` lookups). The refs are recorded
+    /// by `insert_new_change` while the scope is open, which covers directly imported
+    /// changes, unlocked pending changes and every blob of an `import_batch`. See
+    /// `context/movable-list-op-validation.md`.
+    pub(crate) fn validate_movable_list_elem_refs_in_import_scope(
+        &mut self,
+    ) -> Result<(), LoroError> {
+        let Some(rollback) = self.import_rollback.as_mut() else {
+            return Ok(());
+        };
+        let refs = std::mem::take(&mut rollback.movable_list_refs);
+        // Moves and sets keep hitting the same elements, and what an element id
+        // resolves to does not depend on the op, so resolve each one once.
+        let mut elems: FxHashMap<IdLp, Option<ResolvedElem>> = FxHashMap::default();
+        for r in refs {
+            let elem = *elems
+                .entry(r.elem_id)
+                .or_insert_with(|| self.resolve_movable_list_elem(r.elem_id));
+            if !self.is_visible_movable_list_elem(&r, elem) {
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "Movable list op {} targets element {}, which is not in the list's \
+                         causal history",
+                        r.op_id, r.elem_id
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Where `elem_id`'s insert op lives, or `None` if its lamport is not in the stored
+    /// history. The lookup searches both parsed and KV-only blocks of the peer, so
+    /// `None` means the element never existed or was trimmed before a shallow root.
+    fn resolve_movable_list_elem(&self, elem_id: IdLp) -> Option<ResolvedElem> {
+        let change = self.change_store.get_change_by_lamport_lte(elem_id)?;
+        if change.lamport_end() <= elem_id.lamport {
+            return None;
+        }
+        let target = ID::new(
+            change.id.peer,
+            (elem_id.lamport - change.lamport) as Counter + change.id.counter,
+        );
+        let op = change.get_op_with_counter(target.counter)?;
+        Some(ResolvedElem {
+            target,
+            container: op.container,
+            is_insert: matches!(
+                op.content,
+                InnerContent::List(list_op::InnerListOp::Insert { .. })
+            ),
+        })
+    }
+
+    fn is_visible_movable_list_elem(
+        &self,
+        r: &MovableListElemRef,
+        elem: Option<ResolvedElem>,
+    ) -> bool {
+        if r.elem_id.lamport >= r.op_lamport {
+            return false;
+        }
+
+        let Some(elem) = elem else {
+            // History before a shallow root is trimmed. An op after the root can
+            // only see pre-root elements that are still alive at the root.
+            return !self.dag.shallow_since_vv().is_empty()
+                && self.with_history_cache(|h| {
+                    h.shallow_root_has_movable_list_elem(r.container, r.elem_id)
+                });
+        };
+        if !elem.is_insert || elem.container != r.container {
+            return false;
+        }
+
+        // Earlier ops of the op's own DAG node are by the same peer, so the node's
+        // start version covers every other peer's part of its causal history.
+        let target = elem.target;
+        (target.peer == r.op_id.peer && target.counter < r.op_id.counter)
+            || self
+                .dag
+                .get(r.op_id)
+                .is_some_and(|node| self.dag.ensure_vv_for(&node).includes_id(target))
     }
 
     #[allow(unused)]
