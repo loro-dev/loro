@@ -14,4 +14,4 @@ Also fixed:
 - A rolled-back import could leave a cached change block behind that made the next import of the same changes panic with "counter should be continuous".
 - Imports of List and Tree ops no longer copy the peer's last change block on every import to keep a rollback copy. Many small List or Tree imports are about 30% faster.
 
-Performance: movable-list imports now check every `move`/`set` against the document's history. That makes them about 2–5% slower (many small imports) and 0–4% slower (a 120k-op import, about 70% of it moves and sets).
+Performance: movable-list imports now check every `move`/`set` against the document's history. In release benchmarks that makes them about 2–8% slower for many small imports and 0–4% slower for a 120k-op import where about 70% of the ops are moves and sets.
