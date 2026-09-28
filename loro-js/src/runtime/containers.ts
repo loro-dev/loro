@@ -2179,6 +2179,7 @@ export class LoroText extends LoroContainer {
   }
 
   #entityFrom(index: number, from: TextPosType): number | undefined {
+    this._ensureHydrated();
     const sequence = this._sequence;
     const length = sequence.visibleLength;
     if (sequence.visibleZeroWidthLength === 0) {
@@ -2238,6 +2239,7 @@ export class LoroText extends LoroContainer {
    * `anchorStaysAfterInsert`), or after all of them.
    */
   #insertPosition(position: number): number {
+    // Hydrates a lazily loaded text; its anchors decide where the text goes.
     const entity = this.#entityAt(position);
     if (entity === undefined) {
       throw new RangeError(`text position ${position} is out of range`);

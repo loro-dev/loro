@@ -3,6 +3,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ContainerType,
+  decodeFastSnapshot,
+  decodeStateSnapshotStore,
+} from "../src/codec/index";
+import {
   LoroDoc,
   LoroText,
   UndoManager,
@@ -10,6 +15,8 @@ import {
   type Frontiers,
   type JsonSchema,
 } from "../src/index";
+import { applyDelta, normalizeDelta } from "./support/richtext-differential";
+import { loadRustReference } from "./support/rust-reference";
 
 /**
  * Rust-side fixtures from `scripts/write-rust-richtext-fixtures.cjs`: loro-crdt
@@ -293,5 +300,134 @@ describe("rich-text style anchors match Rust positions", () => {
     expect(attached.toDelta()).toEqual([
       { insert: "hello!", attributes: { bold: true } },
     ]);
+  });
+});
+
+interface Runtime {
+  readonly LoroDoc: typeof LoroDoc;
+  readonly LoroText: typeof LoroText;
+}
+
+const rust = loadRustReference();
+const runtimes: [string, Runtime][] = [["loro.js", { LoroDoc, LoroText }]];
+if (rust !== undefined) runtimes.push(["loro-crdt", rust]);
+
+/** The values of the style marks in a Text state of an encoded state store. */
+function markValues(stateBytes: Uint8Array): unknown[] {
+  const store = decodeStateSnapshotStore(stateBytes);
+  if (store.kind !== "sstable") return [];
+  return store.containers.flatMap(({ wrapper: { state } }) =>
+    state.kind === ContainerType.Text
+      ? state.marks.map(({ value }) => (value.type === "null" ? null : value.value))
+      : [],
+  );
+}
+
+describe.each(runtimes)("rich-text anchors in %s", (runtimeName, runtime) => {
+  test("inserts into a nested text that a snapshot loaded lazily", () => {
+    const source = new runtime.LoroDoc();
+    source.setPeerId(1);
+    source.configTextStyle({ bold: { expand: "before" } });
+    const text = source.getMap("m").setContainer("t", new runtime.LoroText());
+    text.insert(0, "abcd");
+    text.mark({ start: 0, end: 4 }, "bold", true);
+    source.commit();
+    const snapshot = source.export({ mode: "snapshot" });
+
+    const insertInto = (position: number): Delta<string>[] => {
+      const doc = new runtime.LoroDoc();
+      doc.setPeerId(2);
+      doc.configTextStyle({ bold: { expand: "before" } });
+      doc.import(snapshot);
+      // Not read before the insert, so the text is still unhydrated.
+      const nested = doc.getMap("m").get("t") as LoroText;
+      nested.insert(position, "X");
+      return nested.toDelta();
+    };
+    // bold expands before: X at 0 joins it, X at 4 does not.
+    expect(insertInto(0)).toEqual([{ insert: "Xabcd", attributes: { bold: true } }]);
+    expect(insertInto(2)).toEqual([{ insert: "abXcd", attributes: { bold: true } }]);
+    expect(insertInto(4)).toEqual([
+      { insert: "abcd", attributes: { bold: true } },
+      { insert: "X" },
+    ]);
+  });
+
+  test.each(["none", "before", "after", "both"] as const)(
+    "shallow snapshots null a %s style that no text is left in",
+    (expand) => {
+      const shallow = (styleDiesAfterRoot: boolean): Uint8Array => {
+        const doc = new runtime.LoroDoc();
+        doc.setPeerId(1);
+        doc.setChangeMergeInterval(0);
+        doc.configTextStyle({ link: { expand } });
+        const text = doc.getText("t");
+        text.insert(0, "x");
+        doc.commit();
+        text.mark({ start: 0, end: 1 }, "link", "private");
+        doc.commit();
+        let root: Frontiers | undefined;
+        if (styleDiesAfterRoot) {
+          doc.getMap("meta").set("v", 0);
+          doc.commit();
+          root = doc.frontiers();
+        }
+        text.delete(0, 1);
+        doc.commit();
+        doc.getMap("meta").set("v", 1);
+        doc.commit();
+        return doc.export({
+          mode: "shallow-snapshot",
+          frontiers: root ?? doc.frontiers(),
+        });
+      };
+
+      // Dead at the root: the value is nulled there and in the latest state,
+      // except for a both-expand style, which still styles future inserts.
+      const dead = decodeFastSnapshot(shallow(false));
+      const kept = expand === "both" ? "private" : null;
+      expect(markValues(dead.shallowRootState)).toEqual([kept]);
+      // Alive at the root: the latest state keeps it for historical checkout.
+      const late = decodeFastSnapshot(shallow(true));
+      expect(markValues(late.shallowRootState)).toEqual(["private"]);
+      // Rust writes no latest state for so few ops; loro.js always does.
+      const writesLatest = runtimeName === "loro.js";
+      expect(markValues(dead.state)).toEqual(writesLatest ? [kept] : []);
+      expect(markValues(late.state)).toEqual(writesLatest ? ["private"] : []);
+      const replica = new runtime.LoroDoc();
+      replica.import(shallow(false));
+      expect(replica.getText("t").toString()).toBe("");
+    },
+  );
+
+  test("a checkout that adds only a mark's start anchor changes no text", () => {
+    const doc = new runtime.LoroDoc();
+    doc.setPeerId(5);
+    doc.configTextStyle({ bold: { expand: "after" } });
+    const text = doc.getText("t");
+    text.insert(0, "abc");
+    doc.commit();
+    text.mark({ start: 1, end: 3 }, "bold", "x");
+    doc.commit();
+    text.delete(1, 2);
+    doc.commit();
+
+    // 2@5 is before the mark, 3@5 has its start anchor but not its end.
+    const versions: Frontiers[] = [2, 3, 4, 3, 2, 4, 5, 3].map((counter) => [
+      { peer: "5", counter },
+    ]);
+    doc.checkout(versions[0]!);
+    let mirror = text.toDelta();
+    doc.subscribe((batch) => {
+      for (const event of batch.events) {
+        if (event.diff.type === "text") {
+          mirror = applyDelta(mirror, event.diff.diff as Delta<string>[]);
+        }
+      }
+    });
+    for (const version of versions.slice(1)) {
+      doc.checkout(version);
+      expect(normalizeDelta(mirror)).toEqual(normalizeDelta(text.toDelta()));
+    }
   });
 });

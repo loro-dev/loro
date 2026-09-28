@@ -397,12 +397,19 @@ export class RichtextScenario {
         return;
       case "checkout": {
         const peer = this.#peer(action.peer);
-        if (peer.versions.length === 0) return;
         this.#commit(peer);
-        const version = peer.versions[action.version % peer.versions.length]!;
-        this.#both(peer, `checkout(${JSON.stringify(version)})`, (r) =>
-          r.doc.checkout(version),
-        );
+        // Two versions in a row, so transitions also run between historical
+        // versions, not only from and back to the latest one.
+        for (const roll of [
+          action.version,
+          Math.imul(action.version, 0x9e37_79b1) >>> 0,
+        ]) {
+          const version = this.#versionToVisit(peer, roll);
+          if (version === undefined) continue;
+          this.#both(peer, `checkout(${JSON.stringify(version)})`, (r) =>
+            r.doc.checkout(version),
+          );
+        }
         this.#both(peer, "checkoutToLatest", (r) => r.doc.checkoutToLatest());
         return;
       }
@@ -459,6 +466,26 @@ export class RichtextScenario {
         this.#createCursor(action);
         return;
     }
+  }
+
+  /**
+   * A recorded commit version, or for odd rolls the version right after a
+   * random op in the history. The latter can split a change or an op, such as
+   * a mark whose end anchor is not included yet.
+   */
+  #versionToVisit(peer: Peer, roll: number): Frontiers | undefined {
+    if (roll % 2 === 1) {
+      const counters = [...peer.rust.doc.oplogVersion().toJSON()].filter(
+        ([, end]) => end > 0,
+      );
+      if (counters.length > 0) {
+        const [id, end] = counters[(roll >>> 1) % counters.length]!;
+        return [{ peer: id, counter: (roll >>> 5) % end }];
+      }
+    }
+    return peer.versions.length === 0
+      ? undefined
+      : peer.versions[roll % peer.versions.length];
   }
 
   #text(replica: Replica): Text {

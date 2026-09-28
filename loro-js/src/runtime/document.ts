@@ -3997,6 +3997,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (content.type === "text-mark" || content.type === "text-mark-end") {
             const text = container as LoroText;
             textStyleContainers.add(text);
+            // Anchors take the bulk path, which records no event. Start the
+            // text's event baseline before anything moves, or a transition
+            // that only toggles a start anchor would diff the text against an
+            // empty value and report it as inserted.
+            if (recording !== undefined)
+              this.#sequenceEventState(recording, text, "text");
             if (recording !== undefined && content.type === "text-mark-end") {
               const style = text._styleAt({
                 peer: change.id.peer,
@@ -5497,10 +5503,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const latestFrontiers = this.#frontiersForVersion(latestVersion);
     const restoreVersion = this.version();
 
+    // Rust's `redact_export_states`: null the values of styles that enclose no
+    // text at the root, and only those in the latest state
+    // (context/shallow-snapshot-style-redaction.md).
+    const redacted = new Set<string>();
     this.#rebuildFromHistory(rootVersion);
-    const rootStore = this.#buildStateStore(startFrontiers);
+    const rootStore = this.#buildStateStore(startFrontiers, { redacted });
     this.#rebuildFromHistory(latestVersion);
-    const latestStore = this.#buildStateStore();
+    const latestStore = this.#buildStateStore(undefined, {
+      redacted: new Set(),
+      only: redacted,
+    });
     if (restoreVersion.compare(latestVersion) !== 0) {
       this.#rebuildFromHistory(restoreVersion);
     }
@@ -5612,7 +5625,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       : undefined;
   }
 
-  #buildStateStore(frontiers?: readonly CodecId[]): StateSnapshotStore {
+  #buildStateStore(
+    frontiers?: readonly CodecId[],
+    redaction?: StyleRedaction,
+  ): StateSnapshotStore {
     const containers: StateSnapshotContainerEntry[] = [];
     for (const container of this.#containers.values()) {
       const id = container._codecId;
@@ -5624,7 +5640,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           containerType: id.containerType,
           depth: BigInt(containerDepth(container)),
           parent,
-          state: this.#containerState(container),
+          state: this.#containerState(container, redaction),
         },
       });
     }
@@ -5633,7 +5649,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       : { kind: "sstable", frontiers, containers };
   }
 
-  #containerState(container: LoroContainer): ContainerStateSnapshot {
+  #containerState(
+    container: LoroContainer,
+    redaction?: StyleRedaction,
+  ): ContainerStateSnapshot {
     if (container instanceof LoroMap) {
       const peers: bigint[] = [];
       const peerIndices = new Map<bigint, number>();
@@ -5741,6 +5760,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           });
         }
       }
+      if (redaction !== undefined) redactDeadStyleValues(peers, spans, marks, redaction);
       return {
         kind: CodecContainerType.Text,
         text: text.join(""),
@@ -8431,4 +8451,51 @@ function treeNodeAtPath(
   if (part.includes("@")) return tree.getNodeByID(part as TreeID);
   const index = parseOptionalPathIndex(part);
   return index === undefined ? undefined : tree._nodeAt(undefined, index);
+}
+
+interface StyleRedaction {
+  /** Start IDs (`peer:counter`) of the pairs whose values were nulled. */
+  readonly redacted: Set<string>;
+  /** Only pairs in this set may be nulled (the shallow root's pairs). */
+  readonly only?: ReadonlySet<string>;
+}
+
+const STYLE_EXPAND_BOTH = 0x02 | 0x04;
+
+/**
+ * Rust's `redact_dead_style_values`: nulls the value of every style pair with
+ * no text span between its anchors, except both-expand pairs, which still
+ * style future inserts. Anchors and IDs stay so positions do not move.
+ */
+function redactDeadStyleValues(
+  peers: readonly bigint[],
+  spans: readonly { peerIndex: bigint; counter: number; length: number }[],
+  marks: { value: EncodedLoroValue; info: number }[],
+  redaction: StyleRedaction,
+): void {
+  // Open pairs keyed by the ID their end span carries (start counter + 1).
+  const open = new Map<string, { mark: number; id: string; textSpans: number }>();
+  let starts = 0;
+  let textSpans = 0;
+  for (const span of spans) {
+    if (span.length > 0) {
+      textSpans += 1;
+    } else if (span.length === 0) {
+      const id = `${peers[Number(span.peerIndex)]}:${span.counter}`;
+      open.set(`${span.peerIndex}:${span.counter + 1}`, { mark: starts, id, textSpans });
+      starts += 1;
+    } else {
+      const key = `${span.peerIndex}:${span.counter}`;
+      const pair = open.get(key);
+      if (pair === undefined) continue;
+      open.delete(key);
+      if (pair.textSpans !== textSpans) continue;
+      const mark = marks[pair.mark]!;
+      if ((mark.info & STYLE_EXPAND_BOTH) === STYLE_EXPAND_BOTH) continue;
+      if (mark.value.type === "null") continue;
+      if (redaction.only !== undefined && !redaction.only.has(pair.id)) continue;
+      mark.value = { type: "null" };
+      redaction.redacted.add(pair.id);
+    }
+  }
 }
