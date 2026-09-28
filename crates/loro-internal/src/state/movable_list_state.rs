@@ -1207,8 +1207,18 @@ impl ContainerState for MovableListState {
                 match self.inner.elements().get(&elem_id).cloned() {
                     Some(elem) => {
                         // Update value if needed
-                        if let Some(value_id) = value_id {
-                            if elem.value != value && (!need_compare || elem.value_id < value_id) {
+                        if let Some(value_id) =
+                            value_id.filter(|value_id| !need_compare || elem.value_id < *value_id)
+                        {
+                            if elem.value == value {
+                                // Only the winning set op may have changed (e.g. a
+                                // checkout past a later set of the same value):
+                                // keep the value id accurate without an event, as
+                                // for maps.
+                                if elem.value_id != value_id {
+                                    self.inner.update_value(elem_id, value, value_id);
+                                }
+                            } else {
                                 maybe_moved.remove(&elem_id);
                                 self.inner.update_value(elem_id, value.clone(), value_id);
                                 let index = self.get_index_of_elem(elem_id);

@@ -10,7 +10,7 @@ use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
-use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID};
+use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID, ID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -22,13 +22,13 @@ use crate::{
     cursor::{Cursor, PosType},
     delta::TreeExternalDiff,
     diff_calc::{DiffCalculator, DiffMode},
-    event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff},
+    event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff, KeptChange},
     fx_map,
     handler::ValueOrHandler,
     id::PeerID,
     lock::{LoroLockGroup, LoroMutex},
     op::{Op, RawOp},
-    version::Frontiers,
+    version::{Frontiers, VersionVector},
     ContainerDiff, ContainerType, DocDiff, InternalString, LoroDocInner, LoroValue, OpLog,
 };
 
@@ -174,6 +174,10 @@ pub struct DocState {
 
     dead_containers_cache: DeadContainersCache,
     alive_containers_cache: Option<AliveContainersCache>,
+    /// Set while recording for a caller that only uses actual changes
+    /// ([`crate::undo::DiffBatch::from_changes`]: revert, undo). Containers that keep their
+    /// state are then not revived at all, which skips building full states nobody reads.
+    record_changes_only: bool,
 }
 
 struct AliveContainersCache {
@@ -499,6 +503,7 @@ impl DocState {
                 event_recorder: Default::default(),
                 dead_containers_cache: Default::default(),
                 alive_containers_cache: None,
+                record_changes_only: false,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -524,6 +529,7 @@ impl DocState {
             event_recorder: Default::default(),
             dead_containers_cache: Default::default(),
             alive_containers_cache: None,
+            record_changes_only: false,
         }))
     }
 
@@ -719,6 +725,10 @@ impl DocState {
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
         let mut to_revive_in_next_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut to_revive_in_this_layer: FxHashSet<ContainerIdx> = FxHashSet::default();
+        // Revived containers that kept their id and state: a mergeable child re-activated by
+        // a container that is not itself revived, and what such a container holds. Their event
+        // still carries the full state; `KeptChange` records their actual change.
+        let mut kept: FxHashSet<ContainerIdx> = FxHashSet::default();
         let mut last_depth = 0;
         let len = diffs.len();
         for mut diff in std::mem::replace(&mut diffs, Vec::with_capacity(len)) {
@@ -733,26 +743,11 @@ impl DocState {
                 let to_create = std::mem::take(&mut to_revive_in_this_layer);
                 to_revive_in_this_layer = std::mem::take(&mut to_revive_in_next_layer);
                 for new in to_create {
-                    let state = self.store.get_or_create_mut(new);
-                    if state.is_state_empty() {
-                        continue;
+                    if let Some(d) =
+                        self.revive_without_diff(new, &mut to_revive_in_this_layer, &mut kept)
+                    {
+                        diffs.push(d);
                     }
-
-                    let external_diff = state.to_diff(&self.doc);
-                    trigger_on_new_container(
-                        &external_diff,
-                        |cid| {
-                            to_revive_in_this_layer.insert(cid);
-                        },
-                        &self.arena,
-                    );
-
-                    diffs.push(InternalContainerDiff {
-                        idx: new,
-                        bring_back: true,
-                        diff: external_diff.into(),
-                        diff_mode: DiffMode::Checkout,
-                    });
                 }
 
                 last_depth += 1;
@@ -785,32 +780,60 @@ impl DocState {
                             }
                             let state = self.store.get_or_create_mut(idx);
                             if is_recording {
+                                let is_revived =
+                                    diff.bring_back || to_revive_in_this_layer.contains(&idx);
+                                let is_kept = is_revived && kept.contains(&idx);
+                                let ctx = DiffApplyContext {
+                                    mode: diff.diff_mode,
+                                    doc: &self.doc,
+                                };
+                                let internal_diff = internal_diff.into_internal().unwrap();
+                                // Containers the actual change inserts are new to a doc that
+                                // kept this container, so they are revived with full state.
+                                let mut inserted: FxHashSet<ContainerIdx> = FxHashSet::default();
                                 // process bring_back before apply
-                                let external_diff =
-                                    if diff.bring_back || to_revive_in_this_layer.contains(&idx) {
-                                        state.apply_diff(
-                                            internal_diff.into_internal().unwrap(),
-                                            DiffApplyContext {
-                                                mode: diff.diff_mode,
-                                                doc: &self.doc,
-                                            },
-                                        )?;
-                                        state.to_diff(&self.doc)
-                                    } else {
-                                        state.apply_diff_and_convert(
-                                            internal_diff.into_internal().unwrap(),
-                                            DiffApplyContext {
-                                                mode: diff.diff_mode,
-                                                doc: &self.doc,
-                                            },
-                                        )
-                                    };
+                                let external_diff = if is_kept {
+                                    let change = state.apply_diff_and_convert(internal_diff, ctx);
+                                    trigger_on_new_container(
+                                        &change,
+                                        |cid| {
+                                            inserted.insert(cid);
+                                        },
+                                        &self.arena,
+                                    );
+                                    diff.kept = Some(KeptChange::from_diff(change));
+                                    state.to_diff(&self.doc)
+                                } else if is_revived {
+                                    state.apply_diff(internal_diff, ctx)?;
+                                    state.to_diff(&self.doc)
+                                } else {
+                                    state.apply_diff_and_convert(internal_diff, ctx)
+                                };
+                                let arena = &self.arena;
+                                let changes_only = self.record_changes_only;
                                 trigger_on_new_container(
                                     &external_diff,
                                     |cid| {
+                                        if changes_only && !is_revived && is_mergeable(arena, cid) {
+                                            // It keeps its state; its own diff (if any) is
+                                            // its change.
+                                            return;
+                                        }
                                         to_revive_in_next_layer.insert(cid);
+                                        let keeps_state = if is_revived {
+                                            is_kept
+                                                && (!inserted.contains(&cid)
+                                                    || is_mergeable(arena, cid))
+                                        } else {
+                                            // A container that keeps its id re-activates a
+                                            // mergeable child at its deterministic cid.
+                                            is_mergeable(arena, cid)
+                                        };
+                                        if keeps_state {
+                                            kept.insert(cid);
+                                        }
                                     },
-                                    &self.arena,
+                                    arena,
                                 );
                                 diff.diff = external_diff.into();
                             } else {
@@ -830,7 +853,7 @@ impl DocState {
             }
 
             to_revive_in_this_layer.remove(&idx);
-            if !diff.diff.is_empty() {
+            if !diff.diff.is_empty() || matches!(diff.kept, Some(KeptChange::Changed(_))) {
                 diffs.push(diff);
             }
         }
@@ -839,27 +862,10 @@ impl DocState {
         while !to_revive_in_this_layer.is_empty() || !to_revive_in_next_layer.is_empty() {
             let to_create = std::mem::take(&mut to_revive_in_this_layer);
             for new in to_create {
-                let state = self.store.get_or_create_mut(new);
-                if state.is_state_empty() {
-                    continue;
-                }
-
-                let external_diff = state.to_diff(&self.doc);
-                trigger_on_new_container(
-                    &external_diff,
-                    |cid| {
-                        to_revive_in_next_layer.insert(cid);
-                    },
-                    &self.arena,
-                );
-
-                if !external_diff.is_empty() {
-                    diffs.push(InternalContainerDiff {
-                        idx: new,
-                        bring_back: true,
-                        diff: external_diff.into(),
-                        diff_mode: DiffMode::Checkout,
-                    });
+                if let Some(d) =
+                    self.revive_without_diff(new, &mut to_revive_in_next_layer, &mut kept)
+                {
+                    diffs.push(d);
                 }
             }
 
@@ -1291,6 +1297,7 @@ impl DocState {
                         .to_diff(&self.doc)
                         .into(),
                     diff_mode: DiffMode::Checkout,
+                    kept: None,
                 })
                 .collect();
 
@@ -1324,6 +1331,55 @@ impl DocState {
     {
         let state = self.store.get_or_create_mut(idx);
         f(state)
+    }
+
+    pub(crate) fn set_record_changes_only(&mut self, on: bool) {
+        self.record_changes_only = on;
+    }
+
+    /// The container's current state as a full-state diff, the shape revival events use.
+    pub(crate) fn container_full_diff(&mut self, idx: ContainerIdx) -> Diff {
+        let doc = self.doc.clone();
+        self.store.get_or_create_mut(idx).to_diff(&doc)
+    }
+
+    pub(crate) fn is_container_state_empty(&mut self, idx: ContainerIdx) -> bool {
+        self.store.get_or_create_mut(idx).is_state_empty()
+    }
+
+    /// Revives a container that has no diff of its own in this batch: its event is its full
+    /// state. Children it holds are queued into `to_revive`; if it kept its state, they did too.
+    fn revive_without_diff(
+        &mut self,
+        idx: ContainerIdx,
+        to_revive: &mut FxHashSet<ContainerIdx>,
+        kept: &mut FxHashSet<ContainerIdx>,
+    ) -> Option<InternalContainerDiff> {
+        let state = self.store.get_or_create_mut(idx);
+        if state.is_state_empty() {
+            return None;
+        }
+
+        let is_kept = kept.contains(&idx);
+        let external_diff = state.to_diff(&self.doc);
+        trigger_on_new_container(
+            &external_diff,
+            |cid| {
+                to_revive.insert(cid);
+                if is_kept {
+                    kept.insert(cid);
+                }
+            },
+            &self.arena,
+        );
+
+        Some(InternalContainerDiff {
+            idx,
+            bring_back: true,
+            diff: external_diff.into(),
+            diff_mode: DiffMode::Checkout,
+            kept: is_kept.then_some(KeptChange::Unchanged),
+        })
     }
 
     pub(super) fn is_in_txn(&self) -> bool {
@@ -1799,6 +1855,133 @@ impl DocState {
         Ok(ans)
     }
 
+    /// Keys of stored normal containers, created at or before `root_vv`, that the retention
+    /// walk ([`AliveWalk::Retention`] from every stored root) may not reach. A fast filter: an
+    /// empty result means filtering by the walk would remove nothing; otherwise the full walk
+    /// must decide, and only keys in both sets may be removed.
+    ///
+    /// Every stored container's parent is read from its encoded header, and only containers
+    /// that are the header parent of another stored container are decoded to list their
+    /// children; leaf containers (a big text, childless maps, tree metas) are never decoded.
+    /// A container counts as reached only through its header parent, so a header that lies
+    /// about the parent makes the container a candidate, and the full walk then rejects the
+    /// inconsistency instead of dropping the container. A child referenced by a container
+    /// other than its header parent is rejected here directly.
+    ///
+    /// Two kinds of entries are never candidates:
+    /// - Containers created after `root_vv`. A root state written with an overlay keeps an
+    ///   empty entry for them, which nothing at the root references yet.
+    /// - Stored children of a reached container of an unknown (newer) type. Its value decodes
+    ///   to `Null`, so neither this filter nor the full walk can list its children; they are
+    ///   kept. An unknown type claimed only by a header parent that is not stored, or an
+    ///   unreferenced unknown entry, gets no such protection.
+    pub(crate) fn unreached_stored_containers(
+        &mut self,
+        root_vv: &VersionVector,
+    ) -> LoroResult<Vec<bytes::Bytes>> {
+        let entries = self.store.get_kv_clone().scan_all_entries();
+        // Stored normal containers: id -> (key, header parent).
+        let mut stored: FxHashMap<ContainerID, (bytes::Bytes, Option<ContainerID>)> =
+            FxHashMap::default();
+        let mut stored_roots = Vec::new();
+        let mut has_stored_children: FxHashSet<ContainerID> = FxHashSet::default();
+        // Header children of unknown-type parents, whose references cannot be decoded.
+        let mut unknown_children: FxHashMap<ContainerID, Vec<ContainerID>> = FxHashMap::default();
+        for (key, value) in entries {
+            let id = ContainerID::try_from_bytes(&key)?;
+            let (peer, counter) = match &id {
+                ContainerID::Root { .. } => {
+                    stored_roots.push(id);
+                    continue;
+                }
+                ContainerID::Normal { peer, counter, .. } => (*peer, *counter),
+            };
+            if !root_vv.includes_id(ID::new(peer, counter)) {
+                continue;
+            }
+            let parent = ContainerWrapper::try_decode_parent(&value)?;
+            if let Some(parent) = &parent {
+                if parent.is_unknown() {
+                    unknown_children
+                        .entry(parent.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+                has_stored_children.insert(parent.clone());
+            }
+            stored.insert(id, (key, parent));
+        }
+
+        // Roots are always retained; only those parenting a stored container need a visit.
+        let mut to_visit: Vec<ContainerID> = stored_roots
+            .into_iter()
+            .filter(|id| has_stored_children.contains(id))
+            .collect();
+        let mut retained: FxHashSet<ContainerID> = FxHashSet::default();
+        while let Some(parent_id) = to_visit.pop() {
+            let children = if parent_id.is_unknown() {
+                unknown_children.remove(&parent_id).unwrap_or_default()
+            } else {
+                self.retained_child_refs(&parent_id)?
+            };
+            for child_id in children {
+                let Some((_, header_parent)) = stored.get(&child_id) else {
+                    // A root (always retained), a container created after the root, or an
+                    // unstored, hence empty, child.
+                    continue;
+                };
+                if header_parent.as_ref() != Some(&parent_id) {
+                    return Err(LoroError::DecodeError(
+                        format!(
+                            "container {child_id:?} is referenced by {parent_id:?}, but its snapshot state encodes parent {header_parent:?}"
+                        )
+                        .into_boxed_str(),
+                    ));
+                }
+                if has_stored_children.contains(&child_id) && !retained.contains(&child_id) {
+                    to_visit.push(child_id.clone());
+                }
+                retained.insert(child_id);
+            }
+        }
+
+        Ok(stored
+            .into_iter()
+            .filter(|(id, _)| !retained.contains(id))
+            .map(|(_, (key, _))| key)
+            .collect())
+    }
+
+    /// Normal-container children the retention walk follows from `id`: every node meta of a
+    /// tree (deleted nodes included, see [`AliveWalk::Retention`]) and the container values of
+    /// a map or list. Mergeable children are root containers, which are always retained, so
+    /// their markers are not resolved. Unlike `get_alive_children_of`, children are not
+    /// registered in the arena.
+    fn retained_child_refs(&mut self, id: &ContainerID) -> LoroResult<Vec<ContainerID>> {
+        let idx = self.arena.register_container(id);
+        if idx.get_type() == ContainerType::Tree {
+            return Ok(self
+                .store
+                .try_get_parent_and_tree_meta_ids_ephemeral(idx)?
+                .map(|(_, ids)| ids)
+                .unwrap_or_default());
+        }
+
+        let Some((_, value)) = self.store.try_get_parent_and_value_ephemeral(idx)? else {
+            return Ok(Vec::new());
+        };
+        let containers = |values: &mut dyn Iterator<Item = &LoroValue>| {
+            values
+                .filter_map(|v| v.as_container().cloned())
+                .collect::<Vec<_>>()
+        };
+        Ok(match &value {
+            LoroValue::Map(map) => containers(&mut map.values()),
+            LoroValue::List(list) => containers(&mut list.iter()),
+            _ => Vec::new(),
+        })
+    }
+
     fn validate_alive_parent(
         &mut self,
         child_idx: ContainerIdx,
@@ -1959,9 +2142,14 @@ impl DocState {
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
-                let Some((last_container_diff, _)) = containers.get_mut(&container_diff.idx) else {
+                let Some((last_container_diff, last_kept, _)) =
+                    containers.get_mut(&container_diff.idx)
+                else {
                     if let Some(path) = self.get_path(container_diff.idx) {
-                        containers.insert(container_diff.idx, (container_diff.diff, path));
+                        containers.insert(
+                            container_diff.idx,
+                            (container_diff.diff, container_diff.kept, path),
+                        );
                     } else {
                         // if we cannot find the path to the container, the container must be overwritten afterwards.
                         // So we can ignore the diff from it.
@@ -1986,12 +2174,28 @@ impl DocState {
                 // subscriber is attached and many edits land on one container
                 // in a single event batch.
                 let prev = std::mem::take(last_container_diff);
-                *last_container_diff = prev.compose(container_diff.diff).unwrap();
+                if last_kept.is_some() || container_diff.kept.is_some() {
+                    // Track the actual change next to the full-state revival.
+                    let as_change = |kept: Option<KeptChange>, diff: &crate::event::DiffVariant| {
+                        kept.unwrap_or_else(|| {
+                            KeptChange::from_diff(diff.clone().into_external().unwrap())
+                        })
+                    };
+                    let prev_change = as_change(last_kept.take(), &prev);
+                    let next_change = as_change(container_diff.kept.clone(), &container_diff.diff);
+                    *last_kept = Some(prev_change.then(next_change));
+                }
+                *last_container_diff = if container_diff.kept.is_some() {
+                    // A full-state revival supersedes what the container showed before.
+                    container_diff.diff
+                } else {
+                    prev.compose(container_diff.diff).unwrap()
+                };
             }
         }
         let mut diff: Vec<_> = containers
             .into_iter()
-            .map(|(container, (diff, path))| {
+            .map(|(container, (diff, kept, path))| {
                 let idx = container;
                 let id = self.arena.get_container_id(idx).unwrap();
                 let is_unknown = id.is_unknown();
@@ -2002,6 +2206,7 @@ impl DocState {
                     diff: diff.into_external().unwrap(),
                     is_unknown,
                     path,
+                    kept,
                 }
             })
             .collect();
@@ -2453,6 +2658,10 @@ fn create_state_(idx: ContainerIdx, config: &Configure, peer: u64) -> State {
         }
         ContainerType::Unknown(_) => State::UnknownState(UnknownState::new(idx)),
     }
+}
+
+fn is_mergeable(arena: &SharedArena, idx: ContainerIdx) -> bool {
+    arena.idx_to_id(idx).is_some_and(|id| id.is_mergeable())
 }
 
 fn trigger_on_new_container(

@@ -392,6 +392,7 @@ impl DiffCalculator {
                                     bring_back,
                                     diff: diff.into(),
                                     diff_mode,
+                                    kept: None,
                                 },
                             ),
                         );
@@ -417,6 +418,7 @@ impl DiffCalculator {
                             bring_back: true,
                             diff: DiffVariant::None,
                             diff_mode: DiffMode::Checkout,
+                            kept: None,
                         },
                     ),
                 );
@@ -672,48 +674,35 @@ impl DiffCalculatorTrait for MapDiffCalculator {
             DiffMode::Checkout | DiffMode::Import => oplog.with_history_cache(|h| {
                 h.ensure_shallow_map_seeded(self.container_idx);
                 let checkout_index = &h.get_checkout_index().map;
-                let mut changed = Vec::new();
                 let keys = std::mem::take(&mut self.changed);
-                let from_map = checkout_index.get_container_latest_op_at_vv_for_keys(
+                // Every key whose winning op differs is emitted, even when both
+                // winners carry the same value: the state keeps the winner's
+                // lamport/peer, and a shallow root state encoded from stale
+                // metadata collides with a retained op in this index and loses
+                // the root entry. The state is at `from` and already holds the
+                // `from` value, so `MapState` tells value changes from
+                // metadata-only updates in the same write, and the `from` value
+                // is never fetched here.
+                let changed = checkout_index.changed_winners_for_keys(
                     self.container_idx,
                     from_vv,
-                    keys.keys().cloned(),
-                    oplog,
-                );
-                let mut to_map = checkout_index.get_container_latest_op_at_vv_for_keys(
-                    self.container_idx,
                     to_vv,
                     keys.into_keys(),
                     oplog,
                 );
 
-                for (k, peek_from) in from_map.iter() {
-                    let peek_to = to_map.remove(k);
-                    match peek_to {
-                        None => changed.push((k.clone(), None)),
-                        Some(b) => {
-                            if peek_from.value != b.value {
-                                changed.push((k.clone(), Some(b)))
-                            }
-                        }
-                    }
-                }
-
-                for (k, peek_to) in to_map.into_iter() {
-                    changed.push((k, Some(peek_to)));
-                }
-
                 let mut updated =
                     FxHashMap::with_capacity_and_hasher(changed.len(), Default::default());
                 for (key, value) in changed {
                     let value = value.map(|v| {
-                        let value = v.value.clone();
-                        if let Some(LoroValue::Container(c)) = &value {
+                        // A normal container id is minted by one op, so a new
+                        // winner holding a container always changes the value.
+                        if let Some(LoroValue::Container(c)) = &v.value {
                             on_new_container(c);
                         }
 
                         MapValue {
-                            value,
+                            value: v.value,
                             lamp: v.lamport,
                             peer: v.peer,
                         }

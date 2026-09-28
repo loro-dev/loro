@@ -54,11 +54,20 @@ export function writeUleb128(writer: ByteWriter, input: bigint | number): void {
 }
 
 export function readSleb128(reader: ByteReader): bigint {
-  let result = 0n;
-  let shift = 0n;
-  let byte = 0;
   const start = reader.position;
-  for (let index = 0; index < 10; index += 1) {
+  // Fast path: values of up to four bytes (28 payload bits) fit in a number.
+  let small = 0;
+  let byte = 0;
+  for (let index = 0; index < 4; index += 1) {
+    byte = reader.readU8();
+    small += (byte & 0x7f) * 2 ** (7 * index);
+    if ((byte & 0x80) === 0) {
+      return BigInt((byte & 0x40) !== 0 ? small - 2 ** (7 * (index + 1)) : small);
+    }
+  }
+  let result = BigInt(small);
+  let shift = 28n;
+  for (let index = 4; index < 10; index += 1) {
     byte = reader.readU8();
     const payload = BigInt(byte & 0x7f);
     result |= payload << shift;
@@ -83,6 +92,28 @@ export function readSleb128(reader: ByteReader): bigint {
 }
 
 export function writeSleb128(writer: ByteWriter, input: bigint | number): void {
+  // Fast path with 32-bit integer arithmetic; it writes the same bytes.
+  const small =
+    typeof input === "bigint"
+      ? input >= -0x4000_0000n && input < 0x4000_0000n
+        ? Number(input)
+        : undefined
+      : Number.isInteger(input) && input >= -0x4000_0000 && input < 0x4000_0000
+        ? input
+        : undefined;
+  if (small !== undefined) {
+    let rest = small;
+    for (;;) {
+      const byte = rest & 0x7f;
+      rest >>= 7;
+      const sign = (byte & 0x40) !== 0;
+      if ((rest === 0 && !sign) || (rest === -1 && sign)) {
+        writer.writeU8(byte);
+        return;
+      }
+      writer.writeU8(byte | 0x80);
+    }
+  }
   let value = typeof input === "number" ? numberToBigInt(input, "SLEB128") : input;
   if (value < I64_MIN || value > I64_MAX) {
     throw new LoroEncodeError(`SLEB128 value is out of range: ${value}`);

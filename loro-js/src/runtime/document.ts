@@ -113,6 +113,7 @@ import type {
   JsonChange,
   JsonContainerID,
   JsonDiff,
+  JsonIdLp,
   JsonOp,
   JsonOpContent,
   JsonSchema,
@@ -5247,7 +5248,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (this.isShallow()) {
       return this.#encodeShallowSnapshot(this.shallowSinceFrontiers());
     }
+    // A snapshot always carries the latest state, as in Rust. A detached
+    // document's state (lazy or not) may be at an older version or may miss
+    // updates imported while detached.
+    const latestVersion = this.#historyVersion();
+    const detachedState = this.version().compare(latestVersion) !== 0;
     if (
+      !detachedState &&
       this.#deferredSnapshotHistory !== undefined &&
       this.#deferredSnapshotState !== undefined
     ) {
@@ -5272,11 +5279,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       historyEntries.push(
         {
           key: VERSION_KEY,
-          value: encodePostcardVersionVector(this.version().codecEntries()),
+          value: encodePostcardVersionVector(latestVersion.codecEntries()),
         },
         {
           key: FRONTIERS_KEY,
-          value: encodePostcardFrontiers(this.#frontiersCodec()),
+          value: encodePostcardFrontiers(
+            [...this.#historyFrontiers.values()].sort(compareIds),
+          ),
         },
       );
       const body = encodeFastSnapshotBody({
@@ -5298,18 +5307,54 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }));
     historyEntries.push({
       key: VERSION_KEY,
-      value: encodePostcardVersionVector(this.version().codecEntries()),
+      value: encodePostcardVersionVector(latestVersion.codecEntries()),
     });
     historyEntries.push({
       key: FRONTIERS_KEY,
-      value: encodePostcardFrontiers(this.#frontiersCodec()),
+      value: encodePostcardFrontiers(
+        [...this.#historyFrontiers.values()].sort(compareIds),
+      ),
     });
+    const state = encodeStateSnapshotStore(
+      detachedState ? this.#latestStateStore() : this.#buildStateStore(),
+      { compression: "auto" },
+    );
     const body = encodeFastSnapshotBody({
       oplog: encodeSstable(historyEntries, { compression: "auto" }),
-      state: encodeStateSnapshotStore(this.#buildStateStore(), { compression: "auto" }),
+      state,
       shallowRootState: new Uint8Array(),
     });
     return encodeDocument(EncodeMode.FastSnapshot, body);
+  }
+
+  /**
+   * The latest state of a detached document, without changing its checkout.
+   * Like `diff`, it transitions to the latest version and back when the
+   * version delta allows it (O(delta)). Otherwise, including for lazily
+   * imported state that `#buildStateStore` cannot enumerate, it replays the
+   * history once on an isolated staging document.
+   */
+  #latestStateStore(): StateSnapshotStore {
+    const current = this.version();
+    const latest = this.#historyVersion();
+    if (this.#deferredSnapshotState === undefined) {
+      const forward = this.#recordsInVersionRange(current, latest);
+      const retreat = this.#recordsInVersionRange(latest, current);
+      const mode = movableMoveTransitionMode(retreat, forward, this.#movableMovePeers);
+      if (this.#canTransitionRecords([...retreat, ...forward], mode)) {
+        let restored = false;
+        try {
+          this.#applyVersionTransition(retreat, forward, latest, undefined, mode);
+          const store = this.#buildStateStore();
+          this.#applyVersionTransition(forward, retreat, current, undefined, mode);
+          restored = true;
+          return store;
+        } finally {
+          if (!restored) this.#rebuildFromHistory(current);
+        }
+      }
+    }
+    return this.forkAt(this.oplogFrontiers()).#buildStateStore();
   }
 
   #encodeDeferredSnapshotState(): Uint8Array {
@@ -7115,19 +7160,13 @@ function decodedOperationToJson(
         type: "move",
         from: content.from,
         to: content.to,
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
       };
       break;
     case "movable-list-set":
       json = {
         type: "set",
-        elem_id: formatJsonOpId(
-          { peer: content.elementId.peer, counter: content.elementId.lamport },
-          peerMap,
-        ),
+        elem_id: formatJsonIdLp(content.elementId, peerMap),
         value: changeLoroValueToJson(content.value, keys, operationId, peerMap),
       };
       break;
@@ -7147,13 +7186,22 @@ function decodedOperationToJson(
     case "future": {
       const value = content.value;
       if (value.type === "double" || value.type === "i64") {
+        // Rust tags the counter value (`OwnedValue`, serde `value_type`) and
+        // rejects an untagged number. Its counter is an f64, so it writes every
+        // counter op as "f64", including one decoded from an i64 value.
         json = {
           type: "counter",
+          value_type: "f64",
           value: value.type === "double" ? value.value : Number(value.value),
           prop: content.property,
         };
       } else if (value.type === "delta-int") {
-        json = { type: "counter", value: value.value, prop: content.property };
+        json = {
+          type: "counter",
+          value_type: "delta_int",
+          value: value.value,
+          prop: content.property,
+        };
       } else {
         json = {
           type: "unknown",
@@ -7186,8 +7234,14 @@ function changeLoroValueToJson(
       return value.value;
     case "i64":
       return Number(value.value);
-    case "binary":
-      return value.value.slice();
+    case "binary": {
+      // The JSON schema has no binary type; Rust writes a byte array as numbers.
+      const bytes = value.value;
+      const numbers = new Array<number>(bytes.length);
+      for (let index = 0; index < bytes.length; index += 1)
+        numbers[index] = bytes[index]!;
+      return numbers;
+    }
     case "list":
       return value.value.map((item, index) =>
         changeLoroValueToJson(
@@ -7228,6 +7282,13 @@ function changeValueToJsonUnknown(value: unknown): unknown {
 
 function formatJsonOpId(id: CodecId, peerMap?: JsonPeerMap): `${number}@${PeerID}` {
   return `${id.counter}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as `${number}@${PeerID}`;
+}
+
+function formatJsonIdLp(
+  id: { readonly peer: bigint; readonly lamport: number },
+  peerMap?: JsonPeerMap,
+): JsonIdLp {
+  return `L${id.lamport}@${(peerMap?.get(id.peer) ?? id.peer).toString()}` as JsonIdLp;
 }
 
 function formatJsonTreeId(id: CodecId, peerMap?: JsonPeerMap): TreeID {
@@ -7323,6 +7384,9 @@ function jsonOperationToDecoded(
     const parsed = parseTreeId(value as TreeID);
     return { peer: resolvePeer(parsed.peer), counter: parsed.counter };
   };
+  // Rust writes `L{lamport}@{peer}`; loro.js 0.2.1 and earlier omitted the `L`.
+  const parseIdLp = (value: unknown): CodecId =>
+    parseId(typeof value === "string" && value.startsWith("L") ? value.slice(1) : value);
   const parseParent = (value: unknown): CodecId | undefined =>
     value === null || value === undefined ? undefined : parseId(value);
   const encodeValue = (value: unknown, id = operationId): ChangeLoroValue =>
@@ -7443,7 +7507,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "move") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
@@ -7457,7 +7521,7 @@ function jsonOperationToDecoded(
       };
     }
     if (movable && content.type === "set") {
-      const elementId = parseId(content.elem_id);
+      const elementId = parseIdLp(content.elem_id);
       return {
         container,
         counter: operation.counter,
@@ -7519,12 +7583,30 @@ function jsonOperationToDecoded(
           typeof content === "object" && content !== null && "prop" in content
             ? requireJsonInteger(content.prop, "counter property")
             : 0,
+        // Rust reads both "f64" and "i64" counter values as an f64 (`c as f64`).
         value: { type: "double", value },
       },
     };
   }
 
   throw new TypeError("JSON updates do not support this container type");
+}
+
+// Byte arrays arrive as number lists (Rust's JSON form of a binary value), so
+// small integers are common. Their values are immutable and shared.
+const SMALL_JSON_INTEGERS: readonly ChangeLoroValue[] = Array.from(
+  { length: 256 },
+  (_, value) => Object.freeze({ type: "i64", value: BigInt(value) }) as ChangeLoroValue,
+);
+
+function jsonNumberToChangeLoroValue(value: number): ChangeLoroValue {
+  if (Number.isInteger(value) && value >= 0 && value < 256) {
+    return SMALL_JSON_INTEGERS[value]!;
+  }
+  if (!Number.isFinite(value)) throw new TypeError("JSON update numbers must be finite");
+  return Number.isSafeInteger(value)
+    ? { type: "i64", value: BigInt(value) }
+    : { type: "double", value };
 }
 
 function jsonValueToChangeLoroValue(
@@ -7535,13 +7617,7 @@ function jsonValueToChangeLoroValue(
 ): ChangeLoroValue {
   if (value === undefined || value === null) return { type: "null" };
   if (typeof value === "boolean") return { type: "bool", value };
-  if (typeof value === "number") {
-    if (!Number.isFinite(value))
-      throw new TypeError("JSON update numbers must be finite");
-    return Number.isSafeInteger(value)
-      ? { type: "i64", value: BigInt(value) }
-      : { type: "double", value };
-  }
+  if (typeof value === "number") return jsonNumberToChangeLoroValue(value);
   if (typeof value === "bigint") return { type: "i64", value };
   if (typeof value === "string") {
     if (value.startsWith("🦜:")) {
@@ -7568,12 +7644,14 @@ function jsonValueToChangeLoroValue(
     return {
       type: "list",
       value: value.map((item, index) =>
-        jsonValueToChangeLoroValue(
-          item,
-          { peer: operationId.peer, counter: operationId.counter + index },
-          resolvePeer,
-          registerKey,
-        ),
+        typeof item === "number"
+          ? jsonNumberToChangeLoroValue(item)
+          : jsonValueToChangeLoroValue(
+              item,
+              { peer: operationId.peer, counter: operationId.counter + index },
+              resolvePeer,
+              registerKey,
+            ),
       ),
     };
   }

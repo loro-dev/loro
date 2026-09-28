@@ -556,6 +556,12 @@ impl ContainerWrapper {
         Ok(Self::decode_header(bytes)?.payload_offset)
     }
 
+    /// Parent id encoded in the header of a stored container wrapper, read
+    /// without touching the state payload.
+    pub(crate) fn try_decode_parent(bytes: &[u8]) -> LoroResult<Option<ContainerID>> {
+        Ok(Self::decode_header(bytes)?.parent)
+    }
+
     #[allow(unused)]
     pub fn decode_parent(b: &[u8]) -> Option<ContainerID> {
         Self::decode_header(b).unwrap().parent
