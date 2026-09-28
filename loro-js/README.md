@@ -141,28 +141,28 @@ Documents also edited by `loro-crdt` peers already disagreed with Rust in these 
 
 How 1.0 reads data written by 0.2 (measured on the example above):
 
-| 0.2 data              | Current text in 1.0     | History in 1.0                                                             |
-| --------------------- | ----------------------- | -------------------------------------------------------------------------- |
-| Updates, JSON         | Rust's reading (`béa9`) | Rust's reading                                                             |
-| Full/shallow snapshot | Kept (`bé9a`)           | Rust's reading: exported updates and checkouts of older versions follow it |
+| 0.2 data              | 1.0 reads                                                               |
+| --------------------- | ----------------------------------------------------------------------- |
+| Updates, JSON updates | Rust's reading: `béa9`                                                  |
+| Full/shallow snapshot | The 0.2 text (`bé9a`) as current state, but the history reads like Rust |
 
-**Migrate every replica the same way.** Replicas loaded from the same 0.2 snapshot
-agree with each other, but a replica loaded from 0.2 updates holds other text, and
-the two stay different after exchanging new edits (`béQ9aZ` and `béQa9Z`). A peer that
-later joins through exported updates instead of a snapshot diverges the same way.
+A document loaded from a 0.2 snapshot therefore holds a current state that its own
+history disagrees with. Its current state is safe to read right after the import,
+but do not keep using the document: exporting it as updates gives `béa9`, a
+replica loaded from updates holds other text and stays different after new edits
+(`béQ9aZ` and `béQa9Z`), and checking out older versions and back can change the
+content (Rust can then even show text that matches neither reading).
 
-Recommended paths:
+**Migrate every replica the same way.** Recommended paths:
 
-1. **Keep the content, drop the history (safest).** With 0.2, check out the latest
-   version and read the final state (`doc.toJSON()`, or `text.toDelta()` for rich
-   text). In 1.0, build one new document from it and share that document with every
-   replica. Do not import old updates or snapshots into it.
-2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not snapshots)
-   on every replica, and check the content, because it can differ from what 0.2
-   showed.
-
-A 0.2 snapshot keeps its current text, so loading it is only safe when every replica
-loads that snapshot and new peers join through snapshots, never through updates.
+1. **Keep the content, drop the history (safest).** Read the final state, either
+   with 0.2 after checking out the latest version, or with 1.0 right after importing
+   a 0.2 snapshot: `doc.toJSON()`, or `text.toDelta()` for rich text. Build one new
+   document from it in 1.0 and share that document with every replica. Do not
+   import old updates or snapshots into it.
+2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not
+   snapshots) on every replica, and check the content, because it can differ from
+   what 0.2 showed.
 
 ## Development checks
 
