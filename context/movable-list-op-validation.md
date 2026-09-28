@@ -1,6 +1,6 @@
 # Movable List `Move`/`Set` Validation on Import
 
-Verified against code 2026-09-27.
+Verified against code 2026-09-28.
 
 Imported movable-list `Move { from, to, elem_id }` and `Set { elem_id, value }` ops
 come from other peers, so they are external input. Several shapes of them used
@@ -8,46 +8,72 @@ to panic while the doc held its locks (`pos.unwrap()`/`value_id.unwrap()` in
 `MovableListState::apply_diff_and_convert`, `idlp_to_id(..).unwrap()` in
 `MovableListHistoryCache::last_pos`, `last_value(..).unwrap()` in
 `MovableListDiffCalculator::calculate_diff`, `convert_index(..).unwrap()` for
-an overrunning list delta). The panic poisoned a `LoroMutex`, and the process
-aborted when a destructor hit the poisoned lock during unwind.
+an overrunning list delta, and the diff tracker's B-tree for huge positions).
+The panic poisoned a `LoroMutex`, and the process aborted when a destructor hit
+the poisoned lock during unwind.
 
-Tests: `crates/loro/tests/movable_list_invalid_ops.rs`, plus the binary and
-`import_batch` cases in `crates/loro-internal/src/tests/import_atomicity.rs`.
+Tests:
+- `crates/loro/tests/movable_list_invalid_ops.rs`.
+- The binary and `import_batch` cases in `crates/loro-internal/src/tests/import_atomicity.rs`.
+- The `ChangeStore` rollback and KV lookup tests in `src/oplog/change_store.rs`.
+- `crates/loro-wasm/tests/movable_list_invalid_ops.test.ts`.
 
 ## Rejected with `Err`: ops with no meaning
 
-1. **Unknown or out-of-history element.** `OpLog::validate_movable_list_elem_refs_since`
-   (`src/oplog.rs`) checks every newly imported `Move`/`Set`. `elem_id` must
-   resolve through `idlp_to_id` to an `Insert` op in the same container, and that
-   op must be in the op's causal history (`AppDag::get_vv`). The lamport shortcut
-   `elem_id.lamport >= op lamport` rejects early. It returns `LoroError::DecodeError`.
-   - Before a shallow root, history is trimmed. There the element must exist in the
-     shallow-root state (`ContainerHistoryCache::shallow_root_has_movable_list_elem`).
-     Any other pre-root element was deleted before the root, and no op after the
-     root can see it. Import already rejects changes whose deps reach below the root.
-     If this check is removed, `last_pos` panics during a Checkout-mode diff.
-   - It runs after the changes are in the `OpLog` and before any diff is
-     calculated, inside an import rollback scope. It needs the op's causal history,
-     which is only known once pending changes are unlocked and lamports are
-     assigned. `insert_new_change` cannot return `Err`.
-   - Call sites: the attached branch of
-     `import_changes_and_apply_delta_to_state_if_needed`, only when
-     `rollback_enabled`, which the preflight sets whenever the imported or
-     unlocked pending changes hold movable-list ops; its detached branch;
-     `update_oplog_and_apply_delta_to_state_if_needed` (legacy encodings), and
-     `BatchImportGuard::finish`. An attached `import_batch` owns one rollback
-     scope for the whole batch, so per-blob validation is skipped and
-     `validate_movable_list_elem_refs_in_import_scope` checks the whole batch once
-     before the closing checkout. On failure the whole batch is rolled back
-     ([import-batch-atomicity.md](import-batch-atomicity.md)).
-   - A detached import (not inside a batch) now opens its own rollback scope when
-     `preflight.needs_state_apply_rollback`, so it can reject the blob.
-2. **Out-of-bounds `from`/`to`.** `MovableListState::validate_diff` bounds-checks the
-   list delta in op-index space (dead list items count), the same way
-   `ListState::validate_diff` does. `ImportChangesPreflight` and
-   `PendingChanges::has_state_apply_rollback_ops` now include `MovableList`.
-   Without that, a release build has no rollback scope and hits the
-   "state apply returned Err ... without rollback guard" panic.
+1. **Positions no real sequence can reach.** `InnerListOp::check_positions`
+   (`src/container/list/list_op.rs`) runs when binary (`outdated_encode_reordered::decode_op`)
+   and JSON (`json_schema::decode_op`) ops are decoded.
+   - It rejects any position of a List/MovableList/Text op at or past
+     `UNKNOWN_SPAN_LEN - 1` (`src/container/richtext/tracker.rs`). That is the length
+     of the tracker's placeholder span for unreplayed history.
+   - Positions past it panicked inside the tracker before `validate_diff` could run.
+   - This check needs no history, so it covers every import path, including
+     detached imports.
+2. **Unknown or out-of-history element.** `OpLog::validate_movable_list_elem_refs_in_import_scope`
+   (`src/oplog.rs`) checks each `Move`/`Set`. `elem_id` must be an `Insert` op in the
+   same container that lies in the op's causal history (`AppDag::get_vv`, with a
+   same-peer shortcut). It returns `LoroError::DecodeError`.
+   - The references are recorded by `OpLog::insert_new_change` into the open
+     `ImportRollback`, so they cover:
+     - directly imported changes,
+     - pending changes the import unlocks,
+     - every blob of an `import_batch`.
+   - The validator reads the recorded list, so it never re-reads the imported range
+     from the change store.
+   - The element is found with one `ChangeStore::get_change_by_lamport_lte` lookup.
+     That lookup scans both parsed and KV-only blocks, so a miss means the lamport is
+     not in the stored history.
+   - Only on a shallow doc does a miss fall back to the shallow-root state
+     (`ContainerHistoryCache::shallow_root_has_movable_list_elem`): an op after the
+     root can only see pre-root elements that are still alive at the root.
+   - Call sites:
+     - the attached branch of `import_changes_and_apply_delta_to_state_if_needed`
+       (when `rollback_enabled`);
+     - its detached branch (it opens its own scope when the preflight asks for one
+       and no batch scope is open);
+     - `BatchImportGuard::finish`, which validates the whole batch once before the
+       closing checkout and rolls the whole batch back on failure
+       ([import-batch-atomicity.md](import-batch-atomicity.md)).
+3. **Out-of-bounds `from`/`to` that survive the import.** `MovableListState::validate_diff`
+   bounds-checks the list delta in op-index space (dead list items count), the same
+   way `ListState::validate_diff` does.
+   - This check needs state, so a detached import cannot run it (see the gaps below).
+   - It checks the composed delta, so an out-of-bounds move that a later op in the
+     same import cancels (e.g. `move to: 9` followed by `delete pos: 9`) is accepted.
+     Every path gives the same result for it.
+
+### Why every such import gets a rollback scope
+
+`ImportChangesPreflight` (`OpLog::preflight_import_changes`) and
+`PendingChanges::has_state_apply_rollback_ops` set `needs_state_apply_rollback`
+for List, MovableList and Tree ops.
+- The preflight inspects the ops of **every** new change, including ones whose
+  deps are not in the DAG yet. Those deps may be earlier changes of the same import,
+  which then unlock them during the import.
+- It used to skip such changes before looking at their ops. That let
+  `[C1: map-only change, C2: forged op depending on C1]` skip both the rollback
+  scope and the validation. On that path a cross-container move was accepted
+  silently and put one element in two lists.
 
 ## Applied with CRDT semantics: move/set of a deleted element
 
@@ -68,16 +94,43 @@ The one path that could not apply it is the forward fast path
 (`DiffMode::Linear`/`ImportGreaterUpdates`). There the movable-list diff only
 carries the fields the op touched, and `apply_diff_and_convert` fills in the rest
 from the element in `DocState`. Detection and fallback:
-
 - `MovableListState::references_absent_elem` / `DocState::needs_checkout_diff`
   detect a delta that moves/sets an element missing from the state.
 - `recalc_in_checkout_mode_if_needed` (`src/loro.rs`) recomputes that import's
   diff with `DiffCalculator::new(true)` (Persist, so always Checkout mode). This
-  resolves elements from the history index and matches a full replay.
-- Honest imports never trigger it, so the fast path costs one hash lookup per
-  element that has an incomplete delta.
-- `validate_diff` still returns `Err` for such a delta as a backstop, so a new
-  caller that skips the fallback fails loudly instead of panicking.
+  matches a full replay.
+- Honest imports never trigger it.
+- `validate_diff` still returns `Err` for such a delta as a backstop.
+
+## Change-store pitfalls this work exposed
+
+- **`decode_block_range` read a version varint that blocks do not have.**
+  `encode_block` writes a postcard `EncodedBlock` with no version prefix, so every
+  field was read one position off. Consequences:
+  - Blocks that do not start at counter 0 were skipped.
+  - Block `0@P` got its lamport length as its lamport start.
+  - Lamport lookups on KV-only blocks were wrong:
+    `get_change_with_lamport_lte` / JS `getChangeAtLamport` after a snapshot load
+    (this was also broken on main), and the element validator above.
+  - Existing tests missed it because they parsed every block first.
+- **Rollback must not leave an old block in front of the next insert.**
+  `insert_change_inner` merges a change into the cached block right before it.
+  - Failure sequence: an import creates a peer's newest block without loading the
+    older ones; a read during the scope (such as the validator's lamport lookup)
+    caches an older KV block; rollback removes the newest block. The next insert of
+    the same change then panicked with "counter should be continuous".
+  - `ChangeStore::rollback_import` therefore evicts the flushed blocks of every peer
+    the rollback touched. They reload from KV on demand.
+- **Cheap rollback records.** `ChangeStoreRollback` keeps a `BlockShape` for each
+  unflushed pre-scope block an import appended to: change count, the last change's
+  op count and its last op. Rollback truncates back to it.
+  - Imports only append (push changes, or push ops that may merge into the last op),
+    so the shape is enough.
+  - Flushed blocks need no record: their KV copy is the pre-scope version.
+  - The earlier record was an `Arc` of the whole block, which made the next append
+    copy the block's changes on every import under a scope. That made small
+    movable-list imports about 40% slower, and List/Tree imports on main already
+    paid it (they are about 45% faster now).
 
 ## Known gaps (not fixed here)
 
@@ -85,9 +138,9 @@ from the element in `DocState`. Detection and fallback:
   removes whatever list item sits at `from`, so another element can disappear.
   The result is the same on every path, but it does not match any honest op.
 - An explicitly detached doc that imports an op which only state validation
-  rejects (a list insert out of bounds, a movable-list move out of bounds) panics
-  on `attach()`/`checkout_to_latest`. Those return `()` and `expect` the checkout.
-  This affects every container type and predates this change.
+  rejects (an out-of-bounds list insert, or a movable-list move out of bounds)
+  panics on `attach()`/`checkout_to_latest`. Those return `()` and `expect` the
+  checkout. This affects every container type and predates this change.
 - The oplog inside a `FastSnapshot` is not validated op by op, because that would
   decode every block. A forged snapshot can still reach the diff calculator's
   unwraps on a later checkout.
