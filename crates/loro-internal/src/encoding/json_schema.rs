@@ -1049,6 +1049,9 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
             }
         } // Note: The Future Type need try to parse Op from the unknown content
     };
+    if let InnerContent::List(list_op) = &content {
+        list_op.check_positions()?;
+    }
     Ok(Op {
         counter,
         container: idx,

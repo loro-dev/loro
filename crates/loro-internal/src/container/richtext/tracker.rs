@@ -19,6 +19,12 @@ use super::{
 
 mod crdt_rope;
 mod id_to_cursor;
+
+/// Length of the placeholder span that stands for history the tracker has not
+/// replayed (`Tracker::new_with_unknown`). Op positions must stay below it; see
+/// `InnerListOp::check_positions`.
+pub(crate) const UNKNOWN_SPAN_LEN: u32 = u32::MAX / 4;
+
 pub(crate) use crdt_rope::CrdtRopeDelta;
 
 #[derive(Debug)]
@@ -46,7 +52,7 @@ impl Tracker {
         };
 
         let result = this.rope.tree.push(FugueSpan {
-            content: RichtextChunk::new_unknown(u32::MAX / 4),
+            content: RichtextChunk::new_unknown(UNKNOWN_SPAN_LEN),
             id: IdFull::new(UNKNOWN_PEER_ID, 0, 0),
             real_id: None,
             status: Status::default(),
@@ -56,7 +62,7 @@ impl Tracker {
         });
         this.id_to_cursor.insert_without_split(
             ID::new(UNKNOWN_PEER_ID, 0),
-            id_to_cursor::Cursor::new_insert(result.leaf, u32::MAX as usize / 4),
+            id_to_cursor::Cursor::new_insert(result.leaf, UNKNOWN_SPAN_LEN as usize),
         );
         this
     }

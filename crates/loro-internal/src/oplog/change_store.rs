@@ -133,7 +133,27 @@ struct ChangeStoreInner {
 #[derive(Debug)]
 pub(crate) struct ChangeStoreRollback {
     old_vv: VersionVector,
-    blocks_before_mutation: BTreeMap<ID, Arc<ChangesBlock>>,
+    /// Pre-scope blocks that an import appended to, keyed by block id. `None` means the
+    /// block was flushed, so its KV copy is the pre-scope version.
+    blocks_before_mutation: BTreeMap<ID, Option<BlockShape>>,
+}
+
+/// What an unflushed block looked like before an import appended to it.
+///
+/// Imports only append to a block (`ChangesBlock::push_change`): they push changes,
+/// or push ops onto its last change, where an op may merge into the last op. So the
+/// shape only needs the change count, the last change's op count and its last op.
+/// Keeping an `Arc` of the whole block instead made the next append copy the block's
+/// changes, and cloning the last change costs as much once remote changes keep
+/// merging into it.
+#[derive(Debug)]
+struct BlockShape {
+    counter_end: Counter,
+    lamport_end: Lamport,
+    estimated_size: usize,
+    n_changes: usize,
+    /// `(merged op count, last op)` of the last change.
+    last_change_ops: Option<(usize, Option<Op>)>,
 }
 
 impl ChangeStoreRollback {
@@ -144,13 +164,33 @@ impl ChangeStoreRollback {
         }
     }
 
-    fn record_block_before_mutation(&mut self, id: ID, block: Arc<ChangesBlock>) {
+    /// The version when the import scope began.
+    pub(crate) fn old_vv(&self) -> &VersionVector {
+        &self.old_vv
+    }
+
+    fn record_block_before_mutation(&mut self, id: ID, block: &ChangesBlock) {
         let old_end = self.old_vv.get(&id.peer).copied().unwrap_or(0);
         if id.counter >= old_end {
             return;
         }
 
-        self.blocks_before_mutation.entry(id).or_insert(block);
+        self.blocks_before_mutation.entry(id).or_insert_with(|| {
+            if block.flushed {
+                return None;
+            }
+            let changes = block
+                .content
+                .try_changes()
+                .expect("an unflushed block always holds parsed changes");
+            Some(BlockShape {
+                counter_end: block.counter_range.1,
+                lamport_end: block.lamport_range.1,
+                estimated_size: block.estimated_size,
+                n_changes: changes.len(),
+                last_change_ops: changes.last().map(|c| (c.ops.len(), c.ops.last().cloned())),
+            })
+        });
     }
 }
 
@@ -355,13 +395,57 @@ impl ChangeStore {
         // The name set may already include names from changes this rollback removes. That is
         // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
         let mut inner = self.inner.lock();
+        let mut touched_peers = FxHashSet::default();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
-            id.counter < old_end
+            let keep = id.counter < old_end;
+            if !keep {
+                touched_peers.insert(id.peer);
+            }
+            keep
         });
 
-        for (id, block) in rollback.blocks_before_mutation {
-            inner.mem_parsed_kv.insert(id, block);
+        for (id, shape) in rollback.blocks_before_mutation {
+            touched_peers.insert(id.peer);
+            let Some(shape) = shape else {
+                // Flushed before the scope: the KV copy is the pre-scope block.
+                inner.mem_parsed_kv.remove(&id);
+                continue;
+            };
+            let block = inner
+                .mem_parsed_kv
+                .get_mut(&id)
+                .expect("a block appended to during the scope stays cached");
+            let block = Arc::make_mut(block);
+            let changes = Arc::make_mut(
+                block
+                    .content
+                    .changes_mut(&self.arena)
+                    .expect("an unflushed block always holds parsed changes"),
+            );
+            changes.truncate(shape.n_changes);
+            if let Some((n_ops, last_op)) = shape.last_change_ops {
+                let ops = changes.last_mut().unwrap().ops.vec_mut();
+                ops.truncate(n_ops);
+                if let Some(last_op) = last_op {
+                    *ops.last_mut().unwrap() = last_op;
+                }
+            }
+            block.counter_range.1 = shape.counter_end;
+            block.lamport_range.1 = shape.lamport_end;
+            block.estimated_size = shape.estimated_size;
+        }
+
+        // `insert_change_inner` merges a change into the cached block right before it.
+        // A read during the scope (e.g. an lamport lookup) may have cached an older
+        // KV block of a touched peer, and removing the scope's newer blocks leaves it
+        // in front of the next insert with a counter gap ("counter should be
+        // continuous"). Blocks that are flushed are identical to their KV copy, so
+        // evict them; they are reloaded on demand.
+        if !touched_peers.is_empty() {
+            inner
+                .mem_parsed_kv
+                .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
     }
 
@@ -1001,7 +1085,7 @@ mod mut_inner_kv {
                     }
 
                     if let Some(rollback) = &mut rollback {
-                        rollback.record_block_before_mutation(*_id, block.clone());
+                        rollback.record_block_before_mutation(*_id, block);
                     }
 
                     match block.push_change(
@@ -2030,6 +2114,136 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    /// Peer 1 history split into many blocks, encoded into a fresh store's KV only
+    /// (nothing parsed into `mem_parsed_kv`), plus the change that comes next.
+    fn kv_only_store_and_next_change() -> (ChangeStore, Counter, Change) {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        for i in 0..100 {
+            let text = doc.get_text(format!("t{i}").as_str());
+            text.insert(0, &"x".repeat(30), PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+        }
+        let (bytes, end) = {
+            let oplog = doc.oplog().lock();
+            let end = oplog.vv().get(&1).copied().unwrap();
+            let bytes = oplog
+                .change_store
+                .encode_all(oplog.vv(), oplog.dag.frontiers());
+            (bytes, end)
+        };
+        doc.get_text("t0").insert(0, "y", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        let next = {
+            let oplog = doc.oplog().lock();
+            let change = oplog.get_change_at(ID::new(1, end)).unwrap();
+            (*change).clone()
+        };
+        let store = ChangeStore::new_for_test();
+        let _ = store.import_all(bytes).unwrap();
+        // Test builds of `import_all` parse each peer's last block; release builds do not.
+        store.inner.lock().mem_parsed_kv.clear();
+        (store, end, next)
+    }
+
+    #[test]
+    fn lamport_lookup_reads_kv_only_blocks() {
+        // Regression: `decode_block_range` read a version varint the block encoding
+        // does not have, shifting every field. KV-only blocks that did not start at
+        // counter 0 were skipped and block `0@P` got its lamport length as its start.
+        let (store, end, _) = kv_only_store_and_next_change();
+        for l in (0..end as Lamport).step_by(13) {
+            store.inner.lock().mem_parsed_kv.clear();
+            let change = store
+                .get_change_by_lamport_lte(IdLp::new(1, l))
+                .unwrap_or_else(|| panic!("lamport {l} should be found"));
+            assert!(change.lamport <= l);
+            assert!(l < change.lamport + change.atom_len() as Lamport);
+        }
+    }
+
+    #[test]
+    fn rollback_evicts_older_blocks_cached_during_the_scope() {
+        // An import creates the peer's newest block without loading the older ones,
+        // then a read caches an old KV block (the element lookup of the movable-list
+        // validator does this). Rolling back removes the newest block; the cached old
+        // block must not end up right before the next insert of the same change.
+        let (store, end, next) = kv_only_store_and_next_change();
+        let mut old_vv = VersionVector::new();
+        old_vv.insert(1, end);
+        let mut rollback = ChangeStoreRollback::new(old_vv);
+        store.insert_change_with_rollback(next.clone(), true, false, &mut rollback);
+        assert!(store.get_change(ID::new(1, 0)).is_some());
+        store.rollback_import(rollback);
+        store.insert_change(next, true, false);
+        assert!(store.get_change(ID::new(1, end)).is_some());
+        assert!(store.get_change(ID::new(1, 0)).is_some());
+    }
+
+    #[test]
+    fn rollback_restores_unflushed_block_that_was_appended_to() {
+        // The rollback keeps only the shape of a block an import appended to and
+        // truncates back to it. Appends both push changes and merge ops into the last
+        // change, so the restored store must encode exactly like one that never saw
+        // the rolled-back changes.
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        // Keep the commits as separate changes; the store below merges them itself.
+        doc.set_change_merge_interval(-1);
+        let text = doc.get_text("t");
+        for i in 0..40 {
+            text.insert(i, "a", PosType::Unicode).unwrap();
+            if i % 3 == 0 {
+                doc.get_map("m").insert("k", i as i64).unwrap();
+            }
+            doc.commit_then_renew();
+        }
+        let mut changes = Vec::new();
+        let arena = {
+            let oplog = doc.oplog().lock();
+            oplog
+                .change_store
+                .visit_all_changes(&mut |c| changes.push(c.clone()));
+            oplog.arena.clone()
+        };
+        // The changes reference the doc's containers and values.
+        let new_store = || ChangeStore::new_mem(&arena, Arc::new(AtomicI64::new(0)));
+        assert!(changes.len() > 10);
+        let (first, rest) = changes.split_at(changes.len() / 2);
+        let vv_of = |cs: &[Change]| {
+            let mut vv = VersionVector::new();
+            vv.insert(1, cs.last().unwrap().ctr_end());
+            vv
+        };
+
+        let rolled_back = new_store();
+        for c in first {
+            rolled_back.insert_change(c.clone(), true, false);
+        }
+        let mut rollback = ChangeStoreRollback::new(vv_of(first));
+        for c in &rest[..rest.len() / 2] {
+            rolled_back.insert_change_with_rollback(c.clone(), true, false, &mut rollback);
+        }
+        rolled_back.rollback_import(rollback);
+        assert!(rolled_back
+            .get_change(ID::new(1, vv_of(first)[&1]))
+            .is_none());
+        for c in rest {
+            rolled_back.insert_change(c.clone(), true, false);
+        }
+
+        let direct = new_store();
+        for c in &changes {
+            direct.insert_change(c.clone(), true, false);
+        }
+        let vv = vv_of(&changes);
+        let frontiers = Frontiers::from_id(changes.last().unwrap().id_last());
+        assert_eq!(
+            rolled_back.encode_all(&vv, &frontiers),
+            direct.encode_all(&vv, &frontiers)
+        );
     }
 
     #[test]

@@ -740,8 +740,8 @@ mod tests {
     #[test]
     fn unresolved_container_handlers_apply_as_default_collection_values() {
         let doc = LoroDoc::new_auto_commit();
-        let map_handler = Handler::new_unattached(ContainerType::Map);
-        let text_handler = Handler::new_unattached(ContainerType::Text);
+        let map_handler = Handler::new_unattached(ContainerType::Map).unwrap();
+        let text_handler = Handler::new_unattached(ContainerType::Text).unwrap();
         let attached_list = doc.get_list("list").to_handler();
 
         assert_eq!(
