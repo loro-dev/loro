@@ -135,19 +135,25 @@ their values. The arena rollback (`SharedArena::rollback`) drops registrations
 and values made during the import, so `ChangeStore::rollback_import`, after
 truncating and evicting blocks (see
 [movable-list-op-validation.md](movable-list-op-validation.md)), drops the
-parsed changes of every kept block that still has its encoded bytes; the next
-access parses again and registers again. Blocks without bytes were built from
-changes inserted before the import, so their containers were registered then.
-Before 2026-09-28 the parsed ops kept indices and value slices past the
-truncated arena: exporting the history hit `unreachable!` in the JSON encoder,
-and a later checkout panicked on a missing value (loro-dev/loro#1161).
+parsed changes of the kept blocks that were parsed since the import began; the
+next access parses again and registers again. `ChangesBlock::ensure_changes`
+records the arena's `ArenaExtent` (containers, values, text) when it parses a
+block. A block parsed before the checkpoint can only refer to what was there
+then, so it keeps its parsed changes (`SharedArenaRollback::keeps`). Dropping
+them all made every failed import an O(blocks) pass and the next history read a
+full reparse. Blocks without bytes were built from changes inserted before the
+import, so their containers were registered then. Before 2026-09-28 the parsed
+ops kept indices and value slices past the truncated arena: exporting the
+history hit `unreachable!` in the JSON encoder, and a later checkout panicked on
+a missing value (loro-dev/loro#1161).
 
 The resolver can run during any import, because it does not take the op log
 lock. So every arena rollback of a failed import goes through the change store
 and runs under the state lock:
 
 - Under `inner`: `ChangeStore::rollback_arena` rolls the arena back and drops
-  the parsed changes of blocks with bytes. `rollback_import` ends with it. The
+  the parsed changes of blocks parsed since the checkpoint. `rollback_import`
+  ends with it. The
   early returns of `LoroDoc::import_changes_and_apply_delta_to_state_if_needed`
   (a decode error, or updates that depend on history before the shallow root)
   call it through `OpLog::rollback_arena`; they used to call
