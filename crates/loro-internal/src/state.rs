@@ -1052,100 +1052,11 @@ impl DocState {
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
         self.frontiers = new_frontiers;
-        if let Some(mut diff) = diff {
+        if let Some(diff) = diff {
             if self.is_recording() {
-                if let Some(revived) = self.revive_mergeable_in_local_diff(&diff.diff) {
-                    diff.diff = Cow::Owned(revived);
-                }
                 self.record_diff(diff);
             }
         }
-    }
-
-    /// A local transaction that writes a mergeable marker makes the child visible with the
-    /// state it kept. Like import/checkout revival, its event carries that full state (and so
-    /// do the containers it holds), with the transaction's own ops as the [`KeptChange`].
-    /// Returns `None` if the transaction re-activates no mergeable child.
-    fn revive_mergeable_in_local_diff(
-        &mut self,
-        diffs: &[InternalContainerDiff],
-    ) -> Option<Vec<InternalContainerDiff>> {
-        let mut queue: Vec<ContainerIdx> = Vec::new();
-        for d in diffs {
-            if let crate::event::DiffVariant::External(Diff::Map(map)) = &d.diff {
-                for v in map.updated.values() {
-                    if let Some(ValueOrHandler::Handler(h)) = &v.value {
-                        if h.id().is_mergeable() {
-                            queue.push(h.container_idx());
-                        }
-                    }
-                }
-            }
-        }
-        if queue.is_empty() {
-            return None;
-        }
-
-        let mut rest = Vec::with_capacity(diffs.len());
-        for d in diffs {
-            rest.push(d.clone());
-        }
-        let mut seen: FxHashSet<ContainerIdx> = FxHashSet::default();
-        let mut revived = Vec::new();
-        while let Some(idx) = queue.pop() {
-            if !seen.insert(idx) {
-                continue;
-            }
-            // The transaction's own ops on this container, composed.
-            let mut change: Option<Diff> = None;
-            rest.retain(|d| {
-                if d.idx != idx {
-                    return true;
-                }
-                let crate::event::DiffVariant::External(diff) = &d.diff else {
-                    return true;
-                };
-                change = Some(match change.take() {
-                    None => diff.clone(),
-                    Some(c) => c.compose(diff.clone()).unwrap(),
-                });
-                false
-            });
-            // Containers the transaction inserted here are new, and their own diffs are full.
-            let mut inserted: FxHashSet<ContainerIdx> = FxHashSet::default();
-            if let Some(change) = &change {
-                trigger_on_new_container(
-                    change,
-                    |cid| {
-                        inserted.insert(cid);
-                    },
-                    &self.arena,
-                );
-            }
-            let full = self.container_full_diff(idx);
-            trigger_on_new_container(
-                &full,
-                |cid| {
-                    if !inserted.contains(&cid) || is_mergeable(&self.arena, cid) {
-                        queue.push(cid);
-                    }
-                },
-                &self.arena,
-            );
-            let kept = change.map_or(KeptChange::Unchanged, KeptChange::from_diff);
-            if full.is_empty() && matches!(kept, KeptChange::Unchanged) {
-                continue;
-            }
-            revived.push(InternalContainerDiff {
-                idx,
-                bring_back: true,
-                diff: full.into(),
-                diff_mode: DiffMode::Linear,
-                kept: Some(kept),
-            });
-        }
-        rest.extend(revived);
-        Some(rest)
     }
 
     /// Ensure the container is created and will be encoded in the next `encode` call

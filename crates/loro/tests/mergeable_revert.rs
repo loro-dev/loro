@@ -2,10 +2,11 @@
 //! content exactly once.
 //!
 //! A mergeable child keeps its state at a deterministic cid while the parent marker is
-//! gone. Events and `LoroDoc::diff` report a re-activated child with its full state, so any
-//! doc or mirror can apply them; `apply_diff` aligns that state with whatever hidden state
-//! the target has. Revert and undo apply the child's actual change, which keeps
-//! char/element/TreeID identity. See `context/mergeable-containers.md`.
+//! gone. Revert and undo apply the child's actual change, which keeps char/element/TreeID
+//! identity. `LoroDoc::diff` reports a re-activated child with its full state and marks the
+//! batch (`DiffBatch::is_full_state`), so `apply_diff` aligns it with whatever hidden state
+//! the target has. Local events keep main's shape (increments), so forwarding them needs a
+//! target that shares the source's hidden state. See `context/mergeable-containers.md`.
 
 use loro::{
     event::{Diff, DiffBatch, MapDelta},
@@ -162,28 +163,30 @@ fn check(setup: impl Fn(&LoroDoc), mutate: impl Fn(&LoroDoc), reuses_children: b
     r.commit();
     assert_replays_to(&r, &expected_b, "revert_to back to b");
 
-    // Local events of a revert, forwarded to a doc in the same state, and to one that only
-    // has the visible state (built from `diff`, so it never saw the hidden children).
+    // Local events of a revert, forwarded to a doc that shares the hidden state.
     let source = d.fork();
     let mirror = d.fork();
     forward_events(&source, &mirror, |s| s.revert_to(&a).unwrap());
     assert_eq!(json(&source), expected_a, "event forwarding: source");
     assert_eq!(json(&mirror), expected_a, "event forwarding: mirror");
-    let source = d.fork();
-    let visible_only = visible_copy(&d);
-    assert_eq!(json(&visible_only), expected_b, "visible-only copy");
-    forward_events(&source, &visible_only, |s| s.revert_to(&a).unwrap());
-    assert_eq!(
-        json(&visible_only),
-        expected_a,
-        "event forwarding: visible-only mirror"
-    );
 
-    // Public diff applied to a doc that only has the visible state.
+    // Public (full-state) diff applied to a doc that only has the visible state.
     let visible_only = visible_copy(&d);
     visible_only.apply_diff(d.diff(&b, &a).unwrap()).unwrap();
     visible_only.commit();
     assert_eq!(json(&visible_only), expected_a, "diff to visible-only doc");
+    // Without the flag, it is applied as on main, which is right for a doc without hidden
+    // state.
+    let visible_only = visible_copy(&d);
+    let mut diff = d.diff(&b, &a).unwrap();
+    diff.set_full_state(false);
+    visible_only.apply_diff(diff).unwrap();
+    visible_only.commit();
+    assert_eq!(
+        json(&visible_only),
+        expected_a,
+        "incremental diff to visible-only doc"
+    );
 
     // diff + apply_diff
     let r = d.fork();
@@ -902,10 +905,11 @@ fn public_diff_restores_counter_whatever_the_target_hidden_state() {
     }
 }
 
-/// A local re-activation (here `ensure_mergeable_*` over a deleted key) reports the child's
-/// full state, like import and checkout do, so a mirror without hidden state can follow.
+/// A local re-activation (`ensure_mergeable_*` over a deleted key) keeps main's event shape:
+/// only the parent marker, plus the transaction's own ops on the child. Forwarded to a doc that
+/// shares the hidden state, the default (incremental) `apply_diff` reproduces the source.
 #[test]
-fn local_reactivation_event_carries_full_state() {
+fn local_reensure_event_keeps_main_shape() {
     let d = doc();
     let m = d.get_map("m");
     m.ensure_mergeable_text("s")
@@ -913,19 +917,45 @@ fn local_reactivation_event_carries_full_state() {
         .insert(0, "hello")
         .unwrap();
     m.ensure_mergeable_list("l").unwrap().push("keep").unwrap();
+    #[cfg(feature = "counter")]
+    m.ensure_mergeable_counter("c")
+        .unwrap()
+        .increment(7.0)
+        .unwrap();
     d.commit();
-    delete_s(&d);
-    m.delete("l").unwrap();
+    for key in ["s", "l", "c"] {
+        m.delete(key).unwrap();
+    }
     d.commit();
-    let mirror = visible_copy(&d);
+    let mirror = d.fork();
+    let seen: Arc<Mutex<Vec<String>>> = Default::default();
+    let sink = seen.clone();
+    let sub = d.subscribe_root(Arc::new(move |e| {
+        for ev in e.events {
+            sink.lock().unwrap().push(format!("{:?}", ev.target));
+        }
+    }));
     forward_events(&d, &mirror, |d| {
         let m = d.get_map("m");
         m.ensure_mergeable_text("s").unwrap();
+        #[cfg(feature = "counter")]
+        m.ensure_mergeable_counter("c").unwrap();
         m.ensure_mergeable_list("l").unwrap().push("more").unwrap();
     });
-    let expected = json!({"m": {"s": "hello", "l": ["keep", "more"]}});
+    drop(sub);
+    let mut expected = json!({"m": {"s": "hello", "l": ["keep", "more"]}});
+    #[cfg(feature = "counter")]
+    {
+        expected["m"]["c"] = json!(7.0);
+    }
     assert_eq!(json(&d), expected);
     assert_eq!(json(&mirror), expected);
+    // The unchanged text and counter get no entry of their own; the list only its push.
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.iter().all(|t| !t.contains(">s") && !t.contains(">c")),
+        "{seen:?}"
+    );
 }
 
 /// A re-activates a child that B edited while it was hidden. B's import event reports the
@@ -1047,5 +1077,249 @@ fn peer_can_undo_own_edit_after_remote_undo_reactivates_child() {
             sync(&a, &b);
             assert_eq!(json(&a), after_undo, "{what}: A after sync");
         }
+    }
+}
+
+/// Container children of a mergeable (movable) list, reordered/removed/added after the target
+/// version and then hidden. The full-state `diff` restores them on docs with the same hidden
+/// state, none, or a different one: movable-list children that exist in both are moved and keep
+/// their content (no loss, no duplication).
+#[test]
+fn public_diff_restores_reordered_container_children() {
+    type Mutation = fn(&LoroDoc, bool);
+    fn children(d: &LoroDoc, movable: bool) -> usize {
+        let m = d.get_map("m");
+        if movable {
+            m.ensure_mergeable_movable_list("s").unwrap().len()
+        } else {
+            m.ensure_mergeable_list("s").unwrap().len()
+        }
+    }
+    let mutations: [(&str, Mutation); 5] = [
+        ("swap first two", |d, movable| {
+            if movable {
+                d.get_map("m")
+                    .ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .mov(0, 1)
+                    .unwrap();
+            } else {
+                d.get_map("m")
+                    .ensure_mergeable_list("s")
+                    .unwrap()
+                    .delete(0, 1)
+                    .unwrap();
+            }
+        }),
+        ("rotate", |d, movable| {
+            if movable {
+                d.get_map("m")
+                    .ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .mov(2, 0)
+                    .unwrap();
+            }
+        }),
+        ("reverse", |d, movable| {
+            if movable {
+                let l = d.get_map("m").ensure_mergeable_movable_list("s").unwrap();
+                l.mov(2, 0).unwrap();
+                l.mov(2, 1).unwrap();
+            }
+        }),
+        ("delete middle", |d, movable| {
+            let m = d.get_map("m");
+            if movable {
+                m.ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .delete(1, 1)
+                    .unwrap();
+            } else {
+                m.ensure_mergeable_list("s").unwrap().delete(1, 1).unwrap();
+            }
+        }),
+        ("insert new child", |d, movable| {
+            let m = d.get_map("m");
+            if movable {
+                m.ensure_mergeable_movable_list("s")
+                    .unwrap()
+                    .insert_container(1, loro::LoroText::new())
+                    .unwrap()
+                    .insert(0, "new")
+                    .unwrap();
+            } else {
+                m.ensure_mergeable_list("s")
+                    .unwrap()
+                    .insert_container(1, loro::LoroText::new())
+                    .unwrap()
+                    .insert(0, "new")
+                    .unwrap();
+            }
+        }),
+    ];
+    for movable in [true, false] {
+        for texts in [false, true] {
+            for (name, mutate) in mutations {
+                let setup = |d: &LoroDoc| {
+                    let m = d.get_map("m");
+                    for (i, v) in ["A", "B", "C"].into_iter().enumerate() {
+                        if texts {
+                            let t = if movable {
+                                m.ensure_mergeable_movable_list("s")
+                                    .unwrap()
+                                    .insert_container(i, loro::LoroText::new())
+                                    .unwrap()
+                            } else {
+                                m.ensure_mergeable_list("s")
+                                    .unwrap()
+                                    .insert_container(i, loro::LoroText::new())
+                                    .unwrap()
+                            };
+                            t.insert(0, v).unwrap();
+                        } else {
+                            let c = if movable {
+                                m.ensure_mergeable_movable_list("s")
+                                    .unwrap()
+                                    .insert_container(i, loro::LoroMap::new())
+                                    .unwrap()
+                            } else {
+                                m.ensure_mergeable_list("s")
+                                    .unwrap()
+                                    .insert_container(i, loro::LoroMap::new())
+                                    .unwrap()
+                            };
+                            c.insert("v", v).unwrap();
+                        }
+                    }
+                };
+                let (d, target, expected) = deleted_after_divergence(setup, |d| mutate(d, movable));
+                let what = format!("movable={movable} texts={texts} {name}");
+                let diff = || d.diff(&d.state_frontiers(), &target).unwrap();
+
+                let same = d.fork();
+                same.apply_diff(diff()).unwrap();
+                same.commit();
+                assert_replays_to(&same, &expected, &format!("{what}: same hidden"));
+                assert_eq!(children(&same, movable), 3, "{what}");
+
+                let absent = LoroDoc::new();
+                absent.get_map("m");
+                absent.apply_diff(diff()).unwrap();
+                absent.commit();
+                assert_eq!(json(&absent), expected, "{what}: absent hidden");
+
+                let (other, _, _) = deleted_after_divergence(
+                    |d| {
+                        let m = d.get_map("m");
+                        if movable {
+                            m.ensure_mergeable_movable_list("s")
+                                .unwrap()
+                                .push(1)
+                                .unwrap();
+                        } else {
+                            m.ensure_mergeable_list("s").unwrap().push(1).unwrap();
+                        }
+                    },
+                    |_| {},
+                );
+                other.set_peer_id(3).unwrap();
+                other.apply_diff(diff()).unwrap();
+                other.commit();
+                assert_replays_to(&other, &expected, &format!("{what}: different hidden"));
+
+                let r = d.fork();
+                r.revert_to(&target).unwrap();
+                r.commit();
+                assert_replays_to(&r, &expected, &format!("{what}: revert_to"));
+            }
+        }
+    }
+}
+
+/// The default `apply_diff` is incremental, as on main: a full-state batch applied without the
+/// flag to a doc that keeps the child's hidden state appends to it. `LoroDoc::diff` sets the
+/// flag, so this only happens to batches whose flag was cleared (or rebuilt from JS without
+/// `{ fullState: true }`).
+#[test]
+fn default_apply_diff_is_incremental() {
+    let d = doc();
+    d.get_map("m")
+        .ensure_mergeable_text("s")
+        .unwrap()
+        .insert(0, "hello")
+        .unwrap();
+    d.commit();
+    let target = d.state_frontiers();
+    delete_s(&d);
+    d.commit();
+    let mut diff = d.diff(&d.state_frontiers(), &target).unwrap();
+    assert!(diff.is_full_state());
+    diff.set_full_state(false);
+    d.apply_diff(diff).unwrap();
+    d.commit();
+    assert_eq!(json(&d), json!({"m": {"s": "hellohello"}}));
+}
+
+/// Aligning text compares content and styles separately: kept chars whose style differs are
+/// re-marked, not deleted and re-inserted, so a concurrent edit to them survives.
+#[test]
+fn public_diff_restyles_kept_chars() {
+    let d = doc();
+    let t = d.get_map("m").ensure_mergeable_text("s").unwrap();
+    t.insert(0, "hello").unwrap();
+    d.commit();
+    let b = peer(&d, 3);
+    t.mark(0..5, "bold", true).unwrap();
+    d.commit();
+    let bold = d.state_frontiers();
+    t.unmark(0..5, "bold").unwrap();
+    d.commit();
+    delete_s(&d);
+    d.commit();
+
+    let r = d.fork();
+    r.set_peer_id(4).unwrap();
+    let before = r.len_ops();
+    r.apply_diff(d.diff(&d.state_frontiers(), &bold).unwrap())
+        .unwrap();
+    r.commit();
+    let restored = r.get_map("m").ensure_mergeable_text("s").unwrap();
+    assert_eq!(
+        restored.get_richtext_value().to_json_value(),
+        json!([{"insert": "hello", "attributes": {"bold": true}}])
+    );
+    // The marker and the mark: no text is rewritten.
+    assert!(r.len_ops() - before <= 3, "{} ops", r.len_ops() - before);
+
+    // B concurrently replaces the old "h" with "H".
+    let bt = b.get_map("m").ensure_mergeable_text("s").unwrap();
+    bt.delete(0, 1).unwrap();
+    bt.insert(0, "H").unwrap();
+    b.commit();
+    sync(&r, &b);
+    assert_eq!(restored.to_string(), "Hello");
+}
+
+/// Committing many new mergeable children with a subscriber attached stays linear. A previous
+/// revision rebuilt local events per re-activated child and scanned the whole transaction for
+/// each (20k children: ~50 ms -> ~1.3-2.2 s).
+///
+/// `cargo test -p loro --test mergeable_revert perf_commit_many_mergeable_children -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn perf_commit_many_mergeable_children_with_subscriber() {
+    for n in [5_000usize, 20_000] {
+        let d = doc();
+        let _sub = d.subscribe_root(Arc::new(|_| {}));
+        let m = d.get_map("m");
+        for i in 0..n {
+            m.ensure_mergeable_text(&i.to_string())
+                .unwrap()
+                .insert(0, "x")
+                .unwrap();
+        }
+        let start = std::time::Instant::now();
+        d.commit();
+        println!("{n} children: commit {:?}", start.elapsed());
     }
 }

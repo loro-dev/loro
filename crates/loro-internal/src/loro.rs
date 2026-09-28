@@ -1297,7 +1297,10 @@ impl LoroDoc {
     /// NOTE: This method will make the doc enter the **detached mode**.
     // FIXME: This method needs testing (no event should be emitted during processing this)
     pub fn diff(&self, a: &Frontiers, b: &Frontiers) -> LoroResult<DiffBatch> {
-        self.diff_events(a, b, false).map(DiffBatch::new)
+        self.diff_events(a, b, false).map(|e| DiffBatch {
+            full_state: true,
+            ..DiffBatch::new(e)
+        })
     }
 
     /// With `changes_only`, only [`DiffBatch::from_changes`] of the result is meaningful.
@@ -1370,8 +1373,13 @@ impl LoroDoc {
 
     /// Apply a diff to the current state.
     #[inline(always)]
+    ///
+    /// A mergeable child that the batch re-activates is aligned with this doc's hidden state
+    /// only if `diff.full_state` is set (batches from [`LoroDoc::diff`]); otherwise its entry
+    /// is applied as an increment. See [`DiffBatch::full_state`].
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
-        self._apply_diff(diff, &mut Default::default(), true, true)
+        let align = diff.full_state;
+        self._apply_diff(diff, &mut Default::default(), true, align)
     }
 
     /// Apply a diff to the current state.
@@ -1386,11 +1394,11 @@ impl LoroDoc {
     /// However, the diff may contain operations that depend on container IDs.
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
     ///
-    /// With `align_revived_mergeable`, `diff` follows the event contract: a mergeable child the
+    /// With `align_revived_mergeable` (a [`DiffBatch::full_state`] batch), a mergeable child the
     /// batch re-activates carries its full state (no entry means empty), which is aligned with
-    /// whatever hidden state this doc has at its deterministic cid. Revert and undo pass
-    /// batches of actual changes ([`DiffBatch::from_changes`]) and disable it. See
-    /// context/mergeable-containers.md.
+    /// whatever hidden state this doc has at its deterministic cid. Otherwise entries are
+    /// increments; revert and undo pass batches of actual changes ([`DiffBatch::from_changes`]).
+    /// See context/mergeable-containers.md.
     pub(crate) fn _apply_diff(
         &self,
         diff: DiffBatch,

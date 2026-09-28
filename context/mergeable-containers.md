@@ -82,62 +82,73 @@ rewrites the marker.
 ## Revert, Apply-Diff, Events, And Undo
 
 A mergeable child that becomes visible again keeps its deterministic cid and its hidden
-state. Two consumers need different things:
+state. What a diff consumer needs depends on whether it holds that hidden state:
 
-- Anything that did not see the hidden state (JS mirrors, loro-js, another doc, a doc
-  built only from the visible state) needs the child's **full state**.
-- The doc that kept the state (its own revert and undo) needs the **actual change**. So
-  does the undo manager's transform base, because undo positions live in the kept
-  content. Applying a full state there duplicated content (`"hello"` -> `"hellohello"`,
-  counter 7 -> 14), and transforming against it broke later undo steps.
+- the doc that kept it (its own revert/undo, or a mirror that shares its history) needs
+  the **actual change**;
+- a doc without it (a fresh doc, a JSON mirror) needs the **full state**;
+- a doc with a *different* hidden state needs the full state **aligned** with what it has.
 
-The contract keeps both:
+A batch alone cannot say which it holds. In JS, `[cid, diff][]` has no room for that. For a
+plain re-ensure, "no child entry" means "unchanged" in a local event but "empty" in a
+full-state diff. So the mode is explicit:
 
-- **Events and `LoroDoc::diff` report full state**, as on main. That covers import,
-  checkout, and local transactions. A re-activated mergeable child, and every container it
-  holds that kept its id, appears with its full state; no entry means empty. Import and
-  checkout get this from revival in `DocState::apply_diff`. Local transactions get it from
-  `DocState::revive_mergeable_in_local_diff` (in `commit_txn`), triggered by a local map
-  diff whose value is a mergeable container.
-- **`KeptChange`** (`event.rs`) sits next to such full states on `InternalContainerDiff`
-  and `ContainerDiff::kept`, and holds the actual change. `DocState::apply_diff` tracks the
-  `kept` set: a mergeable child re-activated by a container that is not itself revived, plus
-  what a kept container holds, except containers its own change inserts (those are new, and
-  their full state is their change). A mergeable child under a parent revived under a fresh
-  id is not kept: `apply_diff` gives it a fresh cid. `ContainerDiff::change()` returns the
-  actual change.
-- **Revert and undo** build their batch with `DiffBatch::from_changes` and apply it with
-  alignment off. Only the real difference is written, keeping char/element/`TreeID`
-  identity. Unchanged hidden content costs only the parent marker op.
-- **Public `apply_diff`** (`_apply_diff(.., align_revived_mergeable = true)`) aligns a
-  re-activated mergeable child's full state with whatever the target doc holds at that cid
-  (`handler/full_state.rs`), whether that is nothing, the same state, or a different
-  state:
+- **Events keep main's shapes.**
+  - Local transactions report the parent marker plus the transaction's own ops. A plain
+    `ensure_mergeable_*` over a deleted key emits only the marker.
+  - Import/checkout revival reports full state, as on main. It also records the actual
+    change as `KeptChange` (`event.rs`: `InternalContainerDiff`/`ContainerDiff::kept`,
+    `ContainerDiff::change()`). `DocState::apply_diff` tracks the `kept` set: a mergeable
+    child re-activated by a container that is not itself revived, plus what a kept
+    container holds, minus containers its own change inserts. A mergeable child under a
+    parent revived under a fresh id is not kept, because `apply_diff` gives it a fresh cid.
+- **`LoroDoc::diff`** reports full state and sets `DiffBatch::full_state`
+  (`loro::event::DiffBatch::is_full_state`/`set_full_state`).
+- **`apply_diff` is incremental by default**, as on main. It aligns only for a
+  `full_state` batch (WASM: `applyDiff(diff, { fullState: true })`). In `_apply_diff` with
+  `align_revived_mergeable`, a re-activated mergeable child's full state is aligned with
+  what the doc holds at that cid (`handler/full_state.rs`):
   - Map: per key.
   - Counter: adds the difference.
-  - Text and List/MovableList: keep the common prefix and suffix (chars with equal
-    styles; values, containers by id) and replace the middle.
-  - Tree: by `TreeID`. Missing nodes are created, kept nodes are moved if their parent or
-    position differs, the rest are deleted.
-  - Kept children are handed down as further full-state targets. A target with no entry is
-    cleared.
-- **UndoManager** composes remote/paused events with `change()`, not `diff`.
+  - Text: keeps the common prefix/suffix by content; re-marks kept chars whose style
+    differs (`null` unmarks); replaces the middle.
+  - List/MovableList: keeps the common prefix/suffix (values; containers by id) and
+    replaces the middle. In a movable list, `apply_delta` turns deleting and re-inserting
+    a child into a move (`movable_list_apply_delta.rs`, #1138), so middle children present
+    in both keep their id and are full-state targets too. A plain list recreates them.
+  - Tree: by `TreeID` (create/move/delete).
+  - Kept children become further full-state targets. A target with no entry is cleared.
+- **Revert and undo** apply `DiffBatch::from_changes` without alignment, recorded with
+  `record_changes_only` (an optimization that skips unused full states). Only the real
+  difference is written, keeping char/element/`TreeID` identity.
+- **UndoManager** composes remote events with `ContainerDiff::change()`, so a peer can still
+  undo its edit after a remote undo re-activates the child.
 
-Consequences:
+When to opt in:
 
-- `source.diff(D, T)` applied to a doc that never saw the child restores it.
-- Local events forwarded to another doc (same or no hidden state) reproduce the source.
-- A peer can still undo its own edit to a child that a remote undo re-activated.
-- Concurrent reverts of the same state delete the same elements and merge to the target.
-  A concurrent edit to a kept element, such as a tree node's meta, survives.
-- `revert_to` behaves like it does for a root container: a remote edit to the hidden child
-  that was already observed is reverted, and one that arrives later merges. Undo of a delete
-  only restores the marker, so such remote edits survive in either order.
+- **Mirroring events** (subscribe → `applyDiff`) requires the receiver to share the
+  source's hidden state, as on main. Use the default. To build a mirror from scratch, use
+  `diff()` or a snapshot.
+- **Applying `diff()` to a doc that may hold hidden state** for a child the diff
+  re-activates (the same doc, a fork, a doc with another history) needs
+  `{ fullState: true }` in JS. In Rust the flag comes with `LoroDoc::diff`. Without it, such
+  a doc gets main's behavior: the full state is appended to the hidden one. On a doc
+  without hidden state both modes give the same result.
+
+Known limitations:
+
+- Alignment is content-based and each receiver writes its own ops. Two receivers that each
+  align the same full-state batch against the same hidden state and then merge can apply
+  it twice (e.g. `hello` over `hXYZo` gives `hellello`, `[keep]` over `[other]` gives two
+  `keep`, and two new tree nodes). That converges, but it is not idempotent. To restore
+  once across peers, have one peer apply and sync the updates.
+- Identity is kept for the shared prefix/suffix, moved movable-list children, and tree
+  nodes by `TreeID`. Plain-list middle children and middle text are recreated.
 - Counters stay additive: two peers reverting 10 -> 7 concurrently give 4, as for a root
   counter.
-- Alignment in `apply_diff` of a different hidden state is content-based. Its edits are
-  new ops of the applying doc; identity is kept only for the shared prefix/suffix and for
-  tree nodes.
+- `revert_to` treats a remote edit to the hidden child like a root container does: already
+  observed means reverted, arriving later means merged. Undo of a delete keeps such edits
+  in either order.
 
 Covered by `crates/loro/tests/mergeable_revert.rs`, `tests/mergeable_container/delete.rs`,
 and `crates/loro-wasm/tests/mergeable.test.ts`.
@@ -185,8 +196,8 @@ raw/shallow storage may still show the binary marker for forward compatibility.
   removing the marker.
 - "A full-state revival of a re-activated mergeable child is its change." False; it is
   what a consumer that never saw the child needs. The doc that kept the child uses
-  `KeptChange` (revert, undo, undo transforms), and `apply_diff` aligns the full state
-  with the target's hidden state.
+  `KeptChange` (revert, undo, undo transforms), and `apply_diff` aligns a full state with
+  the target's hidden state only for `full_state` batches.
 - "Kind conflict discards the loser." False; the loser is hidden but should stay
   recoverable by deterministic cid.
 - "The marker is the child cid." False; the marker activates a kind at a

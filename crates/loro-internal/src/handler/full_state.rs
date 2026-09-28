@@ -31,8 +31,6 @@ pub(crate) fn align_full_state(
     current: Diff,
     full_state_targets: &mut FxHashSet<ContainerID>,
 ) -> LoroResult<Option<Diff>> {
-    #[cfg(not(feature = "counter"))]
-    let _ = handler;
     match (target, current) {
         (Diff::Map(target), Diff::Map(current)) => {
             Ok(align_map(target, current, full_state_targets).map(Diff::Map))
@@ -52,10 +50,13 @@ pub(crate) fn align_full_state(
             None => Some(Diff::Text(target)),
         }),
         (Diff::List(target), Diff::List(current)) => {
-            Ok(match align_list(&target, &current, full_state_targets) {
-                Some(edit) => (!edit.is_empty()).then_some(Diff::List(edit)),
-                None => Some(Diff::List(target)),
-            })
+            let movable = matches!(handler, Handler::MovableList(_));
+            Ok(
+                match align_list(&target, &current, movable, full_state_targets) {
+                    Some(edit) => (!edit.is_empty()).then_some(Diff::List(edit)),
+                    None => Some(Diff::List(target)),
+                },
+            )
         }
         (Diff::Tree(target), Diff::Tree(current)) => {
             Ok(match align_tree(&target, &current, full_state_targets) {
@@ -134,31 +135,78 @@ fn text_chars(diff: &TextDiff) -> Option<Vec<(char, &TextMeta)>> {
 
 /// Lengths of the longest common prefix and of the longest common suffix of the rest.
 fn common_ends<T: PartialEq>(a: &[T], b: &[T]) -> (usize, usize) {
-    let prefix = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    common_ends_by(a, b, |x, y| x == y)
+}
+
+fn common_ends_by<T>(a: &[T], b: &[T], eq: impl Fn(&T, &T) -> bool) -> (usize, usize) {
+    let prefix = a.iter().zip(b).take_while(|(x, y)| eq(x, y)).count();
     let suffix = a[prefix..]
         .iter()
         .rev()
         .zip(b[prefix..].iter().rev())
-        .take_while(|(x, y)| x == y)
+        .take_while(|(x, y)| eq(x, y))
         .count();
     (prefix, suffix)
 }
 
-/// Keeps the common prefix and suffix (chars with equal styles) and replaces the middle.
+/// The styles to mark on a kept char so that `current` becomes `target` (`null` unmarks).
+fn style_change(current: &TextMeta, target: &TextMeta) -> TextMeta {
+    let mut change = TextMeta::default();
+    for (key, value) in target.0.iter() {
+        if current.0.get(key) != Some(value) {
+            change.0.insert(key.clone(), value.clone());
+        }
+    }
+    for key in current.0.keys() {
+        if !target.0.contains_key(key) {
+            change.0.insert(key.clone(), LoroValue::Null);
+        }
+    }
+    change
+}
+
+/// Retains `current[i]` for each `(current[i], target[i])` pair, restyling chars whose styles
+/// differ.
+fn push_restyled_retain(
+    edit: &mut TextDiff,
+    current: &[(char, &TextMeta)],
+    target: &[(char, &TextMeta)],
+) {
+    let same_style = |i: usize| current[i].1 == target[i].1;
+    let mut i = 0;
+    while i < current.len() {
+        let start = i;
+        let mut len = 0;
+        if same_style(i) {
+            while i < current.len() && same_style(i) {
+                len += char_len(current[i].0);
+                i += 1;
+            }
+            edit.push_retain(len, TextMeta::default());
+        } else {
+            let (from, to) = (current[i].1, target[i].1);
+            while i < current.len() && current[i].1 == from && target[i].1 == to {
+                len += char_len(current[i].0);
+                i += 1;
+            }
+            debug_assert!(i > start);
+            edit.push_retain(len, style_change(from, to));
+        }
+    }
+}
+
+/// Keeps the chars of the common prefix and suffix (compared by content; differing styles are
+/// re-marked) and replaces the middle.
 fn align_text(target: &TextDiff, current: &TextDiff) -> Option<TextDiff> {
     let target = text_chars(target)?;
     let current = text_chars(current)?;
-    let (prefix, suffix) = common_ends(&target, &current);
+    let (prefix, suffix) = common_ends_by(&target, &current, |(a, _), (b, _)| a == b);
     let mut edit = TextDiff::new();
-    if prefix == target.len() && prefix == current.len() {
-        return Some(edit);
-    }
-    let retain: usize = current[..prefix].iter().map(|(c, _)| char_len(*c)).sum();
+    push_restyled_retain(&mut edit, &current[..prefix], &target[..prefix]);
     let delete: usize = current[prefix..current.len() - suffix]
         .iter()
         .map(|(c, _)| char_len(*c))
         .sum();
-    edit.push_retain(retain, TextMeta::default());
     edit.push_delete(delete);
     let middle = &target[prefix..target.len() - suffix];
     let mut i = 0;
@@ -172,6 +220,11 @@ fn align_text(target: &TextDiff, current: &TextDiff) -> Option<TextDiff> {
         i += run.chars().count();
         edit.push_insert(StringSlice::from(run), attr.clone());
     }
+    push_restyled_retain(
+        &mut edit,
+        &current[current.len() - suffix..],
+        &target[target.len() - suffix..],
+    );
     Some(edit)
 }
 
@@ -191,9 +244,14 @@ fn list_items(diff: &ListDiff) -> Option<Vec<&ValueOrHandler>> {
 }
 
 /// Keeps the common prefix and suffix (equal values, containers by id) and replaces the middle.
+///
+/// In a movable list, `apply_delta` turns deleting a child container and re-inserting it into
+/// a move (see `movable_list_apply_delta.rs`), so middle children that exist in both lists
+/// keep their id as well. A plain list recreates them under fresh ids.
 fn align_list(
     target: &ListDiff,
     current: &ListDiff,
+    movable: bool,
     full_state_targets: &mut FxHashSet<ContainerID>,
 ) -> Option<ListDiff> {
     let target = list_items(target)?;
@@ -201,9 +259,25 @@ fn align_list(
     let target_values: Vec<LoroValue> = target.iter().map(|v| v.to_value()).collect();
     let current_values: Vec<LoroValue> = current.iter().map(|v| v.to_value()).collect();
     let (prefix, suffix) = common_ends(&target_values, &current_values);
-    let kept = target_values[..prefix]
+    let mut kept: Vec<&LoroValue> = target_values[..prefix]
         .iter()
-        .chain(&target_values[target_values.len() - suffix..]);
+        .chain(&target_values[target_values.len() - suffix..])
+        .collect();
+    if movable {
+        let current_middle: FxHashSet<&ContainerID> = current_values
+            [prefix..current_values.len() - suffix]
+            .iter()
+            .filter_map(|v| v.as_container())
+            .collect();
+        kept.extend(
+            target_values[prefix..target_values.len() - suffix]
+                .iter()
+                .filter(|v| {
+                    v.as_container()
+                        .is_some_and(|id| current_middle.contains(id))
+                }),
+        );
+    }
     for v in kept {
         if let LoroValue::Container(id) = v {
             full_state_targets.insert(id.clone());

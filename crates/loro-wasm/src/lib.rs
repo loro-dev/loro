@@ -438,6 +438,8 @@ extern "C" {
     pub type JsVersionVectorDiff;
     #[wasm_bindgen(typescript_type = "[ContainerID, Diff|JsonDiff][]")]
     pub type JsDiffBatch;
+    #[wasm_bindgen(typescript_type = "ApplyDiffOptions")]
+    pub type JsApplyDiffOptions;
 }
 
 mod observer {
@@ -2320,8 +2322,41 @@ impl LoroDoc {
     /// doc2.applyDiff(diff);
     /// console.log(doc2.getText("text").toString()); // "Hello"
     /// ```
+    ///
+    /// Pass `{ fullState: true }` when applying the result of `doc.diff()` to a document that may
+    /// keep hidden state for a mergeable child the diff makes visible again (e.g. applying
+    /// `doc.diff(afterDelete, beforeDelete)` to `doc` itself or to a copy of it). The child's
+    /// entry is then read as its full content and aligned with that hidden state. Without it
+    /// (the default), entries are applied as increments, which is right for events forwarded to
+    /// a document that shares the source's hidden state.
+    ///
+    /// ```ts
+    /// const text = doc.getMap("m").ensureMergeableText("t");
+    /// text.insert(0, "hello");
+    /// const before = doc.frontiers();
+    /// doc.getMap("m").delete("t");
+    /// doc.applyDiff(doc.diff(doc.frontiers(), before), { fullState: true });
+    /// console.log(doc.getMap("m").get("t").toString()); // "hello"
+    /// ```
     #[wasm_bindgen(js_name = "applyDiff")]
-    pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
+    pub fn apply_diff(
+        &self,
+        diff: JsDiffBatch,
+        options: Option<JsApplyDiffOptions>,
+    ) -> JsResult<()> {
+        let full_state = match options {
+            Some(options) => {
+                let full_state = Reflect::get(&options, &JsValue::from_str("fullState"))?;
+                if full_state.is_undefined() || full_state.is_null() {
+                    false
+                } else {
+                    full_state
+                        .as_bool()
+                        .ok_or("`fullState` must be a boolean")?
+                }
+            }
+            None => false,
+        };
         let diff: JsValue = diff.into();
         let arr: js_sys::Array = diff.into();
         let mut cid_to_events = FxHashMap::default();
@@ -2343,6 +2378,7 @@ impl LoroDoc {
         self.doc.apply_diff(DiffBatch {
             cid_to_events,
             order,
+            full_state,
         })?;
         Ok(())
     }
@@ -6546,6 +6582,21 @@ interface LoroDoc {
     diff(from: OpId[], to: OpId[], for_json: true): [ContainerID, JsonDiff][];
     diff(from: OpId[], to: OpId[], for_json: undefined): [ContainerID, JsonDiff][];
     diff(from: OpId[], to: OpId[], for_json?: boolean): [ContainerID, JsonDiff|Diff][];
+}
+
+/**
+ * Options for `LoroDoc.applyDiff`.
+ */
+export interface ApplyDiffOptions {
+    /**
+     * Read the batch as the result of `doc.diff()`: a mergeable child that the batch makes
+     * visible again carries its full content, which is aligned with whatever hidden state the
+     * target document keeps for it (none, the same, or different).
+     *
+     * Leave it unset (the default) for batches built from events: those entries are
+     * increments, which is right when the target shares the source's hidden state.
+     */
+    fullState?: boolean;
 }
 
 /**

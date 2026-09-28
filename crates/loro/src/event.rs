@@ -254,6 +254,7 @@ impl From<ValueOrHandler> for ValueOrContainer {
 pub struct DiffBatch {
     cid_to_events: FxHashMap<ContainerID, Diff<'static>>,
     order: Vec<ContainerID>,
+    full_state: bool,
 }
 
 impl std::fmt::Debug for DiffBatch {
@@ -287,6 +288,22 @@ impl DiffBatch {
                 Ok(())
             }
         }
+    }
+
+    /// Whether a mergeable child this batch re-activates carries its full state.
+    ///
+    /// Batches from [`crate::LoroDoc::diff`] set it. [`crate::LoroDoc::apply_diff`] then aligns
+    /// that full state with whatever hidden state the target doc keeps for the child (none,
+    /// the same, or different), so the batch applies to any doc. Otherwise (the default, e.g.
+    /// a batch built from events) the child's entry is applied as an increment, which is right
+    /// for a doc that shares the source's hidden state.
+    pub fn is_full_state(&self) -> bool {
+        self.full_state
+    }
+
+    /// Sets [`DiffBatch::is_full_state`].
+    pub fn set_full_state(&mut self, full_state: bool) {
+        self.full_state = full_state;
     }
 
     pub(crate) fn validate_for_apply(&self) -> LoroResult<()> {
@@ -354,6 +371,7 @@ impl From<InnerDiffBatch> for DiffBatch {
         DiffBatch {
             cid_to_events: map,
             order: value.order,
+            full_state: value.full_state,
         }
     }
 }
@@ -426,6 +444,7 @@ impl From<DiffBatch> for InnerDiffBatch {
         InnerDiffBatch {
             cid_to_events: map,
             order: value.order,
+            full_state: value.full_state,
         }
     }
 }

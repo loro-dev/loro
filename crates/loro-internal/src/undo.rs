@@ -25,6 +25,12 @@ use crate::{
 pub struct DiffBatch {
     pub cid_to_events: FxHashMap<ContainerID, Diff>,
     pub order: Vec<ContainerID>,
+    /// Set on batches from [`LoroDoc::diff`]: a mergeable child the batch re-activates carries
+    /// its full state (no entry means empty), which `apply_diff` aligns with whatever hidden
+    /// state the target doc keeps at that deterministic cid. Unset batches (events, hand-built
+    /// ones) are applied incrementally, as a doc that shares the source's hidden state needs.
+    /// See context/mergeable-containers.md.
+    pub full_state: bool,
 }
 
 impl DiffBatch {
@@ -42,6 +48,7 @@ impl DiffBatch {
         Self {
             cid_to_events: map,
             order,
+            full_state: false,
         }
     }
 
@@ -67,6 +74,7 @@ impl DiffBatch {
         Self {
             cid_to_events: map,
             order,
+            full_state: false,
         }
     }
 

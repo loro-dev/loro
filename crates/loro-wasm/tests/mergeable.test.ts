@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { LoroDoc, UndoManager } from "../bundler/index";
+import { LoroDoc, LoroMap, LoroText, UndoManager } from "../bundler/index";
 
 function sync(a: LoroDoc, b: LoroDoc) {
   const aBytes = a.export({ mode: "update", from: b.version() });
@@ -245,7 +245,8 @@ describe("mergeable containers (WASM bindings)", () => {
     expect(r.d.toJSON()).toEqual(expected);
 
     const p = setup();
-    p.d.applyDiff(p.d.diff(p.b, p.a));
+    // The doc keeps the hidden children, so the full-state diff needs `fullState`.
+    p.d.applyDiff(p.d.diff(p.b, p.a), { fullState: true });
     p.d.commit();
     expect(p.d.toJSON()).toEqual(expected);
   });
@@ -367,5 +368,86 @@ describe("mergeable containers (WASM bindings)", () => {
     expect(ub.undo()).toBe(true);
     b.commit();
     expect(b.toJSON()).toEqual({ m: { s: "hello" } });
+  });
+  test("applyDiff is incremental by default and aligns with fullState", () => {
+    const setup = () => {
+      const d = new LoroDoc();
+      d.setPeerId(1);
+      d.getMap("m").ensureMergeableText("t").insert(0, "hello");
+      d.commit();
+      const target = d.frontiers();
+      d.getMap("m").delete("t");
+      d.commit();
+      return { d, diff: d.diff(d.frontiers(), target) };
+    };
+    // Same hidden state: the default applies the entry as an increment, as before.
+    const a = setup();
+    a.d.applyDiff(a.diff);
+    a.d.commit();
+    expect(a.d.toJSON()).toEqual({ m: { t: "hellohello" } });
+    // With fullState it is aligned with the hidden state.
+    const b = setup();
+    b.d.applyDiff(b.diff, { fullState: true });
+    b.d.commit();
+    expect(b.d.toJSON()).toEqual({ m: { t: "hello" } });
+    // A doc without hidden state gets the same result either way.
+    for (const options of [undefined, { fullState: true }]) {
+      const fresh = new LoroDoc();
+      fresh.getMap("m");
+      fresh.applyDiff(setup().diff, options);
+      fresh.commit();
+      expect(fresh.toJSON()).toEqual({ m: { t: "hello" } });
+    }
+    expect(() =>
+      setup().d.applyDiff(setup().diff, { fullState: "yes" } as any),
+    ).toThrow();
+  });
+
+  test("fullState applyDiff keeps reordered movable-list children", () => {
+    for (const kind of ["map", "text"]) {
+      const d = new LoroDoc();
+      d.setPeerId(1);
+      const list = d.getMap("m").ensureMergeableMovableList("s");
+      for (const [i, v] of ["A", "B"].entries()) {
+        if (kind === "map") list.insertContainer(i, new LoroMap()).set("v", v);
+        else list.insertContainer(i, new LoroText()).insert(0, v);
+      }
+      d.commit();
+      const target = d.frontiers();
+      const expected = d.toJSON();
+      list.move(0, 1);
+      d.getMap("m").delete("s");
+      d.commit();
+      d.applyDiff(d.diff(d.frontiers(), target), { fullState: true });
+      d.commit();
+      expect(d.toJSON()).toEqual(expected);
+    }
+  });
+
+  test("local re-ensure events mirror onto a doc sharing the hidden state", () => {
+    const d = new LoroDoc();
+    d.setPeerId(1);
+    const m = d.getMap("m");
+    m.ensureMergeableCounter("c").increment(7);
+    m.ensureMergeableText("t").insert(0, "hello");
+    m.ensureMergeableList("l").push("keep");
+    d.commit();
+    for (const key of ["c", "t", "l"]) m.delete(key);
+    d.commit();
+    const mirror = d.fork();
+    const batches: [string, any][][] = [];
+    const unsub = d.subscribe((e) => {
+      batches.push(e.events.map((ev) => [ev.target, ev.diff]));
+    });
+    m.ensureMergeableCounter("c");
+    m.ensureMergeableText("t");
+    m.ensureMergeableList("l").push("more");
+    d.commit();
+    unsub();
+    for (const batch of batches) mirror.applyDiff(batch as any);
+    mirror.commit();
+    const expected = { m: { c: 7, t: "hello", l: ["keep", "more"] } };
+    expect(d.toJSON()).toEqual(expected);
+    expect(mirror.toJSON()).toEqual(expected);
   });
 });
