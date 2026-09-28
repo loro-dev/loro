@@ -4,7 +4,7 @@ use self::block_encode::{
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
 use crate::{
-    arena::{CreatorOp, SharedArena, SharedArenaRollback},
+    arena::{ArenaExtent, CreatorOp, SharedArena, SharedArenaRollback},
     change::Change,
     estimated_size::EstimatedSize,
     kv_store::KvStore,
@@ -215,6 +215,9 @@ pub(crate) struct ChangesBlock {
     estimated_size: usize,
     flushed: bool,
     content: ChangesBlockContent,
+    /// Where the arena reached when `content` was parsed from its bytes (`Both`). See
+    /// [`ChangeStore::rollback_arena`].
+    parsed_extent: ArenaExtent,
 }
 
 #[derive(Clone)]
@@ -471,15 +474,17 @@ impl ChangeStore {
     }
 
     /// Rolls the arena back to `arena`, a checkpoint taken before a failed import, and drops
-    /// the parsed changes of every cached block that has its encoded bytes. Every arena
-    /// rollback must go through here (or [`Self::rollback_import`] / [`Self::retire`]).
+    /// the parsed changes of the cached blocks that were parsed since. Every arena rollback must
+    /// go through here (or [`Self::rollback_import`] / [`Self::retire`]).
     ///
     /// Parsing a block registers the containers its ops use and allocates their values, and
     /// the arena rollback drops what was registered or allocated after the checkpoint, so a
     /// block parsed in between may hold indices and value slices that no longer exist or that
-    /// new registrations reuse. Keeping only its bytes makes the next access parse and register
-    /// again. A block without bytes was built in memory from changes inserted before the
-    /// import, whose containers were registered then.
+    /// new registrations reuse. Such a block keeps only its bytes, so the next access parses and
+    /// registers again. A block parsed before the checkpoint can only refer to what was there
+    /// then (its `parsed_extent`), and keeps its parsed changes. A block without bytes was built
+    /// in memory from changes inserted before the import, whose containers were registered
+    /// then.
     ///
     /// This happens under `inner`, where blocks are parsed. The creator resolver parses
     /// without the op log lock, so otherwise it could parse a block after the bytes are
@@ -490,13 +495,15 @@ impl ChangeStore {
     }
 
     fn rollback_arena_in(&self, inner: &mut ChangeStoreInner, arena: SharedArenaRollback) {
-        self.arena.rollback(arena);
         for block in inner.mem_parsed_kv.values_mut() {
             if let ChangesBlockContent::Both(_, bytes) = &block.content {
-                let bytes = bytes.clone();
-                Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+                if !arena.keeps(block.parsed_extent) {
+                    let bytes = bytes.clone();
+                    Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+                }
             }
         }
+        self.arena.rollback(arena);
     }
 
     /// Rolls the arena back to `arena` after the op log replaced this store (a failed
@@ -1798,6 +1805,7 @@ impl ChangesBlock {
             lamport_range,
             flushed: true,
             content,
+            parsed_extent: ArenaExtent::default(),
         })
     }
 
@@ -1820,6 +1828,7 @@ impl ChangesBlock {
             estimated_size,
             content,
             flushed: false,
+            parsed_extent: ArenaExtent::default(),
         }
     }
 
@@ -1931,6 +1940,7 @@ impl ChangesBlock {
                 let b = bytes.clone();
                 let this = Arc::make_mut(self);
                 this.content = ChangesBlockContent::Both(Arc::new(changes), b);
+                this.parsed_extent = a.extent();
                 Ok(())
             }
         }
@@ -1971,11 +1981,6 @@ impl ChangesBlock {
                 }
             }
         }
-    }
-
-    #[allow(unused)]
-    fn get_changes(&mut self, a: &SharedArena) -> LoroResult<&Vec<Change>> {
-        self.content.changes(a)
     }
 
     #[allow(unused)]
@@ -2035,19 +2040,6 @@ impl ChangesBlockContent {
         }
 
         dag_nodes
-    }
-
-    #[allow(unused)]
-    pub fn changes(&mut self, a: &SharedArena) -> LoroResult<&Vec<Change>> {
-        match self {
-            ChangesBlockContent::Changes(changes) => Ok(changes),
-            ChangesBlockContent::Both(changes, _) => Ok(changes),
-            ChangesBlockContent::Bytes(bytes) => {
-                let changes = bytes.parse(a)?;
-                *self = ChangesBlockContent::Both(Arc::new(changes), bytes.clone());
-                self.changes(a)
-            }
-        }
     }
 
     /// Note that this method will invalidate the stored bytes
@@ -2285,6 +2277,34 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    #[test]
+    fn rollback_drops_only_blocks_parsed_after_the_checkpoint() {
+        // A failed import must not keep blocks it parsed (they may refer to what the arena
+        // rollback drops), but the blocks parsed before it are still valid, and reparsing them
+        // after every failed import would cost a full history pass.
+        let (store, end, _) = kv_only_store_and_next_change();
+        let is_parsed = |id: ID| {
+            let inner = store.inner.lock();
+            let (_, block) = inner.mem_parsed_kv.range(..=id).next_back().unwrap();
+            matches!(block.content, ChangesBlockContent::Both(..))
+        };
+        let early = ID::new(1, 0);
+        let late = ID::new(1, end - 1);
+        store.get_change(early).unwrap();
+        let checkpoint = store.arena.checkpoint_for_rollback();
+        // Something the failed import registered.
+        store.arena.register_container(&ContainerID::new_root(
+            "new",
+            loro_common::ContainerType::Map,
+        ));
+        store.get_change(late).unwrap();
+        assert!(is_parsed(early) && is_parsed(late));
+        store.rollback_arena(checkpoint);
+        assert!(is_parsed(early));
+        assert!(!is_parsed(late));
+        assert!(store.get_change(late).is_some());
     }
 
     #[test]

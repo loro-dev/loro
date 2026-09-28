@@ -110,6 +110,24 @@ pub(crate) struct SharedArenaRollback {
     str: StrArenaCheckpoint,
 }
 
+/// How far the arena reached when something that refers into it was built, e.g. a parsed
+/// change block: it can only refer to containers, values, and text allocated before.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ArenaExtent {
+    containers: usize,
+    values: usize,
+    str_bytes: usize,
+}
+
+impl SharedArenaRollback {
+    /// Whether rolling back to this checkpoint keeps everything within `extent`.
+    pub(crate) fn keeps(&self, extent: ArenaExtent) -> bool {
+        extent.containers <= self.container_len
+            && extent.values <= self.values_len
+            && extent.str_bytes <= self.str.bytes_len()
+    }
+}
+
 #[derive(Debug)]
 pub struct StrAllocResult {
     /// unicode start
@@ -298,6 +316,15 @@ impl SharedArena {
                 values: Mutex::new(self.inner.values.lock().clone()),
                 str: self.inner.str.clone(),
             }),
+        }
+    }
+
+    /// See [`ArenaExtent`].
+    pub(crate) fn extent(&self) -> ArenaExtent {
+        ArenaExtent {
+            containers: self.inner.containers.read().container_idx_to_id.len(),
+            values: self.inner.values.lock().len(),
+            str_bytes: self.inner.str.lock().bytes_len(),
         }
     }
 
