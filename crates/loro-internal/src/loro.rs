@@ -1196,6 +1196,10 @@ impl LoroDoc {
     /// This implementation is kinda slow, but it's simple and maintainable. We can optimize it
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
+    ///
+    /// Returns `Err(LoroError::ArgErr)` without changing the doc when the step
+    /// would recreate a container of an unknown type; no other error of this
+    /// method is an `ArgErr`.
     #[instrument(level = "info", skip_all)]
     pub fn undo_internal(
         &self,
@@ -1250,16 +1254,23 @@ impl LoroDoc {
         }
         drop(txn);
         self.start_auto_commit();
-        // Try applying the diff, but ignore the error if it happens.
+        // A step that would recreate an unknown container is rejected as a
+        // whole, before anything is applied
+        let rejected =
+            self.check_apply_diff_creates_no_unknown_container(&diff, container_remap, true);
+        // Otherwise try applying the diff, but ignore the error if it happens.
         // MovableList's undo behavior is too tricky to handle in a collaborative env
         // so in edge cases this may be an Error
-        if let Err(e) = self._apply_diff(diff, container_remap, true) {
-            warn!("Undo Failed {:?}", e);
+        if rejected.is_ok() {
+            if let Err(e) = self._apply_diff(diff, container_remap, true) {
+                warn!("Undo Failed {:?}", e);
+            }
         }
 
         if let Some(options) = options {
             self.set_next_commit_options(options);
         }
+        rejected?;
         Ok(CommitWhenDrop {
             doc: self,
             default_options: CommitOptions::new().origin("undo"),
@@ -1419,13 +1430,25 @@ impl LoroDoc {
 
     /// `_apply_diff` recreates the containers inserted by a diff, but this
     /// version cannot create a container whose type it doesn't know
-    /// ([ContainerType::Unknown], e.g. `cid:0@1:Unknown(9)`). Such containers
-    /// may only appear where no container is created: mergeable map children
-    /// (the id is deterministic, only the marker is written), and MovableList
-    /// moves of an element already in the list.
+    /// ([ContainerType::Unknown], e.g. `cid:0@1:Unknown(9)`). Such values may
+    /// only appear where nothing is created: mergeable map children (only the
+    /// marker is written), MovableList moves of an element already in the
+    /// list, diffs targeting an unknown container (a no-op), and diffs that
+    /// `_apply_diff` skips because their target is unreachable.
     ///
-    /// This mirrors how `_apply_diff` resolves and skips targets, without
-    /// applying anything.
+    /// Nothing is applied here, but the apply loop changes its own inputs as it
+    /// goes, so this predicts those changes from the whole batch:
+    ///
+    /// - fresh: container values of Map/List diffs and the metas of recreated
+    ///   tree nodes are recreated under a new id (`container_remap`). Their
+    ///   diffs then apply to a new, empty container and are never skipped.
+    /// - revived: writing a mergeable child's marker makes it reachable again.
+    /// - removed: a diff that deletes a child container makes it and its
+    ///   descendants unreachable for the diffs after it.
+    ///
+    /// Every prediction errs towards checking a diff (a false rejection),
+    /// never towards skipping it, so an accepted batch cannot fail on an
+    /// unknown container half way through.
     fn check_apply_diff_creates_no_unknown_container(
         &self,
         diff: &DiffBatch,
@@ -1444,16 +1467,6 @@ impl LoroDoc {
             (id, remapped)
         }
 
-        fn unknown_container_err(id: &ContainerID) -> LoroError {
-            LoroError::ArgErr(
-                format!(
-                    "Cannot create container {id}: its type {} is unknown to this version of Loro",
-                    id.container_type()
-                )
-                .into_boxed_str(),
-            )
-        }
-
         fn container_id(v: &ValueOrHandler) -> Option<ContainerID> {
             match v {
                 ValueOrHandler::Value(LoroValue::Container(id)) => Some(id.clone()),
@@ -1462,97 +1475,174 @@ impl LoroDoc {
             }
         }
 
-        for (id, diff) in diff.iter() {
-            let has_unknown = match diff {
+        fn inserted(delta: &crate::event::ListDiff) -> impl Iterator<Item = ContainerID> + '_ {
+            delta
+                .iter()
+                .flat_map(|item| match item {
+                    loro_delta::DeltaItem::Replace { value, .. } => {
+                        Some(value.iter().filter_map(container_id))
+                    }
+                    loro_delta::DeltaItem::Retain { .. } => None,
+                })
+                .flatten()
+        }
+
+        fn has_unknown_value(diff: &crate::event::Diff) -> bool {
+            match diff {
                 crate::event::Diff::Map(map) => map.updated.values().any(|v| {
                     v.value
                         .as_ref()
                         .and_then(container_id)
                         .is_some_and(|c| c.is_unknown())
                 }),
-                crate::event::Diff::List(delta) => delta.iter().any(|item| match item {
-                    loro_delta::DeltaItem::Replace { value, .. } => value
-                        .iter()
-                        .any(|v| container_id(v).is_some_and(|c| c.is_unknown())),
-                    loro_delta::DeltaItem::Retain { .. } => false,
-                }),
+                crate::event::Diff::List(delta) => inserted(delta).any(|c| c.is_unknown()),
                 _ => false,
+            }
+        }
+
+        if !diff.iter().any(|(_, d)| has_unknown_value(d)) {
+            return Ok(());
+        }
+
+        // A handler for an existing container, without materializing roots
+        // that have no state yet
+        let existing = |id: &ContainerID| -> Option<Handler> {
+            if id.is_root() && !id.is_mergeable() && self.arena.id_to_idx(id).is_none() {
+                return None;
+            }
+            self.has_container(id)
+                .then(|| Handler::new_attached(id.clone(), self.clone()))
+        };
+
+        let mut fresh: FxHashSet<ContainerID> = FxHashSet::default();
+        let mut revived: FxHashSet<ContainerID> = FxHashSet::default();
+        // Container -> index of the first diff in the batch that removes it
+        let mut removed: FxHashMap<ContainerID, usize> = FxHashMap::default();
+        for (i, (id, diff)) in diff.iter().enumerate() {
+            let (target, _) = resolve(id.clone(), container_remap);
+            let handler = if fresh.contains(id) || target.is_unknown() {
+                None
+            } else {
+                existing(&target)
             };
-            if !has_unknown {
-                continue;
-            }
-
-            let (target, remapped) = resolve(id.clone(), container_remap);
-            let exists = self.has_container(&target);
-            if exists && skip_unreachable && !remapped && !self.state.lock().get_reachable(&target)
-            {
-                // `_apply_diff` skips this diff
-                continue;
-            }
-
             match diff {
                 crate::event::Diff::Map(map) => {
-                    for v in map.updated.values() {
-                        if let Some(child) = v.value.as_ref().and_then(container_id) {
-                            if child.is_unknown() && !child.is_mergeable() {
-                                return Err(unknown_container_err(&child));
+                    let map_handler = handler.and_then(|h| h.into_map().ok());
+                    for (key, v) in map.updated.iter() {
+                        if let Some(LoroValue::Container(old)) =
+                            map_handler.as_ref().and_then(|m| m.get(key))
+                        {
+                            if !old.is_mergeable() {
+                                removed.entry(old).or_insert(i);
+                            }
+                        }
+                        if let Some(c) = v.value.as_ref().and_then(container_id) {
+                            if c.is_mergeable() {
+                                revived.insert(c);
+                            } else {
+                                fresh.insert(c);
                             }
                         }
                     }
                 }
                 crate::event::Diff::List(delta) => {
-                    // Only an existing MovableList can move one of its elements
-                    // instead of creating a container: either an element this delta
-                    // deletes, or (`from_move`) an element still in the list.
-                    let list = if exists && target.container_type() == ContainerType::MovableList {
-                        self.get_handler(target)
-                            .and_then(|h| h.into_movable_list().ok())
-                    } else {
-                        None
+                    let values: FxHashSet<ContainerID> = inserted(delta)
+                        .map(|c| resolve(c, container_remap).0)
+                        .collect();
+                    let get = |i: usize| match &handler {
+                        Some(Handler::List(l)) => l.get(i),
+                        Some(Handler::MovableList(l)) => l.get(i),
+                        _ => None,
                     };
-                    let mut deleted = FxHashSet::default();
-                    let mut current = FxHashSet::default();
-                    if let Some(list) = &list {
+                    if handler.is_some() {
+                        let movable = matches!(handler, Some(Handler::MovableList(_)));
                         let mut index = 0;
                         for item in delta.iter() {
                             match item {
                                 loro_delta::DeltaItem::Retain { len, .. } => index += len,
                                 loro_delta::DeltaItem::Replace { delete, .. } => {
-                                    for i in index..index + delete {
-                                        if let Some(LoroValue::Container(c)) = list.get(i) {
-                                            deleted.insert(c);
+                                    for j in index..index + delete {
+                                        if let Some(LoroValue::Container(old)) = get(j) {
+                                            // A MovableList may move it instead
+                                            if !movable || !values.contains(&old) {
+                                                removed.entry(old).or_insert(i);
+                                            }
                                         }
                                     }
                                     index += delete;
                                 }
                             }
                         }
-                        for i in 0..list.len() {
-                            if let Some(LoroValue::Container(c)) = list.get(i) {
-                                current.insert(c);
-                            }
-                        }
                     }
-
-                    for item in delta.iter() {
-                        let loro_delta::DeltaItem::Replace { value, attr, .. } = item else {
-                            continue;
-                        };
-                        for child in value.iter().filter_map(container_id) {
-                            if !child.is_unknown() {
-                                continue;
+                    // Moves are counted too, which can only check more
+                    fresh.extend(inserted(delta));
+                }
+                crate::event::Diff::Tree(tree) => {
+                    for item in tree.diff.iter() {
+                        let meta = item.target.associated_meta_container();
+                        if matches!(item.action, crate::delta::TreeExternalDiff::Delete { .. }) {
+                            if handler.is_some() && !container_remap.contains_key(&meta) {
+                                removed.entry(meta).or_insert(i);
                             }
-                            let (resolved, _) = resolve(child.clone(), container_remap);
-                            let moved = deleted.contains(&child)
-                                || deleted.contains(&resolved)
-                                || (attr.from_move && current.contains(&resolved));
-                            if !moved {
-                                return Err(unknown_container_err(&child));
-                            }
+                        } else {
+                            fresh.insert(meta);
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+
+        for (i, (id, diff)) in diff.iter().enumerate() {
+            if !has_unknown_value(diff) {
+                continue;
+            }
+            let (target, remapped) = resolve(id.clone(), container_remap);
+            if target.is_unknown() {
+                // `Handler::Unknown` ignores diffs
+                continue;
+            }
+
+            let handler = if fresh.contains(id) {
+                None
+            } else {
+                existing(&target)
+            };
+            if handler.is_some() && skip_unreachable && !remapped {
+                let mut chain: Vec<ContainerID> = self
+                    .get_path_to_container(&target)
+                    .map(|path| path.into_iter().map(|(c, _)| c).collect())
+                    .unwrap_or_default();
+                chain.push(target.clone());
+                let skipped = !chain.iter().any(|c| revived.contains(c))
+                    && (!self.state.lock().get_reachable(&target)
+                        || chain.iter().any(|c| removed.get(c).is_some_and(|&j| j < i)));
+                if skipped {
+                    // `_apply_diff` skips this diff
+                    continue;
+                }
+            }
+
+            let created = match diff {
+                crate::event::Diff::Map(map) => map
+                    .updated
+                    .values()
+                    .filter_map(|v| v.value.as_ref().and_then(container_id))
+                    .find(|c| c.is_unknown() && !c.is_mergeable()),
+                crate::event::Diff::List(delta) => match &handler {
+                    // Only an existing MovableList can move an element instead
+                    // of creating it
+                    Some(Handler::MovableList(list)) => {
+                        list.unknown_container_created_by_delta(delta, container_remap)?
+                    }
+                    _ => inserted(delta).find(|c| c.is_unknown()),
+                },
+                _ => None,
+            };
+            if let Some(c) = created {
+                return Err(crate::handler::unknown_container_creation_err(
+                    c.container_type(),
+                ));
             }
         }
 

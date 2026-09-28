@@ -399,6 +399,8 @@ impl Diff {
             }
             #[cfg(feature = "counter")]
             (Diff::Counter(a), Diff::Counter(b)) => *a += b,
+            // Unknown containers have no diff content
+            (Diff::Unknown, Diff::Unknown) => {}
             (_, _) => unreachable!(),
         }
     }

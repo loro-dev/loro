@@ -338,12 +338,17 @@ fn existing_unknown_containers_keep_working() {
     assert_eq!(json(&doc), before);
     assert_eq!(doc.oplog_vv(), vv);
 
-    // Undoing the deletion is skipped without changes, like other undo steps
-    // that fail to apply
-    undo.undo().unwrap();
+    // Undoing the deletion fails without changes and drops that step
+    let undo_count = undo.undo_count();
+    let err = undo.undo().unwrap_err();
+    assert!(
+        matches!(&err, LoroError::ArgErr(msg) if msg.contains("Unknown(9)")),
+        "{err:?}"
+    );
     doc.commit();
     assert_eq!(json(&doc), before);
     assert_eq!(doc.oplog_vv(), vv);
+    assert_eq!(undo.undo_count(), undo_count - 1);
 }
 
 /// JSON updates in which a newer Loro creates an unknown container under

@@ -880,6 +880,11 @@ impl UndoManager {
                     },
                 ) {
                     Ok(c) => c,
+                    // The step would recreate a container of an unknown type
+                    // (the only `ArgErr` of `undo_internal`). Nothing was
+                    // applied; drop the step instead of retrying it forever or
+                    // undoing the next step in its place.
+                    Err(e @ LoroError::ArgErr(_)) => return Err(e),
                     Err(e) => {
                         get_stack(&mut self.inner.lock().borrow_mut())
                             .push(span.span, span.meta);

@@ -25,12 +25,9 @@ before changing mergeable child behavior.
 - `dead_containers_cache.rs`: dead/alive tracking and marker-driven mergeable
   reactivation.
 - `unknown_state.rs` and `../diff_calc/unknown.rs`: forward compatibility for
-  unknown container types. Unknown containers can be imported, exported and
-  moved, but never created locally: local ops have no rollback, so
-  `LoroDoc::check_apply_diff_creates_no_unknown_container` (`../loro.rs`) and
-  `ensure_no_unknown_container_in_attached` (`../handler.rs`) reject
-  `apply_diff`/`revert_to`/undo steps and container copies up front with
-  `ArgErr`.
+  unknown container types. They are never created locally; the `apply_diff`
+  pre-check and undo rules are in
+  [../../../../context/unknown-containers.md](../../../../context/unknown-containers.md).
 
 ## Mergeable Rules
 

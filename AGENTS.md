@@ -43,6 +43,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/container-value-cache.md](context/container-value-cache.md).
 - Movable-list `apply_diff`/undo: delete + re-insert of a child becomes a move,
   cursor invariant, pitfalls: [context/movable-list-apply-diff.md](context/movable-list-apply-diff.md).
+- Unknown container types (newer-version containers): never created locally,
+  `apply_diff`/undo pre-check, events, test forging:
+  [context/unknown-containers.md](context/unknown-containers.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands

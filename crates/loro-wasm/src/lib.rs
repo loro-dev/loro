@@ -2622,9 +2622,20 @@ fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsResult<JsValue>
         Reflect::set(&obj, &"currentTarget".into(), &t.to_string().into())?;
     }
 
-    let events = js_sys::Array::new_with_length(event.events.len() as u32);
-    for (i, &event) in event.events.iter().enumerate() {
-        events.set(i as u32, container_diff_to_js_value(event, for_json)?);
+    // Containers of a type unknown to this version (created by a newer Loro)
+    // have no readable diff, and a diff holding one as a child value cannot be
+    // converted either. Skip those container events, but keep the others.
+    let events = js_sys::Array::new();
+    for &event in event.events.iter() {
+        if matches!(event.diff, loro_internal::event::Diff::Unknown) {
+            continue;
+        }
+        match container_diff_to_js_value(event, for_json) {
+            Ok(v) => {
+                events.push(&v);
+            }
+            Err(e) => console_error!("Skipped the event of container {}: {:?}", event.id, e),
+        }
     }
 
     Reflect::set(&obj, &"events".into(), &events.into())?;
@@ -5628,12 +5639,19 @@ impl UndoManager {
     }
 
     /// Undo the last operation.
+    ///
+    /// Throws without changing the doc if the step would have to recreate a
+    /// container of a type unknown to this version (created by a newer
+    /// loro-crdt). That step is dropped; the next call undoes the one before it.
     pub fn undo(&mut self) -> JsResult<bool> {
         let executed = self.undo.lock().undo()?;
         Ok(executed)
     }
 
     /// Redo the last undone operation.
+    ///
+    /// Throws like `undo` on steps that would recreate a container of an
+    /// unknown type.
     pub fn redo(&mut self) -> JsResult<bool> {
         let executed = self.undo.lock().redo()?;
         Ok(executed)

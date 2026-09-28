@@ -21,6 +21,7 @@
 
 use super::*;
 use crate::{event::Index, state::ContainerState};
+use rustc_hash::FxHashSet;
 use std::ops::Range;
 
 /// Pass 1 output of [`MovableListHandler::apply_delta`].
@@ -285,6 +286,65 @@ impl MovableListHandler {
                 self.id()
             ),
         }
+    }
+
+    /// The first container value of `delta` with an unknown type that
+    /// [`Self::apply_delta`] would create instead of move. Mirrors its plan:
+    /// a value moves a claimed deleted child, or is skipped with `from_move`
+    /// when the child stays in the list.
+    pub(crate) fn unknown_container_created_by_delta(
+        &self,
+        delta: &loro_delta::DeltaRope<
+            loro_delta::array_vec::ArrayVec<ValueOrHandler, 8>,
+            crate::event::ListDeltaMeta,
+        >,
+        container_remap: &FxHashMap<ContainerID, ContainerID>,
+    ) -> LoroResult<Option<ContainerID>> {
+        let plan = self.plan_moves(delta, container_remap)?;
+        let mut claims = plan.claims.iter();
+        // Children deleted by the delta and not claimed; only read when needed
+        let mut deleted_unclaimed: Option<FxHashSet<ContainerID>> = None;
+        for delta_item in delta.iter() {
+            let loro_delta::DeltaItem::Replace { value, attr, .. } = delta_item else {
+                continue;
+            };
+            for id in value.iter().filter_map(inserted_container_id) {
+                if claims.next().is_some_and(|c| c.is_some()) || !id.is_unknown() {
+                    continue;
+                }
+                let mut id = id;
+                while let Some(new_id) = container_remap.get(&id) {
+                    id = new_id.clone();
+                }
+                if attr.from_move && self.contains_child(&id)? {
+                    let deleted_unclaimed = match &mut deleted_unclaimed {
+                        Some(x) => x,
+                        None => deleted_unclaimed.insert(self.with_state(|state| {
+                            let list = state.as_movable_list_state().unwrap();
+                            let mut ans = FxHashSet::default();
+                            for range in plan.deleted.iter() {
+                                for i in range.clone() {
+                                    if plan.claimed.binary_search(&i).is_ok() {
+                                        continue;
+                                    }
+                                    if let Some(LoroValue::Container(c)) =
+                                        list.get(i, IndexType::ForUser)
+                                    {
+                                        ans.insert(c.clone());
+                                    }
+                                }
+                            }
+                            Ok(ans)
+                        })?),
+                    };
+                    if !deleted_unclaimed.contains(&id) {
+                        continue;
+                    }
+                }
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     fn contains_child(&self, id: &ContainerID) -> LoroResult<bool> {

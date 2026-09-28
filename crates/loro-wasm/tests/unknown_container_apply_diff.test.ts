@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ContainerID, LoroCounter, LoroDoc, LoroText } from "../bundler/index";
+import {
+  ContainerID,
+  LoroCounter,
+  LoroDoc,
+  LoroEventBatch,
+  LoroList,
+  LoroText,
+  UndoManager,
+} from "../bundler/index";
 
 // `applyDiff` used to trap the wasm instance (`unreachable!()` in
 // `Handler::new_unattached`) when a diff asked it to create a container whose
@@ -29,6 +37,41 @@ function expectRejected(doc: LoroDoc, diff: [ContainerID, unknown][]) {
   doc.getText("after").insert(0, "ok");
   doc.commit();
   expect(doc.getText("after").toString()).toBe("ok");
+}
+
+/**
+ * Replays `build`'s history into a new doc with every Counter turned into an
+ * `Unknown(9)` container, as if a newer loro-crdt had written it.
+ */
+function forge(build: (doc: LoroDoc) => void): LoroDoc {
+  const src = new LoroDoc();
+  src.setPeerId(1);
+  build(src);
+  src.commit();
+  const json = JSON.stringify(src.exportJsonUpdates())
+    .replace(/(cid:\d+@\d+):Counter/g, "$1:Unknown(9)")
+    .split('"type":"counter"')
+    .join('"type":"unknown"');
+  const doc = new LoroDoc();
+  doc.setPeerId(2);
+  doc.importJsonUpdates(JSON.parse(json));
+  return doc;
+}
+
+/** `m.k = List[U, 1]` with an unknown container U. */
+function listHoldingUnknown(): LoroDoc {
+  const doc = forge((src) => {
+    const list = src.getMap("m").setContainer("k", new LoroList());
+    list.insertContainer(0, new LoroCounter()).increment(1);
+    list.push(1);
+  });
+  expect(doc.toJSON()).toStrictEqual({ m: { k: [null, 1] } });
+  return doc;
+}
+
+function state(doc: LoroDoc) {
+  doc.commit();
+  return [doc.toJSON(), doc.version().toJSON()];
 }
 
 describe("applyDiff with unknown container types", () => {
@@ -164,5 +207,70 @@ describe("applyDiff with unknown container types", () => {
       doc.checkoutToLatest();
       expect(doc.toJSON()).toStrictEqual({ map: { k: null } });
     }
+  });
+
+  it("rejects recreating a deleted list holding an unknown container atomically", () => {
+    const doc = listHoldingUnknown();
+    const v0 = doc.frontiers();
+    doc.getText("t").insert(0, "x");
+    doc.getMap("m").delete("k");
+    doc.commit();
+    const v1 = doc.frontiers();
+    const before = state(doc);
+    // The recreated list `m.k` would get U: used to apply part of the diff
+    // (`m.k` became `[]`) before failing
+    expect(() => doc.applyDiff(doc.diff(v1, v0))).toThrowError(
+      /Unknown\(9\)/,
+    );
+    expect(state(doc)).toStrictEqual(before);
+    expect(() => doc.revertTo(v0)).toThrowError(/Unknown\(9\)/);
+    expect(state(doc)).toStrictEqual(before);
+  });
+
+  it("fails an undo step that would recreate an unknown container without changes", () => {
+    const doc = listHoldingUnknown();
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    doc.getText("t").insert(0, "a");
+    doc.commit();
+    // One step mixing a text edit with deleting the list holding U
+    doc.getText("t").insert(1, "b");
+    doc.getMap("m").delete("k");
+    doc.commit();
+
+    // Used to return true after dropping both U and `1`
+    const before = state(doc);
+    expect(() => undo.undo()).toThrowError(/Unknown\(9\)/);
+    expect(state(doc)).toStrictEqual(before);
+    // The step is dropped; the next undo undoes only the step before it
+    expect(undo.canUndo()).toBe(true);
+    expect(undo.undo()).toBe(true);
+    expect(doc.toJSON()).toStrictEqual({ m: {}, t: "b" });
+    expect(undo.canUndo()).toBe(false);
+  });
+
+  it("still emits the events of known containers next to unknown ones", async () => {
+    // A newer loro-crdt creates `m.u` with an unknown type, edits it, and
+    // edits a text in the same change
+    const src = new LoroDoc();
+    src.setPeerId(1);
+    src.getMap("m").setContainer("u", new LoroCounter()).increment(1);
+    src.getText("t").insert(0, "hi");
+    src.commit();
+    const json = JSON.stringify(src.exportJsonUpdates())
+      .replace(/(cid:\d+@\d+):Counter/g, "$1:Unknown(9)")
+      .split('"type":"counter"')
+      .join('"type":"unknown"');
+
+    const doc = new LoroDoc();
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((e) => batches.push(e));
+    doc.importJsonUpdates(JSON.parse(json));
+    await Promise.resolve();
+    // The whole batch used to be dropped
+    expect(batches.length).toBe(1);
+    const targets = batches[0].events.map((e) => e.target);
+    expect(targets).toContain("cid:root-t:Text");
+    expect(targets.some((t) => t.includes("Unknown"))).toBe(false);
+    expect(doc.toJSON()).toStrictEqual({ m: { u: null }, t: "hi" });
   });
 });

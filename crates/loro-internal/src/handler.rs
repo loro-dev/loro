@@ -230,11 +230,12 @@ fn ensure_handler_not_attached_to_other_doc(handler: &Handler, doc: &LoroDoc) ->
     }
 }
 
-fn unknown_container_arg_err(id: &ContainerID) -> LoroError {
+/// The error for operations that would create a container of a type this
+/// version doesn't know ([ContainerType::Unknown], written by a newer Loro).
+pub(crate) fn unknown_container_creation_err(kind: ContainerType) -> LoroError {
     LoroError::ArgErr(
         format!(
-            "Cannot create a copy of container {id}: its type {} is unknown to this version of Loro",
-            id.container_type()
+            "Cannot create a container of type {kind}: the type is unknown to this version of Loro"
         )
         .into_boxed_str(),
     )
@@ -262,7 +263,7 @@ fn ensure_no_unknown_container_in_attached(handler: &Handler) -> LoroResult<()> 
     };
 
     match handler {
-        Handler::Unknown(u) => Err(unknown_container_arg_err(&u.id())),
+        Handler::Unknown(u) => Err(unknown_container_creation_err(u.kind())),
         Handler::Map(m) => check_children(m.get_value()),
         Handler::List(l) => check_children(l.get_value()),
         Handler::MovableList(l) => check_children(l.get_value()),
@@ -1285,11 +1286,7 @@ impl Handler {
             ContainerType::MovableList => Self::MovableList(MovableListHandler::new_detached()),
             #[cfg(feature = "counter")]
             ContainerType::Counter => Self::Counter(counter::CounterHandler::new_detached()),
-            ContainerType::Unknown(_) => {
-                return Err(LoroError::ArgErr(
-                    format!("Cannot create a container of unknown type {kind}").into_boxed_str(),
-                ));
-            }
+            ContainerType::Unknown(_) => return Err(unknown_container_creation_err(kind)),
         })
     }
 

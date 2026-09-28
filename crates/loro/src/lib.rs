@@ -3864,11 +3864,19 @@ impl UndoManager {
     }
 
     /// Undo the last change made by the peer.
+    ///
+    /// Returns `Err(LoroError::ArgErr)` without changing the doc if the step
+    /// would have to recreate a container of a type unknown to this version
+    /// (written by a newer Loro). That step is dropped; the next call undoes
+    /// the step before it.
     pub fn undo(&mut self) -> LoroResult<bool> {
         self.0.undo()
     }
 
     /// Redo the last change made by the peer.
+    ///
+    /// Fails like [`UndoManager::undo`] on steps that would recreate a
+    /// container of an unknown type.
     pub fn redo(&mut self) -> LoroResult<bool> {
         self.0.redo()
     }
