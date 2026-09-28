@@ -70,13 +70,16 @@ creator resolver (not owned by an op log) still panics.
 ## Import rollback
 
 A failed import can parse old change blocks while it computes its diff
-(including through the creator resolver), which registers containers. The
-arena rollback (`SharedArena::rollback`) drops registrations made during the
-import, so `ChangeStore::rollback_import` drops the parsed changes of every
-kept block that still has its encoded bytes; the next access parses again and
-registers again. Before 2026-09-28 the parsed ops kept indices that later
-registrations reuse, and exporting the history hit `unreachable!` in the JSON
-encoder.
+(including through the creator resolver) or validates movable-list ops
+(`OpLog::resolve_movable_list_elem`), which registers containers. The arena
+rollback (`SharedArena::rollback`) drops registrations made during the import,
+so `ChangeStore::rollback_import`, after truncating and evicting blocks (see
+[movable-list-op-validation.md](movable-list-op-validation.md)), drops the
+parsed changes of every kept block that still has its encoded bytes; the next
+access parses again and registers again. Blocks without bytes were built from
+changes inserted before the import, so their containers were registered then.
+Before 2026-09-28 the parsed ops kept indices that later registrations reuse,
+and exporting the history hit `unreachable!` in the JSON encoder.
 
 ## Testing pitfall
 

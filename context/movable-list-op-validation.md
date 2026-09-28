@@ -142,6 +142,9 @@ from the element in `DocState`. Detection and fallback:
     the same change then panicked with "counter should be continuous".
   - `ChangeStore::rollback_import` therefore evicts the flushed blocks of every peer
     the rollback touched. They reload from KV on demand.
+  - The lookup's parse also registers containers that the arena rollback forgets,
+    so rollback then drops the parsed changes of every kept block that has bytes
+    ([arena-parent-links.md](arena-parent-links.md#import-rollback)).
 - **Cheap rollback records.** `ChangeStoreRollback` keeps a `BlockShape` for each
   unflushed pre-scope block an import appended to: change count, the last change's
   op count and its last op. Rollback truncates back to it.
