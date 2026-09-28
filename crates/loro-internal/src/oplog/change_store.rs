@@ -137,6 +137,9 @@ struct ChangeStoreInner {
     start_frontiers: Frontiers,
     /// It's more like a parsed cache for binary_kv.
     mem_parsed_kv: BTreeMap<ID, Arc<ChangesBlock>>,
+    /// Set by [`ChangeStore::retire`]: the op log replaced this store, so loading from it
+    /// must not register anything in the arena any more.
+    retired: bool,
 }
 
 #[derive(Debug)]
@@ -240,6 +243,7 @@ impl ChangeStore {
                 start_vv: ImVersionVector::new(),
                 start_frontiers: Frontiers::default(),
                 mem_parsed_kv: BTreeMap::new(),
+                retired: false,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -401,11 +405,7 @@ impl ChangeStore {
     }
 
     /// Rolls back the store and the arena (to `arena`, the checkpoint taken when the import
-    /// began).
-    ///
-    /// Both happen under `inner`, where the creator resolver parses blocks. Otherwise the
-    /// resolver, which does not take the op log lock, could parse a block in between and keep
-    /// indices of registrations the arena rollback then drops.
+    /// began). See [`Self::rollback_arena`].
     pub(crate) fn rollback_import(
         &self,
         rollback: ChangeStoreRollback,
@@ -414,7 +414,6 @@ impl ChangeStore {
         // The name set may already include names from changes this rollback removes. That is
         // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
         let mut inner = self.inner.lock();
-        self.arena.rollback(arena);
         let mut touched_peers = FxHashSet::default();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
@@ -468,17 +467,47 @@ impl ChangeStore {
                 .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
 
-        // Parsing a block during the import registered the containers its ops use, and the
-        // arena rollback drops those registrations, so a kept block may hold indices that
-        // new registrations reuse. Keep only the encoded bytes of every block that has them
-        // and parse again on the next access. A block without bytes was built in memory
-        // from changes inserted before the import, whose containers were registered then.
+        self.rollback_arena_in(&mut inner, arena);
+    }
+
+    /// Rolls the arena back to `arena`, a checkpoint taken before a failed import, and drops
+    /// the parsed changes of every cached block that has its encoded bytes. Every arena
+    /// rollback must go through here (or [`Self::rollback_import`] / [`Self::retire`]).
+    ///
+    /// Parsing a block registers the containers its ops use and allocates their values, and
+    /// the arena rollback drops what was registered or allocated after the checkpoint, so a
+    /// block parsed in between may hold indices and value slices that no longer exist or that
+    /// new registrations reuse. Keeping only its bytes makes the next access parse and register
+    /// again. A block without bytes was built in memory from changes inserted before the
+    /// import, whose containers were registered then.
+    ///
+    /// This happens under `inner`, where blocks are parsed. The creator resolver parses
+    /// without the op log lock, so otherwise it could parse a block after the bytes are
+    /// restored and before the arena is rolled back.
+    pub(crate) fn rollback_arena(&self, arena: SharedArenaRollback) {
+        let mut inner = self.inner.lock();
+        self.rollback_arena_in(&mut inner, arena);
+    }
+
+    fn rollback_arena_in(&self, inner: &mut ChangeStoreInner, arena: SharedArenaRollback) {
+        self.arena.rollback(arena);
         for block in inner.mem_parsed_kv.values_mut() {
             if let ChangesBlockContent::Both(_, bytes) = &block.content {
                 let bytes = bytes.clone();
                 Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
             }
         }
+    }
+
+    /// Rolls the arena back to `arena` after the op log replaced this store (a failed
+    /// snapshot import), and stops loading from it. A creator resolver that reached this store
+    /// before the replacement then finds nothing instead of registering containers of the
+    /// discarded history in the arena.
+    pub(crate) fn retire(&self, arena: SharedArenaRollback) {
+        let mut inner = self.inner.lock();
+        self.arena.rollback(arena);
+        inner.mem_parsed_kv.clear();
+        inner.retired = true;
     }
 
     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
@@ -813,6 +842,7 @@ impl ChangeStore {
                 start_vv: inner.start_vv.clone(),
                 start_frontiers: inner.start_frontiers.clone(),
                 mem_parsed_kv: BTreeMap::new(),
+                retired: false,
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1520,14 +1550,23 @@ mod mut_inner_kv {
             id: ID,
         ) -> Result<Option<Arc<ChangesBlock>>, (ID, LoroError)> {
             // A cached block needs only `inner`.
-            if let Some(block) = Self::parse_cached_block(&mut inner.lock(), arena, id) {
-                return block.map(Some);
+            {
+                let mut inner = inner.lock();
+                if inner.retired {
+                    return Ok(None);
+                }
+                if let Some(block) = Self::parse_cached_block(&mut inner, arena, id) {
+                    return block.map(Some);
+                }
             }
 
             // Lock order: `external_kv` before `inner`. Another thread may have loaded the
-            // block in between, so look again.
+            // block (or retired the store) in between, so look again.
             let store = external_kv.lock();
             let mut inner = inner.lock();
+            if inner.retired {
+                return Ok(None);
+            }
             if let Some(block) = Self::parse_cached_block(&mut inner, arena, id) {
                 return block.map(Some);
             }
@@ -2246,6 +2285,19 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    #[test]
+    fn a_retired_store_resolves_nothing() {
+        // A resolver that reached the store before a failed snapshot import replaced it
+        // must not register containers of the discarded history.
+        let (store, _, _) = kv_only_store_and_next_change();
+        let resolve = store.creator_resolver();
+        let checkpoint = store.arena.checkpoint_for_rollback();
+        assert_eq!(resolve(&store.arena, ID::new(1, 0)), CreatorOp::Loaded);
+        store.retire(checkpoint);
+        assert_eq!(resolve(&store.arena, ID::new(1, 0)), CreatorOp::Absent);
+        assert!(store.inner.lock().mem_parsed_kv.is_empty());
     }
 
     #[test]

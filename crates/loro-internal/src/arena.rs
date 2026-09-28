@@ -318,6 +318,9 @@ impl SharedArena {
         }
     }
 
+    /// Call it through the op log's change store (`ChangeStore::rollback_arena` and friends),
+    /// which does it under the lock the creator resolver parses under and drops the parsed
+    /// changes that may refer to what this removes. See `context/arena-parent-links.md`.
     pub(crate) fn rollback(&self, checkpoint: SharedArenaRollback) {
         let mut containers = self.inner.containers.write();
         let removed_ids = containers

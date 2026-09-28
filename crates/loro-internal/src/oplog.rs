@@ -26,6 +26,7 @@ use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
 use crate::op::{FutureInnerContent, InnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
+use crate::state::DocState;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
@@ -333,18 +334,20 @@ impl OpLog {
         self.import_rollback = None;
     }
 
-    /// Close an import rollback scope this caller owns: commit it when `keep`,
-    /// roll everything back otherwise. No-op when `owns` is false — the scope
-    /// then belongs to an outer owner such as `import_batch`.
-    pub(crate) fn end_import_rollback(&mut self, owns: bool, keep: bool) {
-        if !owns {
-            return;
-        }
-
-        if keep {
+    /// Commit an import rollback scope this caller owns. No-op when `owns` is false — the
+    /// scope then belongs to an outer owner such as `import_batch`.
+    pub(crate) fn commit_owned_import_rollback(&mut self, owns: bool) {
+        if owns {
             self.commit_import_rollback();
-        } else {
-            self.rollback_import();
+        }
+    }
+
+    /// Roll back an import rollback scope this caller owns (see [`Self::rollback_import`]).
+    /// No-op when `owns` is false — the scope then belongs to an outer owner such as
+    /// `import_batch`.
+    pub(crate) fn rollback_owned_import(&mut self, owns: bool, state: &DocState) {
+        if owns {
+            self.rollback_import(state);
         }
     }
 
@@ -407,7 +410,13 @@ impl OpLog {
         ans
     }
 
-    pub(crate) fn rollback_import(&mut self) {
+    /// Undo the open import rollback scope, including the arena.
+    ///
+    /// `_state` shows that the caller holds the state lock. A reader under that lock can
+    /// register containers through the creator resolver, which runs without the op log lock,
+    /// and use their indices before it returns; the arena rollback must not free them in
+    /// between. See `context/arena-parent-links.md`.
+    pub(crate) fn rollback_import(&mut self, _state: &DocState) {
         let Some(rollback) = self.import_rollback.take() else {
             return;
         };
@@ -421,13 +430,23 @@ impl OpLog {
         self.refresh_visible_op_count();
     }
 
+    /// Rolls the arena back to a checkpoint taken before an import that failed before its
+    /// import rollback scope began. See [`ChangeStore::rollback_arena`], and
+    /// [`Self::rollback_import`] for `_state`.
+    pub(crate) fn rollback_arena(&self, arena_checkpoint: SharedArenaRollback, _state: &DocState) {
+        self.change_store.rollback_arena(arena_checkpoint);
+    }
+
+    /// See [`Self::rollback_import`] for `_state`.
     pub(crate) fn reset_to_empty_for_failed_snapshot_import(
         &mut self,
         arena_checkpoint: SharedArenaRollback,
+        _state: &DocState,
     ) {
         let arena = self.arena.clone();
         let configure = self.configure.clone();
-        arena.rollback(arena_checkpoint);
+        // Also rolls back the arena; see `ChangeStore::retire`.
+        self.change_store.retire(arena_checkpoint);
         let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_s.clone());
         arena.set_creator_resolver(change_store.creator_resolver());
         self.history_cache = Mutex::new(ContainerHistoryCache::new(change_store.clone(), None));

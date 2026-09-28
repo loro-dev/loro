@@ -396,4 +396,80 @@ mod loom_test {
             });
         }
     }
+
+    /// An import that fails before its rollback scope begins (here while decoding JSON) rolls
+    /// the arena back to where it started. A block that the resolver parsed on another thread
+    /// in the meantime must not keep indices that the rollback drops.
+    #[test]
+    fn resolving_a_meta_parent_while_an_import_fails() {
+        struct Fixture {
+            snapshot: Vec<u8>,
+            meta: loro::ContainerID,
+            bad_json: String,
+            vv: loro::VersionVector,
+            history: String,
+        }
+        // Built once, in a single-threaded model of its own, so the racing model does not
+        // explore it.
+        static FIXTURE: std::sync::Mutex<Option<std::sync::Arc<Fixture>>> =
+            std::sync::Mutex::new(None);
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100_000;
+        builder.check(|| {
+            let (snapshot, child) = deleted_parent_snapshot();
+            // A separate document, so that exporting parses nothing in the tested one.
+            let reference = LoroDoc::new();
+            reference.import(&snapshot).unwrap();
+            let vv = reference.oplog_vv();
+            let history =
+                serde_json::to_string(&reference.export_json_updates(&Default::default(), &vv))
+                    .unwrap();
+            // Another peer creates a container, so decoding its change registers one. The
+            // empty change after it fails the decode.
+            let e = LoroDoc::new();
+            e.set_peer_id(9).unwrap();
+            e.import(&snapshot).unwrap();
+            e.get_map("x")
+                .insert_container("c", loro::LoroMap::new())
+                .unwrap()
+                .insert("q", 1)
+                .unwrap();
+            e.commit();
+            let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+            let changes = json["changes"].as_array_mut().unwrap();
+            let mut empty = changes.last().unwrap().clone();
+            empty["ops"] = serde_json::json!([]);
+            changes.push(empty);
+            *FIXTURE.lock().unwrap() = Some(std::sync::Arc::new(Fixture {
+                snapshot,
+                meta: child.associated_meta_container(),
+                bad_json: serde_json::to_string(&json).unwrap(),
+                vv,
+                history,
+            }));
+        });
+        let f = FIXTURE.lock().unwrap().clone().unwrap();
+
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100_000;
+        builder.check(move || {
+            let doc = LoroDoc::new();
+            doc.import(&f.snapshot).unwrap();
+            let (doc1, doc2) = (doc.clone(), doc.clone());
+            let (f1, f2) = (f.clone(), f.clone());
+            let h0 = loom::thread::spawn(move || {
+                doc1.has_container(&f1.meta);
+            });
+            let h1 = loom::thread::spawn(move || {
+                assert!(doc2.import_json_updates(f2.bad_json.as_str()).is_err());
+            });
+            h0.join().unwrap();
+            h1.join().unwrap();
+            assert!(doc.has_container(&f.meta));
+            let history =
+                serde_json::to_string(&doc.export_json_updates(&Default::default(), &f.vv))
+                    .unwrap();
+            assert_eq!(history, f.history);
+        });
+    }
 }

@@ -572,6 +572,183 @@ fn queries_race_with_history_readers() {
     runner.join().unwrap();
 }
 
+/// An import that fails before its rollback scope begins (decoding, or depending on history
+/// before a shallow root) rolls the arena back to where it started, while another thread
+/// resolves parents through the change store. Neither the parsed blocks nor the resolver's
+/// caller may keep indices the rollback frees (`multi_thread_test.rs` has the loom model).
+/// Before the fix, a failed JSON import hit it within the default trials in most runs.
+/// Trials: `UNREGISTERED_PARENT_THREAD_TRIALS` (default 120).
+#[test]
+fn queries_race_with_failing_imports() {
+    use loro::{LoroMap, VersionVector};
+    use std::sync::Barrier;
+    use std::time::Instant;
+
+    // Peer 2 creates children under parents that peer 1 deletes concurrently, and map
+    // children that it deletes again: none of them is in the state, except that a shallow
+    // snapshot keeps the metas of deleted nodes.
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let tree = a.get_tree("tree");
+    let parents: Vec<_> = (0..4)
+        .map(|_| tree.create(TreeParentId::Root).unwrap())
+        .collect();
+    a.commit();
+    let before_root = a.export(ExportMode::all_updates()).unwrap();
+    a.get_map("m").insert("k", -1).unwrap();
+    a.commit();
+    let root = a.oplog_frontiers();
+    let root_vv = a.oplog_vv();
+    let shallow_at_root = a.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let mut ids = vec![];
+    for (i, p) in parents.iter().enumerate() {
+        for j in 0..8 {
+            let child = b.get_tree("tree").create(*p).unwrap();
+            ids.push(child.associated_meta_container());
+            let key = format!("c{i}_{j}");
+            let gone = b
+                .get_map("gone")
+                .insert_container(&key, LoroMap::new())
+                .unwrap();
+            gone.insert("v", 1).unwrap();
+            ids.push(gone.id());
+            b.get_map("gone").delete(&key).unwrap();
+            b.commit();
+            for k in 0..30 {
+                b.get_map("filler").insert("k", k).unwrap();
+                b.commit();
+            }
+        }
+    }
+    for p in parents.iter() {
+        tree.delete(*p).unwrap();
+    }
+    a.commit();
+    a.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    for i in 0..1000 {
+        a.get_map("m").insert("k", i).unwrap();
+        a.commit();
+    }
+    let vv = a.oplog_vv();
+    let snapshot = a.export(ExportMode::Snapshot).unwrap();
+    // A snapshot of a shallow document whose history starts at `root`. It received the
+    // rest as updates, so its state lacks the same containers, and it loads lazily.
+    let shallow_doc = import(&shallow_at_root);
+    shallow_doc
+        .import(&a.export(ExportMode::updates(&root_vv)).unwrap())
+        .unwrap();
+    let shallow = shallow_doc.export(ExportMode::Snapshot).unwrap();
+
+    // Many changes that create containers, so the failing import registers many and takes a
+    // while. Decoding the JSON fails at the empty change at its end.
+    let e = import(&snapshot);
+    e.set_peer_id(8).unwrap();
+    for i in 0..1000 {
+        e.get_map("new")
+            .insert_container(&format!("n{i}"), LoroMap::new())
+            .unwrap();
+        e.commit();
+    }
+    let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+    let changes = json["changes"].as_array_mut().unwrap();
+    let mut empty = changes.last().unwrap().clone();
+    empty["ops"] = serde_json::json!([]);
+    changes.push(empty);
+    let bad_json = serde_json::to_string(&json).unwrap();
+    // These depend on history before the shallow root.
+    let o = LoroDoc::new();
+    o.set_peer_id(10).unwrap();
+    o.import(&before_root).unwrap();
+    for i in 0..1000 {
+        o.get_map("old")
+            .insert_container(&format!("n{i}"), LoroMap::new())
+            .unwrap();
+        o.commit();
+    }
+    let old_deps = o.export(ExportMode::all_updates()).unwrap();
+
+    let history = |doc: &LoroDoc, from: &VersionVector| {
+        serde_json::to_string(&doc.export_json_updates(from, &vv)).unwrap()
+    };
+    let reference = import(&a.export(ExportMode::all_updates()).unwrap());
+    let empty_vv = VersionVector::new();
+    let expected = [
+        history(&reference, &empty_vv),
+        history(&reference, &root_vv),
+    ];
+    // Also IDs of peer 2's other ops, which create no container. In the shallow document the
+    // containers above are in the state, and only these make the resolver load a block.
+    for counter in (0..vv.get(&2).copied().unwrap()).step_by(13) {
+        ids.push(ContainerID::new_normal(
+            ID::new(2, counter),
+            loro::ContainerType::Map,
+        ));
+    }
+    let exists: Vec<bool> = ids.iter().map(|id| reference.has_container(id)).collect();
+
+    let fail_import = |doc: &LoroDoc, is_shallow: bool| {
+        if is_shallow {
+            assert!(matches!(
+                doc.import(&old_deps),
+                Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion)
+            ));
+        } else {
+            assert!(doc.import_json_updates(bad_json.as_str()).is_err());
+        }
+    };
+    // How long each failing import takes here, to sweep the queries across it.
+    let window = [false, true].map(|is_shallow| {
+        let doc = import(if is_shallow { &shallow } else { &snapshot });
+        let start = Instant::now();
+        fail_import(&doc, is_shallow);
+        start.elapsed()
+    });
+
+    let trials: usize = std::env::var("UNREGISTERED_PARENT_THREAD_TRIALS")
+        .map(|s| s.parse().unwrap())
+        .unwrap_or(120);
+    for trial in 0..trials {
+        let is_shallow = trial % 2 == 1;
+        let doc = import(if is_shallow { &shallow } else { &snapshot });
+        let barrier = Arc::new(Barrier::new(2));
+        let query = {
+            let (doc, barrier, ids) = (doc.clone(), barrier.clone(), ids.clone());
+            let delay = window[is_shallow as usize] * (trial as u32 / 2 % 20) / 20;
+            std::thread::spawn(move || {
+                barrier.wait();
+                let start = Instant::now();
+                while start.elapsed() < delay {
+                    std::hint::spin_loop();
+                }
+                for id in ids.iter() {
+                    doc.has_container(id);
+                }
+            })
+        };
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                fail_import(&doc, is_shallow);
+            });
+        });
+        query.join().unwrap();
+        for (id, exists) in ids.iter().zip(exists.iter()) {
+            assert_eq!(doc.has_container(id), *exists, "trial {trial}: {id}");
+        }
+        let from = if is_shallow { &root_vv } else { &empty_vv };
+        assert_eq!(
+            history(&doc, from),
+            expected[is_shallow as usize],
+            "trial {trial}"
+        );
+    }
+}
+
 mod random {
     use super::*;
     use loro::{LoroText, TreeID};

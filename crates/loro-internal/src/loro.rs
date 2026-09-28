@@ -723,13 +723,13 @@ impl LoroDoc {
                     },
                     diff_mode,
                 ) {
-                    oplog.end_import_rollback(owns_rollback, false);
+                    oplog.rollback_owned_import(owns_rollback, &state);
                     return Err(e);
                 }
             }
             match result {
                 Ok(result) => {
-                    oplog.end_import_rollback(owns_rollback, true);
+                    oplog.commit_owned_import_rollback(owns_rollback);
                     Ok(result)
                 }
                 Err(e) => {
@@ -738,18 +738,22 @@ impl LoroDoc {
                     // also applied to state; rollback is for failed state apply
                     // or decode errors that made no visible oplog progress.
                     let keep_prefix = &old_vv != oplog.vv();
-                    oplog.end_import_rollback(owns_rollback, keep_prefix);
+                    if keep_prefix {
+                        oplog.commit_owned_import_rollback(owns_rollback);
+                    } else {
+                        oplog.rollback_owned_import(owns_rollback, &self.state.lock());
+                    }
                     Err(e)
                 }
             }
         } else {
             match f(&mut oplog) {
                 Ok(result) => {
-                    oplog.end_import_rollback(owns_rollback, true);
+                    oplog.commit_owned_import_rollback(owns_rollback);
                     Ok(result)
                 }
                 Err(e) => {
-                    oplog.end_import_rollback(owns_rollback, false);
+                    oplog.rollback_owned_import(owns_rollback, &self.state.lock());
                     Err(e)
                 }
             }
@@ -767,7 +771,7 @@ impl LoroDoc {
         let changes = match decode_changes(&mut oplog) {
             Ok(changes) => changes,
             Err(e) => {
-                oplog.arena.rollback(arena_checkpoint);
+                oplog.rollback_arena(arena_checkpoint, &self.state.lock());
                 return Err(e);
             }
         };
@@ -776,7 +780,7 @@ impl LoroDoc {
         if preflight.has_deps_before_shallow_root
             && (self.is_detached() || !preflight.applies_to_dag)
         {
-            oplog.arena.rollback(arena_checkpoint);
+            oplog.rollback_arena(arena_checkpoint, &self.state.lock());
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
         }
 
@@ -791,7 +795,7 @@ impl LoroDoc {
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if owns_rollback {
                 if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
-                    oplog.rollback_import();
+                    oplog.rollback_import(&self.state.lock());
                     return Err(e);
                 }
                 oplog.commit_import_rollback();
@@ -807,7 +811,7 @@ impl LoroDoc {
             let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if result.has_deps_before_shallow_root {
-                oplog.arena.rollback(arena_checkpoint);
+                oplog.rollback_arena(arena_checkpoint, &self.state.lock());
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
             }
 
@@ -842,7 +846,7 @@ impl LoroDoc {
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
                 if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
-                    oplog.rollback_import();
+                    oplog.rollback_import(&self.state.lock());
                     return Err(e);
                 }
             }
@@ -900,7 +904,7 @@ impl LoroDoc {
                 diff_mode,
             ) {
                 if rollback_enabled {
-                    oplog.rollback_import();
+                    oplog.rollback_import(&state);
                     return Err(e);
                 }
 
@@ -2733,7 +2737,9 @@ impl LoroDoc {
                 state.ensure_container(id);
             }
         }
-        let idx = state.arena.id_to_idx(id).unwrap();
+        // The registration above can already be gone: a failed import on another thread
+        // rolls back every registration made since it began (loro-dev/loro#1164).
+        let idx = state.arena.id_to_idx(id)?;
         state.get_path(idx)
     }
 
@@ -3210,7 +3216,7 @@ impl BatchImportGuard<'_> {
                 // still at its pre-batch version; undoing the batch in the `OpLog`
                 // makes the two agree again, which is what lets the doc stay attached.
                 tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
-                doc.oplog.lock().rollback_import();
+                doc.oplog.lock().rollback_import(&doc.state.lock());
                 // The shared diff calculator cached ranges against the rolled-back
                 // history; drop that cache instead of reusing stale entries.
                 *doc.diff_calculator.lock() = DiffCalculator::new(true);
