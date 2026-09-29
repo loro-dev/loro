@@ -508,6 +508,10 @@ export class FuzzRun {
             .diff(from, to, false)
             .filter(([id]) => reachable === undefined || reachable.has(id))
             .map(([id, diff]) => [id, canonicalDiff(diff)] as const)
+            // A child created in the range whose map keys were all set and
+            // deleted again: Rust lists them as deleted, loro.js (List, Map and
+            // MovableList parents alike, on `main` too) omits the child.
+            .filter(([, diff]) => !onlyDeletedMapKeys(diff))
             .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)),
         );
         if (results !== undefined && !isDeepStrictEqual(results.rust, results.js)) {
@@ -845,6 +849,14 @@ function orderedDiff(diff: unknown): unknown {
     }
   }
   return { type: "list", diff: output };
+}
+
+function onlyDeletedMapKeys(diff: unknown): boolean {
+  const typed = diff as { type: string; updated?: Record<string, unknown> };
+  return (
+    typed.type === "map" &&
+    Object.values(typed.updated ?? {}).every((value) => value === undefined)
+  );
 }
 
 export interface SavedTrace {
