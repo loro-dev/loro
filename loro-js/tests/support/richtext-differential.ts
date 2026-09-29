@@ -75,6 +75,13 @@ export type Action =
     }
   | { readonly type: "commit"; readonly peer: number }
   | {
+      readonly type: "list";
+      readonly peer: number;
+      readonly op: number;
+      readonly pos: number;
+      readonly to: number;
+    }
+  | {
       readonly type: "sync";
       readonly from: number;
       readonly to: number;
@@ -114,7 +121,14 @@ export interface ScenarioOptions {
   readonly crossRuntimeSync?: boolean;
   readonly snapshots?: boolean;
   readonly snapshotCheckout?: boolean;
+  /** Check out a shallow snapshot's retained versions (loro.js roots differ). */
+  readonly shallowCheckout?: boolean;
   readonly checkout?: boolean;
+  /**
+   * Edit a movable list next to the text. Its set, move, and delete ops keep
+   * checkouts off the incremental path, so they replay the text's records.
+   */
+  readonly movableList?: boolean;
   readonly revert?: boolean;
   readonly cursors?: boolean;
   readonly events?: boolean;
@@ -132,9 +146,10 @@ const DEFAULT_OPTIONS: Required<ScenarioOptions> = {
   undo: true,
   crossRuntimeSync: true,
   snapshots: true,
-  // Checking out a document imported from a snapshot needs loro-dev/loro#1126.
-  snapshotCheckout: false,
+  snapshotCheckout: true,
+  shallowCheckout: false,
   checkout: true,
+  movableList: true,
   revert: true,
   cursors: true,
   events: true,
@@ -203,7 +218,7 @@ export function generateActions(
     } else if (roll < 68 && config.marks) {
       actions.push({ type: "unmark", peer, pos, len, key: random.pick(STYLE_KEYS) });
       commitMaybe(peer);
-    } else if (roll < 80) {
+    } else if (roll < 76 || (roll < 80 && !config.movableList)) {
       const to = random.pick(peerIds.filter((id) => id !== peer));
       actions.push({
         type: "sync",
@@ -212,6 +227,9 @@ export function generateActions(
         json: random.int(2) === 0,
         cross: config.crossRuntimeSync && random.int(2) === 0,
       });
+    } else if (roll < 80) {
+      actions.push({ type: "list", peer, op: random.int(4), pos, to: random.next() });
+      commitMaybe(peer);
     } else if (roll < 84 && config.checkout) {
       actions.push({ type: "checkout", peer, version: random.next() });
     } else if (roll < 88 && config.undo) {
@@ -391,6 +409,9 @@ export class RichtextScenario {
       }
       case "commit":
         this.#commit(this.#peer(action.peer));
+        return;
+      case "list":
+        this.#editList(action);
         return;
       case "sync":
         this.#sync(action);
@@ -574,17 +595,37 @@ export class RichtextScenario {
     }
   }
 
+  /**
+   * Edits the movable list in Rust and imports the change into loro.js. The
+   * list itself is not compared, and it is never moved or deleted from: loro.js
+   * and Rust disagree on such lists (loro-dev/loro#1132), and Rust panics when
+   * it checks out a snapshot that loro.js wrote with the differing state.
+   */
+  #editList(action: Extract<Action, { type: "list" }>): void {
+    const peer = this.#peer(action.peer);
+    const list = peer.rust.doc.getMovableList("ml");
+    const length = list.length;
+    const insert = length === 0 || action.op === 0;
+    this.#oneSided(peer, peer.rust, insert ? "list insert" : "list set", () => {
+      if (insert) list.insert(action.pos % (length + 1), action.to % 100);
+      else list.set(action.pos % length, action.to % 100);
+    });
+  }
+
   #snapshotRoundTrip(action: Extract<Action, { type: "snapshot" }>): void {
     const peer = this.#peer(action.peer);
     this.#commit(peer);
     const source = action.fromRust ? peer.rust : peer.js;
     const bytes = source.doc.export({ mode: "snapshot" });
     this.#log.push(`peer ${peer.id}: snapshot from ${source.runtime}`);
-    const version =
-      peer.versions.length === 0
-        ? undefined
-        : peer.versions[action.version % peer.versions.length]!;
-    this.#compareImported(peer, bytes, `snapshot from ${source.runtime}`, version);
+    // Versions in a row, so the state holds elements hidden by earlier
+    // checkouts when a later checkout, diff, or attach moves forward again.
+    const rolls = [action.version, secondRoll(action.version)];
+    rolls.push(secondRoll(rolls[1]!));
+    const versions = rolls
+      .map((roll) => this.#versionToVisit(peer, roll))
+      .filter((version) => version !== undefined);
+    this.#compareImported(peer, bytes, `snapshot from ${source.runtime}`, versions);
   }
 
   #shallowRoundTrip(action: Extract<Action, { type: "shallow" }>): void {
@@ -603,7 +644,7 @@ export class RichtextScenario {
       peer,
       bytes,
       `shallow snapshot from ${source.runtime}`,
-      later[action.version % later.length],
+      this.#options.shallowCheckout ? [later[action.version % later.length]!] : [],
     );
   }
 
@@ -617,7 +658,7 @@ export class RichtextScenario {
     peer: Peer,
     bytes: Uint8Array,
     label: string,
-    version: Frontiers | undefined,
+    versions: readonly Frontiers[],
   ): void {
     const js = new Js.LoroDoc();
     js.import(bytes);
@@ -632,27 +673,58 @@ export class RichtextScenario {
       this.#log.push("  (the Rust import differs from its source)");
     }
     this.#expectDelta(js, source, `${label}: loro.js import vs source`);
-    if (!this.#options.snapshotCheckout || version === undefined) return;
-    const errors: string[] = [];
-    for (const doc of [rust, js]) {
-      try {
-        doc.checkout(version);
-      } catch (error) {
-        errors.push(String(error));
+    if (!this.#options.snapshotCheckout || versions.length === 0) return;
+    const both = (step: string, run: (doc: Doc) => void): boolean => {
+      const errors: string[] = [];
+      for (const doc of [rust, js]) {
+        try {
+          run(doc);
+        } catch (error) {
+          errors.push(String(error));
+        }
+      }
+      if (errors.length === 1) {
+        this.#fail(`${label}: ${step} threw only in one runtime: ${errors[0]}`);
+      }
+      return errors.length === 0;
+    };
+    const states: Delta<string>[][] = [];
+    for (const version of versions) {
+      const step = `checkout ${JSON.stringify(version)}`;
+      if (!both(step, (doc) => doc.checkout(version))) return;
+      states.push(normalizeDelta(rust.getText("t").toDelta()));
+      this.#expectDelta(js, states.at(-1)!, `${label}: ${step}`);
+    }
+    states.splice(0, states.length - 2);
+    if (versions.length >= 2) {
+      const [from, to] = versions.slice(-2) as [Frontiers, Frontiers];
+      const step = `diff ${JSON.stringify(from)} -> ${JSON.stringify(to)}`;
+      const diffs: { rust?: unknown; js?: unknown } = {};
+      if (
+        both(step, (doc) => {
+          const text = doc.diff(from, to).find(([id]) => id === "cid:root-t:Text")?.[1];
+          diffs[doc === js ? "js" : "rust"] = text;
+        })
+      ) {
+        // Applied to the state at `from`, both diffs must give the state at `to`.
+        const applied = (diff: unknown): Delta<string>[] =>
+          normalizeDelta(
+            diff === undefined
+              ? states[0]!
+              : applyDelta(states[0]!, (diff as { diff: Delta<string>[] }).diff),
+          );
+        // Only loro.js must: Rust's text diff between concurrent versions can
+        // disagree with its own checkout (a style value on the wrong side).
+        if (JSON.stringify(applied(diffs.js)) !== JSON.stringify(states[1])) {
+          this.#fail(`${label}: ${step}: the loro.js diff does not reach \`to\``);
+        }
+        if (JSON.stringify(applied(diffs.rust)) !== JSON.stringify(states[1])) {
+          this.#log.push("  (the Rust diff does not reach `to` either)");
+        }
       }
     }
-    if (errors.length === 1) {
-      this.#fail(
-        `${label}: checkout ${JSON.stringify(version)} threw only in one runtime`,
-      );
-    }
-    if (errors.length === 0) {
-      this.#expectDelta(
-        js,
-        normalizeDelta(rust.getText("t").toDelta()),
-        `${label}: checkout ${JSON.stringify(version)}`,
-      );
-    }
+    if (!both("attach", (doc) => doc.attach())) return;
+    this.#expectDelta(js, source, `${label}: attach`);
   }
 
   #createCursor(action: Extract<Action, { type: "cursor" }>): void {
@@ -804,6 +876,7 @@ function atomicOps(doc: Doc): string[] {
   for (const change of json.changes) {
     const [, peer] = expand(change.id);
     for (const op of change.ops) {
+      if (op.container !== "cid:root-t:Text") continue;
       const content = op.content as Record<string, unknown>;
       const push = (offset: number, text: string): void => {
         atoms.push({ peer, counter: op.counter + offset, text });

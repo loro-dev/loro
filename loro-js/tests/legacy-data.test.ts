@@ -14,7 +14,7 @@ const fixture = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(fixtureUrl(name)));
 const json = (name: string): unknown =>
   JSON.parse(readFileSync(fixtureUrl(name), "utf8"));
-const legacy = json("expected.json") as Record<string, string | number>;
+const legacy = json("expected.json") as Record<string, unknown>;
 
 interface Runtime {
   readonly LoroDoc: typeof LoroDoc;
@@ -58,6 +58,65 @@ describe.each(runtimes)(
       const fork = fromSnapshot.fork();
       expect(fork.getText("t").toString()).toBe(name === "loro.js" ? "béa9" : "bé9a");
     });
+
+    test("reads rich-text positions with Rust's anchors", () => {
+      expect(legacy["richtext-positions"]).toEqual([
+        { insert: "a", attributes: { bold: true } },
+        { insert: "cXd" },
+      ]);
+      const styled = (load: (doc: LoroDoc) => void): LoroDoc =>
+        read((doc) => {
+          doc.configTextStyle({ bold: { expand: "after" } });
+          load(doc);
+        });
+      // The ops 0.2 wrote left the mark's anchors out of their positions.
+      const rustReading = [
+        { insert: "bX", attributes: { bold: true } },
+        { insert: "cd" },
+      ];
+      const fromUpdate = styled((doc) =>
+        doc.import(fixture("richtext-positions.update.blob")),
+      );
+      expect(fromUpdate.getText("t").toDelta()).toEqual(rustReading);
+      const fromJson = styled((doc) =>
+        doc.importJsonUpdates(json("richtext-positions.json") as JsonSchema),
+      );
+      expect(fromJson.getText("t").toDelta()).toEqual(rustReading);
+      // A snapshot keeps the 0.2 state, but its history reads like Rust.
+      const fromSnapshot = styled((doc) =>
+        doc.import(fixture("richtext-positions.snapshot.blob")),
+      );
+      expect(fromSnapshot.getText("t").toDelta()).toEqual(legacy["richtext-positions"]);
+      const history = styled((doc) =>
+        doc.import(fromSnapshot.export({ mode: "update" })),
+      );
+      expect(history.getText("t").toDelta()).toEqual(rustReading);
+      // State and history disagree, so the runtimes' forks differ: loro.js
+      // replays the history, Rust copies the state.
+      const fork = fromSnapshot.fork();
+      fork.configTextStyle({ bold: { expand: "after" } });
+      expect(fork.getText("t").toDelta()).toEqual(
+        name === "loro.js" ? rustReading : legacy["richtext-positions"],
+      );
+    });
+
+    // Rust shows text that matches neither reading after this round trip.
+    test.skipIf(name !== "loro.js")(
+      "keeps a 0.2 snapshot's state through checkouts",
+      () => {
+        const doc = read((created) => {
+          created.configTextStyle({ bold: { expand: "after" } });
+          created.import(fixture("richtext-positions.snapshot.blob"));
+        });
+        // The checkout finds that the replay differs from the state, so the text
+        // keeps the state (#1126's unreplayable fallback) and shows older
+        // versions approximately.
+        const [first] = doc.frontiers();
+        doc.checkout([{ peer: first!.peer, counter: 3 }]);
+        doc.checkoutToLatest();
+        expect(doc.getText("t").toDelta()).toEqual(legacy["richtext-positions"]);
+      },
+    );
 
     test("resolves a 0.2 end cursor one character earlier, like Rust", () => {
       expect(legacy["cursor-emoji"]).toBe(4);

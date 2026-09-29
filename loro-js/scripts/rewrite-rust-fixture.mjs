@@ -221,6 +221,68 @@ writeFileSync(
   cursorDoc.getText("text").getCursor(1).encode(),
 );
 
+// Rich text: concurrent edits at style boundaries after marks and unmarks. Op
+// positions count style anchors, so Rust must read them the same way.
+const richStyles = {
+  bold: { expand: "after" },
+  link: { expand: "none" },
+  em: { expand: "before" },
+  hl: { expand: "both" },
+};
+const richLeft = new LoroDoc();
+richLeft.setPeerId(21);
+richLeft.configTextStyle(richStyles);
+richLeft.getText("text").insert(0, "Hello 😀 World");
+richLeft.getText("text").mark({ start: 0, end: 5 }, "bold", true);
+richLeft.getText("text").mark({ start: 6, end: 8 }, "link", "https://loro.dev");
+richLeft.commit();
+const richVersion = richLeft.frontiers();
+const richBase = richLeft.export({ mode: "update" });
+const richRight = new LoroDoc();
+richRight.setPeerId(22);
+richRight.configTextStyle(richStyles);
+richRight.import(richBase);
+richLeft.getText("text").insert(5, "!");
+richLeft.getText("text").unmark({ start: 1, end: 3 }, "bold");
+richLeft.getText("text").mark({ start: 3, end: 10 }, "hl", "yellow");
+richLeft.commit();
+richRight.getText("text").insert(0, ">");
+richRight.getText("text").insert(6, "?");
+richRight.getText("text").delete(7, 3);
+richRight.getText("text").mark({ start: 2, end: 4 }, "em", true);
+richRight.commit();
+const richLeftUpdate = richLeft.export({
+  mode: "update",
+  from: richRight.oplogVersion(),
+});
+const richRightUpdate = richRight.export({
+  mode: "update",
+  from: richLeft.oplogVersion(),
+});
+richLeft.import(richRightUpdate);
+richRight.import(richLeftUpdate);
+if (
+  JSON.stringify(richLeft.getText("text").toDelta()) !==
+  JSON.stringify(richRight.getText("text").toDelta())
+) {
+  throw new Error("TypeScript rich-text replicas did not converge");
+}
+writeFileSync(fixtureUrl("richtext-base.ts.blob"), richBase);
+writeFileSync(fixtureUrl("richtext-left.ts.blob"), richLeftUpdate);
+writeFileSync(fixtureUrl("richtext-right.ts.blob"), richRightUpdate);
+writeFileSync(
+  fixtureUrl("richtext-snapshot.ts.blob"),
+  richLeft.export({ mode: "snapshot" }),
+);
+const richLatest = richLeft.getText("text").toDelta();
+richLeft.checkout(richVersion);
+const richBaseDelta = richLeft.getText("text").toDelta();
+richLeft.checkoutToLatest();
+writeFileSync(
+  fixtureUrl("richtext.expected.json"),
+  `${JSON.stringify({ delta: richLatest, base: { frontiers: richVersion, delta: richBaseDelta } }, null, 2)}\n`,
+);
+
 const awareness = new AwarenessWasm("123", 30_000);
 awareness.setLocalState({ status: "typing", position: 3 });
 writeFileSync(fixtureUrl("awareness.ts.blob"), awareness.encodeAll());

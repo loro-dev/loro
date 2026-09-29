@@ -40,12 +40,19 @@ JavaScript constant factor.
 - `ordered-index.ts` is the ordered rank index used for map keys and tree
   children. Insert/delete/rank lookup are expected O(log n), while ordered
   iteration is O(n).
+- Rich-text style anchors are zero-width elements of the Text sequence, as in
+  Rust ([loro-js-richtext-anchors.md](loro-js-richtext-anchors.md)). Each
+  subtree also counts its elements without UTF-16 width, so Unicode and entity
+  positions convert in O(log n); a sequence without anchors takes the old fast
+  paths.
 - `text-style-index.ts` stores style histories in disjoint operation-ID ranges,
-  separately from scalar Text elements. Applying, unapplying, or checking a
-  style range is expected O(log style-runs + affected style-runs). Full-range
-  marks and their subscribed checkout events no longer write or inspect every
-  character. Delta and snapshot output reuse a run-local style resolver so
-  their work remains linear in returned text and style runs.
+  separately from scalar Text elements. A style covers the elements physically
+  between its anchors, so applying one is expected O(log n + ID runs in its
+  range). Checking or undoing a style range is expected O(log style-runs +
+  affected style-runs). Full-range marks and their subscribed checkout events
+  no longer write or inspect every character. Delta and snapshot output reuse a
+  run-local style resolver so their work remains linear in returned text and
+  style runs.
 - `LoroDoc` maintains per-peer change arrays, end counters, operation counts,
   current frontiers, sorted-history cache, and per-change dependency-version
   caches. Latest version/frontier lookup is O(peer/frontier count), and
@@ -171,12 +178,16 @@ JavaScript constant factor.
   copies every untouched entry and rewrites only the touched ones. A delete
   transition is still refused unless the deletion index recorded that delete,
   for example one imported while detached.
-- loro.js does not count Rust rich-text style anchors in Text operation
-  positions, so a replay of Rust-created styled text can differ from its
-  snapshot state (for example, an insert right after a mark's end anchor). The
-  completion therefore compares the replay of a Text or List with the snapshot
-  state (visible ids, plus the delta when styled). When they differ, the replay
-  is discarded and the container becomes `unreplayable`: it keeps its snapshot
+- The completion compares the replay of a Text or List with the snapshot state
+  (visible ids, plus the values). With style anchors in the sequence
+  (loro-dev/loro#1137) a replay of Rust or loro.js history, styled or not,
+  equals its snapshot state; before, loro.js did not count the anchors and a
+  replay of Rust-created styled text could differ. A replay now differs only
+  when the snapshot state disagrees with its own history: a snapshot written by
+  loro.js 0.2 (see `loro-js/README.md`, "Upgrading from 0.2"), or a loro.js
+  shallow snapshot with the retained-range gap described in
+  [loro-js-rust-differential.md](loro-js-rust-differential.md). When they
+  differ, the replay is discarded and the container becomes `unreplayable`: it keeps its snapshot
   state, encoded once, and is never given a replay. A transition that touches
   it runs without its operations and then moves it separately
   (`#planSnapshotStates`): when the installed state already has every forward
@@ -230,13 +241,13 @@ JavaScript constant factor.
   the latest state and `revertTo` are right). This is loro.js's MovableList
   transition gap, left to loro-dev/loro#1132.
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
-  `forkAt`) first checks the snapshot-hydrated Text containers that have or
-  had styles, including lazily encoded ones, and then rebuilds unreplayable
-  containers the same way. "Had" matters: when every marked character was
-  deleted, the snapshot state has no style, but the mark's anchors still shift
-  later Rust positions, so the replay differs (`#hasStyleHistory`: a mark
-  operation in the history, indexed as `#markedTexts`, or styles in the shallow
-  root state). Plain text is not checked, so it pays no extra replay. Only the root state of a shallow export uses the replay, since the
+  `forkAt`) rebuilds unreplayable containers the same way. It no longer checks
+  snapshot-hydrated styled Text first (`#checkSnapshotSequences`, removed in
+  loro-dev/loro#1137): that extra replay per styled Text existed because the
+  anchors shifted Rust positions, which the anchor model now counts. So styled
+  and plain Text behave alike: a hydrated container that no transition has
+  completed takes the replay of its history, which for a 0.2 snapshot is Rust's
+  reading. Only the root state of a shallow export uses the replay, since the
   snapshot state is later than the root. `forkAt` keeps a snapshot state only
   in a fork whose version includes that state's version; an older fork has
   none of the operations needed to undo later ones in that state, so it keeps
@@ -356,7 +367,10 @@ heap and 322.1 MB RSS.
 The original array implementation was estimated at 30–50 minutes. Prefix
 measurements from 20k through the full trace scale approximately linearly. The
 matching Rust Criterion benchmark has a 47.711 ms point estimate on the same
-machine, so TypeScript is about 7.4x slower in absolute time. B4 leaves 182,315
+machine, so TypeScript is about 7.4x slower in absolute time. Merging
+consecutive inserts of a transaction into one op, as Rust does, shrank the B4
+update export from 1,153,540 to 274,574 bytes, and merging contiguous text in
+the Text state shrank the snapshot from 309,780 to 206,553 bytes. B4 leaves 182,315
 scalar objects but packs them into 13,613 TypeScript treap nodes. The same run
 measured snapshot
 export at 162.4 ms, update export at 129.3 ms, snapshot import at 161.5 ms, and
@@ -415,6 +429,48 @@ isolated repeated probe. Retreating/restoring that full-range mark takes about
 0.11/0.10 ms, and the subscribed restore takes about 0.41 ms. These operations
 now scale with ID/style runs and emitted formatting ranges rather than the 64k
 characters.
+
+With style anchors in the sequence (September 28, Node 22, best of 7 on a
+loaded machine, same process for both revisions): the 64k full-range mark takes
+0.07–0.08 ms (0.06–0.08 before), its retreat/restore 0.06–0.07 ms (about 0.01
+before), and the subscribed restore 0.06 ms. Typing 1,000 characters inside the
+bold range takes 3.1–3.3 ms (1.7–2.1 before): each insert intersects the style
+memberships of its two physical neighbors. Marking the same range again and
+again nests anchors: the n-th mark's range contains the n-1 earlier start
+anchors as separate ID runs, so applying it and moving the version across it
+are O(n), as in Rust, whose `StyleRangeMap` has one segment per anchor there.
+`text-repeated-mark-tail-{retreat,restore}` therefore grows with its size
+(0.5/1.1/2.2/6.9 ms at 1k/2k/4k/8k, versus 0.16–0.29 ms before); the Rust WASM
+build takes 7.1/19/362 ms to retreat 1k/4k/16k such marks, and building the 16k
+history takes 402 s in loro.js and 542 s in Rust. Every other
+`bench:complexity` entry stays flat from 1k to 8k.
+
+The zero-width counters are four more fields in every treap node, maintained
+on every update even for text without anchors, so plain Text edits pay a
+constant cost: 8,000 subscribed middle inserts take 15.4–15.8 ms against
+14.3–14.4 ms without them, and `text-subscribed-batch`, `history-commit`, and
+`history-update-batch-import` are 12–20% slower at 8k (September 29, Node 22,
+alternating runs at 1-minute load 6–8). No entry grows with size because of
+them. Moving them into a sidecar that only anchored sequences allocate, like
+the line-break totals, would remove that cost.
+
+Reading a Rust-written styled Text from a snapshot (16k characters, 200 marks,
+2k later edits) and checking out a middle version takes 24.7–25.0 ms the
+first time, 4.1–4.3 ms back to the latest, and 11.8–12.2 ms for a fork; `main`
+takes 35.9–37.2, 3.1–3.3, and 29.8–30.5 ms but shows wrong text, because it
+marks the text unreplayable and toggles its snapshot state.
+
+These costs were reviewed and accepted (loro-dev/loro#1137). The review measured,
+on Node 26 at 1-minute load 25–40, typing 1,000 characters inside a 64k bold
+range at 2.9–4.4 ms (1.9 ms on `main`) and the 8k repeated-mark tail retreat and
+restore at 8.0–8.1 and 11.6–13.2 ms (0.4–0.6 ms on `main`). Re-measured after the
+review fixes (two runs of two interleaved rounds with `main`, Node 22, 1-minute
+load 5–25): the repeated-mark tail retreat takes 0.51–0.71/1.18–1.27/2.25–2.80/
+6.11–8.25 ms and its restore 0.47–0.53/1.16–1.35/2.08–2.57/5.89–7.75 ms at
+1k/2k/4k/8k (0.08–0.43 ms on `main`); a 64k full-range mark applies in 0.11–0.17
+ms (0.06–0.12), retreats in 0.22–0.35 ms (0.11–0.14), and restores in 0.11–0.14
+ms (0.02–0.03); typing 1,000 characters inside it varies with load (2.4–6.6 ms,
+2.6–4.3 ms on `main` in the same alternating runs).
 
 A subscribed forward checkout that combines a full-range delete and mark takes
 0.41 ms at 1k characters and 0.16 ms at 8k after warmup. Historical mark
