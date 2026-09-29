@@ -112,16 +112,13 @@ Remote ops:
   threw `duplicate sequence id` on `attach` after a snapshot import and two
   checkouts.
 - Undoing a mark gives back, wherever it changed the value, the value from just
-  before its op (`LoroText._undoStyle`). The restoring mark starts right before
-  the undone style's start anchor, not where `mark` would put it (after a
-  before- or both-expand start anchor), so text typed at the old start does not
-  land between the two anchors and keep the undone value. Rust's undo writes
-  its restoring marks from its delta and reaches the same text in 159 of 160
-  expand/prior-style/typing-position cases (September 29); in the other, a
-  before-expand mark right after an older style of the same key, Rust keeps
-  the undone value on text typed at the old start, and loro.js does not. The
-  ops differ (Rust re-marks unchanged ranges). loro.js undo still does not
-  transform against remote edits the way Rust's `UndoManager` does.
+  before its op (`LoroText._undoStyle`, through `mark`). Known gap: `mark` puts
+  the restoring start anchor after a before- or both-expand start anchor, so
+  after undoing such a mark, text typed at its old start still gets the undone
+  value; Rust leaves it unstyled. A fix (start the restoring mark right before
+  the undone style's start anchor) is commit d1663c9e, left for a follow-up.
+  loro.js undo also does not transform against remote edits the way Rust's
+  `UndoManager` does.
 
 ## Snapshots
 

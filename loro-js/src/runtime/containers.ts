@@ -2015,26 +2015,10 @@ export class LoroText extends LoroContainer {
           .map((range) => ({ range, value: previous?.value ?? null })),
       )
       .sort((left, right) => left.range.start - right.range.start);
-    // Where the undone style starts, the restoring mark starts right before its
-    // start anchor, like Rust's undo, so text typed there does not go between
-    // the two anchors and keep the undone value.
-    const anchor = this._sequence.findById(style.startId);
-    const anchorIndex =
-      anchor === undefined ? undefined : this._sequence.visibleIndexOf(anchor);
     for (const { range, value } of changes) {
-      if (range.start >= range.end) continue;
-      let start = this.#insertPosition(range.start);
-      if (anchorIndex !== undefined && anchorIndex < start) {
-        const boundary =
-          range.start === 0
-            ? 0
-            : this._sequence.visibleIndexOfMetricUnit(range.start - 1, "utf16")! + 1;
-        if (anchorIndex >= boundary) start = anchorIndex;
+      if (range.start < range.end) {
+        this.mark({ start: range.start, end: range.end }, style.key, value);
       }
-      const end = this.#insertPosition(range.end);
-      const normalized = normalizeDetachedValue(value);
-      if (this.#markIsRedundant(start, end, style.key, normalized)) continue;
-      this._doc!._textMark(this, start, end, style.key, value);
     }
   }
 
