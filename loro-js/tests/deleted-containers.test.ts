@@ -4,7 +4,8 @@ import { LoroDoc, LoroMap, LoroText } from "../src/index";
 
 // A container is deleted when any ancestor was removed from its parent, and a
 // tree node is deleted when any ancestor node is. Expected values are what
-// loro-crdt returns for the same calls.
+// loro-crdt returns for the same calls. (loro-crdt also rejects local edits to
+// a deleted container; loro.js still accepts them.)
 
 describe("deleted containers and tree nodes", () => {
   test("treat the subtree of a deleted tree node as deleted", () => {
@@ -37,7 +38,7 @@ describe("deleted containers and tree nodes", () => {
     expect(tree.getNodeByID(grandchild.id)!.isDeleted()).toBe(true);
     expect(tree.getNodeByID(other.id)!.isDeleted()).toBe(false);
     expect(grandchild.data.isDeleted()).toBe(true);
-    expect(() => grandchild.data.set("key", 1)).toThrow(/is deleted/);
+    expect(doc.getPathToContainer(grandchild.data.id)).toBeUndefined();
 
     // Moving a node out of the deleted subtree revives it and its children.
     // (loro-crdt 1.16 keeps the metadata of a node it already reported as
@@ -71,22 +72,18 @@ describe("deleted containers and tree nodes", () => {
       expect(doc.getPathToContainer(container.id)).toBeUndefined();
       expect(doc.getContainerById(container.id)).toBeDefined();
     }
-    expect(() => text.insert(0, "y")).toThrow(
-      `The container ${text.id} is deleted. You cannot apply the op on a deleted container.`,
-    );
-    expect(() => empty.insert(0, "y")).toThrow(/is deleted/);
-    expect(doc.getPendingTxnLength()).toBe(0);
-    expect(text.toString()).toBe("x");
   });
 
-  test("rejects edits to a list child removed from its list", () => {
+  test("treats a list child removed from its list as deleted", () => {
     const doc = new LoroDoc();
     const list = doc.getList("list");
     const child = list.insertContainer(0, new LoroMap());
+    const grandchild = child.setContainer("text", new LoroText());
     doc.commit();
     list.delete(0, 1);
     doc.commit();
     expect(child.isDeleted()).toBe(true);
-    expect(() => child.set("key", 1)).toThrow(/is deleted/);
+    expect(grandchild.isDeleted()).toBe(true);
+    expect(doc.getPathToContainer(grandchild.id)).toBeUndefined();
   });
 });

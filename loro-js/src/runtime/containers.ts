@@ -149,7 +149,7 @@ export abstract class LoroContainer {
   }
 
   isDeleted(): boolean {
-    return this._doc?._isContainerDeleted(this) ?? false;
+    return this._doc?._isContainerUnreachable(this) ?? false;
   }
 
   subscribe(listener: (event: LoroEventBatch) => void): Subscription {

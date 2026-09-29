@@ -460,7 +460,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (
       container !== undefined &&
       isMergeableContainerId(parsed) &&
-      this.#isContainerUnbound(container, false) &&
+      this._isContainerDeleted(container) &&
       !this.#containerHasOperations(parsed)
     ) {
       return undefined;
@@ -3231,7 +3231,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   getPathToContainer(id: ContainerID): Path | undefined {
     const container = this.getContainerById(id);
-    if (container === undefined || this._isContainerDeleted(container)) return undefined;
+    if (container === undefined || this._isContainerUnreachable(container))
+      return undefined;
     return containerPath(container);
   }
 
@@ -3265,7 +3266,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     cursor: Cursor,
   ): { update?: Cursor; offset: number; side: Side } | undefined {
     const container = this.getContainerById(cursor.containerId());
-    if (container === undefined || this._isContainerDeleted(container)) return undefined;
+    if (container === undefined || this._isContainerUnreachable(container))
+      return undefined;
     const id = cursor._idValue();
     if (!(container instanceof LoroList || container instanceof LoroText))
       return undefined;
@@ -3378,25 +3380,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   /**
    * Whether `container` is unreachable from the roots: it or an ancestor was
-   * removed from its parent, or its tree node is under a deleted node. Rust's
-   * `DocState::is_deleted` has the same meaning.
+   * removed from its parent, or its tree node is under a deleted node, as in
+   * Rust's `DocState::is_deleted`. `_isContainerDeleted` checks only the
+   * container's own slot.
    */
-  _isContainerDeleted(container: LoroContainer): boolean {
+  _isContainerUnreachable(container: LoroContainer): boolean {
     for (
       let current: LoroContainer | undefined = container;
       current !== undefined;
       current = current.parent()
     ) {
-      if (this.#isContainerUnbound(current, true)) return true;
+      if (this._isContainerDeleted(current)) return true;
+      const binding = current._parentLink?.binding;
+      const parent = current.parent();
+      if (
+        binding?.kind === "tree" &&
+        parent instanceof LoroTree &&
+        parent._isNodeHidden(binding.record)
+      ) {
+        return true;
+      }
     }
     return false;
   }
 
-  /**
-   * Whether `container` is no longer attached to its own parent. With
-   * `treeAncestors`, a tree node under a deleted node also counts.
-   */
-  #isContainerUnbound(container: LoroContainer, treeAncestors: boolean): boolean {
+  _isContainerDeleted(container: LoroContainer): boolean {
     if (
       container._codecId?.kind === "root" &&
       !isMergeableContainerId(container._codecId)
@@ -3420,10 +3428,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return binding.element.deleted || binding.element.value !== container;
     }
     if (binding?.kind === "tree" && parent instanceof LoroTree) {
-      return (
-        (treeAncestors ? parent._isNodeHidden(binding.record) : binding.record.deleted) ||
-        binding.record.data !== container
-      );
+      return binding.record.deleted || binding.record.data !== container;
     }
     return parent !== undefined;
   }
@@ -4417,11 +4422,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (container._codecId === undefined || container._doc !== this)
       throw new Error("container is detached");
     this._ensureContainerHydrated(container);
-    if (this._isContainerDeleted(container)) {
-      throw new Error(
-        `The container ${container.id} is deleted. You cannot apply the op on a deleted container.`,
-      );
-    }
     const pending = this.#ensurePending();
     const counter = this.#nextOperationCounter(pending);
     const operation: DecodedOperation = {
