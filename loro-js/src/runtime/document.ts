@@ -119,6 +119,7 @@ import type {
   JsonChange,
   JsonContainerID,
   JsonDiff,
+  ApplyDiffOptions,
   JsonIdLp,
   JsonOp,
   JsonOpContent,
@@ -337,6 +338,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #shallowRootVersion = new VersionVector();
   #shallowRootFrontiers: CodecId[] = [];
   #shallowRootStore: StateSnapshotStore | undefined;
+  // Containers whose full state a `fullState` applyDiff aligns (see
+  // #alignFullState); undefined outside such a call.
+  #fullStateTargets: Set<LoroContainer> | undefined;
+  // Set while revertTo computes its diff: a re-activated mergeable child then
+  // contributes its actual change instead of its full state.
+  #changesOnlyDiff = false;
   // Root store entries by container key, built by the import merge or on first
   // lookup.
   #shallowRootEntries: Map<string, StateSnapshotContainerEntry> | undefined;
@@ -1247,7 +1254,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const entries = [...changed]
         .flatMap((id) => {
           const container = this.#containers.get(id);
-          return container === undefined ? [] : [container];
+          // As in Rust, a container that is not reachable at `to` (deleted,
+          // under a deleted tree node, or a hidden mergeable child) has no entry.
+          return container === undefined || !this.#isReachable(container)
+            ? []
+            : [container];
         })
         .sort((left, right) => containerDepth(left) - containerDepth(right))
         .flatMap((container) => {
@@ -1259,74 +1270,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             });
           return isEmptyContainerDiff(diff) ? [] : [[container.id, diff] as const];
         });
-      // A container that is unreachable at `from` and reachable at `to` (a map
-      // key set back to an older child, a revived list element or tree node,
-      // or anything under such a container) carries its whole state, as in
-      // Rust; applyDiff recreates it under a new ID. A container that stays
-      // reachable, for example a moved movable-list element, keeps only its
-      // own ops. So does a mergeable child of such a container: re-ensuring
-      // it resurfaces its preserved state.
-      const diffs = new Map<ContainerID, LoroEvent["diff"]>(entries);
-      for (const [id, diff] of diffs) {
-        const tree = this.#containers.get(id);
-        if (diff.type === "tree" && tree instanceof LoroTree) {
-          diffs.set(id, {
-            type: "tree",
-            diff: this.#completeTreeRevivals(tree, diff.diff, fromVersion),
-          });
-        }
-      }
-      // Most diffs attach no child container; skip the reachability pass and
-      // keep the depth order computed above.
-      const attachesChildren = [...diffs].some(
-        ([id, diff]) =>
-          this.#attachedChildren(this.#containers.get(id)!, diff).length > 0,
+      const completed = this.#completeDiffEntries(
+        entries,
+        fromVersion,
+        this.#changesOnlyDiff,
       );
-      if (attachesChildren) {
-        const created = new Set<ContainerID>();
-        const byDepth = new Map<number, LoroContainer[]>();
-        const schedule = (container: LoroContainer): void => {
-          const depth = containerDepth(container);
-          const bucket = byDepth.get(depth);
-          if (bucket === undefined) byDepth.set(depth, [container]);
-          else bucket.push(container);
-        };
-        for (const [id] of entries) schedule(this.#containers.get(id)!);
-        for (let depth = 0; byDepth.size > 0; depth += 1) {
-          const bucket = byDepth.get(depth);
-          if (bucket === undefined) continue;
-          byDepth.delete(depth);
-          for (const parent of bucket) {
-            const diff = diffs.get(parent.id);
-            if (diff === undefined) continue;
-            const parentCreated = created.has(parent.id);
-            for (const child of this.#attachedChildren(parent, diff)) {
-              if (created.has(child.id)) continue;
-              if (
-                !parentCreated &&
-                (isMergeableContainerId(child._codecId!) ||
-                  this.#reachableThroughParentAt(child, parent, fromVersion))
-              ) {
-                continue;
-              }
-              created.add(child.id);
-              if (!diffs.has(child.id)) schedule(child);
-              diffs.set(child.id, containerDiff(child, undefined));
-            }
-          }
-        }
-        const ordered = [...diffs]
-          .filter(([, diff]) => !isEmptyContainerDiff(diff))
-          .map(([id, diff]) => ({
-            id,
-            diff,
-            depth: containerDepth(this.#containers.get(id)!),
-          }))
-          .sort((left, right) => left.depth - right.depth);
-        entries.length = 0;
-        for (const { id, diff } of ordered) entries.push([id, diff]);
-      }
-      return entries.map(
+      return completed.map(
         ([id, diff]) =>
           [id, forJson ? diffForJson(diff) : diff] as [ContainerID, Diff | JsonDiff],
       );
@@ -1736,6 +1685,29 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return deletes;
   }
 
+  /** Whether `container` is reachable from a root container in the current state. */
+  #isReachable(container: LoroContainer): boolean {
+    for (let current: LoroContainer | undefined = container; current !== undefined; ) {
+      const id = current._codecId;
+      if (id?.kind === "root" && !isMergeableContainerId(id))
+        return this.#roots.has(id.name);
+      if (this._isContainerDeleted(current)) return false;
+      const parent = current.parent();
+      const binding =
+        current._parentLink?.binding ??
+        (parent === undefined ? undefined : recoverParentBinding(current, parent));
+      if (
+        binding?.kind === "tree" &&
+        parent instanceof LoroTree &&
+        this.#isTreeRecordHidden(parent, binding.record)
+      ) {
+        return false;
+      }
+      current = parent;
+    }
+    return false;
+  }
+
   #isTreeRecordHidden(tree: LoroTree, record: TreeNodeRecord): boolean {
     for (let current: TreeNodeRecord | undefined = record; current !== undefined; ) {
       if (current.deleted) return true;
@@ -1840,6 +1812,251 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return result;
   }
 
+  /**
+   * Turns the full state `diff` of a re-activated mergeable child (or of a
+   * container it keeps) into an edit of what this document holds for it, as
+   * Rust's `handler/full_state.rs` does. Children kept by ID become targets
+   * too. Identity is kept for shared entries, list prefixes and suffixes,
+   * moved movable-list children, and tree nodes by TreeID.
+   */
+  #alignFullState(
+    container: LoroContainer,
+    diff: Diff | JsonDiff,
+    remap: Map<ContainerID, Container>,
+    treeRemap: Map<TreeID, TreeID>,
+  ): void {
+    const targets = this.#fullStateTargets!;
+    const keep = (sourceId: ContainerID, child: unknown): void => {
+      if (child instanceof LoroContainer) {
+        remap.set(sourceId, child as Container);
+        targets.add(child);
+      }
+    };
+    if (diff.type === "map" && container instanceof LoroMap) {
+      const wanted = new Map(
+        Object.entries(diff.updated).filter(([, value]) => value !== undefined),
+      );
+      for (const key of container.keys()) {
+        if (!wanted.has(key)) container.delete(key);
+      }
+      for (const [key, value] of wanted) {
+        const sourceId = diffContainerId(value);
+        const current = container.get(key);
+        if (sourceId === undefined) {
+          if (!sameDiffValue(current, value)) container.set(key, value);
+          continue;
+        }
+        if (
+          isContainer(current) &&
+          current.id === (remap.get(sourceId)?.id ?? sourceId)
+        ) {
+          keep(sourceId, current);
+          continue;
+        }
+        this.#applyMapChildDiff(container, key, sourceId, remap);
+      }
+      return;
+    }
+    if (diff.type === "counter" && container instanceof LoroCounter) {
+      const change = diff.increment - container.value;
+      if (change !== 0) container.increment(change);
+      return;
+    }
+    if (diff.type === "text" && container instanceof LoroText) {
+      alignText(container, diff.diff);
+      return;
+    }
+    if (diff.type === "list" && container instanceof LoroList) {
+      const wanted: unknown[] = [];
+      for (const item of diff.diff) if ("insert" in item) wanted.push(...item.insert);
+      const current = container.toArray();
+      const same = (index: number, wantedIndex: number): boolean => {
+        const value = wanted[wantedIndex];
+        const sourceId = diffContainerId(value);
+        const existing = container.get(index);
+        return sourceId === undefined
+          ? !isContainer(existing) && sameDiffValue(existing, value)
+          : isContainer(existing) &&
+              existing.id === (remap.get(sourceId)?.id ?? sourceId);
+      };
+      let prefix = 0;
+      while (prefix < current.length && prefix < wanted.length && same(prefix, prefix)) {
+        prefix += 1;
+      }
+      let suffix = 0;
+      while (
+        suffix < current.length - prefix &&
+        suffix < wanted.length - prefix &&
+        same(current.length - 1 - suffix, wanted.length - 1 - suffix)
+      ) {
+        suffix += 1;
+      }
+      const middle = wanted.slice(prefix, wanted.length - suffix);
+      const delta: Delta<unknown[]>[] = [];
+      if (prefix > 0) delta.push({ retain: prefix });
+      const deleted = current.length - prefix - suffix;
+      if (deleted > 0) delta.push({ delete: deleted });
+      if (middle.length > 0) delta.push({ insert: middle });
+      if (delta.length > 0) {
+        this.#applyContainerDiff(
+          container as Container,
+          { type: "list", diff: delta },
+          remap,
+          treeRemap,
+        );
+      }
+      // Children present in both (kept prefix/suffix, moved middle children
+      // of a movable list) keep their ID and are aligned too.
+      for (let index = 0; index < wanted.length; index += 1) {
+        const sourceId = diffContainerId(wanted[index]);
+        if (sourceId === undefined || remap.get(sourceId) !== undefined) continue;
+        const existing = container.get(index);
+        if (isContainer(existing) && existing.id === sourceId) keep(sourceId, existing);
+      }
+      return;
+    }
+    if (diff.type === "tree" && container instanceof LoroTree) {
+      const wanted = diff.diff.filter(
+        (item): item is Extract<TreeDiffItem, { action: "create" }> =>
+          item.action === "create",
+      );
+      const wantedIds = new Set(wanted.map((item) => item.target));
+      const items: TreeDiffItem[] = [];
+      // Delete the topmost unwanted nodes; their subtrees go with them.
+      for (const node of container.getNodes()) {
+        if (wantedIds.has(node.id) || node.isDeleted()) continue;
+        const parent = node.parent()?.id;
+        if (parent === undefined || wantedIds.has(parent)) {
+          items.push({
+            target: node.id,
+            action: "delete",
+            oldParent: parent,
+            oldIndex: 0,
+          });
+        }
+      }
+      const kept: TreeID[] = [];
+      for (const item of wanted) {
+        const alive = container.has(item.target) && !container.isNodeDeleted(item.target);
+        if (!alive) {
+          items.push(item);
+          continue;
+        }
+        kept.push(item.target);
+        items.push({
+          target: item.target,
+          action: "move",
+          parent: item.parent,
+          index: item.index,
+          fractionalIndex: item.fractionalIndex,
+          oldParent: undefined,
+          oldIndex: 0,
+        });
+      }
+      this.#applyTreeDiff(container, items, remap, treeRemap);
+      for (const node of kept) {
+        const data = container.getNodeByID(node)?.data;
+        if (data !== undefined) keep(data.id, data);
+      }
+      return;
+    }
+    throw diffKindMismatch(container as Container, diff.type);
+  }
+
+  /** Empties a container (a full-state target the batch has no entry for). */
+  #clearContainer(container: LoroContainer): void {
+    if (container instanceof LoroMap) {
+      for (const key of container.keys()) container.delete(key);
+    } else if (container instanceof LoroList) {
+      if (container.length > 0) container.delete(0, container.length);
+    } else if (container instanceof LoroText) {
+      if (container.length > 0) container.delete(0, container.length);
+    } else if (container instanceof LoroCounter) {
+      if (container.value !== 0) container.increment(-container.value);
+    } else if (container instanceof LoroTree) {
+      for (const root of container.roots()) container.delete(root.id);
+    }
+  }
+
+  /**
+   * Completes the per-container diffs of a range from `from` to the current
+   * state, in parent-first order: tree revivals become creates of the whole
+   * subtree, and a container that is unreachable at `from` and reachable now
+   * (a map key set back to an older child, a revived list element or tree
+   * node, anything under such a container, or a re-activated mergeable child)
+   * carries its whole state, as in Rust. With `changesOnly` (revertTo), a
+   * re-activated mergeable child keeps only its actual change.
+   */
+  #completeDiffEntries(
+    entries: readonly (readonly [ContainerID, LoroEvent["diff"]])[],
+    fromVersion: VersionVector,
+    changesOnly: boolean,
+  ): [ContainerID, LoroEvent["diff"]][] {
+    const diffs = new Map<ContainerID, LoroEvent["diff"]>(entries);
+    for (const [id, diff] of diffs) {
+      const tree = this.#containers.get(id);
+      if (diff.type === "tree" && tree instanceof LoroTree) {
+        diffs.set(id, {
+          type: "tree",
+          diff: this.#completeTreeRevivals(tree, diff.diff, fromVersion),
+        });
+      }
+    }
+    // Most diffs attach no child container; skip the reachability pass and
+    // keep the caller's depth order.
+    const attachesChildren = [...diffs].some(
+      ([id, diff]) => this.#attachedChildren(this.#containers.get(id)!, diff).length > 0,
+    );
+    if (attachesChildren) {
+      const created = new Set<ContainerID>();
+      const byDepth = new Map<number, LoroContainer[]>();
+      const schedule = (container: LoroContainer): void => {
+        const depth = containerDepth(container);
+        const bucket = byDepth.get(depth);
+        if (bucket === undefined) byDepth.set(depth, [container]);
+        else bucket.push(container);
+      };
+      for (const [id] of entries) schedule(this.#containers.get(id)!);
+      for (let depth = 0; byDepth.size > 0; depth += 1) {
+        const bucket = byDepth.get(depth);
+        if (bucket === undefined) continue;
+        byDepth.delete(depth);
+        for (const parent of bucket) {
+          const diff = diffs.get(parent.id);
+          if (diff === undefined) continue;
+          const parentCreated = created.has(parent.id);
+          for (const child of this.#attachedChildren(parent, diff)) {
+            if (created.has(child.id)) continue;
+            // A re-activated mergeable child keeps its id and hidden state.
+            // Public diffs report its full state, as Rust's `LoroDoc::diff`
+            // does (a full-state batch); revertTo applies only its actual
+            // change (Rust's `KeptChange`) so identity is kept.
+            if (
+              !parentCreated &&
+              ((changesOnly && isMergeableContainerId(child._codecId!)) ||
+                this.#reachableThroughParentAt(child, parent, fromVersion))
+            ) {
+              continue;
+            }
+            created.add(child.id);
+            if (!diffs.has(child.id)) schedule(child);
+            diffs.set(child.id, containerDiff(child, undefined));
+          }
+        }
+      }
+      const ordered = [...diffs]
+        .filter(([, diff]) => !isEmptyContainerDiff(diff))
+        .map(([id, diff]) => ({
+          id,
+          diff,
+          depth: containerDepth(this.#containers.get(id)!),
+        }))
+        .sort((left, right) => left.depth - right.depth);
+      return ordered.map(({ id, diff }) => [id, diff]);
+    }
+    return [...diffs];
+  }
+
   /** Child containers that a map, list, or tree diff of `parent` attaches. */
   #attachedChildren(parent: LoroContainer, diff: LoroEvent["diff"]): LoroContainer[] {
     const children: LoroContainer[] = [];
@@ -1889,7 +2106,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return valueId.peer === childId.peer && valueId.counter === childId.counter;
   }
 
-  applyDiff(diffBatch: readonly (readonly [ContainerID, Diff | JsonDiff])[]): void {
+  applyDiff(
+    diffBatch: readonly (readonly [ContainerID, Diff | JsonDiff])[],
+    options: ApplyDiffOptions = {},
+  ): void {
     if (!Array.isArray(diffBatch)) throw new TypeError("diff batch must be an array");
     if (this.#detached && !this.#detachedEditing) {
       throw new Error("cannot edit a detached document; call attach() first");
@@ -1899,18 +2119,41 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
     const containerRemap = new Map<ContainerID, Container>();
     const treeRemap = new Map<TreeID, TreeID>();
-    for (const [index, entry] of diffBatch.entries()) {
-      const sourceId = entry[0] as ContainerID;
-      const diff = entry[1];
-      const container = this.#resolveDiffContainer(sourceId, containerRemap);
-      if (container === undefined) continue;
-      this.#applyContainerDiff(
-        container,
-        diff,
-        containerRemap,
-        treeRemap,
-        checked.has(index),
-      );
+    // Full-state targets: re-activated mergeable children and what they keep.
+    const targets = options.fullState === true ? new Set<LoroContainer>() : undefined;
+    const visited = new Set<LoroContainer>();
+    this.#fullStateTargets = targets;
+    try {
+      for (const [index, entry] of diffBatch.entries()) {
+        const sourceId = entry[0] as ContainerID;
+        const diff = entry[1];
+        const container = this.#resolveDiffContainer(sourceId, containerRemap);
+        if (container === undefined) continue;
+        if (targets?.has(container as LoroContainer) === true) {
+          visited.add(container as LoroContainer);
+          this.#alignFullState(
+            container as LoroContainer,
+            diff,
+            containerRemap,
+            treeRemap,
+          );
+          continue;
+        }
+        this.#applyContainerDiff(
+          container,
+          diff,
+          containerRemap,
+          treeRemap,
+          checked.has(index),
+        );
+      }
+      // A full-state batch lists every non-empty container it revives, so a
+      // target without an entry is empty at the target version.
+      for (const target of targets ?? []) {
+        if (!visited.has(target)) this.#clearContainer(target);
+      }
+    } finally {
+      this.#fullStateTargets = undefined;
     }
   }
 
@@ -1979,7 +2222,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       throw new Error("cannot edit a detached document; call attach() first");
     }
     this.#commit({}, true);
-    const diff = this.diff(this.frontiers(), frontiers, false);
+    this.#changesOnlyDiff = true;
+    let diff: [ContainerID, Diff][];
+    try {
+      diff = this.diff(this.frontiers(), frontiers, false);
+    } finally {
+      this.#changesOnlyDiff = false;
+    }
     this.applyDiff(diff);
   }
 
@@ -2095,6 +2344,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (isMergeableContainerId(parsed)) {
       const child = ensureMergeableChild(parent, key, type);
       remap.set(sourceId, child);
+      // In a full-state batch, align the child's state with its hidden state.
+      this.#fullStateTargets?.add(child as LoroContainer);
       return;
     }
     if (parsed.kind === "root") {
@@ -7864,15 +8115,28 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     preparedDiffs: ReadonlyMap<string, Diff> = new Map(),
   ): void {
     if (changed.size === 0 || !this.#hasEventSubscribers()) return;
-    const events: LoroEvent[] = [...changed].flatMap((id) => {
+    let entries = [...changed].flatMap((id) => {
       const container = this.#containers.get(id);
       if (container === undefined) return [];
       const diff =
         preparedDiffs.get(id) ?? containerDiff(container, beforeValues.get(id));
-      return isEmptyContainerDiff(diff)
-        ? []
-        : [{ target: id as ContainerID, diff, path: containerPath(container) }];
+      return isEmptyContainerDiff(diff) ? [] : [[id as ContainerID, diff] as const];
     });
+    // As in Rust, an import or checkout reports the whole state of a
+    // container it makes reachable again, such as a re-activated mergeable
+    // child; a local event reports only the ops of the commit.
+    if (by !== "local" && entries.length > 0) {
+      entries = this.#completeDiffEntries(
+        entries,
+        this.#causalVersionForKnownFrontiers(from),
+        false,
+      );
+    }
+    const events: LoroEvent[] = entries.map(([target, diff]) => ({
+      target,
+      diff,
+      path: containerPath(this.#containers.get(target)!),
+    }));
     if (events.length === 0) return;
     const base = {
       by,
@@ -10239,6 +10503,105 @@ function validateListDelta(
     }
   }
   return length === undefined ? undefined : length - deleted + inserted;
+}
+
+function sameDiffValue(left: unknown, right: unknown): boolean {
+  if (left instanceof Uint8Array || right instanceof Uint8Array) {
+    return (
+      left instanceof Uint8Array && right instanceof Uint8Array && bytesEqual(left, right)
+    );
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * Makes `text` equal to the full-state `delta`: keeps the common prefix and
+ * suffix by content, replaces the middle, then marks or unmarks only where the
+ * styles differ (including styles an insert inherits from a neighbor).
+ */
+function alignText(text: LoroText, delta: readonly Delta<string>[]): void {
+  const wanted = delta
+    .flatMap((item) => ("insert" in item ? [item.insert] : []))
+    .join("");
+  const current = text.toString();
+  const wantedChars = Array.from(wanted);
+  const currentChars = Array.from(current);
+  let prefix = 0;
+  while (
+    prefix < wantedChars.length &&
+    prefix < currentChars.length &&
+    wantedChars[prefix] === currentChars[prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < wantedChars.length - prefix &&
+    suffix < currentChars.length - prefix &&
+    wantedChars[wantedChars.length - 1 - suffix] ===
+      currentChars[currentChars.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const units = (chars: readonly string[], start: number, end: number): number =>
+    chars.slice(start, end).join("").length;
+  const start = units(currentChars, 0, prefix);
+  const removed = units(currentChars, prefix, currentChars.length - suffix);
+  const inserted = wantedChars.slice(prefix, wantedChars.length - suffix).join("");
+  if (removed > 0) text.delete(start, removed);
+  if (inserted.length > 0) text.insert(start, inserted);
+
+  // Styles: walk both deltas over the now equal content.
+  const runs = (items: readonly Delta<string>[]) =>
+    items.flatMap((item) =>
+      "insert" in item
+        ? [{ length: item.insert.length, attributes: item.attributes ?? {} }]
+        : [],
+    );
+  const target = runs(delta);
+  const actual = runs(text.toDelta());
+  let position = 0;
+  let targetIndex = 0;
+  let actualIndex = 0;
+  let targetUsed = 0;
+  let actualUsed = 0;
+  const changes: { start: number; end: number; key: string; value: unknown }[] = [];
+  while (targetIndex < target.length && actualIndex < actual.length) {
+    const want = target[targetIndex]!;
+    const have = actual[actualIndex]!;
+    const length = Math.min(want.length - targetUsed, have.length - actualUsed);
+    const keys = new Set([
+      ...Object.keys(want.attributes),
+      ...Object.keys(have.attributes),
+    ]);
+    for (const key of keys) {
+      const wantedValue = (want.attributes as Record<string, unknown>)[key];
+      const actualValue = (have.attributes as Record<string, unknown>)[key];
+      if (!sameDiffValue(wantedValue ?? null, actualValue ?? null)) {
+        changes.push({
+          start: position,
+          end: position + length,
+          key,
+          value: wantedValue ?? null,
+        });
+      }
+    }
+    position += length;
+    targetUsed += length;
+    actualUsed += length;
+    if (targetUsed === want.length) {
+      targetIndex += 1;
+      targetUsed = 0;
+    }
+    if (actualUsed === have.length) {
+      actualIndex += 1;
+      actualUsed = 0;
+    }
+  }
+  for (const { start: from, end, key, value } of changes) {
+    if (value === null) text.unmark({ start: from, end }, key);
+    else text.mark({ start: from, end }, key, value);
+  }
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {

@@ -210,6 +210,17 @@ export type MapDiff = {
   readonly type: "map";
   readonly updated: Readonly<Record<string, unknown>>;
 };
+/** Options for `LoroDoc.applyDiff`. */
+export interface ApplyDiffOptions {
+  /**
+   * The batch comes from `diff()` and re-activated mergeable children carry
+   * their full state. Each such child's full state is aligned with the hidden
+   * state this document holds at its container ID instead of being applied on
+   * top of it. Leave unset for event batches (incremental), as in loro-crdt.
+   */
+  readonly fullState?: boolean;
+}
+
 export type TreeDiffItem =
   | {
       readonly target: TreeID;
