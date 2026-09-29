@@ -56,6 +56,13 @@ const CI_RUNS: readonly {
     pending: new Map(),
   },
   {
+    name: "MovableList and nested child containers: replay, checkout, snapshot, and event oracles",
+    features: { ...MAP_LIST_TEXT_COUNTER, movableList: true, nested: true },
+    checks: { events: true, checkout: true, snapshot: true, shallow: false },
+    seeds: Array.from({ length: 120 }, (_, index) => index),
+    pending: new Map(),
+  },
+  {
     name: "nested child containers and snapshot imports: replay, checkout, snapshot, and event oracles",
     features: { ...MAP_LIST_TEXT_COUNTER, nested: true, snapshotSync: true },
     checks: { events: true, checkout: true, snapshot: true, shallow: false },
