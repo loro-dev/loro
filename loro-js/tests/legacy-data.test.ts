@@ -118,7 +118,7 @@ describe.each(runtimes)(
       },
     );
 
-    test("resolves a 0.2 cursor by its Unicode position", () => {
+    test("resolves a 0.2 end cursor one character earlier, like Rust", () => {
       expect(legacy["cursor-emoji"]).toBe(4);
       const owner = read((doc) => doc.import(fixture("cursor-emoji.snapshot.blob")));
       const cursor = runtime.Cursor.decode(fixture("cursor-emoji.cursor.blob"));
