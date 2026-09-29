@@ -242,6 +242,9 @@ Differences in form, not in effect, which the suite checks by value:
 - Event deltas can differ in shape, or be a no-op where Rust reports nothing;
   the suite then checks that each engine's deltas turn the previous value into
   the new one.
+- Rust's `diff()` can list a sequence whose delta is empty (two peers
+  concurrently moving one element), where loro.js omits the container. The
+  suite ignores such entries.
 
 Rust issues the suite works around:
 
