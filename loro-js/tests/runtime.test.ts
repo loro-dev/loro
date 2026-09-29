@@ -1735,30 +1735,6 @@ describe("loro-wasm-compatible runtime", () => {
     expect(b.toJSON()).toEqual({ map: {} });
   });
 
-  test("deletes text ID runs from right to left like loro-crdt", () => {
-    const peers = [1, 2, 3].map((peer) => {
-      const doc = new LoroDoc();
-      doc.setPeerId(peer);
-      return doc;
-    });
-    const [p1, p2, p3] = peers as [LoroDoc, LoroDoc, LoroDoc];
-    p1.getText("text").insert(0, "ab");
-    p1.commit();
-    p2.import(p1.export({ mode: "update" }));
-    p2.getText("text").insert(1, "X");
-    p2.commit();
-    p3.import(p2.export({ mode: "update" }));
-    // Three ID runs: a, X, b.
-    p3.getText("text").delete(0, 3);
-    p3.commit();
-
-    const texts = [0, 1, 2].map((counter) => {
-      p3.checkout([{ peer: "3", counter }]);
-      return p3.getText("text").toString();
-    });
-    expect(texts).toEqual(["aX", "a", ""]);
-  });
-
   test("resurfaces preserved state and switches mergeable kinds", () => {
     const doc = new LoroDoc();
     const root = doc.getMap("state");

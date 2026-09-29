@@ -5,7 +5,9 @@ use std::sync::Weak;
 use tracing::{instrument, warn};
 
 use generic_btree::BTree;
-use loro_common::{CompactIdLp, ContainerID, IdFull, IdLp, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{
+    CompactIdLp, ContainerID, IdFull, IdLp, LoroError, LoroResult, LoroValue, PeerID, ID,
+};
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -1002,6 +1004,26 @@ impl MovableListState {
     }
 }
 
+impl MovableListState {
+    /// Whether a forward (Linear/ImportGreaterUpdates) diff moves or sets an element
+    /// that is not in this state.
+    ///
+    /// Such diffs only carry the fields an op touched and take the rest from the
+    /// current element. Honest ops cannot produce this (an element absent here was
+    /// deleted before every op in the diff), but a forged op can; it has the same
+    /// meaning as a concurrent move/set of a deleted element, which only a Checkout
+    /// mode diff resolves. See `context/movable-list-op-validation.md`.
+    pub(crate) fn references_absent_elem(
+        &self,
+        diff: &crate::delta::MovableListInnerDelta,
+    ) -> bool {
+        diff.elements.iter().any(|(elem_id, elem)| {
+            (elem.pos.is_none() || elem.value_id.is_none())
+                && !self.inner.elements().contains_key(elem_id)
+        })
+    }
+}
+
 impl ContainerState for MovableListState {
     fn container_idx(&self) -> ContainerIdx {
         self.idx
@@ -1009,6 +1031,58 @@ impl ContainerState for MovableListState {
 
     fn is_state_empty(&self) -> bool {
         self.list().is_empty() && self.elements().is_empty()
+    }
+
+    fn validate_diff(&self, diff: &InternalDiff) -> LoroResult<()> {
+        let InternalDiff::MovableList(diff) = diff else {
+            unreachable!()
+        };
+
+        // List items are addressed by op index (dead items included).
+        let mut cursor = 0usize;
+        let mut projected = self.inner.len_kind(IndexType::ForOp);
+        for item in diff.list.iter() {
+            match item {
+                DeltaItem::Retain { retain, .. } => {
+                    cursor += retain;
+                    if cursor > projected {
+                        return Err(LoroError::DecodeError(
+                            format!("movable list diff retains {cursor} items but state only has {projected}")
+                                .into_boxed_str(),
+                        ));
+                    }
+                }
+                DeltaItem::Insert { insert, .. } => {
+                    if cursor > projected {
+                        return Err(LoroError::DecodeError(
+                            format!("movable list diff inserts at {cursor} but state only has {projected}")
+                                .into_boxed_str(),
+                        ));
+                    }
+                    cursor += insert.len();
+                    projected += insert.len();
+                }
+                DeltaItem::Delete { delete, .. } => {
+                    if cursor + delete > projected {
+                        return Err(LoroError::DecodeError(
+                            format!("movable list diff deletes {delete} at {cursor} but state only has {projected}")
+                                .into_boxed_str(),
+                        ));
+                    }
+                    projected -= delete;
+                }
+            }
+        }
+
+        // Import callers recompute such diffs in Checkout mode first
+        // (`DocState::needs_checkout_diff`); reaching here means that was skipped.
+        if self.references_absent_elem(diff) {
+            return Err(LoroError::internal(
+                "movable list diff lacks the value or position of an element absent from state",
+            ));
+        }
+
+        Ok(())
     }
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.

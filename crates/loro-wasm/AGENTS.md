@@ -64,6 +64,9 @@ Validate arguments and return `JsResult` errors instead of `unwrap`/`expect`/
 `unreachable!()` on any path reachable from JS input. `handler_to_js_value`
 returns `JsResult` for this reason: unknown containers (written by newer Loro
 versions) must surface a readable error, matching `getContainerById`.
+Event batches skip only the container events that can't be converted, and
+`diff()` leaves out the empty entries of unknown containers
+([context/unknown-containers.md](../../context/unknown-containers.md)).
 
 When a panic or OOM does trap, the full message and stack are stored on
 `globalThis.__LORO_WASM_LAST_PANIC__` and printed to `console.error`. Mechanism

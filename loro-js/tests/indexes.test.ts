@@ -34,7 +34,7 @@ describe("runtime indexes", () => {
       const operation = current.length === 0 ? 0 : nextRandom() % 3;
       if (operation === 0) {
         const position = nextRandom() % (current.length + 1);
-        const value = ["a", "文", "🙂"][nextRandom() % 3]!;
+        const value = ["a", "文", "🙂", ""][nextRandom() % 4]!;
         const element: TestElement = {
           id: { peer: 1n, counter: counter++ },
           deleted: false,
@@ -89,6 +89,38 @@ describe("runtime indexes", () => {
         expect(sequence.atVisible(index)).toBe(element);
         expect(sequence.visibleIndexOf(element)).toBe(index);
       }
+      // Zero-width elements (rich-text style anchors) are skipped by width
+      // queries and counted separately.
+      const widths = expectedVisible.filter((element) => element.value.length > 0);
+      expect(sequence.visibleZeroWidthLength).toBe(
+        expectedVisible.length - widths.length,
+      );
+      let zeroWidthBefore = 0;
+      let utf16 = 0;
+      for (const [index, element] of expectedVisible.entries()) {
+        expect(sequence.zeroWidthBeforeVisibleIndex(index)).toBe(zeroWidthBefore);
+        if (element.value.length === 0) {
+          zeroWidthBefore += 1;
+          continue;
+        }
+        expect(sequence.visibleIndexOfWidthElement(index - zeroWidthBefore)).toBe(index);
+        for (let unit = 0; unit < element.value.length; unit += 1) {
+          expect(sequence.visibleIndexOfMetricUnit(utf16 + unit, "utf16")).toBe(index);
+        }
+        utf16 += element.value.length;
+      }
+      expect(sequence.zeroWidthBeforeVisibleIndex(expectedVisible.length)).toBe(
+        zeroWidthBefore,
+      );
+      expect(sequence.visibleIndexOfWidthElement(widths.length)).toBe(
+        expectedVisible.length,
+      );
+      expect(sequence.visibleIndexOfMetricUnit(utf16, "utf16")).toBeUndefined();
+      const physicalStart = physical.length >>> 3;
+      const physicalEnd = physical.length - physicalStart;
+      expect(sequence.physicalIdRuns(physicalStart, physicalEnd)).toEqual(
+        compressIdRuns(physical.slice(physicalStart, physicalEnd)),
+      );
       const start = expectedVisible.length >>> 2;
       const end = expectedVisible.length - start;
       expect(sequence.visibleRange(start, end)).toEqual(
@@ -208,34 +240,54 @@ describe("runtime indexes", () => {
 
     expect(styles.metasAt({ peer: 1n, counter: 10 }).get("bold")).toBe(outer);
     expect(styles.metasAt({ peer: 1n, counter: 50 }).get("bold")).toBe(inner);
+    // A style applies once its end anchor (the op after its start) is included.
     expect(
       styles.metasAt({ peer: 1n, counter: 50 }, new Map([[7n, 1]])).get("bold"),
+    ).toBeUndefined();
+    expect(
+      styles.metasAt({ peer: 1n, counter: 50 }, new Map([[7n, 2]])).get("bold"),
     ).toBe(outer);
+    const whole = [{ start: { peer: 1n, counter: 0 }, length: 100 }];
+    const middle = [{ start: { peer: 1n, counter: 30 }, length: 20 }];
+    expect(styles.everyWinner(middle, "bold", undefined, (meta) => meta === inner)).toBe(
+      true,
+    );
+    expect(styles.everyWinner(whole, "bold", undefined, (meta) => meta === inner)).toBe(
+      false,
+    );
     expect(
-      styles.rangeHasKey([{ start: { peer: 1n, counter: 30 }, length: 20 }], "bold"),
-    ).toBe(false);
-    expect(
-      styles.runsContainMeta(
-        [{ start: { peer: 1n, counter: 0 }, length: 100 }],
+      styles.everyWinner(
+        [{ start: { peer: 1n, counter: 90 }, length: 20 }],
         "bold",
-        outer.startId,
-      ),
-    ).toBe(true);
-    expect(
-      styles.runsContainMeta(
-        [{ start: { peer: 1n, counter: 0 }, length: 100 }],
-        "bold",
-        inner.startId,
-      ),
-    ).toBe(false);
-    expect(
-      styles.transitions(
-        [{ start: { peer: 1n, counter: 0 }, length: 100 }],
-        "bold",
-        new Map([[7n, 1]]),
         undefined,
+        () => true,
+      ),
+    ).toBe(false);
+    expect(styles.someHasKey(middle, "bold", undefined)).toBe(true);
+    expect(styles.someHasKey(middle, "italic", undefined)).toBe(false);
+    expect(styles.someHasKey(middle, "bold", new Map())).toBe(false);
+    expect(
+      styles.winningRuns(
+        whole,
+        "bold",
+        inner,
+        undefined,
+        (left, right) => left === right,
+      ),
+    ).toEqual([{ start: { peer: 1n, counter: 25 }, length: 50 }]);
+    expect(
+      styles.winningRuns(
+        whole,
+        "bold",
+        outer,
+        undefined,
+        (left, right) => left === right,
       ),
     ).toEqual([
+      { start: { peer: 1n, counter: 0 }, length: 25 },
+      { start: { peer: 1n, counter: 75 }, length: 25 },
+    ]);
+    expect(styles.transitions(whole, "bold", new Map([[7n, 2]]), undefined)).toEqual([
       {
         run: { start: { peer: 1n, counter: 25 }, length: 50 },
         before: outer,
