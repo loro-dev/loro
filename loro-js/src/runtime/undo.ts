@@ -55,6 +55,11 @@ class UndoDeque<T> {
     this.#start = 0;
     this.#end = 0;
   }
+
+  *values(): IterableIterator<T> {
+    for (let index = this.#start; index < this.#end; index += 1)
+      yield this.#items.get(index)!;
+  }
 }
 
 const EMPTY_META: UndoItemValue = { value: null, cursors: [] };
@@ -107,6 +112,7 @@ export class UndoManager {
       this.#undo.push(item);
       throw error;
     }
+    this.#pruneTracked();
     return true;
   }
 
@@ -121,6 +127,7 @@ export class UndoManager {
       this.#redo.push(item);
       throw error;
     }
+    this.#pruneTracked();
     return true;
   }
 
@@ -183,14 +190,17 @@ export class UndoManager {
     this.#undo.clear();
     this.#redo.length = 0;
     this.#remoteTargets.clear();
+    this.#tracked.clear();
   }
 
   clearUndo(): void {
     this.#undo.clear();
+    this.#pruneTracked();
   }
 
   clearRedo(): void {
     this.#redo.length = 0;
+    this.#pruneTracked();
   }
 
   pause(): void {
@@ -273,6 +283,7 @@ export class UndoManager {
     }
     this.#redo.length = 0;
     this.#remoteTargets.clear();
+    this.#pruneTracked();
   }
 
   #invert(item: UndoItem, isUndo: boolean): UndoItem | undefined {
@@ -322,6 +333,40 @@ export class UndoManager {
     }
   }
 
+  /**
+   * Keeps only the tracked ranges that can still matter: a move is checked
+   * only against moves after an op on the undo or redo stack, so a range that
+   * ends before the earliest stacked op of its peer is dropped.
+   */
+  /** Number of tracked counter ranges (internal; used by tests). */
+  _trackedRangeCount(): number {
+    let count = 0;
+    for (const ranges of this.#tracked.values()) count += ranges.length;
+    return count;
+  }
+
+  #pruneTracked(): void {
+    const earliest = new Map<bigint, number>();
+    const visit = (item: UndoItem): void => {
+      const peer = BigInt(item.peer);
+      const start = earliest.get(peer);
+      if (start === undefined || item.range.start < start)
+        earliest.set(peer, item.range.start);
+    };
+    for (const item of this.#undo.values()) visit(item);
+    for (const item of this.#redo) visit(item);
+    for (const [peer, ranges] of this.#tracked) {
+      const start = earliest.get(peer);
+      if (start === undefined) {
+        this.#tracked.delete(peer);
+        continue;
+      }
+      let first = 0;
+      while (first < ranges.length && ranges[first]!.end <= start) first += 1;
+      if (first > 0) ranges.splice(0, first);
+    }
+  }
+
   #isTracked(id: { readonly peer: bigint; readonly counter: number }): boolean {
     const ranges = this.#tracked.get(id.peer);
     if (ranges === undefined) return false;
@@ -344,5 +389,6 @@ export class UndoManager {
 
   #trimUndo(): void {
     this.#undo.trimFront(this.#maxUndoSteps);
+    this.#pruneTracked();
   }
 }

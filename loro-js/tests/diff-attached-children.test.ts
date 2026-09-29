@@ -794,6 +794,29 @@ describe("diff and revertTo for containers attached by the range", () => {
     inserted.undo.undo();
     expect(inserted.doc.toJSON()).toEqual({ l: ["A", "new", "B", "C", "D"] });
   });
+
+  test("undo keeps only the tracked ranges its stacks can still use", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const map = doc.getMap("m");
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      maxUndoSteps: 10,
+      excludeOriginPrefixes: ["system"],
+    });
+    for (let round = 0; round < 5_000; round += 1) {
+      map.set("x", round + 1);
+      doc.commit();
+      undo.undo();
+      undo.redo();
+      // An excluded edit leaves a gap between the tracked counter ranges.
+      map.set("sys", round);
+      doc.commit({ origin: "system" });
+    }
+    expect(undo._trackedRangeCount()).toBeLessThanOrEqual(2 * 10 + 2);
+    undo.clear();
+    expect(undo._trackedRangeCount()).toBe(0);
+  });
 });
 
 interface TreeJson {
