@@ -57,9 +57,9 @@ Lockstep requires both implementations to emit the same local ops for the same
 API calls; an op-generation difference shows up as `lockstep` or
 `lockstep-throws` on the first affected action. On `main` without #1145 and #1143,
 most lockstep seeds diverge at the first delete of an absent map key, zero
-counter increment, or checkout of the current version; with both, 49 of 50
-Map/List/Text/Counter seeds matched Rust step by step, and the remaining one
-was the #1143 case.
+counter increment, or checkout of the current version. With #1145 alone, 49 of
+50 Map/List/Text/Counter seeds matched Rust step by step; the remaining one is
+the #1143 case.
 
 ## Running
 
