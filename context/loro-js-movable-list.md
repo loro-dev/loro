@@ -8,8 +8,8 @@ reproduce, the loro.js model that implements them, and how the differential
 suite checks the two against each other. Complexity rules still come from
 [loro-js-performance.md](loro-js-performance.md).
 
-Status: the model below is implemented. Import validation and atomic rollback
-("Validation and import atomicity") land in follow-up changes.
+Status: the model below and atomic imports are implemented. Import validation
+("Validation and import atomicity") lands in a follow-up change.
 
 ## Rust semantics (the contract)
 
@@ -211,7 +211,8 @@ Rust's rule for `from_move` inserts that transforms leave behind
 
 ## Validation and import atomicity
 
-Planned; not implemented yet. Import validation follows Rust #1125. A `Move`/`Set` whose element is unknown,
+Atomicity is implemented ([import-batch-atomicity.md](import-batch-atomicity.md),
+"loro.js"). Validation is planned. It follows Rust #1125. A `Move`/`Set` whose element is unknown,
 lives in another container, is outside the op's causal history, or (on a
 shallow doc) was deleted before the root is rejected with an error. So is a
 `from`/`to` outside the op-index range of its causal view. A `Move`/`Set` of a

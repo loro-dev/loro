@@ -342,6 +342,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   // Root-time map entries and tree nodes of a shallow doc, indexed per
   // container on first lookup.
   #shallowRootIndexes = new WeakMap<StateSnapshotStore, ShallowRootIndex>();
+  /**
+   * Undo log of in-place history mutations while an import runs, so a failed
+   * import can be rolled back; see `#atomically`. `null` while importing into a
+   * pristine document, which a failure simply empties again.
+   */
+  #importUndo: (() => void)[] | null | undefined;
+  /** Whether the running import has started to change container state. */
+  #importTouchedState = false;
   #textStyles = new Map<string, TextStyleExpand>([
     ["bold", "after"],
     ["italic", "after"],
@@ -685,6 +693,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   import(bytes: Uint8Array): ImportStatus {
     this.#commit({}, true);
+    const { status, emit } = this.#atomically(() => this.#importBlob(bytes));
+    emit();
+    return status;
+  }
+
+  #importBlob(bytes: Uint8Array): { status: ImportStatus; emit: () => void } {
     const before = this.#frontiersCodec();
     const beforeVersion = this.#historyVersion();
     const parsed = decodeDocument(bytes);
@@ -941,22 +955,33 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             change.operations.map((op) => formatContainerId(op.container)),
           ),
         ));
-    this.#emit(
-      "import",
-      undefined,
-      before,
-      this.#frontiersCodec(),
-      changed,
-      beforeValues,
-      preparedDiffs,
-    );
-    return deferredStatus ?? importStatus(integration.added, integration.pending);
+    const after = this.#frontiersCodec();
+    return {
+      status: deferredStatus ?? importStatus(integration.added, integration.pending),
+      emit: () =>
+        this.#emit(
+          "import",
+          undefined,
+          before,
+          after,
+          changed,
+          beforeValues,
+          preparedDiffs,
+        ),
+    };
   }
 
+  /** Imports every blob or, when one fails, none of them. */
   importBatch(blobs: readonly Uint8Array[]): ImportStatus {
     if (blobs.length === 0) return { success: new Map(), pending: null };
     if (blobs.length === 1) return this.import(blobs[0]!);
     this.#commit({}, true);
+    const { status, emit } = this.#atomically(() => this.#importBlobs(blobs));
+    emit();
+    return status;
+  }
+
+  #importBlobs(blobs: readonly Uint8Array[]): { status: ImportStatus; emit: () => void } {
     this.#materializeDeferredHistory();
     const before = this.#frontiersCodec();
     const beforeVersion = this.#historyVersion();
@@ -1048,16 +1073,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const changed = this.#detached
       ? new Set<string>()
       : changedContainerIds(integration.added);
-    this.#emit(
-      "import",
-      undefined,
-      before,
-      this.#frontiersCodec(),
-      changed,
-      beforeValues,
-      preparedDiffs,
-    );
-    return importStatus(integration.added, integration.pending);
+    const after = this.#frontiersCodec();
+    return {
+      status: importStatus(integration.added, integration.pending),
+      emit: () =>
+        this.#emit(
+          "import",
+          undefined,
+          before,
+          after,
+          changed,
+          beforeValues,
+          preparedDiffs,
+        ),
+    };
   }
 
   importUpdateBatch(blobs: readonly Uint8Array[]): ImportStatus {
@@ -4432,8 +4461,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const container = createContainer(codecTypeToPublic(id.containerType));
     container._attach(this, id, parent);
     this.#containers.set(key, container);
+    const containers = this.#containers;
+    this.#importUndo?.push(() => containers.delete(key));
     if (id.kind === "root" && !isMergeableContainerId(id)) {
-      this.#roots.set(id.name, container);
+      const roots = this.#roots;
+      const name = id.name;
+      const previous = roots.get(name);
+      roots.set(name, container);
+      this.#importUndo?.push(() => {
+        if (previous === undefined) roots.delete(name);
+        else roots.set(name, previous);
+      });
     }
     if (hydrate) this._ensureContainerHydrated(container);
     return container;
@@ -5290,6 +5328,108 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
   }
 
+  /**
+   * Runs an import so that it either completes or leaves no trace: history,
+   * pending changes, version, containers and state are restored when it
+   * throws, and no event has been emitted yet (the caller emits after success),
+   * so subscribers and undo managers never see a partial import. This mirrors
+   * the Rust contract in context/import-batch-atomicity.md.
+   */
+  #atomically<T>(run: () => T): T {
+    if (this.#importUndo !== undefined) return run();
+    const pristine =
+      this.#history.size === 0 &&
+      this.#pendingHistory.size === 0 &&
+      this.#deferredSnapshotHistory === undefined &&
+      this.#shallowRootStore === undefined;
+    const checkpoint = {
+      history: this.#history,
+      historyOrder: this.#historyOrder,
+      historyByPeer: this.#historyByPeer,
+      historyEndByPeer: this.#historyEndByPeer,
+      historyOperationCount: this.#historyOperationCount,
+      historyFrontiers: new Map(this.#historyFrontiers),
+      dependencyVersionCache: this.#dependencyVersionCache,
+      mapOperationHistory: this.#mapOperationHistory,
+      treeOperationHistory: this.#treeOperationHistory,
+      containersWithOperations: this.#containersWithOperations,
+      pendingHistory: new Map(this.#pendingHistory),
+      seenCommittedPeers: new Set(this.#seenCommittedPeers),
+      deferredSnapshotHistory: this.#deferredSnapshotHistory,
+      deferredSnapshotState: this.#deferredSnapshotState,
+      // Journaled per write (`#journalSnapshotSequence`): a document can hold
+      // one entry per hydrated sequence, too many to copy on every import.
+      snapshotSequences: pristine
+        ? new Map(this.#snapshotSequences)
+        : this.#snapshotSequences,
+      shallowRootEntries: this.#shallowRootEntries,
+      shallowStartVersion: this.#shallowStartVersion,
+      shallowRootVersion: this.#shallowRootVersion,
+      shallowRootFrontiers: this.#shallowRootFrontiers,
+      shallowRootStore: this.#shallowRootStore,
+      nextCounter: this.#nextCounter,
+      containers: pristine ? new Map(this.#containers) : this.#containers,
+      roots: pristine ? new Map(this.#roots) : this.#roots,
+    };
+    this.#importUndo = pristine ? null : [];
+    this.#importTouchedState = false;
+    try {
+      const result = run();
+      return result;
+    } catch (error) {
+      const undo = this.#importUndo;
+      const touchedState = this.#importTouchedState;
+      this.#importUndo = undefined;
+      if (undo === null) {
+        // Nothing existed before; drop everything the import added in place.
+        checkpoint.history.clear();
+        checkpoint.historyOrder = new OrderedIndex<HistoryRecord>(compareHistoryRecords);
+        checkpoint.historyByPeer.clear();
+        checkpoint.historyEndByPeer.clear();
+        checkpoint.mapOperationHistory.clear();
+        checkpoint.treeOperationHistory.clear();
+        checkpoint.containersWithOperations.clear();
+      } else {
+        for (let index = undo.length - 1; index >= 0; index -= 1) undo[index]!();
+      }
+      this.#history = checkpoint.history;
+      this.#historyOrder = checkpoint.historyOrder;
+      this.#historyByPeer = checkpoint.historyByPeer;
+      this.#historyEndByPeer = checkpoint.historyEndByPeer;
+      this.#historyOperationCount = checkpoint.historyOperationCount;
+      this.#historyFrontiers = checkpoint.historyFrontiers;
+      this.#sortedHistoryCache = undefined;
+      this.#dependencyVersionCache = checkpoint.dependencyVersionCache;
+      this.#mapOperationHistory = checkpoint.mapOperationHistory;
+      this.#treeOperationHistory = checkpoint.treeOperationHistory;
+      this.#containersWithOperations = checkpoint.containersWithOperations;
+      this.#pendingHistory = checkpoint.pendingHistory;
+      this.#seenCommittedPeers = checkpoint.seenCommittedPeers;
+      this.#deferredSnapshotHistory = checkpoint.deferredSnapshotHistory;
+      this.#deferredSnapshotState = checkpoint.deferredSnapshotState;
+      this.#snapshotSequences = checkpoint.snapshotSequences;
+      this.#shallowRootEntries = checkpoint.shallowRootEntries;
+      // The per-container record index may hold the rolled-back records.
+      this.#historyRevision += 1;
+      this.#containerHistoryIndex = undefined;
+      this.#shallowStartVersion = checkpoint.shallowStartVersion;
+      this.#shallowRootVersion = checkpoint.shallowRootVersion;
+      this.#shallowRootFrontiers = checkpoint.shallowRootFrontiers;
+      this.#shallowRootStore = checkpoint.shallowRootStore;
+      this.#nextCounter = checkpoint.nextCounter;
+      this.#containers = checkpoint.containers;
+      this.#roots = checkpoint.roots;
+      // State was changed in place; rebuild it from the restored history.
+      if (touchedState) {
+        this.#rebuildFromHistory(this.#detached ? this.#checkoutVersion : undefined);
+      }
+      throw error;
+    } finally {
+      this.#importUndo = undefined;
+      this.#importTouchedState = false;
+    }
+  }
+
   #readChangeBlock(bytes: Uint8Array): HistoryRecord[] {
     const block = decodeChangeBlock(bytes);
     return block.changes.map((change) => ({ change, keys: block.keys }));
@@ -5413,6 +5553,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             addedRecordIndices.delete(previous);
           }
           const previousLength = changeLength(previous.change);
+          this.#journalMergedRecord(previous, previousLength);
           const appended = appendHistoryRecord(previous, record, previousLength);
           this.#appendMergedHistoryRecord(previous, appended, previousLength);
         }
@@ -5494,6 +5635,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   #applyRecords(records: readonly HistoryRecord[], recording?: EventRecording): void {
+    if (this.#importUndo !== undefined) this.#importTouchedState = true;
     for (const record of records)
       this.#applyChange(record.change, record.keys, recording);
   }
@@ -6244,6 +6386,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    * `replaySnapshotStates` asks for the plain replay (a shallow root state).
    */
   #rebuildFromHistory(version?: VersionVector, replaySnapshotStates = false): void {
+    if (this.#importUndo !== undefined) this.#importTouchedState = true;
     const target = version ?? this.#historyVersion();
     this.#discardDeferredSnapshotState();
     for (const container of this.#containers.values()) container._reset();
@@ -6257,8 +6400,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       );
     }
     for (const [key, entry] of this.#snapshotSequences) {
-      if (entry.kind === "hydrated") this.#snapshotSequences.delete(key);
-      else if (!replaySnapshotStates) this.#rebuildFromSnapshotState(key, target);
+      if (entry.kind === "hydrated") {
+        this.#journalSnapshotSequence(key);
+        this.#snapshotSequences.delete(key);
+      } else if (!replaySnapshotStates) this.#rebuildFromSnapshotState(key, target);
     }
   }
 
@@ -6270,8 +6415,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    */
   #markSnapshotSequence(container: LoroContainer, version: VersionVector): void {
     if (container instanceof LoroList || container instanceof LoroText) {
+      this.#journalSnapshotSequence(container.id);
       this.#snapshotSequences.set(container.id, { kind: "hydrated", version });
     }
+  }
+
+  /** Records how to undo a write of `key` in `#snapshotSequences`. */
+  #journalSnapshotSequence(key: string): void {
+    if (!this.#importUndo) return;
+    const sequences = this.#snapshotSequences;
+    const entry = sequences.get(key);
+    this.#importUndo.push(() => {
+      if (entry === undefined) sequences.delete(key);
+      else sequences.set(key, entry);
+    });
   }
 
   /**
@@ -6475,6 +6632,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       container._swapState(snapshot);
       throw error;
     }
+    this.#journalSnapshotSequence(key);
     if (same) {
       this.#snapshotSequences.delete(key);
       return false;
@@ -6569,6 +6727,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const { peer, counter } of version._codecEntriesUnsorted()) {
       if (counter > (applied.get(peer) ?? 0)) applied.set(peer, counter);
     }
+    this.#journalSnapshotSequence(key);
     this.#snapshotSequences.set(key, { ...entry, applied });
     this.#dirtySnapshotContainers.add(key);
   }
@@ -6745,32 +6904,53 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   #setHistoryRecord(key: string, record: HistoryRecord, appended: HistoryRecord): void {
     const previous = this.#history.get(key);
-    this.#history.set(key, record);
-    if (previous !== undefined) this.#historyOrder.delete(previous);
-    this.#historyOrder.add(record);
+    const history = this.#history;
+    const order = this.#historyOrder;
+    history.set(key, record);
+    if (previous !== undefined) order.delete(previous);
+    order.add(record);
+    this.#importUndo?.push(() => {
+      order.delete(record);
+      if (previous === undefined) {
+        history.delete(key);
+      } else {
+        history.set(key, previous);
+        order.add(previous);
+      }
+    });
     this.#historyOperationCount +=
       changeLength(record.change) -
       (previous === undefined ? 0 : changeLength(previous.change));
     this.#sortedHistoryCache = undefined;
     this.#historyRevision += 1;
 
-    let peerRecords = this.#historyByPeer.get(record.change.id.peer);
+    const byPeer = this.#historyByPeer;
+    const peer = record.change.id.peer;
+    let peerRecords = byPeer.get(peer);
     if (peerRecords === undefined) {
       peerRecords = [];
-      this.#historyByPeer.set(record.change.id.peer, peerRecords);
+      byPeer.set(peer, peerRecords);
+      this.#importUndo?.push(() => byPeer.delete(peer));
     }
     if (previous !== undefined) {
       const previousIndex = lowerBoundHistory(peerRecords, previous.change.id.counter);
-      if (peerRecords[previousIndex] === previous) peerRecords.splice(previousIndex, 1);
+      if (peerRecords[previousIndex] === previous) {
+        peerRecords.splice(previousIndex, 1);
+        const records = peerRecords;
+        this.#importUndo?.push(() => records.splice(previousIndex, 0, previous));
+      }
     }
     const index = lowerBoundHistory(peerRecords, record.change.id.counter);
     peerRecords.splice(index, 0, record);
+    const records = peerRecords;
+    this.#importUndo?.push(() => records.splice(index, 1));
+    this.#journalHistoryEnd(peer);
     const last = peerRecords.at(-1);
     if (last === undefined) {
-      this.#historyEndByPeer.delete(record.change.id.peer);
+      this.#historyEndByPeer.delete(peer);
     } else {
       this.#historyEndByPeer.set(
-        record.change.id.peer,
+        peer,
         last.change.id.counter + changeLength(last.change),
       );
     }
@@ -6794,6 +6974,30 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#indexHistoryOperations(appended);
   }
 
+  /** Records how to undo `appendHistoryRecord`'s in-place growth of `record`. */
+  #journalMergedRecord(record: HistoryRecord, length: number): void {
+    if (!this.#importUndo) return;
+    const keys = record.keys;
+    const keyCount = keys.length;
+    const keyIndices = record.keyIndices;
+    const operations = record.change.operations as DecodedOperation[];
+    const operationCount = operations.length;
+    this.#importUndo.push(() => {
+      if (keyIndices === undefined) {
+        record.keys = keys;
+        delete record.keyIndices;
+      } else {
+        const grown = record.keys as string[];
+        for (const key of grown.slice(keyCount)) {
+          if (keyIndices.get(key)! >= keyCount) keyIndices.delete(key);
+        }
+        grown.length = keyCount;
+      }
+      operations.length = operationCount;
+      changeLengthCache.set(record.change, length);
+    });
+  }
+
   #appendMergedHistoryRecord(
     record: HistoryRecord,
     appended: HistoryRecord,
@@ -6802,6 +7006,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const appendedLength = changeLength(appended.change);
     this.#historyOperationCount += appendedLength;
     this.#historyRevision += 1;
+    this.#journalHistoryEnd(record.change.id.peer);
     this.#historyEndByPeer.set(
       record.change.id.peer,
       record.change.id.counter + previousLength + appendedLength,
@@ -6823,9 +7028,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#indexHistoryOperations(appended);
   }
 
+  #journalHistoryEnd(peer: bigint): void {
+    if (!this.#importUndo) return;
+    const ends = this.#historyEndByPeer;
+    const end = ends.get(peer);
+    this.#importUndo.push(() => {
+      if (end === undefined) ends.delete(peer);
+      else ends.set(peer, end);
+    });
+  }
+
   #indexHistoryOperations(record: HistoryRecord): void {
+    const undo = this.#importUndo;
     for (const operation of record.change.operations) {
-      this.#containersWithOperations.add(this.#containerKey(operation.container));
+      const containerKey = this.#containerKey(operation.container);
+      if (undo && !this.#containersWithOperations.has(containerKey)) {
+        const withOperations = this.#containersWithOperations;
+        undo.push(() => withOperations.delete(containerKey));
+      }
+      this.#containersWithOperations.add(containerKey);
       const content = operation.content;
       const indexed = {
         record,
@@ -6837,10 +7058,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       let treeOperation = false;
       if (content.type === "map-insert" || content.type === "map-delete") {
         const container = this.#containerKey(operation.container);
-        bySubject = this.#mapOperationHistory.get(container);
+        const histories = this.#mapOperationHistory;
+        bySubject = histories.get(container);
         if (bySubject === undefined) {
           bySubject = new Map();
-          this.#mapOperationHistory.set(container, bySubject);
+          histories.set(container, bySubject);
+          undo?.push(() => histories.delete(container));
         }
         subject = content.key;
       } else if (
@@ -6849,10 +7072,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         content.type === "tree-delete"
       ) {
         const container = this.#containerKey(operation.container);
-        bySubject = this.#treeOperationHistory.get(container);
+        const histories = this.#treeOperationHistory;
+        bySubject = histories.get(container);
         if (bySubject === undefined) {
           bySubject = new Map();
-          this.#treeOperationHistory.set(container, bySubject);
+          histories.set(container, bySubject);
+          undo?.push(() => histories.delete(container));
         }
         subject = idKey(content.subject);
         treeOperation = true;
@@ -6868,23 +7093,36 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           ...(treeOperation ? { placementsByPeer: new Map() } : {}),
         };
         bySubject.set(subject, history);
+        const subjects = bySubject;
+        const key = subject;
+        undo?.push(() => subjects.delete(key));
       }
-      history.byWriter.add(indexed);
-      let peerOperations = history.byPeer.get(record.change.id.peer);
+      const subjectHistory = history;
+      subjectHistory.byWriter.add(indexed);
+      undo?.push(() => subjectHistory.byWriter.delete(indexed));
+      const peer = record.change.id.peer;
+      let peerOperations = subjectHistory.byPeer.get(peer);
       if (peerOperations === undefined) {
         peerOperations = [];
-        history.byPeer.set(record.change.id.peer, peerOperations);
+        subjectHistory.byPeer.set(peer, peerOperations);
+        undo?.push(() => subjectHistory.byPeer.delete(peer));
       }
       const peerIndex = lowerBoundIndexedOperation(peerOperations, operation.counter);
       peerOperations.splice(peerIndex, 0, indexed);
+      const operations = peerOperations;
+      undo?.push(() => operations.splice(peerIndex, 1));
       if (content.type === "tree-create" || content.type === "tree-move") {
-        let placements = history.placementsByPeer!.get(record.change.id.peer);
+        const placementsByPeer = subjectHistory.placementsByPeer!;
+        let placements = placementsByPeer.get(peer);
         if (placements === undefined) {
           placements = [];
-          history.placementsByPeer!.set(record.change.id.peer, placements);
+          placementsByPeer.set(peer, placements);
+          undo?.push(() => placementsByPeer.delete(peer));
         }
         const placementIndex = lowerBoundIndexedOperation(placements, operation.counter);
         placements.splice(placementIndex, 0, indexed);
+        const placed = placements;
+        undo?.push(() => placed.splice(placementIndex, 1));
       }
     }
   }
@@ -8138,6 +8376,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     snapshotVersion: VersionVector | undefined,
     shallowRoot = false,
   ): void {
+    if (this.#importUndo !== undefined) this.#importTouchedState = true;
     if (store.kind !== "sstable") return;
     // The root store keys are formatted here anyway; keep them for the shallow
     // root fallbacks (#shallowRootEntryIndex).
