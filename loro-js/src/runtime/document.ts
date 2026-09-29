@@ -4229,13 +4229,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (parent !== undefined && !tree.has(parent)) {
       throw new RangeError(`tree parent ${parent} does not exist`);
     }
-    const position = tree._positionFor(parentId, index);
+    const { position, rearranged } = tree._positionFor(parentId, index);
     this.#appendAndApply(
       tree,
       { type: "tree-create", subject, parent: parentId, position },
       1,
     );
+    this.#moveRearrangedTreeNodes(tree, parentId, rearranged);
     return new LoroTreeNode(tree, subject);
+  }
+
+  /** Moves the siblings that `_positionFor` gave new positions, like Rust. */
+  #moveRearrangedTreeNodes(
+    tree: LoroTree,
+    parent: CodecId | undefined,
+    rearranged: readonly { id: CodecId; position: Uint8Array }[],
+  ): void {
+    for (const { id, position } of rearranged) {
+      this.#appendAndApply(tree, { type: "tree-move", subject: id, parent, position }, 1);
+    }
   }
 
   _treeMove(tree: LoroTree, target: TreeID, parent?: TreeID, index?: number): void {
@@ -4245,19 +4257,31 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     const subject = parseTreeId(target);
     const parentId = parent === undefined ? undefined : parseTreeId(parent);
+    // Like Rust's is_ancestor_of: a deleted node's parent is the deleted
+    // root, so the walk stops there. It is bounded so that a malformed cycle
+    // cannot loop forever.
     let ancestor = parentId;
-    while (ancestor !== undefined) {
+    for (let steps = 0; ancestor !== undefined && steps <= tree._nodes.size; steps += 1) {
       if (idsEqual(ancestor, subject)) {
         throw new RangeError("cannot move a tree node below itself or its descendant");
       }
-      ancestor = tree._nodes.get(formatTreeId(ancestor))?.parent;
+      const record = tree._nodes.get(formatTreeId(ancestor));
+      ancestor = record === undefined || record.deleted ? undefined : record.parent;
     }
-    const position = tree._positionFor(parentId, index, subject);
+    // Rust's mov_with_txn: moving a node to where it already is records nothing.
+    const record = tree._nodes.get(target)!;
+    if (!record.deleted && sameOptionalCodecId(record.parent, parentId)) {
+      const current = tree._indexOf(record);
+      const siblings = tree._childCount(parentId);
+      if (current === (index ?? siblings - 1)) return;
+    }
+    const { position, rearranged } = tree._positionFor(parentId, index, subject);
     this.#appendAndApply(
       tree,
       { type: "tree-move", subject, parent: parentId, position },
       1,
     );
+    this.#moveRearrangedTreeNodes(tree, parentId, rearranged);
   }
 
   _treeDelete(tree: LoroTree, target: TreeID): void {
@@ -11314,6 +11338,15 @@ function treeNodeAtPath(
   if (part.includes("@")) return tree.getNodeByID(part as TreeID);
   const index = parseOptionalPathIndex(part);
   return index === undefined ? undefined : tree._nodeAt(undefined, index);
+}
+
+function sameOptionalCodecId(
+  left: CodecId | undefined,
+  right: CodecId | undefined,
+): boolean {
+  return left === undefined || right === undefined
+    ? left === right
+    : idsEqual(left, right);
 }
 
 function sameFrontierSet(left: readonly OpId[], right: readonly OpId[]): boolean {

@@ -1,4 +1,4 @@
-import { bytesToHex } from "../codec/bytes";
+import { bytesEqual, bytesToHex } from "../codec/bytes";
 import {
   containerTypeFromHistoricalByte,
   containerTypeToHistoricalByte,
@@ -7,7 +7,7 @@ import { PostcardReader, PostcardWriter } from "../codec/postcard";
 import type { ContainerId as CodecContainerId, Id as CodecId } from "../codec/types";
 import { formatContainerId, formatTreeId, parseContainerId } from "./ids";
 import type { LoroDoc } from "./document";
-import { fractionalIndexBetween } from "./fractional-index";
+import { fractionalIndexBetween, fractionalIndexesBetween } from "./fractional-index";
 import { OrderedIndex } from "./ordered-index";
 import { SequenceIndex, SequenceSpan } from "./sequence-index";
 import type { SequenceIdRun } from "./sequence-index";
@@ -3028,11 +3028,18 @@ export class LoroTree<
     );
   }
 
+  /**
+   * Port of Rust's `generate_fi_at`: the position for a node placed at
+   * `index` among `parent`'s children, not counting `exclude`. When both
+   * neighbors share a position there is no index between them, so the right
+   * neighbor and every following sibling with that position get new
+   * positions in `rearranged`, in order.
+   */
   _positionFor(
     parent: CodecId | undefined,
     index?: number,
     exclude?: CodecId,
-  ): Uint8Array {
+  ): { position: Uint8Array; rearranged: { id: CodecId; position: Uint8Array }[] } {
     const children = this._children.get(treeParentKey(parent));
     const excluded =
       exclude === undefined ? undefined : this._nodes.get(formatTreeId(exclude));
@@ -3053,10 +3060,29 @@ export class LoroTree<
           ? siblingIndex + 1
           : siblingIndex,
       );
-    return fractionalIndexBetween(
-      position === 0 ? undefined : siblingAt(position - 1)!.position,
-      position === length ? undefined : siblingAt(position)!.position,
-    );
+    const left = position === 0 ? undefined : siblingAt(position - 1)!.position;
+    const right = position === length ? undefined : siblingAt(position)!;
+    if (left === undefined || right === undefined || !bytesEqual(left, right.position)) {
+      return { position: fractionalIndexBetween(left, right?.position), rearranged: [] };
+    }
+    const reset = [right];
+    let nextRight: Uint8Array | undefined;
+    for (let sibling = position + 1; sibling < length; sibling += 1) {
+      const record = siblingAt(sibling)!;
+      if (!bytesEqual(record.position, left)) {
+        nextRight = record.position;
+        break;
+      }
+      reset.push(record);
+    }
+    const positions = fractionalIndexesBetween(left, nextRight, reset.length + 1);
+    return {
+      position: positions[0]!,
+      rearranged: reset.map((record, offset) => ({
+        id: record.id,
+        position: positions[offset + 1]!,
+      })),
+    };
   }
 
   _setRecord(record: TreeNodeRecord): void {
@@ -3198,12 +3224,28 @@ export class LoroTreeNode<T extends Record<string, unknown> = Record<string, unk
   }
 
   moveAfter(target: LoroTreeNode<T>): void {
+    // Rust's mov_after: the index is counted without this node.
     const parent = target.parent();
-    this.move(parent, target.index() + 1);
+    let index = target.index() + 1;
+    if (this.#hasParent(parent) && this.index() < index) index -= 1;
+    this.move(parent, index);
   }
 
   moveBefore(target: LoroTreeNode<T>): void {
-    this.move(target.parent(), target.index());
+    const parent = target.parent();
+    let index = target.index();
+    if (this.#hasParent(parent) && index >= 1 && this.index() < index) index -= 1;
+    this.move(parent, index);
+  }
+
+  #hasParent(parent: LoroTreeNode<T> | undefined): boolean {
+    const record = this.#record();
+    return (
+      !record.deleted &&
+      (parent === undefined
+        ? record.parent === undefined
+        : record.parent !== undefined && formatTreeId(record.parent) === parent.id)
+    );
   }
 
   parent(): LoroTreeNode<T> | undefined {

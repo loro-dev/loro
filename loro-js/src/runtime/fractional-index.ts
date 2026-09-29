@@ -25,6 +25,36 @@ export function fractionalIndexBetween(
   return terminated(between);
 }
 
+/**
+ * `n` increasing indexes between the bounds, spread by bisection. Port of
+ * Rust's `FractionalIndex::generate_n_evenly`.
+ */
+export function fractionalIndexesBetween(
+  lower: Uint8Array | undefined,
+  upper: Uint8Array | undefined,
+  n: number,
+): Uint8Array[] {
+  const output: Uint8Array[] = [];
+  const generate = (
+    low: Uint8Array | undefined,
+    high: Uint8Array | undefined,
+    count: number,
+  ): void => {
+    if (count === 0) return;
+    const middle = fractionalIndexBetween(low, high);
+    if (count === 1) {
+      output.push(middle);
+      return;
+    }
+    const half = Math.floor(count / 2);
+    generate(low, middle, half);
+    output.push(middle);
+    generate(middle, high, count - half - 1);
+  };
+  generate(lower, upper, n);
+  return output;
+}
+
 function terminated(bytes: number[]): Uint8Array {
   return Uint8Array.from([...bytes, TERMINATOR]);
 }
