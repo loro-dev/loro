@@ -1525,38 +1525,82 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     items: readonly TreeDiffItem[],
     from: VersionVector,
   ): TreeDiffItem[] {
+    if (items.length === 0) return [];
     const aliveCache = new Map<string, boolean>();
     const aliveAtFrom = (node: CodecId): boolean =>
       this.#treeNodeAliveAt(tree, node, from, aliveCache);
+    const hiddenCache = new Map<string, boolean>();
+    const hiddenNow = (record: TreeNodeRecord): boolean =>
+      this.#isTreeRecordHidden(tree, record, hiddenCache);
+    // A node that is hidden now (it or an ancestor is deleted) and was alive
+    // at `from` is deleted, whatever its item: a move into a deleted subtree
+    // or a parent the receiver lacks shows as its removal. A node alive at
+    // neither version changes nothing visible and is left out.
+    const deleted = new Set<string>();
     const revived = new Set<string>();
     for (const item of items) {
-      if (item.action === "delete") continue;
+      if (item.action === "delete") {
+        deleted.add(item.target);
+        continue;
+      }
       const record = tree._nodes.get(item.target);
-      if (record === undefined || this.#isTreeRecordHidden(tree, record)) continue;
+      if (record === undefined) continue;
+      if (hiddenNow(record)) {
+        if (aliveAtFrom(record.id)) deleted.add(item.target);
+        continue;
+      }
       if (item.action === "create" || !aliveAtFrom(record.id)) revived.add(item.target);
     }
-    if (revived.size === 0) return [...items];
+    // Whether an ancestor is revived, memoized along each walked path.
+    const insideCache = new Map<string, boolean>();
     const insideRevived = (target: TreeID): boolean => {
-      let parent = tree._nodes.get(target)?.parent;
-      while (parent !== undefined) {
+      const path: string[] = [];
+      let result = false;
+      for (let parent = tree._nodes.get(target)?.parent; parent !== undefined; ) {
         const key = formatTreeId(parent);
-        if (revived.has(key)) return true;
+        const known = insideCache.get(key);
+        if (known !== undefined) {
+          result = known;
+          break;
+        }
+        if (revived.has(key)) {
+          result = true;
+          break;
+        }
+        path.push(key);
         parent = tree._nodes.get(key)?.parent;
       }
-      return false;
+      for (const key of path) insideCache.set(key, result);
+      return result;
     };
 
-    // Deletes come first, as in Rust: the diff's own deletes, then the old
-    // copies of moved-in live nodes that a revived subtree recreates.
+    // Items apply in order, as in Rust, so each needs the tree its earlier
+    // items leave: first the moves of live nodes, parent first, so a node
+    // leaves a subtree before the subtree is deleted; then the deletes (the
+    // diff's own, and the old copies of moved-in nodes that a revived subtree
+    // recreates); then the revived subtrees, parent first. Only the topmost
+    // deleted nodes are listed: a delete removes the node's subtree.
     const deleteTargets: CodecId[] = [];
-    for (const item of items) {
-      if (item.action === "delete") deleteTargets.push(parseTreeId(item.target));
+    for (const target of deleted) {
+      const node = parseTreeId(target);
+      const parent = this.#treeNodePlacementAt(tree, node, from)?.parent;
+      if (parent === undefined || !deleted.has(formatTreeId(parent)))
+        deleteTargets.push(node);
     }
-    const body: TreeDiffItem[] = [];
+    const moves: TreeNodeRecord[] = [];
+    const revivedTrees: { records: TreeNodeRecord[]; indices: number[] }[] = [];
     for (const item of items) {
-      if (item.action === "delete") continue;
+      if (item.action === "delete" || deleted.has(item.target)) continue;
       if (!revived.has(item.target)) {
-        if (!insideRevived(item.target)) body.push(item);
+        const record = tree._nodes.get(item.target);
+        if (
+          record !== undefined &&
+          !hiddenNow(record) &&
+          item.action === "move" &&
+          !insideRevived(item.target)
+        ) {
+          moves.push(record);
+        }
         continue;
       }
       if (insideRevived(item.target)) continue;
@@ -1595,37 +1639,70 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         if (parent !== undefined && alive.has(idKey(parent))) continue;
         deleteTargets.push(record.id);
       }
-      for (let position = 0; position < records.length; position += 1) {
-        const record = records[position]!;
-        body.push({
-          target: formatTreeId(record.id),
-          action: "create",
-          parent: record.parent === undefined ? undefined : formatTreeId(record.parent),
-          index: indices[position]!,
-          fractionalIndex: bytesToHex(record.position).toUpperCase(),
-        });
-      }
+      revivedTrees.push({ records, indices });
     }
+    // Parent first by depth at `to`: a moved node's new ancestors are then in
+    // place, so no move makes a cycle.
+    const depths = new Map<string, number>();
+    const depthOf = (record: TreeNodeRecord): number => {
+      const path: TreeNodeRecord[] = [];
+      let depth = 0;
+      for (let current: TreeNodeRecord | undefined = record; current !== undefined; ) {
+        const known = depths.get(idKey(current.id));
+        if (known !== undefined) {
+          depth = known;
+          break;
+        }
+        path.push(current);
+        current =
+          current.parent === undefined
+            ? undefined
+            : tree._nodes.get(formatTreeId(current.parent));
+      }
+      for (let index = path.length - 1; index >= 0; index -= 1) {
+        depth += 1;
+        depths.set(idKey(path[index]!.id), depth);
+      }
+      return depths.get(idKey(record.id))!;
+    };
+    const movesByDepth = moves
+      .map((record) => ({ record, depth: depthOf(record) }))
+      .sort((left, right) => left.depth - right.depth)
+      .map(({ record }) => record);
     const changed = new Set(items.map((item) => item.target));
-    return [...this.#treeDeletesAt(tree, deleteTargets, changed, from), ...body];
+    return this.#sequenceTreeItems(
+      tree,
+      movesByDepth,
+      deleteTargets,
+      revivedTrees,
+      changed,
+      from,
+      aliveAtFrom,
+    );
   }
 
   /**
-   * Delete items for `targets`, applied in order to the tree as it was at
-   * `from`: each `oldParent` and `oldIndex` come from the target's placement at
-   * `from`, less the siblings deleted by earlier items. The sibling order of
-   * each affected parent is built once, from its unchanged current children
-   * and the changed nodes placed under it at `from` (both resolved without
-   * the `to` state, which lacks nodes that only exist at `from`), and indexes
-   * are counted with a Fenwick tree: O((changed + siblings) log n).
+   * Emits `moves`, then deletes of `deleteTargets`, then creates of
+   * `revivedTrees`, each index counted in the tree that the earlier items
+   * leave, starting from the tree at `from`. Only parents that exist at
+   * `from` need counting: a recreated parent gets its children in order.
+   * Under such a parent the children at any moment are the unchanged ones
+   * plus the present slots of changed nodes: a slot at `from` for each
+   * changed node that was there, and a slot at `to` for each moved or revived
+   * node placed there. All are in sibling order, so the index of a slot is the
+   * number of unchanged children before it (the current rank less the changed
+   * nodes before it now) plus the present changed slots before it, kept in a
+   * Fenwick tree. The cost is O(changed log n), whatever the sibling count.
    */
-  #treeDeletesAt(
+  #sequenceTreeItems(
     tree: LoroTree,
-    targets: readonly CodecId[],
+    moves: readonly TreeNodeRecord[],
+    deleteTargets: readonly CodecId[],
+    revivedTrees: readonly { records: TreeNodeRecord[]; indices: number[] }[],
     changed: ReadonlySet<string>,
     from: VersionVector,
+    aliveAtFrom: (node: CodecId) => boolean,
   ): TreeDiffItem[] {
-    if (targets.length === 0) return [];
     const placements = new Map<string, TreePlacement | undefined>();
     const placementOf = (node: CodecId): TreePlacement | undefined => {
       const key = idKey(node);
@@ -1635,54 +1712,164 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     };
     const parentKey = (parent: CodecId | undefined): string =>
       parent === undefined ? "" : idKey(parent);
-    const affected = new Map<string, CodecId | undefined>();
-    for (const target of targets) {
-      const placement = placementOf(target);
-      if (placement !== undefined)
-        affected.set(parentKey(placement.parent), placement.parent);
+    const oldParentOf = (node: CodecId): { parent: CodecId | undefined } | undefined => {
+      if (!aliveAtFrom(node)) return undefined;
+      const placement = placementOf(node);
+      return placement === undefined ? undefined : { parent: placement.parent };
+    };
+
+    type Slot = { key: TreeSiblingKey; node: string; isNew: boolean };
+    interface ParentOrder {
+      readonly parent: CodecId | undefined;
+      readonly slots: Slot[];
+      // Keys of the changed nodes under the parent now, sorted.
+      readonly current: TreeSiblingKey[];
+      readonly old: Map<string, number>;
+      readonly new: Map<string, number>;
+      counts: Fenwick;
     }
-    // Changed nodes placed under an affected parent at `from`.
-    const changedByParent = new Map<string, TreeSiblingKey[]>();
+    const parents = new Map<string, ParentOrder>();
+    const parentEntry = (parent: CodecId | undefined): ParentOrder => {
+      const key = parentKey(parent);
+      let entry = parents.get(key);
+      if (entry === undefined) {
+        entry = {
+          parent,
+          slots: [],
+          current: [],
+          old: new Map(),
+          new: new Map(),
+          counts: new Fenwick(0),
+        };
+        parents.set(key, entry);
+      }
+      return entry;
+    };
+    for (const record of moves) {
+      const old = oldParentOf(record.id);
+      if (old !== undefined) parentEntry(old.parent);
+      parentEntry(record.parent);
+    }
+    for (const target of deleteTargets) {
+      const old = oldParentOf(target);
+      if (old !== undefined) parentEntry(old.parent);
+    }
+    for (const { records } of revivedTrees) parentEntry(records[0]!.parent);
     for (const target of changed) {
       const node = parseTreeId(target);
-      const placement = placementOf(node);
-      if (placement === undefined || placement.deleted) continue;
-      const key = parentKey(placement.parent);
-      if (!affected.has(key)) continue;
-      let list = changedByParent.get(key);
-      if (list === undefined) changedByParent.set(key, (list = []));
-      list.push(siblingKey(node, placement));
-    }
-    const orders = new Map<string, { position: Map<string, number>; counts: Fenwick }>();
-    for (const [key, parent] of affected) {
-      const siblings = [...(changedByParent.get(key) ?? [])];
-      for (const child of tree._childrenOf(parent)) {
-        if (!changed.has(formatTreeId(child.id)))
-          siblings.push(siblingKey(child.id, child));
+      // A slot at `from`, for a changed node that was under the parent then.
+      const old = oldParentOf(node);
+      const fromEntry =
+        old === undefined ? undefined : parents.get(parentKey(old.parent));
+      if (fromEntry !== undefined) {
+        fromEntry.slots.push({
+          key: siblingKey(node, placementOf(node)!),
+          node: target,
+          isNew: false,
+        });
       }
-      siblings.sort(compareSiblingKeys);
-      const position = new Map(
-        siblings.map((sibling, index) => [idKey(sibling.id), index]),
-      );
-      orders.set(key, { position, counts: new Fenwick(siblings.length) });
+      // A changed node under the parent now is not one of its unchanged children.
+      const record = tree._nodes.get(target);
+      const nowEntry =
+        record === undefined || record.deleted
+          ? undefined
+          : parents.get(parentKey(record.parent));
+      if (nowEntry !== undefined) nowEntry.current.push(siblingKey(record!.id, record!));
     }
-    const deletes: TreeDiffItem[] = [];
-    for (const target of targets) {
-      const placement = placementOf(target);
-      const order =
-        placement === undefined ? undefined : orders.get(parentKey(placement.parent));
-      const index = order?.position.get(idKey(target));
-      if (placement === undefined || order === undefined || index === undefined) continue;
-      deletes.push({
+    // Slots at `to`: moved nodes and the tops of revived subtrees.
+    for (const record of [...moves, ...revivedTrees.map(({ records }) => records[0]!)]) {
+      parentEntry(record.parent).slots.push({
+        key: siblingKey(record.id, record),
+        node: formatTreeId(record.id),
+        isNew: true,
+      });
+    }
+    for (const entry of parents.values()) {
+      const { slots } = entry;
+      slots.sort(
+        (left, right) =>
+          compareSiblingKeys(left.key, right.key) ||
+          Number(left.isNew) - Number(right.isNew),
+      );
+      slots.forEach((slot, index) =>
+        (slot.isNew ? entry.new : entry.old).set(slot.node, index),
+      );
+      entry.counts = new Fenwick(slots.length, (index) => !slots[index]!.isNew);
+      entry.current.sort(compareSiblingKeys);
+    }
+    // Unchanged children of `entry` that sort before `key`.
+    const unchangedBefore = (entry: ParentOrder, key: TreeSiblingKey): number => {
+      let low = 0;
+      let high = entry.current.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (compareSiblingKeys(entry.current[middle]!, key) < 0) low = middle + 1;
+        else high = middle;
+      }
+      return tree._childRank(entry.parent, key) - low;
+    };
+    const indexOf = (entry: ParentOrder, slot: number): number =>
+      unchangedBefore(entry, entry.slots[slot]!.key) + entry.counts.prefix(slot);
+    const removeOld = (
+      node: CodecId,
+    ): { parent: CodecId | undefined; index: number } | undefined => {
+      const old = oldParentOf(node);
+      const entry = old === undefined ? undefined : parents.get(parentKey(old.parent));
+      const slot = entry?.old.get(formatTreeId(node));
+      if (old === undefined || entry === undefined || slot === undefined)
+        return undefined;
+      const index = indexOf(entry, slot);
+      entry.counts.remove(slot);
+      return { parent: old.parent, index };
+    };
+    const addNew = (record: TreeNodeRecord): number => {
+      const entry = parents.get(parentKey(record.parent))!;
+      const slot = entry.new.get(formatTreeId(record.id))!;
+      entry.counts.add(slot);
+      return indexOf(entry, slot);
+    };
+    const fractionalIndex = (record: TreeNodeRecord): string =>
+      bytesToHex(record.position).toUpperCase();
+    const parentId = (parent: CodecId | undefined): TreeID | undefined =>
+      parent === undefined ? undefined : formatTreeId(parent);
+
+    const result: TreeDiffItem[] = [];
+    for (const record of moves) {
+      const old = removeOld(record.id);
+      const index = addNew(record);
+      result.push({
+        target: formatTreeId(record.id),
+        action: "move",
+        parent: parentId(record.parent),
+        index,
+        fractionalIndex: fractionalIndex(record),
+        oldParent: parentId(old?.parent),
+        oldIndex: old?.index ?? 0,
+      });
+    }
+    for (const target of deleteTargets) {
+      const old = removeOld(target);
+      if (old === undefined) continue;
+      result.push({
         target: formatTreeId(target),
         action: "delete",
-        oldParent:
-          placement.parent === undefined ? undefined : formatTreeId(placement.parent),
-        oldIndex: order.counts.prefix(index),
+        oldParent: parentId(old.parent),
+        oldIndex: old.index,
       });
-      order.counts.remove(index);
     }
-    return deletes;
+    for (const { records, indices } of revivedTrees) {
+      for (let position = 0; position < records.length; position += 1) {
+        const record = records[position]!;
+        result.push({
+          target: formatTreeId(record.id),
+          action: "create",
+          parent: parentId(record.parent),
+          index: position === 0 ? addNew(record) : indices[position]!,
+          fractionalIndex: fractionalIndex(record),
+        });
+      }
+    }
+    return result;
   }
 
   /** Whether `container` is reachable from a root container in the current state. */
@@ -1708,15 +1895,36 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return false;
   }
 
-  #isTreeRecordHidden(tree: LoroTree, record: TreeNodeRecord): boolean {
+  /**
+   * Whether `record` or an ancestor is deleted. `cache` memoizes every node on
+   * the walked path, so the nodes of a deep chain resolve in linear time.
+   */
+  #isTreeRecordHidden(
+    tree: LoroTree,
+    record: TreeNodeRecord,
+    cache?: Map<string, boolean>,
+  ): boolean {
+    const path: string[] = [];
+    let result = false;
     for (let current: TreeNodeRecord | undefined = record; current !== undefined; ) {
-      if (current.deleted) return true;
+      const key = cache === undefined ? "" : idKey(current.id);
+      const known = cache?.get(key);
+      if (known !== undefined) {
+        result = known;
+        break;
+      }
+      if (current.deleted) {
+        result = true;
+        break;
+      }
+      if (cache !== undefined) path.push(key);
       current =
         current.parent === undefined
           ? undefined
           : tree._nodes.get(formatTreeId(current.parent));
     }
-    return false;
+    for (const key of path) cache!.set(key, result);
+    return result;
   }
 
   /** `node`'s own placement at `version`, or undefined if it did not exist yet. */
@@ -2158,8 +2366,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   /**
-   * Checks the list deltas of every entry before anything is applied, so a
-   * list delta out of range rejects the batch as a whole. List lengths are
+   * Checks the list deltas and tree items of every entry before anything is
+   * applied, so an out-of-range list delta or a tree item that cannot apply
+   * (see validateTreeItems) rejects the batch as a whole. List lengths are
    * simulated in batch order: an entry starts from the list's current length
    * (looked up without creating anything), the hidden length of a mergeable
    * child, or 0 for a child that an earlier entry creates, and later entries
@@ -2170,6 +2379,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   ): Set<number> {
     const checked = new Set<number>();
     const lengths = new Map<ContainerID, number>();
+    const treeState = newTreeValidationState();
     const created = new Set<ContainerID>();
     const noteChild = (value: unknown): void => {
       const childId = diffContainerId(value);
@@ -2188,6 +2398,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       const diff = entry[1] as Diff | JsonDiff;
       if (diff?.type === "map") {
         for (const value of Object.values(diff.updated ?? {})) noteChild(value);
+        continue;
+      }
+      if (diff?.type === "tree") {
+        const existing = this.#peekDiffContainer(id);
+        if (existing instanceof LoroTree || created.has(id)) {
+          validateTreeItems(
+            existing instanceof LoroTree ? existing : undefined,
+            diff.diff,
+            treeState,
+          );
+        }
         continue;
       }
       if (diff?.type !== "list") continue;
@@ -2377,26 +2598,23 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const resolveNode = (source: TreeID): TreeID | undefined =>
       treeRemap.get(source) ?? (tree.has(source) ? source : undefined);
 
-    for (const item of diff) {
-      if (item.action !== "delete") continue;
-      const target = resolveNode(item.target);
-      if (target !== undefined) tree.delete(target);
-    }
-
-    const pending = diff.filter(
-      (item): item is Extract<TreeDiffItem, { action: "create" | "move" }> =>
-        item.action !== "delete",
-    );
+    // Items apply in order, as in Rust: each index refers to the tree that the
+    // earlier items leave. An item whose parent does not exist yet waits
+    // until a later pass, after the item that creates it.
+    let pending: readonly TreeDiffItem[] = diff;
     while (pending.length > 0) {
-      let progressed = false;
-      for (let index = 0; index < pending.length; ) {
-        const item = pending[index]!;
-        const parent = item.parent === undefined ? undefined : resolveNode(item.parent);
-        if (item.parent !== undefined && parent === undefined) {
-          index += 1;
+      const deferred: TreeDiffItem[] = [];
+      for (const item of pending) {
+        if (item.action === "delete") {
+          const target = resolveNode(item.target);
+          if (target !== undefined) tree.delete(target);
           continue;
         }
-
+        const parent = item.parent === undefined ? undefined : resolveNode(item.parent);
+        if (item.parent !== undefined && parent === undefined) {
+          deferred.push(item);
+          continue;
+        }
         if (item.action === "create") {
           const node = tree.createNode(parent, item.index);
           treeRemap.set(item.target, node.id);
@@ -2411,12 +2629,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           const target = resolveNode(item.target);
           if (target !== undefined) tree.move(target, parent, item.index);
         }
-        pending.splice(index, 1);
-        progressed = true;
       }
-      if (!progressed) {
+      if (deferred.length === pending.length) {
         throw new RangeError("tree diff refers to a parent that does not exist");
       }
+      pending = deferred;
     }
   }
 
@@ -10411,14 +10628,14 @@ function isTextEventValue(value: unknown): value is TextEventValue {
   );
 }
 
-/** Counts present positions; all start present. */
+/** Counts present positions; `present` gives each one's initial state. */
 class Fenwick {
   readonly #tree: Int32Array;
 
-  constructor(length: number) {
+  constructor(length: number, present: (index: number) => boolean = () => true) {
     this.#tree = new Int32Array(length + 1);
     for (let index = 1; index <= length; index += 1) {
-      this.#tree[index] = this.#tree[index]! + 1;
+      if (present(index - 1)) this.#tree[index] = this.#tree[index]! + 1;
       const parent = index + (index & -index);
       if (parent <= length) this.#tree[parent] = this.#tree[parent]! + this.#tree[index]!;
     }
@@ -10429,6 +10646,12 @@ class Fenwick {
     let sum = 0;
     for (let at = index; at > 0; at -= at & -at) sum += this.#tree[at]!;
     return sum;
+  }
+
+  add(index: number): void {
+    for (let at = index + 1; at < this.#tree.length; at += at & -at) {
+      this.#tree[at] = this.#tree[at]! + 1;
+    }
   }
 
   remove(index: number): void {
@@ -10466,6 +10689,127 @@ function compareSiblingKeys(left: TreeSiblingKey, right: TreeSiblingKey): number
     (left.id.peer < right.id.peer ? -1 : left.id.peer > right.id.peer ? 1 : 0) ||
     left.id.counter - right.id.counter
   );
+}
+
+/** What earlier tree items of a batch changed, as validateTreeItems tracks it. */
+interface TreeValidationState {
+  // Source node -> the node the batch resolves it to (a created node gets a
+  // fresh key), shared by every tree in the batch as applyDiff's remap is.
+  readonly remap: Map<TreeID, string>;
+  readonly parents: Map<string, string | undefined>;
+  readonly deleted: Map<string, boolean>;
+  readonly counts: Map<string, number>;
+  created: number;
+}
+
+function newTreeValidationState(): TreeValidationState {
+  return {
+    remap: new Map(),
+    parents: new Map(),
+    deleted: new Map(),
+    counts: new Map(),
+    created: 0,
+  };
+}
+
+/**
+ * Dry-runs tree items against `tree` (undefined for a tree the batch creates)
+ * in the order #applyTreeDiff applies them, deferring an item whose parent
+ * does not exist yet, and throws what applying would throw: a missing target
+ * or parent, a move below itself, or an index outside the parent's children.
+ * Deletes never fail. O(items × depth), like the moves themselves.
+ */
+function validateTreeItems(
+  tree: LoroTree | undefined,
+  items: readonly TreeDiffItem[],
+  state: TreeValidationState,
+): void {
+  if (!Array.isArray(items)) throw new TypeError("tree diff must be an array");
+  const has = (node: string): boolean =>
+    state.parents.has(node) || (tree?.has(node as TreeID) ?? false);
+  const resolve = (source: TreeID): string | undefined => {
+    const mapped = state.remap.get(source);
+    if (mapped !== undefined) return mapped;
+    return has(source) ? source : undefined;
+  };
+  const parentOf = (node: string): string | undefined => {
+    if (state.parents.has(node)) return state.parents.get(node);
+    const parent = tree?._nodes.get(node as TreeID)?.parent;
+    return parent === undefined ? undefined : formatTreeId(parent);
+  };
+  const isDeleted = (node: string): boolean =>
+    state.deleted.get(node) ?? tree?._nodes.get(node as TreeID)?.deleted ?? false;
+  const countOf = (parent: string | undefined): number => {
+    const key = parent ?? "";
+    const known = state.counts.get(key);
+    if (known !== undefined) return known;
+    if (parent !== undefined && !(tree?.has(parent as TreeID) ?? false)) return 0;
+    return (
+      tree?._childCount(
+        parent === undefined ? undefined : parseTreeId(parent as TreeID),
+      ) ?? 0
+    );
+  };
+  const setCount = (parent: string | undefined, delta: number): void => {
+    state.counts.set(parent ?? "", countOf(parent) + delta);
+  };
+  const checkIndex = (index: unknown, length: number): void => {
+    if (
+      typeof index !== "number" ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index > length
+    ) {
+      throw new RangeError(`tree index ${String(index)} is out of range`);
+    }
+  };
+  let pending: readonly TreeDiffItem[] = items;
+  while (pending.length > 0) {
+    const deferred: TreeDiffItem[] = [];
+    for (const item of pending) {
+      if (item.action === "delete") {
+        const target = resolve(item.target);
+        if (target !== undefined && !isDeleted(target)) {
+          setCount(parentOf(target), -1);
+          state.deleted.set(target, true);
+        }
+        continue;
+      }
+      const parent = item.parent === undefined ? undefined : resolve(item.parent);
+      if (item.parent !== undefined && parent === undefined) {
+        deferred.push(item);
+        continue;
+      }
+      if (item.action === "create") {
+        checkIndex(item.index, countOf(parent));
+        const node = `\u0000created:${state.created++}`;
+        state.remap.set(item.target, node);
+        state.parents.set(node, parent);
+        state.deleted.set(node, false);
+        state.counts.set(node, 0);
+        setCount(parent, 1);
+        continue;
+      }
+      const target = resolve(item.target);
+      if (target === undefined) continue;
+      for (let ancestor = parent; ancestor !== undefined; ancestor = parentOf(ancestor)) {
+        if (ancestor === target) {
+          throw new RangeError("cannot move a tree node below itself or its descendant");
+        }
+      }
+      const live = !isDeleted(target);
+      const sameParent = live && parentOf(target) === parent;
+      checkIndex(item.index, countOf(parent) - (sameParent ? 1 : 0));
+      if (live) setCount(parentOf(target), -1);
+      setCount(parent, 1);
+      state.parents.set(target, parent);
+      state.deleted.set(target, false);
+    }
+    if (deferred.length === pending.length) {
+      throw new RangeError("tree diff refers to a parent that does not exist");
+    }
+    pending = deferred;
+  }
 }
 
 /**

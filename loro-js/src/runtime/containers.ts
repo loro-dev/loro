@@ -2441,6 +2441,25 @@ export class LoroTree<
     );
   }
 
+  /** How many current children of `parent` sort before `key`, in O(log n). */
+  _childRank(
+    parent: CodecId | undefined,
+    key: Pick<TreeNodeRecord, "position" | "writer" | "id">,
+  ): number {
+    this._ensureHydrated();
+    return (
+      this._children
+        .get(treeParentKey(parent))
+        ?._lowerBoundBy((record) => compareTreeRecords(record, key as TreeNodeRecord)) ??
+      0
+    );
+  }
+
+  _childCount(parent: CodecId | undefined): number {
+    this._ensureHydrated();
+    return this._children.get(treeParentKey(parent))?.size ?? 0;
+  }
+
   _childrenOf(parent: CodecId | undefined): TreeNodeRecord[] {
     this._ensureHydrated();
     return this._children.get(treeParentKey(parent))?.values() ?? [];
