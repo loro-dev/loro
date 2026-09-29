@@ -148,8 +148,10 @@ A document loaded from a 0.2 snapshot therefore holds a current state that its o
 history disagrees with. Its current state is safe to read right after the import,
 but do not keep using the document: exporting it as updates gives `béa9`, a
 replica loaded from updates holds other text and stays different after new edits
-(`béQ9aZ` and `béQa9Z`), and checking out older versions and back can change the
-content (Rust can then even show text that matches neither reading).
+(`béQ9aZ` and `béQa9Z`), older versions it checks out can be approximate, and a
+fork or a shallow-snapshot export can rebuild it from its history, which switches
+it to Rust's reading (Rust can even show text that matches neither reading after a
+checkout there and back).
 
 **Migrate every replica the same way.** Recommended paths:
 
