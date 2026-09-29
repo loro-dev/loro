@@ -1,0 +1,154 @@
+[
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 2
+      }
+    ],
+    "both": [
+      {
+        "insert": "a",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": []
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 3
+      }
+    ],
+    "both": [],
+    "after": []
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 4
+      }
+    ],
+    "both": [
+      {
+        "insert": "b",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": []
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 9
+      }
+    ],
+    "both": [
+      {
+        "insert": "b",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": [
+      {
+        "insert": "hello"
+      }
+    ]
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 11
+      }
+    ],
+    "both": [
+      {
+        "insert": "b",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": [
+      {
+        "insert": "h"
+      },
+      {
+        "insert": "el",
+        "attributes": {
+          "bold": true
+        }
+      },
+      {
+        "insert": "lo"
+      }
+    ]
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 12
+      }
+    ],
+    "both": [
+      {
+        "insert": "b",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": [
+      {
+        "insert": "h"
+      },
+      {
+        "insert": "el",
+        "attributes": {
+          "bold": true
+        }
+      },
+      {
+        "insert": "lXo"
+      }
+    ]
+  },
+  {
+    "frontiers": [
+      {
+        "peer": "1",
+        "counter": 13
+      }
+    ],
+    "both": [
+      {
+        "insert": "b",
+        "attributes": {
+          "keep": "yes"
+        }
+      }
+    ],
+    "after": [
+      {
+        "insert": "el",
+        "attributes": {
+          "bold": true
+        }
+      },
+      {
+        "insert": "lXo"
+      }
+    ]
+  }
+]

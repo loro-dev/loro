@@ -50,3 +50,36 @@ fn test_compact_change_store() {
     doc.compact_change_store();
     doc.checkout(&ID::new(0, 60).into()).unwrap();
 }
+
+/// `get_change_with_lamport_lte` (`getChangeAtLamport` in JS) read the block range
+/// of KV-only blocks one field off, so after loading a snapshot most lookups
+/// returned `None` or the wrong change.
+#[test]
+fn get_change_with_lamport_lte_after_snapshot_import() {
+    let src = LoroDoc::new();
+    src.set_peer_id(7).unwrap();
+    let text = src.get_text("t");
+    for i in 0..300 {
+        text.insert(0, &format!("{i}-abcdefghijklmnopqrstuvwxyz"))
+            .unwrap();
+        src.commit();
+    }
+    let end = src.oplog_vv().get(&7).copied().unwrap() as u32;
+    for lamport in (0..end).step_by(97) {
+        let expected = src.with_oplog(|o| {
+            o.get_change_with_lamport_lte(7, lamport)
+                .map(|c| (c.id(), c.lamport()))
+        });
+        // Fresh load for every lookup, so the answer comes from the KV blocks.
+        let fresh = LoroDoc::new();
+        fresh
+            .import(&src.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        let got = fresh.with_oplog(|o| {
+            o.get_change_with_lamport_lte(7, lamport)
+                .map(|c| (c.id(), c.lamport()))
+        });
+        assert_eq!(got, expected, "lamport {lamport}");
+        assert!(expected.is_some());
+    }
+}

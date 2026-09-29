@@ -29,7 +29,12 @@ over graceful degradation.
   `src/handler/movable_list_apply_delta.rs` applies movable-list diffs for
   `apply_diff` and undo:
   [../../context/movable-list-apply-diff.md](../../context/movable-list-apply-diff.md).
-- `src/diff_calc/`: diff calculation when moving between versions.
+- `src/diff_calc/`: diff calculation when moving between versions. The tree
+  calculator's cache transitions:
+  [../../context/tree-checkout-window.md](../../context/tree-checkout-window.md).
+- `src/container/richtext/`: text state with style anchors. Where local inserts
+  go next to anchors, the insert cursor cache, and delete `start_id`s:
+  [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).
 - `docs/diff_calc.md`: design notes for diff calculation.
 - `docs/critical-version-spec.md`: specification and proof skeleton for
   replay-base selection (Eg-walker-aligned terminology; defines critical
@@ -39,6 +44,9 @@ over graceful degradation.
   mergeable container regression tests.
 - `src/tests/import_atomicity.rs`: import rollback and malformed-input
   regressions.
+- Movable-list `Move`/`Set` element validation on import, plus change-store
+  rollback records and KV block-range decoding:
+  [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).
 - `import_batch` force-detach, its batch-wide rollback scope, and the
   never-exit-detached invariant:
   [../../context/import-batch-atomicity.md](../../context/import-batch-atomicity.md).
@@ -62,16 +70,17 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
 - Replay-base selection uses Eg-walker terminology (arXiv:2409.14252 §3.5):
   a version V is **critical** when every event outside `Events(V)` happened
   after all of `Events(V)` — no concurrency crosses the cut. Non-`Checkout`
-  diff modes and the tree calculator's lamport windows are only sound when
-  the base satisfies this; `dag.rs`/`oplog.rs` enforce it via the
+  diff modes are only sound when the base satisfies this (the tree
+  calculator's `Checkout` path takes its window from the two versions
+  instead); `dag.rs`/`oplog.rs` enforce it via the
   `ImportGreaterUpdates` entry check and, on conservative retreat, the
   multi-head fixpoint `OpLog::latest_critical_version_below_meet`, with
   the `latest_single_head_critical_version` descent as fallback. Do not
   use "LCA" or "common ancestor" in new code or docs: the meet of two
   versions is generally NOT a safe replay base, and a caller that needs a
   critical version must ask for one (loro-dev/loro#1095). Read
-  `docs/critical-version-spec.md` before touching `find_replay_base`, diff
-  modes, or `diff_calc/tree.rs` windows.
+  `docs/critical-version-spec.md` before touching `find_replay_base` or diff
+  modes.
   `OpLog::iter_from_replay_base_causally` may bypass the DAG when the
   concurrency is register-only (`docs/diff_calc.md`, "Register-only
   concurrency"); keep that check container-granular and history-based.
