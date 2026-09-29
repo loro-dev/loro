@@ -881,6 +881,54 @@ describe("diff and revertTo for containers attached by the range", () => {
     // Deleted front to back from the root, each one is at index 0 by then.
     expect(deletes.every((item) => item.oldIndex === 0)).toBe(true);
   }, 60_000);
+
+  test("validates a batch against the lengths its earlier entries produce", () => {
+    // A list created by the batch starts empty: an invalid delta for it rejects
+    // the whole batch before the map entry is written.
+    const created = new LoroDoc();
+    created.setPeerId(1);
+    const map = created.getMap("m");
+    map.set("before", 1);
+    created.commit();
+    expect(() =>
+      created.applyDiff([
+        [
+          map.id,
+          { type: "map", updated: { new: "🦜:cid:100@5:MovableList", changed: 1 } },
+        ],
+        ["cid:100@5:MovableList", { type: "list", diff: [{ delete: 1 }] }],
+      ]),
+    ).toThrow(/list diff/u);
+    created.commit();
+    expect(created.toJSON()).toEqual({ m: { before: 1 } });
+
+    // Entries for the same list apply in order, each seeing the previous result.
+    const twice = new LoroDoc();
+    twice.setPeerId(1);
+    const list = twice.getList("l");
+    list.push("a");
+    twice.commit();
+    twice.applyDiff([
+      [list.id, { type: "list", diff: [{ retain: 1 }, { insert: ["b"] }] }],
+      [list.id, { type: "list", diff: [{ retain: 2 }, { insert: ["c"] }] }],
+    ]);
+    expect(twice.toJSON()).toEqual({ l: ["a", "b", "c"] });
+    // The second entry fits the old length but not the one the first leaves.
+    expect(() =>
+      twice.applyDiff([
+        [list.id, { type: "list", diff: [{ delete: 3 }] }],
+        [list.id, { type: "list", diff: [{ retain: 1 }, { insert: ["x"] }] }],
+      ]),
+    ).toThrow(/list diff/u);
+    expect(twice.toJSON()).toEqual({ l: ["a", "b", "c"] });
+
+    // Rejecting a delta for a root that does not exist yet leaves no empty root.
+    const fresh = new LoroDoc();
+    expect(() =>
+      fresh.applyDiff([["cid:root-new:List", { type: "list", diff: [{ delete: 1 }] }]]),
+    ).toThrow(/list diff/u);
+    expect(fresh.toJSON()).toEqual({});
+  });
 });
 
 interface TreeJson {

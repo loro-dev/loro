@@ -1895,30 +1895,83 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       throw new Error("cannot edit a detached document; call attach() first");
     }
 
-    // Validate every entry before changing anything, so a malformed batch is
-    // rejected as a whole instead of being partly applied.
-    for (const entry of diffBatch) {
-      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
-        throw new TypeError("each diff entry must be a [ContainerID, Diff] tuple");
-      }
-      const diff = entry[1] as Diff | JsonDiff;
-      if (diff?.type !== "list") continue;
-      const existing = this.#resolveDiffContainer(entry[0] as ContainerID, new Map());
-      validateListDelta(
-        diff.diff,
-        existing instanceof LoroList ? existing.length : undefined,
-      );
-    }
+    const checked = this.#validateDiffBatch(diffBatch);
 
     const containerRemap = new Map<ContainerID, Container>();
     const treeRemap = new Map<TreeID, TreeID>();
-    for (const entry of diffBatch) {
+    for (const [index, entry] of diffBatch.entries()) {
       const sourceId = entry[0] as ContainerID;
       const diff = entry[1];
       const container = this.#resolveDiffContainer(sourceId, containerRemap);
       if (container === undefined) continue;
-      this.#applyContainerDiff(container, diff, containerRemap, treeRemap);
+      this.#applyContainerDiff(
+        container,
+        diff,
+        containerRemap,
+        treeRemap,
+        checked.has(index),
+      );
     }
+  }
+
+  /**
+   * Validates every entry before anything is applied, so a malformed batch is
+   * rejected as a whole. List lengths are simulated in batch order: an entry
+   * starts from the list's current length (looked up without creating
+   * anything), or 0 for a child that an earlier entry creates, and later
+   * entries for the same list see the length the earlier ones leave.
+   */
+  #validateDiffBatch(
+    diffBatch: readonly (readonly [ContainerID, Diff | JsonDiff])[],
+  ): Set<number> {
+    const checked = new Set<number>();
+    const lengths = new Map<ContainerID, number>();
+    const created = new Set<ContainerID>();
+    const noteChild = (value: unknown): void => {
+      const childId = diffContainerId(value);
+      if (childId === undefined) return;
+      const existing = this.#peekDiffContainer(childId);
+      if (existing === undefined) created.add(childId);
+    };
+    for (const [index, entry] of diffBatch.entries()) {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") {
+        throw new TypeError("each diff entry must be a [ContainerID, Diff] tuple");
+      }
+      const id = entry[0] as ContainerID;
+      const diff = entry[1] as Diff | JsonDiff;
+      if (diff?.type === "map") {
+        for (const value of Object.values(diff.updated ?? {})) noteChild(value);
+        continue;
+      }
+      if (diff?.type !== "list") continue;
+      let length = lengths.get(id);
+      if (length === undefined) {
+        const existing = this.#peekDiffContainer(id);
+        if (existing instanceof LoroList) length = existing.length;
+        else if (created.has(id) || parseContainerId(id).kind === "root") length = 0;
+      }
+      const next = validateListDelta(diff.diff, length);
+      if (next !== undefined) {
+        lengths.set(id, next);
+        checked.add(index);
+      }
+      for (const item of diff.diff) {
+        if ("insert" in item) for (const value of item.insert) noteChild(value);
+      }
+    }
+    return checked;
+  }
+
+  /** A live container for `id` in this document, without creating one. */
+  #peekDiffContainer(id: ContainerID): Container | undefined {
+    const parsed = parseContainerId(id);
+    if (parsed.kind === "root" && !isMergeableContainerId(parsed)) {
+      return this.#roots.get(parsed.name) as Container | undefined;
+    }
+    const existing = this.getContainerById(id);
+    return existing !== undefined && !this._isContainerDeleted(existing as LoroContainer)
+      ? existing
+      : undefined;
   }
 
   revertTo(frontiers: Frontiers): void {
@@ -1953,6 +2006,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     diff: Diff | JsonDiff,
     containerRemap: Map<ContainerID, Container>,
     treeRemap: Map<TreeID, TreeID>,
+    boundsChecked = false,
   ): void {
     if (diff.type === "map") {
       if (!(container instanceof LoroMap)) throw diffKindMismatch(container, diff.type);
@@ -1991,7 +2045,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
 
     if (!(container instanceof LoroList)) throw diffKindMismatch(container, diff.type);
-    validateListDelta(diff.diff, container.length);
+    if (!boundsChecked) validateListDelta(diff.diff, container.length);
     if (
       container instanceof LoroMovableList &&
       this.#applyMovableListMoves(container, diff.diff, containerRemap)
@@ -10140,7 +10194,10 @@ function compareSiblingKeys(left: TreeSiblingKey, right: TreeSiblingKey): number
  * Rejects a list delta that is malformed or, when `length` is known, consumes
  * more elements than the list has. Counts must be non-negative safe integers.
  */
-function validateListDelta(delta: unknown, length: number | undefined): void {
+function validateListDelta(
+  delta: unknown,
+  length: number | undefined,
+): number | undefined {
   if (!Array.isArray(delta)) throw new TypeError("list diff must be an array");
   const count = (value: unknown, name: string): number => {
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -10149,30 +10206,39 @@ function validateListDelta(delta: unknown, length: number | undefined): void {
     return value;
   };
   let consumed = 0;
+  let inserted = 0;
+  let deleted = 0;
   for (const item of delta as unknown[]) {
     if (typeof item !== "object" || item === null) {
       throw new TypeError("list diff items must be objects");
     }
-    const keys = ["retain", "delete", "insert"].filter((key) => key in item);
-    if (keys.length !== 1) {
+    const isRetain = "retain" in item;
+    const isDelete = "delete" in item;
+    const isInsert = "insert" in item;
+    if (Number(isRetain) + Number(isDelete) + Number(isInsert) !== 1) {
       throw new TypeError("list diff items need exactly one of retain, delete, insert");
     }
-    if ("insert" in item) {
-      if (!Array.isArray((item as { insert: unknown }).insert)) {
+    if (isInsert) {
+      const values = (item as { insert: unknown }).insert;
+      if (!Array.isArray(values))
         throw new TypeError("list diff insert must be an array");
-      }
+      inserted += values.length;
       continue;
     }
-    consumed +=
-      "retain" in item
-        ? count((item as { retain: unknown }).retain, "retain")
-        : count((item as { delete: unknown }).delete, "delete");
+    if (isRetain) {
+      consumed += count((item as { retain: unknown }).retain, "retain");
+    } else {
+      const amount = count((item as { delete: unknown }).delete, "delete");
+      consumed += amount;
+      deleted += amount;
+    }
     if (length !== undefined && consumed > length) {
       throw new RangeError(
         `list diff consumes ${consumed} items but the list has ${length}`,
       );
     }
   }
+  return length === undefined ? undefined : length - deleted + inserted;
 }
 
 function isEmptyContainerDiff(diff: LoroEvent["diff"]): boolean {
