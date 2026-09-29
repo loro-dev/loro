@@ -1,6 +1,6 @@
 # loro.js Differential Fuzzing
 
-Verified against code 2026-09-29.
+Verified against code 2026-09-30.
 
 `loro-js/tests/fuzz/differential.ts` drives several `loro.js` peers through
 random edits, update exchanges, and checkouts, and checks them against
@@ -76,8 +76,9 @@ prints each action as it runs, which finds hangs. The report groups failures by
 signature (oracle plus first differing root or normalized error) and stores the
 minimized action list and a trace written as `loro.js` API calls.
 
-CI runs 120 fixed seeds of Map/List/Text/Counter, and 120 more with nested
-child containers and snapshot imports, with the replay, checkout,
+CI runs 120 fixed seeds of Map/List/Text/Counter, 120 with MovableList and
+nested child containers, and 120 more with nested child containers and snapshot
+imports, with the replay, checkout,
 full-snapshot, and event oracles. A seed that fails on `main` for a known
 reason goes into `pending` with that reason until its fix lands; both lists are
 empty on 2026-09-29 (`main` at #1131).
@@ -97,6 +98,13 @@ and no-op moves (#1148), and a List child that a replay-fallback event
 re-inserts (#1150). With nested children and snapshot imports, seeds 297,
 315, 344, 422, 452, and 559 of 0–599 fail on `main` in the event oracle;
 #1150 fixes all six.
+
+MovableList, fixed by the Rust-model rewrite (loro-dev/loro#1132 and its
+follow-ups, see [loro-js-movable-list.md](loro-js-movable-list.md)): with
+`FUZZ_FEATURES=map,list,text,counter,movableList,nested`, all oracles and
+lockstep with Rust, 144 of seeds 0–299 failed on `main` on 2026-09-30 (98
+checkout-vs-replay, 29 lockstep); on the rewrite seeds 0–599 pass, and CI runs
+120 of them without Rust.
 
 Still open, so `CI_RUNS` does not enable them yet:
 
@@ -121,8 +129,6 @@ Still open, so `CI_RUNS` does not enable them yet:
   (`DocState::get_path`); `loro.js` still sends them. Needs #1147's liveness.
 - Shallow snapshots in the harness need #1144 (the root check fails first on
   every seed without it).
-- MovableList: `loro.js` skips a movable-list `set` to the current value,
-  which Rust records.
 
 ## Rust-side findings
 
