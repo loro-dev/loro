@@ -438,6 +438,37 @@ describe("MovableList versions, undo and diffs", () => {
       .find((event) => event.target === text.id);
     expect(textEvent?.diff).toEqual({ type: "text", diff: [{ insert: "hi" }] });
   });
+
+  test("checkout and diff stay linear in the number of inserts", () => {
+    /** Best of three checkout round trips plus a diff over n scattered inserts. */
+    function transitionsMs(size: number): number {
+      const a = doc(1);
+      const list = a.getMovableList("list");
+      list.push(-1);
+      a.commit();
+      const start = a.frontiers();
+      for (let index = 0; index < size; index += 1) {
+        list.insert((index * 7_919) % (list.length + 1), index);
+      }
+      a.commit();
+      const latest = a.frontiers();
+      let best = Infinity;
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        a.checkout(start);
+        expect(a.getMovableList("list").length).toBe(1);
+        a.checkoutToLatest();
+        expect(a.diff(start, latest).length).toBe(1);
+        best = Math.min(best, performance.now() - started);
+      }
+      expect(a.frontiers()).toEqual(latest);
+      return best;
+    }
+    // Each insert op walked the whole position tree to check that the
+    // transition could skip the replay (8x the inserts took about 90x the time).
+    const ratio = transitionsMs(8_000) / transitionsMs(1_000);
+    expect(ratio).toBeLessThan(24);
+  }, 60_000);
 });
 
 describe("MovableList cursors", () => {
