@@ -527,6 +527,27 @@ for (const size of sizes) {
     return concurrentTarget.getText("text").length;
   });
 
+  // Checking out across size / 4 scattered inserts: the transition checks each
+  // op's elements, once per container rather than one tree walk per op.
+  const scatteredDoc = new LoroDoc();
+  scatteredDoc.setPeerId(4);
+  const scatteredText = scatteredDoc.getText("text");
+  scatteredText.insert(0, "x".repeat(size));
+  scatteredDoc.commit();
+  const scatteredBase = scatteredDoc.frontiers();
+  let scatteredSeed = 1;
+  for (let index = 0; index < size >>> 2; index += 1) {
+    scatteredSeed = (scatteredSeed * 1_103_515_245 + 12_345) >>> 0;
+    scatteredText.insert(scatteredSeed % scatteredText.length, "y");
+    if (index % 16 === 0) scatteredDoc.commit();
+  }
+  scatteredDoc.commit();
+  measure("text-scattered-edits-checkout", size, () => {
+    scatteredDoc.checkout(scatteredBase);
+    scatteredDoc.checkoutToLatest();
+    return scatteredText.length;
+  });
+
   const checkoutTextDoc = new LoroDoc();
   checkoutTextDoc.setPeerId(3);
   checkoutTextDoc.getText("text").insert(0, "x".repeat(size));
