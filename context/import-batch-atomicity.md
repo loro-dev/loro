@@ -32,7 +32,9 @@ is still at its pre-batch version and the `OpLog` is the only thing that moved. 
 the `OpLog` therefore makes the two agree again, which is what lets the doc stay
 attached. `import_batch` opens `OpLog::begin_import_rollback` before the loop and
 `BatchImportGuard::finish` either commits it or rolls the whole batch back and returns
-the state-apply error.
+the state-apply error. Before that checkout, `finish` also validates the movable-list element references
+of every blob in the batch ([movable-list-op-validation.md](movable-list-op-validation.md)).
+A failure there rolls the batch back the same way.
 
 Consequences to keep in mind:
 

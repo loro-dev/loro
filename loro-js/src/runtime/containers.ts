@@ -74,6 +74,34 @@ export interface SequenceMoveMeta {
 
 export type CausalVersion = ReadonlyMap<bigint, number>;
 
+/**
+ * Detached internal state of a List, MovableList, or Text, returned by
+ * `_swapState`. The document swaps a snapshot-hydrated state out while it
+ * rebuilds the container from history, and can install it again later.
+ */
+export interface SequenceContainerState {
+  readonly sequence: SequenceIndex<SequenceElement> | SequenceIndex<TextElement>;
+}
+
+interface ListState extends SequenceContainerState {
+  readonly sequence: SequenceIndex<SequenceElement>;
+  readonly detachedCounter: number;
+}
+
+interface MovableListState extends ListState {
+  readonly valueHistoryComplete: boolean;
+  readonly moveHistoryComplete: boolean;
+}
+
+interface TextState extends SequenceContainerState {
+  readonly sequence: SequenceIndex<TextElement>;
+  readonly detachedCounter: number;
+  readonly attributeHistoryComplete: boolean;
+  readonly styleIndex: TextStyleIndex<TextStyle>;
+  readonly styleVersion: CausalVersion | undefined;
+  readonly anchorStarts: Map<bigint, number[]>;
+}
+
 interface ParentLink {
   readonly container: LoroContainer;
   readonly binding?:
@@ -363,7 +391,7 @@ export class LoroMap<
 }
 
 export class LoroList<T = unknown> extends LoroContainer {
-  readonly _sequence = new SequenceIndex<SequenceElement>();
+  _sequence = new SequenceIndex<SequenceElement>();
   _detachedCounter = 0;
 
   get _elements(): SequenceElement[] {
@@ -577,6 +605,21 @@ export class LoroList<T = unknown> extends LoroContainer {
   _reset(): void {
     this._sequence.reset();
     this._detachedCounter = 0;
+  }
+
+  /** Installs `state`, or an empty state, and returns the replaced state. */
+  _swapState(state?: SequenceContainerState): SequenceContainerState {
+    const previous: ListState = {
+      sequence: this._sequence,
+      detachedCounter: this._detachedCounter,
+    };
+    const next = state as ListState | undefined;
+    this._sequence = next?.sequence ?? new SequenceIndex<SequenceElement>();
+    this._detachedCounter = next?.detachedCounter ?? 0;
+    this._sequence.forEachPhysicalRaw((element) => {
+      if (element.value instanceof LoroContainer) this._bindChildren([element]);
+    });
+    return previous;
   }
 
   _bindChildren(elements: readonly SequenceElement[]): void {
@@ -1387,19 +1430,13 @@ export interface TextAnchor {
 const DETACHED_STYLE_INFO = 0x84;
 
 export class LoroText extends LoroContainer {
-  readonly _sequence = new SequenceIndex<TextElement>(
-    (element) => ({
-      utf16: element.value.length,
-      utf8: utf8CodePointLength(element.value),
-    }),
-    (element) => countLineBreaks(element.value),
-  );
+  _sequence = createTextSequence();
   _detachedCounter = 0;
   _attributeHistoryComplete = true;
-  readonly _styleIndex = new TextStyleIndex<TextStyle>();
+  _styleIndex = new TextStyleIndex<TextStyle>();
   _styleVersion: CausalVersion | undefined;
   /** Start-anchor counters by peer, ascending; the end anchor is the next counter. */
-  readonly #anchorStarts = new Map<bigint, number[]>();
+  #anchorStarts = new Map<bigint, number[]>();
   readonly #attributeValuesCache = new WeakMap<
     ReadonlyMap<string, TextStyle>,
     ReadonlyMap<string, RuntimeValue>
@@ -2464,6 +2501,36 @@ export class LoroText extends LoroContainer {
     if (from === undefined || to === undefined || from > to) return;
     this._styleIndex.add(this._sequence.physicalIdRuns(from, to + 1), style.key, style);
   }
+
+  /** Installs `state`, or an empty state, and returns the replaced state. */
+  _swapState(state?: SequenceContainerState): SequenceContainerState {
+    const previous: TextState = {
+      sequence: this._sequence,
+      detachedCounter: this._detachedCounter,
+      attributeHistoryComplete: this._attributeHistoryComplete,
+      styleIndex: this._styleIndex,
+      styleVersion: this._styleVersion,
+      anchorStarts: this.#anchorStarts,
+    };
+    const next = state as TextState | undefined;
+    this._sequence = next?.sequence ?? createTextSequence();
+    this._detachedCounter = next?.detachedCounter ?? 0;
+    this._attributeHistoryComplete = next?.attributeHistoryComplete ?? true;
+    this._styleIndex = next?.styleIndex ?? new TextStyleIndex<TextStyle>();
+    this._styleVersion = next?.styleVersion;
+    this.#anchorStarts = next?.anchorStarts ?? new Map();
+    return previous;
+  }
+}
+
+function createTextSequence(): SequenceIndex<TextElement> {
+  return new SequenceIndex<TextElement>(
+    (element) => ({
+      utf16: element.value.length,
+      utf8: utf8CodePointLength(element.value),
+    }),
+    (element) => countLineBreaks(element.value),
+  );
 }
 
 /**
@@ -2695,6 +2762,18 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     super._reset();
     this._valueHistoryComplete = true;
     this._moveHistoryComplete = true;
+  }
+
+  override _swapState(state?: SequenceContainerState): SequenceContainerState {
+    const previous: MovableListState = {
+      ...(super._swapState(state) as ListState),
+      valueHistoryComplete: this._valueHistoryComplete,
+      moveHistoryComplete: this._moveHistoryComplete,
+    };
+    const next = state as MovableListState | undefined;
+    this._valueHistoryComplete = next?.valueHistoryComplete ?? true;
+    this._moveHistoryComplete = next?.moveHistoryComplete ?? true;
+    return previous;
   }
 }
 

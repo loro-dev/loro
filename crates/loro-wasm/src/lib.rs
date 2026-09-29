@@ -438,6 +438,8 @@ extern "C" {
     pub type JsVersionVectorDiff;
     #[wasm_bindgen(typescript_type = "[ContainerID, Diff|JsonDiff][]")]
     pub type JsDiffBatch;
+    #[wasm_bindgen(typescript_type = "ApplyDiffOptions")]
+    pub type JsApplyDiffOptions;
 }
 
 mod observer {
@@ -2320,8 +2322,42 @@ impl LoroDoc {
     /// doc2.applyDiff(diff);
     /// console.log(doc2.getText("text").toString()); // "Hello"
     /// ```
+    ///
+    /// Pass `{ fullState: true }` when applying the result of `doc.diff()` to a document that may
+    /// keep hidden state for a mergeable child the diff makes visible again (e.g. applying
+    /// `doc.diff(afterDelete, beforeDelete)` to `doc` itself or to a copy of it). The child's
+    /// entry is then read as its full content and aligned with that hidden state. Without it
+    /// (the default), entries are applied as increments, which is right for events forwarded to
+    /// a document that shares the source's hidden state. Never pass it for events from local
+    /// commits; see `ApplyDiffOptions.fullState`.
+    ///
+    /// ```ts
+    /// const text = doc.getMap("m").ensureMergeableText("t");
+    /// text.insert(0, "hello");
+    /// const before = doc.frontiers();
+    /// doc.getMap("m").delete("t");
+    /// doc.applyDiff(doc.diff(doc.frontiers(), before), { fullState: true });
+    /// console.log(doc.getMap("m").get("t").toString()); // "hello"
+    /// ```
     #[wasm_bindgen(js_name = "applyDiff")]
-    pub fn apply_diff(&self, diff: JsDiffBatch) -> JsResult<()> {
+    pub fn apply_diff(
+        &self,
+        diff: JsDiffBatch,
+        options: Option<JsApplyDiffOptions>,
+    ) -> JsResult<()> {
+        let full_state = match options {
+            Some(options) => {
+                let full_state = Reflect::get(&options, &JsValue::from_str("fullState"))?;
+                if full_state.is_undefined() || full_state.is_null() {
+                    false
+                } else {
+                    full_state
+                        .as_bool()
+                        .ok_or("`fullState` must be a boolean")?
+                }
+            }
+            None => false,
+        };
         let diff: JsValue = diff.into();
         let arr: js_sys::Array = diff.into();
         let mut cid_to_events = FxHashMap::default();
@@ -2343,6 +2379,7 @@ impl LoroDoc {
         self.doc.apply_diff(DiffBatch {
             cid_to_events,
             order,
+            full_state,
         })?;
         Ok(())
     }
@@ -2363,6 +2400,12 @@ impl LoroDoc {
         let diff = self.doc.diff(&from, &to)?;
         let arr = js_sys::Array::new();
         for (id, d) in diff.iter() {
+            // A container of a type unknown to this version (created by a
+            // newer loro-crdt) has no readable diff. Applying its entry is a
+            // no-op, also for a full state, so it can be left out.
+            if matches!(d, loro_internal::event::Diff::Unknown) {
+                continue;
+            }
             let entry = js_sys::Array::new();
             let id_str = id.to_string();
             let v = resolved_diff_to_js(d, for_json.unwrap_or(true))?;
@@ -2622,9 +2665,20 @@ fn diff_event_to_js_value(event: DiffEvent, for_json: bool) -> JsResult<JsValue>
         Reflect::set(&obj, &"currentTarget".into(), &t.to_string().into())?;
     }
 
-    let events = js_sys::Array::new_with_length(event.events.len() as u32);
-    for (i, &event) in event.events.iter().enumerate() {
-        events.set(i as u32, container_diff_to_js_value(event, for_json)?);
+    // Containers of a type unknown to this version (created by a newer Loro)
+    // have no readable diff, and a diff holding one as a child value cannot be
+    // converted either. Skip those container events, but keep the others.
+    let events = js_sys::Array::new();
+    for &event in event.events.iter() {
+        if matches!(event.diff, loro_internal::event::Diff::Unknown) {
+            continue;
+        }
+        match container_diff_to_js_value(event, for_json) {
+            Ok(v) => {
+                events.push(&v);
+            }
+            Err(e) => console_error!("Skipped the event of container {}: {:?}", event.id, e),
+        }
     }
 
     Reflect::set(&obj, &"events".into(), &events.into())?;
@@ -5628,12 +5682,21 @@ impl UndoManager {
     }
 
     /// Undo the last operation.
+    ///
+    /// Throws without changing the doc if the step would have to recreate a
+    /// container of a type unknown to this version (created by a newer
+    /// loro-crdt). That step, with every edit merged into it, is dropped and its
+    /// edits stay; the next call undoes the step before it, rebased over the
+    /// dropped step's edits like over a remote peer's.
     pub fn undo(&mut self) -> JsResult<bool> {
         let executed = self.undo.lock().undo()?;
         Ok(executed)
     }
 
     /// Redo the last undone operation.
+    ///
+    /// Throws like `undo` on steps that would recreate a container of an
+    /// unknown type.
     pub fn redo(&mut self) -> JsResult<bool> {
         let executed = self.undo.lock().redo()?;
         Ok(executed)
@@ -6546,6 +6609,29 @@ interface LoroDoc {
     diff(from: OpId[], to: OpId[], for_json: true): [ContainerID, JsonDiff][];
     diff(from: OpId[], to: OpId[], for_json: undefined): [ContainerID, JsonDiff][];
     diff(from: OpId[], to: OpId[], for_json?: boolean): [ContainerID, JsonDiff|Diff][];
+}
+
+/**
+ * Options for `LoroDoc.applyDiff`.
+ */
+export interface ApplyDiffOptions {
+    /**
+     * Read the batch as the result of `doc.diff()`: a mergeable child that the batch makes
+     * visible again carries its full content, which is aligned with whatever hidden state the
+     * target document keeps for it (none, the same, or different).
+     *
+     * Only use it for `doc.diff()` results (also after a JSON round trip), or for events from
+     * `import`/`checkout`, which report a revived child with its full content.
+     *
+     * Never use it for events from local commits. A local re-activation (such as
+     * `ensureMergeableCounter` over a deleted key) reports only the parent map change plus the
+     * commit's own ops, because the child's content did not change. With `fullState`, a
+     * missing child entry means "empty" and an entry means the whole content, so the hidden
+     * child would be cleared or overwritten (e.g. a counter at 7 becomes 0). Leave it unset
+     * (the default) for such events: their entries are increments, which is right when the
+     * target shares the source's hidden state.
+     */
+    fullState?: boolean;
 }
 
 /**

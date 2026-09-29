@@ -164,6 +164,18 @@ regressions are `cached_root_*` unit tests in `shallow_snapshot.rs`.
 `crates/loro/tests/perf_shallow_reexport.rs` is the ignored release benchmark
 for first and repeated re-export and import.
 
+The pure TypeScript runtime (`loro-js`) uses the same retention rule when it
+rebuilds both states in `LoroDoc.#encodeShallowSnapshot`. The root state keeps
+`#retainedContainerKeys()` at the root: root containers (every mergeable
+container is one, as in Rust's `existing_retention_roots`, so a child hidden by
+a deleted or different-kind marker keeps its state), visible Map/List children,
+and every tree node's meta, including deleted nodes. The latest state
+additionally keeps containers alive at the latest version and containers whose
+creation id the root version does not include. `loro-js` always rebuilds the
+root state by replay instead of reusing its cached root store, so re-exporting
+an older blob at the same root also prunes it (the #1123 case). Tests are in
+`loro-js/tests/shallow-snapshot-deleted-containers.test.ts`.
+
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as
 `Delete`, their descendants as `Create` under their real parent); with only

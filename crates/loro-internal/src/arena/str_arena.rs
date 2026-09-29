@@ -26,7 +26,17 @@ struct Index {
     unicode: u32,
 }
 
+impl StrArenaCheckpoint {
+    pub(super) fn bytes_len(&self) -> usize {
+        self.bytes_len
+    }
+}
+
 impl StrArena {
+    pub(super) fn bytes_len(&self) -> usize {
+        self.bytes.len()
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len.bytes == 0
