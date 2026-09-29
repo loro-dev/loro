@@ -619,3 +619,50 @@ fn richtext_overlapping_styles_keep_neighbor_intersections_after_insert_and_snap
 
     Ok(())
 }
+
+#[test]
+fn insert_position_near_style_anchors_does_not_depend_on_cursor_cache() -> LoroResult<()> {
+    let expected = vec![
+        TextDelta::Insert {
+            insert: "b".to_string(),
+            attributes: Some([("em".to_string(), "y".into())].into_iter().collect()),
+        },
+        TextDelta::Insert {
+            insert: "a".to_string(),
+            attributes: None,
+        },
+    ];
+    for skipped_unmark in [false, true] {
+        let doc = LoroDoc::new();
+        let mut styles = StyleConfigMap::new();
+        styles.insert(
+            "em".into(),
+            StyleConfig {
+                expand: ExpandType::Before,
+            },
+        );
+        styles.insert(
+            "bold".into(),
+            StyleConfig {
+                expand: ExpandType::After,
+            },
+        );
+        doc.config_text_style(styles);
+        let text = doc.get_text("text");
+        text.insert(0, "b")?;
+        text.mark(0..1, "em", "y")?;
+        if skipped_unmark {
+            // Writes nothing, but its position lookups used to leave a cursor
+            // cache that put the next insert before em's end anchor.
+            text.unmark(0..1, "bold")?;
+        }
+        // em does not expand after, so the insert goes after its end anchor.
+        text.insert(1, "a")?;
+        assert_eq!(
+            text.to_delta(),
+            expected,
+            "skipped unmark: {skipped_unmark}"
+        );
+    }
+    Ok(())
+}
