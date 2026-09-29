@@ -15,7 +15,11 @@ import {
   type RuntimeValue,
   type SequenceElement,
 } from "./containers";
-import { SequenceIndex, type SequenceMetrics } from "./sequence-index";
+import {
+  SequenceIndex,
+  type SequenceIdRun,
+  type SequenceMetrics,
+} from "./sequence-index";
 
 /**
  * MovableList state with Rust's model: a Fugue sequence of positions plus
@@ -624,12 +628,13 @@ export class MovableListState {
   /** Whether version transitions over `ops` can run without replaying history. */
   canTransition(ops: readonly MovableTransitionOp[]): boolean {
     if (!this.historyComplete) return false;
+    // Checked in one tree walk below; one walk per insert made a checkout
+    // O(operations * positions).
+    const inserted: SequenceIdRun[] = [];
     for (const op of ops) {
       switch (op.type) {
         case "insert":
-          if (!this.positions.containsIdRuns([{ start: op.id, length: op.length }])) {
-            return false;
-          }
+          inserted.push({ start: op.id, length: op.length });
           break;
         case "delete": {
           let recorded = 0;
@@ -669,7 +674,7 @@ export class MovableListState {
         }
       }
     }
-    return true;
+    return this.positions.containsIdRuns(inserted);
   }
 
   /** Encodes the state in Rust's `MovableListState` snapshot layout. */

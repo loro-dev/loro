@@ -1,4 +1,4 @@
 ---
 ---
 
-Add a differential test suite that compares loro.js with the Rust implementation (`pnpm --dir loro-js test:differential`). Tests and scripts only; the published package does not change.
+Add a MovableList differential test suite (`loro-js/tests/differential/`) that compares loro.js with the Rust implementation. It runs in `pnpm test` when the Rust WASM build is present. Tests only; the published package does not change.
