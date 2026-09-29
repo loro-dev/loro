@@ -306,10 +306,11 @@ describe("rich-text style anchors match Rust positions", () => {
 interface Runtime {
   readonly LoroDoc: typeof LoroDoc;
   readonly LoroText: typeof LoroText;
+  readonly UndoManager: typeof UndoManager;
 }
 
 const rust = loadRustReference();
-const runtimes: [string, Runtime][] = [["loro.js", { LoroDoc, LoroText }]];
+const runtimes: [string, Runtime][] = [["loro.js", { LoroDoc, LoroText, UndoManager }]];
 if (rust !== undefined) runtimes.push(["loro-crdt", rust]);
 
 /** The values of the style marks in a Text state of an encoded state store. */
@@ -430,6 +431,25 @@ describe.each(runtimes)("rich-text anchors in %s", (runtimeName, runtime) => {
       expect(normalizeDelta(mirror)).toEqual(normalizeDelta(text.toDelta()));
     }
   });
+
+  test.each(["before", "after", "both", "none"] as const)(
+    "text typed where an undone %s mark started has no style",
+    (expand) => {
+      const doc = new runtime.LoroDoc();
+      doc.setPeerId(1);
+      doc.configTextStyle({ s: { expand } });
+      const undo = new runtime.UndoManager(doc, { mergeInterval: 0 });
+      const text = doc.getText("t");
+      text.insert(0, "hello world");
+      doc.commit();
+      text.mark({ start: 4, end: 8 }, "s", "new");
+      doc.commit();
+      undo.undo();
+      text.insert(4, "XY");
+      doc.commit();
+      expect(normalizeDelta(text.toDelta())).toEqual([{ insert: "hellXYo world" }]);
+    },
+  );
 
   test("a snapshot's anchors survive moving between old versions", () => {
     const source = new runtime.LoroDoc();

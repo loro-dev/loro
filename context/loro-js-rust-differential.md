@@ -40,7 +40,11 @@ per runtime with the same peer ID. Actions:
 - full and shallow snapshot export from either runtime, imported into both;
   a full snapshot's copies then check out three versions in a row (picked like
   `checkout`'s), diff the last two, and attach, so an imported state moves back
-  and forward over elements it already holds;
+  and forward over elements it already holds. The loro.js diff must turn the
+  `from` text into the `to` text; Rust's is only logged, because between
+  concurrent versions it can put a style value on the wrong side (seed 162 at
+  120 steps, September 29: its diff sets `hl:false` on text its own checkout
+  shows with `hl:"x"`);
 - movable-list inserts and sets, written by Rust and imported by loro.js. The
   list is not compared; its set ops keep checkouts off the incremental path, so
   they replay the text's records (the path of the `duplicate sequence id`
