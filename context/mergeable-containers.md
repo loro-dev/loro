@@ -127,8 +127,10 @@ full-state diff. So the mode is explicit:
   adds full state for a re-activated child, both in `diff()` and in import/checkout events
   (`#emit`). `revertTo` sets `#changesOnlyDiff`, which skips full state for mergeable
   children. `applyDiff(diff, { fullState: true })` aligns through `#fullStateTargets` and
-  `#alignFullState`. Tests: `loro-js/tests/mergeable-diff-alignment.test.ts`, with values
-  taken from the Rust WASM build.
+  `#alignFullState`. `#validateDiffBatch` checks a hidden mergeable list's deltas against
+  its hidden length (re-ensuring resurfaces it). An event mirror passes `{ fullState: true }`
+  for `import`/`checkout` batches, as with loro-crdt (`ApplyDiffOptions.fullState`). Tests:
+  `loro-js/tests/mergeable-diff-alignment.test.ts`, with values taken from the Rust WASM build.
 
 Which batches may carry the flag:
 
