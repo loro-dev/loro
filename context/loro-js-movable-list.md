@@ -1,6 +1,6 @@
 # loro.js MovableList: Rust-Compatible Model
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-30.
 
 `loro-js/` must converge with the Rust implementation and read and write its
 encoding. This article states the Rust MovableList semantics that loro.js must
@@ -11,7 +11,9 @@ suite checks the two against each other. Complexity rules still come from
 Status: the differential suite is in the tree. The "loro.js model" section is
 the design of the follow-up change; until it lands, `LoroMovableList` still
 uses the old model described under "Why the old loro.js model diverged", and
-the suite records those profiles in `KNOWN_DIVERGENT`.
+the suite records those profiles in `KNOWN_DIVERGENT`. The insert/delete-only
+profile converges on `main` since the Fugue fixes of loro-dev/loro#1136 and
+#1131, so it is not in that set.
 
 ## Rust semantics (the contract)
 
@@ -177,25 +179,29 @@ identical values, versions, frontiers, reachable container IDs,
 after every step. Sync crosses engines, so each engine also decodes the
 other's updates and snapshots.
 
+It uses the reference that the other loro.js differential suites share
+(`loro-js/tests/support/rust-reference.ts`): `crates/loro-wasm/nodejs`, built by
+`pnpm -C crates/loro-wasm build-dev`, or the build `LORO_WASM_NODEJS` points
+at (for example an unmerged Rust branch). Without a build the suite skips;
+`pnpm test-loro-js` sets `LORO_REQUIRE_WASM_REFERENCE=1` and CI runs it after
+`release-wasm`, so there it always runs.
+
 ```sh
-pnpm --dir loro-js build:reference   # dev WASM build of crates/loro-wasm (nodejs)
-pnpm --dir loro-js test:differential # CI-sized seeds
-LORO_JS_DIFF_SEEDS=500 LORO_JS_DIFF_STEPS=200 pnpm --dir loro-js test:differential
+pnpm -C crates/loro-wasm build-dev
+cd loro-js
+pnpm vitest run tests/differential/movable-list.test.ts   # CI-sized seeds
+LORO_JS_DIFF_SEEDS=500 LORO_JS_DIFF_STEPS=200 pnpm vitest run tests/differential/movable-list.test.ts
 ```
 
-`LORO_JS_REFERENCE=/path/to/nodejs/index.js` compares against another Rust
-build, for example an unmerged branch. The suite folds away a few differences
-that are unrelated to the data model. Each is named in `harness.ts`
-(`canonicalBatch`) and in the test file's profile notes, so a fix can remove
-its normalization.
+The suite folds away a few differences that are unrelated to the data model.
+Each is named in `harness.ts` (`canonicalBatch`) and in the test file's profile
+notes, so a fix can remove its normalization.
 
 Files: `engine.ts` (the shared API surface), `harness.ts` (twin peers,
 canonical events, comparisons), `fuzz.ts` (action generation, transport,
 replay and minimization), `movable-list.test.ts` (profiles). A divergence
 saves its trace to the temp directory; replay it with
 `LORO_JS_DIFF_REPLAY=<file>` and add `LORO_JS_DIFF_MINIMIZE=1` to shrink it.
-The suite is excluded from `pnpm test` because it needs the WASM build; CI
-runs it in `.github/workflows/loro-js.yml`.
 
 ## Remaining known divergences (not MovableList-specific)
 
@@ -209,13 +215,14 @@ them (see the comments in `harness.ts` and `fuzz.ts`):
   document order. `UndoManager.undo()` picks its item before committing the
   pending transaction. Rust commits redo with origin `"undo"`. The profiles run
   undo on one peer, never chained, after an explicit commit.
-- `checkout(frontiers)` at the latest frontiers leaves loro.js detached; Rust
-  stays attached. The profiles skip such checkouts.
+- `checkout(frontiers)` at the latest frontiers left loro.js detached; Rust
+  stays attached. Fixed by loro-dev/loro#1143; the profiles still skip such
+  checkouts.
 - loro.js emits events and `diff()` entries for child containers whose parent
   element is already deleted; Rust does not. Only reachable targets are compared.
 - A snapshot-hydrated loro.js document has no tombstones or origins. It
   mispositions List/Text/MovableList ops that are concurrent with deletes the
-  snapshot already contains.
+  snapshot already contains (loro-dev/loro#1163).
 - Some shallow-snapshot imports that Rust accepts are rejected by loro.js with
   "cannot import updates that depend on an outdated version".
 - Multi-blob `importBatch` events are labeled `by: "checkout"` by Rust and

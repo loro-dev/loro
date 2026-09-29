@@ -1,30 +1,16 @@
-import { existsSync } from "node:fs";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-
 import * as loroJs from "../../src/index";
+import { loadRustReference } from "../support/rust-reference";
 
 import type { EngineModule } from "./engine";
 
 /**
- * Loads the Rust implementation through the workspace `loro-crdt` Node build.
- *
- * Build it with `pnpm --dir loro-js build:reference` (a dev WASM build of
- * `crates/loro-wasm`), or point `LORO_JS_REFERENCE` at another `nodejs/index.js`
- * build, for example one made from an unmerged Rust branch.
+ * The Rust implementation from the shared differential reference
+ * (`tests/support/rust-reference.ts`: `crates/loro-wasm/nodejs`, or
+ * `LORO_WASM_NODEJS`). Undefined when that build is missing, so the suite
+ * skips; `LORO_REQUIRE_WASM_REFERENCE=1` makes a missing build an error.
  */
-export function loadReference(): EngineModule {
-  const path =
-    process.env["LORO_JS_REFERENCE"] ??
-    fileURLToPath(new URL("../../../crates/loro-wasm/nodejs/index.js", import.meta.url));
-  if (!existsSync(path)) {
-    throw new Error(
-      `Rust reference build not found at ${path}. ` +
-        "Run `pnpm --dir loro-js build:reference` first.",
-    );
-  }
-  const require = createRequire(import.meta.url);
-  return require(path) as EngineModule;
+export function loadReference(): EngineModule | undefined {
+  return loadRustReference() as unknown as EngineModule | undefined;
 }
 
 export function loadLoroJs(): EngineModule {

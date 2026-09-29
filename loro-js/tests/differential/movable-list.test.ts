@@ -22,7 +22,8 @@ import { loadLoroJs, loadReference } from "./reference";
  * checkout never targets the current frontiers.
  */
 
-const engines = { rust: loadReference(), js: loadLoroJs() };
+const rust = loadReference();
+const engines = { rust: rust!, js: loadLoroJs() };
 
 const none: FuzzProfile = {
   name: "",
@@ -115,7 +116,6 @@ const cases: Case[] = [
  * context/loro-js-movable-list.md removes them from this set.
  */
 const KNOWN_DIVERGENT = new Set([
-  "insert/delete",
   "insert/delete undo (one peer)",
   "move/set",
   "move/set with children",
@@ -125,7 +125,7 @@ const KNOWN_DIVERGENT = new Set([
   "shallow snapshots",
 ]);
 
-describe("MovableList matches the Rust implementation", () => {
+describe.skipIf(rust === undefined)("MovableList matches the Rust implementation", () => {
   test.each(cases)(
     "$name",
     ({ name, profile, seeds, steps }) => {
@@ -149,7 +149,7 @@ describe("MovableList matches the Rust implementation", () => {
 // Debugging aid: LORO_JS_DIFF_REPLAY=<saved trace> replays one failing trace,
 // and LORO_JS_DIFF_MINIMIZE=1 first shrinks it to a minimal failing sequence.
 const replayPath = process.env["LORO_JS_DIFF_REPLAY"];
-test.runIf(replayPath !== undefined)(
+test.runIf(replayPath !== undefined && rust !== undefined)(
   "replays a saved trace",
   () => {
     let trace = JSON.parse(readFileSync(replayPath!, "utf8")) as SavedTrace;
