@@ -720,6 +720,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
       this.#assertImportsNotOutdated(imported);
       integration = this.#integrateHistory(imported);
+      this.#validateMovableListRefs(integration.added);
       const { added } = integration;
       if (added.length === 0 && !this.#detached) {
         this.#materializePendingRoots(imported, integration.pending);
@@ -914,6 +915,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         installStagedShallowRoot();
         if (!initializeFromSnapshot) this.#assertImportsNotOutdated(imported);
         integration = this.#integrateHistory(imported);
+        // Like Rust, a snapshot that initializes an empty document is not
+        // validated op by op.
+        if (!initializeFromSnapshot) this.#validateMovableListRefs(integration.added);
         if (!this.#detached && initializeFromSnapshot) {
           if (this.#hasEventSubscribers()) {
             beforeValues = this.#captureEventValues(integration.added);
@@ -1026,6 +1030,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (decoded !== snapshotSeed) this.#assertImportsNotOutdated(decoded.records);
     }
     const integration = this.#integrateHistory(ordered.flatMap(({ records }) => records));
+    const seedChanges = new Set(
+      snapshotSeed?.records.map(({ change }) => changeKey(change.id)) ?? [],
+    );
+    this.#validateMovableListRefs(
+      integration.added.filter(({ change }) => !seedChanges.has(changeKey(change.id))),
+    );
     let beforeValues = new Map<string, unknown>();
     let preparedDiffs = new Map<string, Diff>();
     if (integration.added.length > 0 && !this.#detached) {
@@ -8005,6 +8015,155 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return version;
   }
 
+  /**
+   * Rust #1125 (`OpLog::validate_movable_list_elem_refs_since`): a MovableList
+   * move or set must name an element inserted into the same list within the
+   * op's causal history. On a shallow document, an element from before the
+   * root must be in the root state; no op after the root can see one that was
+   * deleted before it. An index out of range fails while the op is applied.
+   * Either way the whole import is rolled back (`#atomically`). A move or set
+   * of a deleted element is valid: it has the meaning of a concurrent one. See
+   * context/loro-js-movable-list.md.
+   */
+  #validateMovableListRefs(records: readonly HistoryRecord[]): void {
+    for (const { change } of records) {
+      let causalVersion: CausalVersion | undefined;
+      for (const operation of change.operations) {
+        const content = operation.content;
+        if (content.type !== "movable-list-move" && content.type !== "movable-list-set") {
+          continue;
+        }
+        causalVersion ??= this.#causalVersionAt(change.dependencies);
+        const opId = { peer: change.id.peer, counter: operation.counter };
+        const lamport = change.lamport + (operation.counter - change.id.counter);
+        if (
+          !this.#isMovableElementVisible(
+            operation.container,
+            opId,
+            lamport,
+            content.elementId,
+            causalVersion,
+          )
+        ) {
+          throw new Error(
+            `Movable list op ${opId.counter}@${opId.peer} targets element ` +
+              `L${content.elementId.lamport}@${content.elementId.peer}, which is not in the ` +
+              "list's causal history",
+          );
+        }
+      }
+    }
+  }
+
+  #isMovableElementVisible(
+    container: CodecContainerId,
+    opId: CodecId,
+    opLamport: number,
+    elementId: { readonly peer: bigint; readonly lamport: number },
+    causalVersion: CausalVersion,
+  ): boolean {
+    if (elementId.lamport >= opLamport) return false;
+    let target = this.#idAtLamport(elementId.peer, elementId.lamport);
+    const deferred = this.#deferredSnapshotHistory;
+    if (target === undefined && deferred !== undefined) {
+      // Only the overlay is indexed, so the element comes from the snapshot
+      // base. Snapshot state only holds elements inserted into that list, all
+      // of them seen by an op that has seen the whole base.
+      if (
+        this.#snapshotStateHasElement(container, elementId) &&
+        deferred.endVersion
+          ._codecEntriesUnsorted()
+          .every(({ peer, counter }) => counter <= (causalVersion.get(peer) ?? 0))
+      ) {
+        return true;
+      }
+      this.#materializeDeferredHistory();
+      target = this.#idAtLamport(elementId.peer, elementId.lamport);
+    }
+    if (target === undefined) return this.#shallowRootHasElement(container, elementId);
+    const causal =
+      (target.peer === opId.peer && target.counter < opId.counter) ||
+      target.counter < (causalVersion.get(target.peer) ?? 0);
+    if (!causal) return false;
+    const operation = this.#operationAt(target);
+    if (operation === undefined) return this.#shallowRootHasElement(container, elementId);
+    return (
+      operation.content.type === "movable-list-insert" &&
+      containerIdsEqual(operation.container, container)
+    );
+  }
+
+  /**
+   * The op ID of `peer`'s op with `lamport`, or undefined when indexed history
+   * lacks it. Deferred snapshot history is not indexed.
+   */
+  #idAtLamport(peer: bigint, lamport: number): CodecId | undefined {
+    const records = this.#historyByPeer.get(peer);
+    if (records === undefined) return undefined;
+    let low = 0;
+    let high = records.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (records[middle]!.change.lamport <= lamport) low = middle + 1;
+      else high = middle;
+    }
+    const record = records[low - 1];
+    if (record === undefined) return undefined;
+    const offset = lamport - record.change.lamport;
+    return offset < changeLength(record.change)
+      ? { peer, counter: record.change.id.counter + offset }
+      : undefined;
+  }
+
+  #snapshotStateHasElement(
+    id: CodecContainerId,
+    elementId: { readonly peer: bigint; readonly lamport: number },
+  ): boolean {
+    const container = this.#containers.get(this.#containerKey(id));
+    if (!(container instanceof LoroMovableList)) return false;
+    this._ensureContainerHydrated(container);
+    return container._state.element(elementId.peer, elementId.lamport) !== undefined;
+  }
+
+  /** Rust's `shallow_root_has_movable_list_elem`. */
+  #shallowRootHasElement(
+    container: CodecContainerId,
+    elementId: { readonly peer: bigint; readonly lamport: number },
+  ): boolean {
+    const store = this.#shallowRootStore;
+    if (store?.kind !== "sstable") return false;
+    const key = formatContainerId(container);
+    let elements = shallowRootElements.get(store)?.get(key);
+    if (elements === undefined) {
+      elements = new Set();
+      const entry = store.containers.find(({ id }) => formatContainerId(id) === key);
+      const state = entry?.wrapper.state;
+      if (state?.kind === CodecContainerType.MovableList) {
+        let listIndex = Number(state.items[0]?.invisibleListItems ?? 0n);
+        let elementIndex = 0;
+        for (let index = 1; index < state.items.length; index += 1) {
+          const item = state.items[index]!;
+          const listItem = state.listItemIds[listIndex]!;
+          const id = item.positionIdEqualsElementId
+            ? {
+                peerIndex: listItem.peerIndex,
+                lamport: listItem.counter + listItem.lamportSub,
+              }
+            : state.elementIds[elementIndex++]!;
+          elements.add(`${state.peers[Number(id.peerIndex)]!}:${id.lamport}`);
+          listIndex += 1 + Number(item.invisibleListItems);
+        }
+      }
+      let byContainer = shallowRootElements.get(store);
+      if (byContainer === undefined) {
+        byContainer = new Map();
+        shallowRootElements.set(store, byContainer);
+      }
+      byContainer.set(key, elements);
+    }
+    return elements.has(`${elementId.peer}:${elementId.lamport}`);
+  }
+
   #operationAt(id: CodecId): DecodedOperation | undefined {
     const record = this.#recordContaining(id);
     if (record === undefined) return undefined;
@@ -9054,6 +9213,9 @@ function transformListDelta(
   while (output.length > 0 && "retain" in output.at(-1)!) output.pop();
   return output;
 }
+
+/** Element IDs of each MovableList in a shallow root store, built on first use. */
+const shallowRootElements = new WeakMap<object, Map<string, Set<string>>>();
 
 function hasMaterializedSequenceInsertions(
   records: readonly HistoryRecord[],

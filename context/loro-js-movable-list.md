@@ -8,8 +8,8 @@ reproduce, the loro.js model that implements them, and how the differential
 suite checks the two against each other. Complexity rules still come from
 [loro-js-performance.md](loro-js-performance.md).
 
-Status: the model below and atomic imports are implemented. Import validation
-("Validation and import atomicity") lands in a follow-up change.
+Status: the model below, atomic imports, and import validation are
+implemented.
 
 ## Rust semantics (the contract)
 
@@ -61,9 +61,9 @@ A MovableList is two CRDTs glued together
   section 8) lists every alive position in order, dead ones included, plus
   element IDs and last-set IDs when they differ from the position/element ID.
 
-Invalid `Move`/`Set` handling (Rust #1125, open when this was written) is in
-[movable-list-op-validation.md](movable-list-op-validation.md) once merged; see
-the "Validation" section below for the loro.js side.
+Invalid `Move`/`Set` handling (Rust loro-dev/loro#1125) is in
+[movable-list-op-validation.md](movable-list-op-validation.md); see the
+"Validation" section below for the loro.js side.
 
 ## Why the old loro.js model diverged
 
@@ -211,17 +211,46 @@ Rust's rule for `from_move` inserts that transforms leave behind
 
 ## Validation and import atomicity
 
-Atomicity is implemented ([import-batch-atomicity.md](import-batch-atomicity.md),
-"loro.js"). Validation is planned. It follows Rust #1125. A `Move`/`Set` whose element is unknown,
-lives in another container, is outside the op's causal history, or (on a
-shallow doc) was deleted before the root is rejected with an error. So is a
-`from`/`to` outside the op-index range of its causal view. A `Move`/`Set` of a
-deleted element is applied with the concurrent-op semantics above.
-`import`/`importBatch` stage the document state (history indexes, containers,
-pending changes, version, subscribers' events, undo stacks) and restore it
-when any blob fails, so a rejected import is invisible
-([import-batch-atomicity.md](import-batch-atomicity.md) states the Rust
-contract).
+Validation follows Rust loro-dev/loro#1125 (`validate_movable_list_elem_refs_since`;
+[movable-list-op-validation.md](movable-list-op-validation.md)).
+`#validateMovableListRefs` in `document.ts` runs on every imported change after
+integration: FastUpdates, non-initializing snapshots, and `importBatch`
+(except the snapshot that seeds an empty document, which Rust does not
+validate op by op either). A `Move`/`Set` whose element is unknown, is not a
+`movable-list-insert` into the same list, is outside the op's causal history,
+or (on a shallow doc) is older than the root but missing from the root state is
+rejected with an error. `MovableListState.applyMove` rejects a `from`/`to`
+outside the op-index range of the op's causal view before mutating anything. A
+`Move`/`Set` of a deleted element is valid and is applied with the
+concurrent-op semantics above, the same on every import path.
+
+The element lookup maps `(peer, lamport)` to an op ID by binary search over
+the peer's indexed changes (lamports grow with counters). While snapshot
+history is deferred only the overlay is indexed; a miss there means the element
+comes from the snapshot base, and it is accepted without decoding history when
+the list's hydrated state holds it and the op has seen the whole base.
+Otherwise history is materialized once. The shallow-root element set is built
+once per root store and list.
+
+A rejection rolls back the whole import or batch. `import`/`importBatch` stage
+the document state (history indexes, containers, pending changes, version,
+subscribers' events, undo stacks) and restore it when any blob fails, so a
+rejected import is invisible ([import-batch-atomicity.md](import-batch-atomicity.md),
+"loro.js", states both contracts). Rust reports an out-of-range index as
+"movable list diff retains N items but state only has M"; loro.js says "out of
+range". `loro-js/tests/movable-list-invalid-ops.test.ts` ports
+`crates/loro/tests/movable_list_invalid_ops.rs`; run against a WASM build of
+`main` with #1125 merged, all of it but the loro.js-only undecodable-snapshot
+test passes, error text aside.
+
+Rust rules loro.js does not copy (edge cases, documented rather than ported):
+- Rust rejects any List/MovableList/Text op position at or past 1,073,741,822
+  when it decodes ops (`InnerListOp::check_positions`), on every import path.
+  loro.js rejects such a move only when it applies it, so a detached import
+  records it until `attach` fails.
+- Rust bounds-checks the composed diff of an import, so an out-of-bounds move
+  that a later op of the same import cancels is accepted. loro.js checks each
+  op when it applies it and rejects the import.
 
 ## Differential suite
 
