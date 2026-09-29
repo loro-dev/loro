@@ -538,4 +538,7 @@ The remaining differences are representation and JavaScript constant factors:
 
 Keep randomized index-invariant coverage in `loro-js/tests/indexes.test.ts` and
 Rust/TypeScript fixture coverage in `loro-js/tests/rust-interop.test.ts` when
-changing these structures.
+changing these structures. The randomized Rust differential suite
+(`loro-js/tests/differential/`, see
+[loro-js-movable-list.md](loro-js-movable-list.md)) checks convergence, events and
+encoding interchange against a WASM build of the Rust implementation.

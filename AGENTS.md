@@ -46,6 +46,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   position rules: [context/loro-js-richtext-anchors.md](context/loro-js-richtext-anchors.md).
 - loro.js multi-peer differential fuzzing against replay, checkout, event, and
   Rust/WASM oracles: [context/loro-js-differential-fuzz.md](context/loro-js-differential-fuzz.md).
+- loro.js MovableList model, the MovableList Rust differential suite
+  (`loro-js/tests/differential/`), and known loro.js/Rust divergences:
+  [context/loro-js-movable-list.md](context/loro-js-movable-list.md).
 - WASM panic/OOM reporting channels, `__wbindgen_start` glue invariant, and
   trap-testing recipes:
   [context/wasm-error-reporting.md](context/wasm-error-reporting.md).
