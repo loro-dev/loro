@@ -2594,10 +2594,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     if (parsed.kind === "root") {
       throw new TypeError("a root container cannot be assigned as a child");
     }
-    if (isContainer(current) && current.id === sourceId) {
-      remap.set(sourceId, current);
-      return;
-    }
+    // As in Rust, a regular child is set as a new container even when the key
+    // already holds one with this ID: the batch carries the child's whole
+    // state (a full-state target is aligned instead, see #alignFullState).
     const child = createContainer(type) as Container;
     remap.set(sourceId, parent.setContainer(key, child));
   }
@@ -2610,16 +2609,43 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   ): void {
     const resolveNode = (source: TreeID): TreeID | undefined =>
       treeRemap.get(source) ?? (tree.has(source) ? source : undefined);
+    // Alive: the node and all its ancestors are not deleted.
+    const aliveNode = (source: TreeID): TreeID | undefined => {
+      const node = resolveNode(source);
+      const record = node === undefined ? undefined : tree._nodes.get(node);
+      return record === undefined || this.#isTreeRecordHidden(tree, record)
+        ? undefined
+        : node;
+    };
+    const create = (
+      item: Extract<TreeDiffItem, { action: "create" | "move" }>,
+      parent: TreeID | undefined,
+    ): void => {
+      const node = tree.createNode(parent, item.index);
+      treeRemap.set(item.target, node.id);
+      const sourceNode = parseTreeId(item.target);
+      const sourceMetaId = formatContainerId({
+        kind: "normal",
+        ...sourceNode,
+        containerType: CodecContainerType.Map,
+      });
+      containerRemap.set(sourceMetaId, node.data);
+    };
 
     // Items apply in order, as in Rust: each index refers to the tree that the
     // earlier items leave. An item whose parent does not exist yet waits
-    // until a later pass, after the item that creates it.
+    // until a later pass, after the item that creates it. As in Rust's
+    // `apply_diff`, a create of a node that is alive here moves it, a move of
+    // a node that is missing or deleted here creates a new one, and a delete
+    // of a node that is already deleted does nothing. Rust places a node at
+    // its fractional index rather than its index; equal positions then tie on
+    // the new op's writer, so the index reproduces the source order better.
     let pending: readonly TreeDiffItem[] = diff;
     while (pending.length > 0) {
       const deferred: TreeDiffItem[] = [];
       for (const item of pending) {
         if (item.action === "delete") {
-          const target = resolveNode(item.target);
+          const target = aliveNode(item.target);
           if (target !== undefined) tree.delete(target);
           continue;
         }
@@ -2628,20 +2654,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           deferred.push(item);
           continue;
         }
-        if (item.action === "create") {
-          const node = tree.createNode(parent, item.index);
-          treeRemap.set(item.target, node.id);
-          const sourceNode = parseTreeId(item.target);
-          const sourceMetaId = formatContainerId({
-            kind: "normal",
-            ...sourceNode,
-            containerType: CodecContainerType.Map,
-          });
-          containerRemap.set(sourceMetaId, node.data);
-        } else {
-          const target = resolveNode(item.target);
-          if (target !== undefined) tree.move(target, parent, item.index);
-        }
+        const target = aliveNode(item.target);
+        if (target === undefined) create(item, parent);
+        else tree.move(target, parent, item.index);
       }
       if (deferred.length === pending.length) {
         throw new RangeError("tree diff refers to a parent that does not exist");
@@ -10791,13 +10806,26 @@ function validateTreeItems(
       throw new RangeError(`tree index ${String(index)} is out of range`);
     }
   };
+  // Alive: the node and all its ancestors are not deleted.
+  const alive = (source: TreeID): string | undefined => {
+    const node = resolve(source);
+    if (node === undefined) return undefined;
+    for (
+      let current: string | undefined = node;
+      current !== undefined;
+      current = parentOf(current)
+    ) {
+      if (isDeleted(current)) return undefined;
+    }
+    return node;
+  };
   let pending: readonly TreeDiffItem[] = items;
   while (pending.length > 0) {
     const deferred: TreeDiffItem[] = [];
     for (const item of pending) {
       if (item.action === "delete") {
-        const target = resolve(item.target);
-        if (target !== undefined && !isDeleted(target)) {
+        const target = alive(item.target);
+        if (target !== undefined) {
           setCount(parentOf(target), -1);
           state.deleted.set(target, true);
         }
@@ -10808,7 +10836,8 @@ function validateTreeItems(
         deferred.push(item);
         continue;
       }
-      if (item.action === "create") {
+      const target = alive(item.target);
+      if (target === undefined) {
         checkIndex(item.index, countOf(parent));
         const node = `\u0000created:${state.created++}`;
         state.remap.set(item.target, node);
@@ -10818,20 +10847,16 @@ function validateTreeItems(
         setCount(parent, 1);
         continue;
       }
-      const target = resolve(item.target);
-      if (target === undefined) continue;
       for (let ancestor = parent; ancestor !== undefined; ancestor = parentOf(ancestor)) {
         if (ancestor === target) {
           throw new RangeError("cannot move a tree node below itself or its descendant");
         }
       }
-      const live = !isDeleted(target);
-      const sameParent = live && parentOf(target) === parent;
+      const sameParent = parentOf(target) === parent;
       checkIndex(item.index, countOf(parent) - (sameParent ? 1 : 0));
-      if (live) setCount(parentOf(target), -1);
+      setCount(parentOf(target), -1);
       setCount(parent, 1);
       state.parents.set(target, parent);
-      state.deleted.set(target, false);
     }
     if (deferred.length === pending.length) {
       throw new RangeError("tree diff refers to a parent that does not exist");

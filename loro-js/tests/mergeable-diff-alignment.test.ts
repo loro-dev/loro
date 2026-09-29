@@ -241,3 +241,61 @@ describe("batch validation of a hidden mergeable list (Rust main results)", () =
     });
   }
 });
+
+describe("default applyDiff on a doc that holds the hidden state (Rust main results)", () => {
+  const shape = (value: unknown): unknown =>
+    JSON.parse(
+      JSON.stringify(value, (_key, node: unknown) => {
+        if (node === null || typeof node !== "object" || Array.isArray(node)) return node;
+        const {
+          id: _id,
+          parent: _parent,
+          index: _index,
+          fractional_index: _fractionalIndex,
+          ...rest
+        } = node as Record<string, unknown>;
+        return rest;
+      }),
+    );
+
+  test("a regular child of a mergeable map is recreated, not appended to", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const map = doc.getMap("m").ensureMergeableMap("s");
+    map.setContainer("t", new LoroText()).insert(0, "x");
+    map.set("k", 1);
+    doc.commit();
+    const alive = doc.frontiers();
+    doc.getMap("m").delete("s");
+    doc.commit();
+    const diff = doc.diff(doc.frontiers(), alive, true);
+    const fork = doc.forkAt(doc.frontiers());
+    fork.setPeerId(7);
+    fork.applyDiff(diff);
+    fork.commit();
+    expect(fork.toJSON()).toEqual({ m: { s: { k: 1, t: "x" } } });
+  });
+
+  test("the nodes of a mergeable tree are reused by TreeID, not duplicated", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getMap("m").ensureMergeableTree("s");
+    const node = tree.createNode();
+    node.data.set("name", "a");
+    node.createNode().data.set("name", "b");
+    doc.commit();
+    const alive = doc.frontiers();
+    doc.getMap("m").delete("s");
+    doc.commit();
+    const diff = doc.diff(doc.frontiers(), alive, true);
+    const fork = doc.forkAt(doc.frontiers());
+    fork.setPeerId(7);
+    fork.applyDiff(diff);
+    fork.commit();
+    expect(shape(fork.toJSON())).toEqual({
+      m: {
+        s: [{ meta: { name: "a" }, children: [{ meta: { name: "b" }, children: [] }] }],
+      },
+    });
+  });
+});
