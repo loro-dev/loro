@@ -130,9 +130,11 @@ can read differently after the upgrade:
 - **Concurrent text inserts.** 0.2 could order an insert after a sibling's subtree
   differently from Rust. 1.0 orders it like Rust, so such a history can give other
   text (`bé9a` in 0.2, `béa9` in 1.0 and Rust).
-- **Cursors.** 0.2 encoded the UTF-16 position of a cursor's target; Rust and 1.0 use
-  the Unicode position. A cursor encoded by 0.2 can resolve to another offset (on
-  `ab😀`, 4 in 0.2 and 2 in 1.0). Get new cursors from the upgraded document.
+- **Cursors.** 1.0 resolves cursors like Rust: a cursor reports its target's own
+  offset. A cursor encoded by 0.2 with side 1, or at the end of the text, therefore
+  resolves one character earlier, whatever the characters are (on `abc`, the end
+  cursor is at 3 in 0.2 and 2 in 1.0; a side-1 cursor on `b` at 2 and 1). Other
+  cursors resolve as before. Get new cursors from the upgraded document.
 
 Documents also edited by `loro-crdt` peers already disagreed with Rust in these cases;
 1.0 makes them agree.
@@ -149,17 +151,21 @@ history disagrees with. Its current state is safe to read right after the import
 but do not keep using the document: exporting it as updates gives `béa9`, a
 replica loaded from updates holds other text and stays different after new edits
 (`béQ9aZ` and `béQa9Z`), older versions it checks out can be approximate, and a
-fork or a shallow-snapshot export can rebuild it from its history, which switches
-it to Rust's reading (Rust can even show text that matches neither reading after a
-checkout there and back).
+fork can rebuild it from its history, which switches it to Rust's reading.
+Exporting a shallow snapshot from it (`export({ mode: "shallow-snapshot" })`) does
+the same to the document itself: its current state becomes Rust's reading (`bé9a`
+turns into `béa9`). Rust can even show text that matches neither reading after a
+checkout there and back.
 
 **Migrate every replica the same way.** Recommended paths:
 
-1. **Keep the content, drop the history (safest).** Read the final state, either
-   with 0.2 after checking out the latest version, or with 1.0 right after importing
-   a 0.2 snapshot: `doc.toJSON()`, or `text.toDelta()` for rich text. Build one new
-   document from it in 1.0 and share that document with every replica. Do not
-   import old updates or snapshots into it.
+1. **Keep the content, drop the history (safest).** Read the final state with 0.2,
+   after checking out the latest version: `doc.toJSON()`, or `text.toDelta()` for
+   rich text. Build one new document from it in 1.0 and share that document with
+   every replica. Do not import old updates or snapshots into it. Reading the state
+   with 1.0 right after importing a 0.2 snapshot gives the same result only when
+   that snapshot is the final version: if updates were stored after it, 1.0 (like
+   Rust) reads those updates the Rust way.
 2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not
    snapshots) on every replica, and check the content, because it can differ from
    what 0.2 showed.

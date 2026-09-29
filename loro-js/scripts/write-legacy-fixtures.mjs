@@ -50,7 +50,7 @@ function sync(from, to) {
   expected["text-concurrent"] = peer2.getText("t").toString();
 }
 
-// A cursor on the end of "ab😀": 0.2 encoded its UTF-16 position.
+// The end cursor of "ab😀": 0.2 resolved it after its target, Rust and 1.0 at it.
 {
   const owner = doc(1);
   const text = owner.getText("c");
