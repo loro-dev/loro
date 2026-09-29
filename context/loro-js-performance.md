@@ -1,6 +1,6 @@
 # loro-js Performance Architecture
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-30.
 
 The pure TypeScript runtime lives in `loro-js/src/runtime`. Its performance
 target is the asymptotic behavior of the Rust runtime, while accepting a larger
@@ -118,8 +118,10 @@ JavaScript constant factor.
   index only when a concurrent/future interval needs ordering. Consecutive IDs
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
   future ID run while finding the next causally included element. Ordinary local
-  edits keep the smaller unindexed path. MovableList continues to use the scan
-  because moves break the origin-tree physical preorder. Sibling subtrees are
+  edits keep the smaller unindexed path. MovableList positions keep the scan
+  (`MovableListState`, `useOriginIndex = false`): the origin index misorders
+  a sibling subtree followed by a concurrent position that is not its
+  descendant. Sibling subtrees are
   contiguous, so the gap between two direct children belongs to the earlier
   child. After the last child the interval can also hold concurrent elements
   whose origin is left of `originLeft`; Rust's scan stops before them. The index
@@ -171,7 +173,11 @@ JavaScript constant factor.
 - Text, List, and MovableList state hydrated from a snapshot (eager, lazy, or a
   shallow root) has no tombstones, deletion index, or style, value, and move
   history for the snapshot's operations. `LoroDoc.#snapshotSequences` records
-  each such container with its snapshot version. Before `checkout`,
+  each such container with its snapshot version. Before an import,
+  `#prepareSnapshotImport` completes (below) each such container that an
+  imported record touches concurrently with the snapshot version, since that
+  record's causal view can need tombstones the snapshot dropped
+  (loro-dev/loro#1163). Before `checkout`,
   `checkoutToLatest`, `diff`, or a detached snapshot export
   (`#encodeLatestState`) transitions, `#prepareSnapshotTransition` looks only
   at the containers the transition
@@ -208,9 +214,8 @@ JavaScript constant factor.
   whole-container values when style operations are crossed, since their ranges
   come from positions.
 - What that guarantees: the latest state, imports, and exports equal the
-  snapshot state plus the later operations, as loro.js applies them. A later
-  operation concurrent with a delete that the snapshot already applied can
-  still land at another position than in Rust, as on main (loro-dev/loro#1163).
+  snapshot state plus the later operations, as loro.js applies them; a later
+  operation concurrent with the snapshot runs on the completed container.
   An older version is approximate: the snapshot state cannot restore text
   deleted before it. In the round-3 review's random Rust histories, older
   versions and `revertTo` differed from Rust more often than on main (437 vs
@@ -222,33 +227,22 @@ JavaScript constant factor.
   (plain text too; loro-dev/loro#1136 fixes the plain-text case), and a shallow
   export that throws midway leaves the live document at the root or in
   between, since `#encodeShallowSnapshot` rebuilds it without a restore.
-- A MovableList is not a snapshot sequence at all (`#markSnapshotSequence`);
-  it behaves as on main. Its snapshot state names each element by its Rust
-  position id (`#hydrateContainerState` takes `listItemIds` in order, and after
-  a move they include invisible positions), while a replay names elements by
-  their insert ids, and Rust encodes element ids as (peer, lamport), so no
-  comparison with a replay is meaningful. The hydrated state also has no move
-  or value history (`_moveHistoryComplete`, `_valueHistoryComplete`), so
-  `#canTransitionRecords` refuses to cross its snapshot moves, sets, and
-  deletes, and the transition replays to the target; later transitions are
-  incremental, and a later move or set by element id resolves. Replaying the
-  list to the current version and then retreating instead (as round 3 did)
-  carried loro.js's MovableList non-convergence at the latest version into
-  older versions. Completing only lists whose snapshot names elements by insert
-  ids was also tried: it makes a snapshot document transition like a
-  full-history one, and loro.js's incremental MovableList transitions have
-  their own bugs with concurrent moves and sets (a full-history document on
-  main shows them too), so random Rust histories got 167 mismatching versions
-  against main's 91; leaving every MovableList on main's path gives 56. Until
-  the MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates
-  element ids, a MovableList whose loro.js replay differs from Rust can change
-  its latest state at the first such transition, also as on main. Once the
-  list is replayed, later transitions are incremental and can still show a
-  wrong older version where main, which replays on every such checkout, is
-  right (round-4 review, seed 22: after checking out v11, v12, then v13, the
-  list shows `[11]` where Rust, main, and a full-history document show `[9]`;
-  the latest state and `revertTo` are right). This is loro.js's MovableList
-  transition gap, left to loro-dev/loro#1132.
+- A MovableList is a snapshot sequence like Text and List. Its snapshot
+  state names Rust's position, element and last-set ids, so a replay of its
+  history is comparable to it (`sameMovableListStates`); its hydrated
+  candidates are partial, so every transition that touches it completes it.
+  Model details: [loro-js-movable-list.md](loro-js-movable-list.md).
+- Cost of completion on import: the first import concurrent with the snapshot
+  pays one replay of that container's history, the work a document loaded
+  from updates did at load time. Measured 2026-09-30: with 2000 random Text
+  edits per peer, the concurrent import after a snapshot takes 675 ms, as
+  after a full-history update import on main (667 ms); main's snapshot path
+  took 235 ms because it skipped the tombstones (loro-dev/loro#1163). With a
+  MovableList of 8000 items and 8000 moves/sets per peer it takes 92 ms, 60 ms
+  after an update import (main: 35 ms and 96 ms; main's snapshot path skipped
+  the history and diverged from Rust). Text concurrent imports stay
+  superlinear, as on main, since each op computes its causal view
+  (`causalView`).
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
   `forkAt`) rebuilds unreplayable containers the same way. It no longer checks
   snapshot-hydrated styled Text first (`#checkSnapshotSequences`, removed in
