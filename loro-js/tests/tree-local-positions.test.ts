@@ -99,6 +99,33 @@ describe("local tree positions", () => {
     expect(tree.toJSON().map((node) => node.id)).toEqual([a.id, c.id, b.id]);
   });
 
+  test("moves within a parent in time independent of the sibling count", () => {
+    /** Best of three runs of 1,000 same-parent moves, half of them no-ops. */
+    function movesMs(siblings: number): number {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const tree = doc.getTree("tree");
+      const nodes = Array.from({ length: siblings }, () => tree.createNode());
+      doc.commit();
+      let best = Infinity;
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        for (let step = 0; step < 500; step += 1) {
+          const node = nodes[(step * 7_919) % siblings]!;
+          tree.move(node.id, undefined, node.index()!);
+          tree.move(node.id, undefined, 0);
+        }
+        doc.commit();
+        best = Math.min(best, performance.now() - started);
+      }
+      return best;
+    }
+    // Counting the siblings by listing them made each move linear in their
+    // number (16x the siblings took about 16x the time).
+    const ratio = movesMs(16_000) / movesMs(1_000);
+    expect(ratio).toBeLessThan(4);
+  }, 60_000);
+
   // Rust's is_ancestor_of treats a deleted node's parent as the deleted root.
   test("moves a node under its own deleted child", () => {
     const doc = new LoroDoc();

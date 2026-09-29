@@ -4272,7 +4272,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const record = tree._nodes.get(target)!;
     if (!record.deleted && sameOptionalCodecId(record.parent, parentId)) {
       const current = tree._indexOf(record);
-      const siblings = tree._childrenOf(parentId).length;
+      const siblings = tree._childCount(parentId);
       if (current === (index ?? siblings - 1)) return;
     }
     const { position, rearranged } = tree._positionFor(parentId, index, subject);
