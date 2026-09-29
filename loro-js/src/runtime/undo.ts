@@ -10,9 +10,16 @@ import type {
 interface UndoItem {
   peer: PeerID;
   range: CounterSpan;
+  // Lamport of the first op in `range`.
+  lamport: number;
   meta: UndoItemValue;
   timestamp: number;
   targets: Set<string>;
+}
+
+/** A counter range and the lamport of its last op. */
+interface TrackedRange extends CounterSpan {
+  lastLamport: number;
 }
 
 class UndoDeque<T> {
@@ -42,6 +49,11 @@ class UndoDeque<T> {
     return this.#end === this.#start ? undefined : this.#items.get(this.#end - 1);
   }
 
+  /** The oldest item. */
+  first(): T | undefined {
+    return this.#end === this.#start ? undefined : this.#items.get(this.#start);
+  }
+
   trimFront(length: number): void {
     while (this.length > length) {
       this.#items.delete(this.#start);
@@ -63,7 +75,7 @@ export class UndoManager {
   readonly #doc: LoroDoc;
   #peer: PeerID;
   readonly #undo = new UndoDeque<UndoItem>();
-  readonly #redo: UndoItem[] = [];
+  readonly #redo = new UndoDeque<UndoItem>();
   readonly #excludeOriginPrefixes = new Set<string>();
   readonly #remoteTargets = new Set<string>();
   #mergeInterval: number;
@@ -71,6 +83,12 @@ export class UndoManager {
   #onPush: UndoConfig["onPush"];
   #onPop: UndoConfig["onPop"];
   #applying = false;
+  // Every counter range this manager recorded or wrote while undoing or
+  // redoing, per peer, merged when adjacent. Later moves inside these do not
+  // block undoing an earlier move; any other later move does.
+  // Each peer's ranges from `head` on are live; the dropped prefix is compacted
+  // away in bulk.
+  readonly #tracked = new Map<bigint, { ranges: TrackedRange[]; head: number }>();
   #paused = false;
   #groupDepth = 0;
   #unsubscribe: () => void;
@@ -103,6 +121,7 @@ export class UndoManager {
       this.#undo.push(item);
       throw error;
     }
+    this.#pruneTracked();
     return true;
   }
 
@@ -117,6 +136,7 @@ export class UndoManager {
       this.#redo.push(item);
       throw error;
     }
+    this.#pruneTracked();
     return true;
   }
 
@@ -145,7 +165,7 @@ export class UndoManager {
   }
 
   topRedoValue(): unknown {
-    return this.#redo.at(-1)?.meta.value;
+    return this.#redo.peek()?.meta.value;
   }
 
   setMaxUndoSteps(steps: number): void {
@@ -177,16 +197,19 @@ export class UndoManager {
 
   clear(): void {
     this.#undo.clear();
-    this.#redo.length = 0;
+    this.#redo.clear();
     this.#remoteTargets.clear();
+    this.#tracked.clear();
   }
 
   clearUndo(): void {
     this.#undo.clear();
+    this.#pruneTracked();
   }
 
   clearRedo(): void {
-    this.#redo.length = 0;
+    this.#redo.clear();
+    this.#pruneTracked();
   }
 
   pause(): void {
@@ -234,10 +257,13 @@ export class UndoManager {
       (spans.length === 1 ? spans[0] : undefined);
     if (span === undefined || span.length === 0) return;
     this.#peer = span.peer;
+    const range = { start: span.counter, end: span.counter + span.length };
+    this.#track(span.peer, range);
     const now = Date.now();
     const item: UndoItem = {
       peer: span.peer,
-      range: { start: span.counter, end: span.counter + span.length },
+      range,
+      lamport: this.#doc._lamportOf(span.peer, range.start),
       meta:
         this.#onPush?.(
           true,
@@ -266,15 +292,16 @@ export class UndoManager {
     } else {
       this.#pushUndo(item, false);
     }
-    this.#redo.length = 0;
+    this.#redo.clear();
     this.#remoteTargets.clear();
+    this.#pruneTracked();
   }
 
   #invert(item: UndoItem, isUndo: boolean): UndoItem | undefined {
     const before = this.#doc.frontiers();
     this.#applying = true;
     try {
-      this.#doc._undoIdSpan(item.peer, item.range);
+      this.#doc._undoIdSpan(item.peer, item.range, (id) => this.#isTracked(id));
       this.#doc.commit({ origin: isUndo ? "undo" : "redo" });
       const after = this.#doc.frontiers();
       const spans = this.#doc.findIdSpansBetween(before, after).forward;
@@ -289,9 +316,11 @@ export class UndoManager {
       if (span === undefined || span.length === 0) return undefined;
       const range = { start: span.counter, end: span.counter + span.length };
       this.#peer = span.peer;
+      this.#track(span.peer, range);
       return {
         peer: span.peer,
         range,
+        lamport: this.#doc._lamportOf(span.peer, range.start),
         meta: this.#onPush?.(!isUndo, range) ?? EMPTY_META,
         timestamp: Date.now(),
         targets: new Set(item.targets),
@@ -301,13 +330,80 @@ export class UndoManager {
     }
   }
 
+  #track(peer: PeerID, range: CounterSpan): void {
+    const key = BigInt(peer);
+    const lastLamport = this.#doc._lamportOf(peer, range.end - 1);
+    let tracked = this.#tracked.get(key);
+    if (tracked === undefined) {
+      tracked = { ranges: [], head: 0 };
+      this.#tracked.set(key, tracked);
+    }
+    const { ranges } = tracked;
+    const last = ranges.length > tracked.head ? ranges.at(-1) : undefined;
+    if (last !== undefined && last.end === range.start) {
+      ranges[ranges.length - 1] = { start: last.start, end: range.end, lastLamport };
+    } else {
+      ranges.push({ start: range.start, end: range.end, lastLamport });
+    }
+  }
+
+  /** Number of tracked counter ranges (internal; used by tests). */
+  _trackedRangeCount(): number {
+    let count = 0;
+    for (const { ranges, head } of this.#tracked.values()) count += ranges.length - head;
+    return count;
+  }
+
+  /**
+   * Keeps only the tracked ranges that can still matter. Undoing a move checks
+   * only the moves after it, and the undone move is an op of a stacked item,
+   * so a range whose ops all precede every stacked op (by lamport, over all
+   * peers) is dropped. Each stacked item was written after every item below
+   * it, so the earliest stacked op is the first op of the bottom item of one
+   * of the stacks. The cost is O(tracked peers + dropped ranges), independent
+   * of the stack lengths.
+   */
+  #pruneTracked(): void {
+    const earliest = Math.min(
+      this.#undo.first()?.lamport ?? Infinity,
+      this.#redo.first()?.lamport ?? Infinity,
+    );
+    for (const [peer, tracked] of this.#tracked) {
+      const { ranges } = tracked;
+      while (tracked.head < ranges.length && ranges[tracked.head]!.lastLamport < earliest)
+        tracked.head += 1;
+      if (tracked.head === ranges.length) {
+        this.#tracked.delete(peer);
+      } else if (tracked.head >= 32 && tracked.head * 2 >= ranges.length) {
+        ranges.splice(0, tracked.head);
+        tracked.head = 0;
+      }
+    }
+  }
+
+  #isTracked(id: { readonly peer: bigint; readonly counter: number }): boolean {
+    const tracked = this.#tracked.get(id.peer);
+    if (tracked === undefined) return false;
+    const { ranges, head } = tracked;
+    let low = head;
+    let high = ranges.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (ranges[middle]!.start <= id.counter) low = middle + 1;
+      else high = middle;
+    }
+    const range = low > head ? ranges[low - 1] : undefined;
+    return range !== undefined && id.counter < range.end;
+  }
+
   #pushUndo(item: UndoItem, clearRedo: boolean): void {
     this.#undo.push(item);
     this.#trimUndo();
-    if (clearRedo) this.#redo.length = 0;
+    if (clearRedo) this.#redo.clear();
   }
 
   #trimUndo(): void {
     this.#undo.trimFront(this.#maxUndoSteps);
+    this.#pruneTracked();
   }
 }
