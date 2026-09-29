@@ -149,7 +149,7 @@ export abstract class LoroContainer {
   }
 
   isDeleted(): boolean {
-    return this._doc?._isContainerDeleted(this) ?? false;
+    return this._doc?._isContainerUnreachable(this) ?? false;
   }
 
   subscribe(listener: (event: LoroEventBatch) => void): Subscription {
@@ -2916,7 +2916,20 @@ export class LoroTree<
 
   isNodeDeleted(target: TreeID): boolean {
     this._ensureHydrated();
-    return this._nodes.get(target)?.deleted ?? false;
+    const record = this._nodes.get(target);
+    return record !== undefined && this._isNodeHidden(record);
+  }
+
+  /** Whether the node or one of its ancestors is deleted. */
+  _isNodeHidden(record: TreeNodeRecord): boolean {
+    let current: TreeNodeRecord | undefined = record;
+    // A parent chain longer than the node count can only be a cycle.
+    for (let steps = 0; steps <= this._nodes.size; steps += 1) {
+      if (current === undefined || current.deleted) return true;
+      if (current.parent === undefined) return false;
+      current = this._nodes.get(formatTreeId(current.parent));
+    }
+    return true;
   }
 
   enableFractionalIndex(jitter = 0): void {
@@ -2940,15 +2953,34 @@ export class LoroTree<
     return record === undefined ? undefined : new LoroTreeNode(this, record.id);
   }
 
+  /**
+   * Alive nodes in breadth-first order from the roots, like Rust. With
+   * `withDeleted`, the deleted nodes and their subtrees follow.
+   */
   getNodes(options: { withDeleted?: boolean } = {}): LoroTreeNode<T>[] {
     this._ensureHydrated();
-    return [...this._nodes.values()]
-      .filter((record) => options.withDeleted === true || !record.deleted)
-      .map((record) => new LoroTreeNode<T>(this, record.id));
+    const records = this._subtreeRecords(this._childrenOf(undefined));
+    if (options.withDeleted === true) {
+      const deleted = [...this._nodes.values()].filter((record) => record.deleted);
+      for (const record of this._subtreeRecords(deleted)) records.push(record);
+    }
+    return records.map((record) => new LoroTreeNode<T>(this, record.id));
   }
 
+  /** Every node, including deleted ones, as in Rust. */
   nodes(): LoroTreeNode<T>[] {
-    return this.getNodes();
+    this._ensureHydrated();
+    return [...this._nodes.values()].map(
+      (record) => new LoroTreeNode<T>(this, record.id),
+    );
+  }
+
+  _subtreeRecords(starts: readonly TreeNodeRecord[]): TreeNodeRecord[] {
+    const output = [...starts];
+    for (let index = 0; index < output.length; index += 1) {
+      for (const child of this._childrenOf(output[index]!.id)) output.push(child);
+    }
+    return output;
   }
 
   roots(): LoroTreeNode<T>[] {
@@ -3275,7 +3307,7 @@ export class LoroTreeNode<T extends Record<string, unknown> = Record<string, unk
   }
 
   isDeleted(): boolean {
-    return this.#record().deleted;
+    return this.#tree._isNodeHidden(this.#record());
   }
 
   getLastMoveId(): { peer: string; counter: number } {

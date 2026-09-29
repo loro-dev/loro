@@ -3253,7 +3253,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   getPathToContainer(id: ContainerID): Path | undefined {
     const container = this.getContainerById(id);
-    if (container === undefined || this._isContainerDeleted(container)) return undefined;
+    if (container === undefined || this._isContainerUnreachable(container))
+      return undefined;
     return containerPath(container);
   }
 
@@ -3287,7 +3288,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     cursor: Cursor,
   ): { update?: Cursor; offset: number; side: Side } | undefined {
     const container = this.getContainerById(cursor.containerId());
-    if (container === undefined || this._isContainerDeleted(container)) return undefined;
+    if (container === undefined || this._isContainerUnreachable(container))
+      return undefined;
     const id = cursor._idValue();
     if (!(container instanceof LoroList || container instanceof LoroText))
       return undefined;
@@ -3396,6 +3398,32 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#containerSubscribers.delete(container.id);
       }
     };
+  }
+
+  /**
+   * Whether `container` is unreachable from the roots: it or an ancestor was
+   * removed from its parent, or its tree node is under a deleted node, as in
+   * Rust's `DocState::is_deleted`. `_isContainerDeleted` checks only the
+   * container's own slot.
+   */
+  _isContainerUnreachable(container: LoroContainer): boolean {
+    for (
+      let current: LoroContainer | undefined = container;
+      current !== undefined;
+      current = current.parent()
+    ) {
+      if (this._isContainerDeleted(current)) return true;
+      const binding = current._parentLink?.binding;
+      const parent = current.parent();
+      if (
+        binding?.kind === "tree" &&
+        parent instanceof LoroTree &&
+        parent._isNodeHidden(binding.record)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   _isContainerDeleted(container: LoroContainer): boolean {
