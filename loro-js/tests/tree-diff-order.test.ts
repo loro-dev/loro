@@ -237,8 +237,8 @@ describe("deep trees", () => {
 
   test("diff, import and checkout with a subscriber stay linear in depth", () => {
     // Each node used to walk to the root to check whether it is hidden
-    // (quadratic: 4x the depth took about 17x the time). Linear is about 5x.
-    const ratio = deepChainMs(8_000) / deepChainMs(2_000);
-    expect(ratio).toBeLessThan(12);
-  });
+    // (quadratic: 4x the depth took about 16x the time). Linear is about 4.5x.
+    const ratio = deepChainMs(4_000) / deepChainMs(1_000);
+    expect(ratio).toBeLessThan(10);
+  }, 60_000);
 });
