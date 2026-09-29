@@ -99,6 +99,9 @@ interface SequenceNode<T extends IndexedSequenceElement> {
   ownIdRunCount: number;
   ownUtf16: number;
   ownUtf8: number;
+  /** Elements with no UTF-16 width, such as rich-text style anchors. */
+  ownZeroWidth: number;
+  ownVisibleZeroWidth: number;
   visibleOffsets: number[] | undefined;
   visibleUtf16Prefix: number[] | undefined;
   visibleUtf8Prefix: number[] | undefined;
@@ -114,6 +117,8 @@ interface SequenceNode<T extends IndexedSequenceElement> {
   idRunCount: number;
   allUtf16: number;
   allUtf8: number;
+  visibleZeroWidth: number;
+  allZeroWidth: number;
   lazyDeleted: boolean;
   lazyVisible: boolean;
 }
@@ -226,6 +231,16 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
 
   get visibleLineBreaks(): number {
     return visibleLineBreakMetric(this.#root);
+  }
+
+  /** Visible elements with no UTF-16 width, such as rich-text style anchors. */
+  get visibleZeroWidthLength(): number {
+    return this.#root?.visibleZeroWidth ?? 0;
+  }
+
+  /** Physical elements with no UTF-16 width, including hidden ones. */
+  get allZeroWidthLength(): number {
+    return this.#root?.allZeroWidth ?? 0;
   }
 
   get spanCount(): number {
@@ -666,6 +681,137 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       node = node.right;
     }
     return undefined;
+  }
+
+  /** Number of visible zero-width elements before a visible index. */
+  zeroWidthBeforeVisibleIndex(index: number): number | undefined {
+    if (!Number.isSafeInteger(index) || index < 0 || index > this.visibleLength) {
+      return undefined;
+    }
+    let node = this.#root;
+    let remaining = index;
+    let count = 0;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftCount = visibleCount(node.left);
+      if (remaining < leftCount) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftCount;
+      count += node.left?.visibleZeroWidth ?? 0;
+      if (remaining < ownVisibleCount(node)) {
+        if (node.ownVisibleZeroWidth === 0) return count;
+        for (let offset = 0; offset < nodeLength(node) && remaining > 0; offset += 1) {
+          if (nodeDeleted(node, offset)) continue;
+          if (nodeMetrics(node, offset, this.#metrics).utf16 === 0) count += 1;
+          remaining -= 1;
+        }
+        return count;
+      }
+      remaining -= ownVisibleCount(node);
+      count += node.ownVisibleZeroWidth;
+      node = node.right;
+    }
+    return count;
+  }
+
+  /**
+   * Visible index of the `offset`-th visible element that has a width, or the
+   * visible length when `offset` equals the number of such elements.
+   */
+  visibleIndexOfWidthElement(offset: number): number | undefined {
+    const total = this.visibleLength - this.visibleZeroWidthLength;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > total) return undefined;
+    if (offset === total) return this.visibleLength;
+    let node = this.#root;
+    let remaining = offset;
+    let index = 0;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftWidth = visibleCount(node.left) - (node.left?.visibleZeroWidth ?? 0);
+      if (remaining < leftWidth) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftWidth;
+      index += visibleCount(node.left);
+      const ownWidth = ownVisibleCount(node) - node.ownVisibleZeroWidth;
+      if (remaining < ownWidth) {
+        if (node.ownVisibleZeroWidth === 0) {
+          return index + remaining;
+        }
+        for (let physical = 0; physical < nodeLength(node); physical += 1) {
+          if (nodeDeleted(node, physical)) continue;
+          if (nodeMetrics(node, physical, this.#metrics).utf16 !== 0) {
+            if (remaining === 0) return index;
+            remaining -= 1;
+          }
+          index += 1;
+        }
+        return undefined;
+      }
+      remaining -= ownWidth;
+      index += ownVisibleCount(node);
+      node = node.right;
+    }
+    return undefined;
+  }
+
+  /** Visible index of the element that contains a metric unit (zero-based). */
+  visibleIndexOfMetricUnit(unit: number, metric: Metric): number | undefined {
+    if (!Number.isSafeInteger(unit) || unit < 0) return undefined;
+    let node = this.#root;
+    let remaining = unit;
+    let index = 0;
+    while (node !== undefined) {
+      pushNodeDeletion(node, this.#metrics);
+      const leftMetric = visibleMetric(node.left, metric);
+      if (remaining < leftMetric) {
+        node = node.left;
+        continue;
+      }
+      remaining -= leftMetric;
+      index += visibleCount(node.left);
+      const ownMetric = ownVisibleMetric(node, metric, this.#metrics);
+      if (remaining < ownMetric) {
+        const prefix =
+          metric === "utf16" ? node.visibleUtf16Prefix : node.visibleUtf8Prefix;
+        if (prefix === undefined) return index;
+        let low = 0;
+        let high = prefix.length - 1;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if (prefix[middle + 1]! > remaining) high = middle;
+          else low = middle + 1;
+        }
+        return index + visibleElementsBefore(node, low);
+      }
+      remaining -= ownMetric;
+      index += ownVisibleCount(node);
+      node = node.right;
+    }
+    return undefined;
+  }
+
+  /** ID runs of every physical element in `[start, end)`, hidden ones included. */
+  physicalIdRuns(start: number, end: number): SequenceIdRun[] {
+    const boundedStart = Math.max(0, Math.min(start, this.allLength));
+    const boundedEnd = Math.max(boundedStart, Math.min(end, this.allLength));
+    const runs: { start: SequenceId; length: number }[] = [];
+    visitPhysicalIdRuns(this.#root, boundedStart, boundedEnd, (id, length) => {
+      const previous = runs[runs.length - 1];
+      if (
+        previous !== undefined &&
+        previous.start.peer === id.peer &&
+        previous.start.counter + previous.length === id.counter
+      ) {
+        previous.length += length;
+      } else {
+        runs.push({ start: { ...id }, length });
+      }
+    });
+    return runs;
   }
 
   visibleIndexAfterLineBreaks(count: number): number | undefined {
@@ -1569,6 +1715,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       ownIdRunCount: 0,
       ownUtf16: 0,
       ownUtf8: 0,
+      ownZeroWidth: 0,
+      ownVisibleZeroWidth: 0,
       visibleOffsets: undefined,
       visibleUtf16Prefix: undefined,
       visibleUtf8Prefix: undefined,
@@ -1584,6 +1732,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       idRunCount: 0,
       allUtf16: 0,
       allUtf8: 0,
+      visibleZeroWidth: 0,
+      allZeroWidth: 0,
       lazyDeleted: false,
       lazyVisible: false,
     };
@@ -1834,6 +1984,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const metrics = this.#metrics(element);
       node.ownUtf16 += metrics.utf16;
       node.ownUtf8 += metrics.utf8;
+      const zeroWidth = metrics.utf16 === 0 ? 1 : 0;
+      node.ownZeroWidth += zeroWidth;
       if (!element.deleted) {
         if (node.ownVisibleCount === 0) {
           node.ownFirstVisibleId = element.id;
@@ -1845,6 +1997,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
         node.ownVisibleCount += 1;
         node.ownVisibleUtf16 += metrics.utf16;
         node.ownVisibleUtf8 += metrics.utf8;
+        node.ownVisibleZeroWidth += zeroWidth;
       }
       visibleOffsets.push(node.ownVisibleCount);
       visibleUtf16Prefix.push(node.ownVisibleUtf16);
@@ -1897,6 +2050,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const metrics = this.#metrics(element);
       node.ownUtf16 += metrics.utf16;
       node.ownUtf8 += metrics.utf8;
+      const zeroWidth = metrics.utf16 === 0 ? 1 : 0;
+      node.ownZeroWidth += zeroWidth;
       const lineBreaks = metrics.lineBreaks ?? 0;
       nodeLineBreaks.own += lineBreaks;
       if (!element.deleted) {
@@ -1910,6 +2065,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
         node.ownVisibleCount += 1;
         node.ownVisibleUtf16 += metrics.utf16;
         node.ownVisibleUtf8 += metrics.utf8;
+        node.ownVisibleZeroWidth += zeroWidth;
         nodeLineBreaks.ownVisible += lineBreaks;
         visibleLineBreakOffsets = appendLineBreakOffsets(
           visibleLineBreakOffsets,
@@ -1983,6 +2139,8 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
       const value = nodeMetrics(node, offsetInNode, this.#metrics);
       node.ownUtf16 += value.utf16;
       node.ownUtf8 += value.utf8;
+      const zeroWidth = value.utf16 === 0 ? 1 : 0;
+      node.ownZeroWidth += zeroWidth;
       const lineBreaks = trackLineBreaks ? (value.lineBreaks ?? 0) : 0;
       if (nodeLineBreaks !== undefined) nodeLineBreaks.own += lineBreaks;
       if (!nodeDeleted(node, offsetInNode)) {
@@ -1996,6 +2154,7 @@ export class SequenceIndex<T extends IndexedSequenceElement> {
         node.ownVisibleCount += 1;
         node.ownVisibleUtf16 += value.utf16;
         node.ownVisibleUtf8 += value.utf8;
+        node.ownVisibleZeroWidth += zeroWidth;
         if (nodeLineBreaks !== undefined) {
           nodeLineBreaks.ownVisible += lineBreaks;
           visibleLineBreakOffsets = appendLineBreakOffsets(
@@ -2520,6 +2679,7 @@ function updateNodeElementVisibility<T extends IndexedSequenceElement>(
   node.ownVisibleCount += direction;
   node.ownVisibleUtf16 += direction * value.utf16;
   node.ownVisibleUtf8 += direction * value.utf8;
+  if (value.utf16 === 0) node.ownVisibleZeroWidth += direction;
   recomputeOwnIdRuns(node);
   if (nodeLength(node) === 1) return;
   for (let index = offset + 1; index < node.visibleOffsets!.length; index += 1) {
@@ -2551,6 +2711,7 @@ function recomputeOwn<T extends IndexedSequenceElement>(
     const value = nodeMetrics(node, 0, metrics);
     node.ownUtf16 = value.utf16;
     node.ownUtf8 = value.utf8;
+    node.ownZeroWidth = value.utf16 === 0 ? 1 : 0;
     if (nodeLineBreaks !== undefined) nodeLineBreaks.own = value.lineBreaks ?? 0;
     node.visibleOffsets = undefined;
     node.visibleUtf16Prefix = undefined;
@@ -2564,6 +2725,7 @@ function recomputeOwn<T extends IndexedSequenceElement>(
       node.ownVisibleCount = 0;
       node.ownVisibleUtf16 = 0;
       node.ownVisibleUtf8 = 0;
+      node.ownVisibleZeroWidth = 0;
       if (nodeLineBreaks !== undefined) nodeLineBreaks.ownVisible = 0;
       node.ownFirstVisibleId = undefined;
       node.ownLastVisibleId = undefined;
@@ -2572,6 +2734,7 @@ function recomputeOwn<T extends IndexedSequenceElement>(
       node.ownVisibleCount = 1;
       node.ownVisibleUtf16 = value.utf16;
       node.ownVisibleUtf8 = value.utf8;
+      node.ownVisibleZeroWidth = node.ownZeroWidth;
       if (nodeLineBreaks !== undefined) {
         nodeLineBreaks.ownVisible = value.lineBreaks ?? 0;
       }
@@ -2584,9 +2747,11 @@ function recomputeOwn<T extends IndexedSequenceElement>(
   node.ownVisibleCount = 0;
   node.ownVisibleUtf16 = 0;
   node.ownVisibleUtf8 = 0;
+  node.ownVisibleZeroWidth = 0;
   if (nodeLineBreaks !== undefined) nodeLineBreaks.ownVisible = 0;
   node.ownUtf16 = 0;
   node.ownUtf8 = 0;
+  node.ownZeroWidth = 0;
   if (nodeLineBreaks !== undefined) nodeLineBreaks.own = 0;
   node.ownFirstVisibleId = undefined;
   node.ownLastVisibleId = undefined;
@@ -2600,6 +2765,8 @@ function recomputeOwn<T extends IndexedSequenceElement>(
     const value = nodeMetrics(node, offset, metrics);
     node.ownUtf16 += value.utf16;
     node.ownUtf8 += value.utf8;
+    const zeroWidth = value.utf16 === 0 ? 1 : 0;
+    node.ownZeroWidth += zeroWidth;
     const lineBreaks = trackLineBreaks ? (value.lineBreaks ?? 0) : 0;
     if (nodeLineBreaks !== undefined) nodeLineBreaks.own += lineBreaks;
     if (!nodeDeleted(node, offset)) {
@@ -2613,6 +2780,7 @@ function recomputeOwn<T extends IndexedSequenceElement>(
       node.ownVisibleCount += 1;
       node.ownVisibleUtf16 += value.utf16;
       node.ownVisibleUtf8 += value.utf8;
+      node.ownVisibleZeroWidth += zeroWidth;
       if (nodeLineBreaks !== undefined) {
         nodeLineBreaks.ownVisible += lineBreaks;
         visibleLineBreakOffsets = appendLineBreakOffsets(
@@ -2658,6 +2826,7 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
     const value = metrics(storage as T);
     node.ownUtf16 = value.utf16;
     node.ownUtf8 = value.utf8;
+    node.ownZeroWidth = value.utf16 === 0 ? 1 : 0;
     if (nodeLineBreaks !== undefined) nodeLineBreaks.own = value.lineBreaks ?? 0;
     node.visibleOffsets = undefined;
     node.visibleUtf16Prefix = undefined;
@@ -2671,6 +2840,7 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
       node.ownVisibleCount = 0;
       node.ownVisibleUtf16 = 0;
       node.ownVisibleUtf8 = 0;
+      node.ownVisibleZeroWidth = 0;
       if (nodeLineBreaks !== undefined) nodeLineBreaks.ownVisible = 0;
       node.ownFirstVisibleId = undefined;
       node.ownLastVisibleId = undefined;
@@ -2679,6 +2849,7 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
       node.ownVisibleCount = 1;
       node.ownVisibleUtf16 = value.utf16;
       node.ownVisibleUtf8 = value.utf8;
+      node.ownVisibleZeroWidth = node.ownZeroWidth;
       if (nodeLineBreaks !== undefined) {
         nodeLineBreaks.ownVisible = value.lineBreaks ?? 0;
       }
@@ -2691,9 +2862,11 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
   node.ownVisibleCount = 0;
   node.ownVisibleUtf16 = 0;
   node.ownVisibleUtf8 = 0;
+  node.ownVisibleZeroWidth = 0;
   if (nodeLineBreaks !== undefined) nodeLineBreaks.ownVisible = 0;
   node.ownUtf16 = 0;
   node.ownUtf8 = 0;
+  node.ownZeroWidth = 0;
   if (nodeLineBreaks !== undefined) nodeLineBreaks.own = 0;
   node.ownFirstVisibleId = undefined;
   node.ownLastVisibleId = undefined;
@@ -2707,6 +2880,8 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
     const value = metrics(element);
     node.ownUtf16 += value.utf16;
     node.ownUtf8 += value.utf8;
+    const zeroWidth = value.utf16 === 0 ? 1 : 0;
+    node.ownZeroWidth += zeroWidth;
     const lineBreaks = trackLineBreaks ? (value.lineBreaks ?? 0) : 0;
     if (nodeLineBreaks !== undefined) nodeLineBreaks.own += lineBreaks;
     if (!element.deleted) {
@@ -2720,6 +2895,7 @@ function recomputeOwnElements<T extends IndexedSequenceElement>(
       node.ownVisibleCount += 1;
       node.ownVisibleUtf16 += value.utf16;
       node.ownVisibleUtf8 += value.utf8;
+      node.ownVisibleZeroWidth += zeroWidth;
       if (nodeLineBreaks !== undefined) {
         nodeLineBreaks.ownVisible += lineBreaks;
         visibleLineBreakOffsets = appendLineBreakOffsets(
@@ -2764,6 +2940,10 @@ function recomputeVisibility<T extends IndexedSequenceElement>(
     (left?.visibleUtf16 ?? 0) + node.ownVisibleUtf16 + (right?.visibleUtf16 ?? 0);
   node.visibleUtf8 =
     (left?.visibleUtf8 ?? 0) + node.ownVisibleUtf8 + (right?.visibleUtf8 ?? 0);
+  node.visibleZeroWidth =
+    (left?.visibleZeroWidth ?? 0) +
+    node.ownVisibleZeroWidth +
+    (right?.visibleZeroWidth ?? 0);
   node.firstVisibleId =
     left?.firstVisibleId ?? node.ownFirstVisibleId ?? right?.firstVisibleId;
   node.lastVisibleId =
@@ -2817,6 +2997,8 @@ function recompute<T extends IndexedSequenceElement>(
     node.visibleCount = node.ownVisibleCount;
     node.visibleUtf16 = node.ownVisibleUtf16;
     node.visibleUtf8 = node.ownVisibleUtf8;
+    node.visibleZeroWidth = node.ownVisibleZeroWidth;
+    node.allZeroWidth = node.ownZeroWidth;
     node.firstVisibleId = node.ownFirstVisibleId;
     node.lastVisibleId = node.ownLastVisibleId;
     node.visibleIdRunCount = node.ownVisibleIdRunCount;
@@ -2830,6 +3012,8 @@ function recompute<T extends IndexedSequenceElement>(
   node.allCount = (left?.allCount ?? 0) + nodeLength(node) + (right?.allCount ?? 0);
   node.allUtf16 = (left?.allUtf16 ?? 0) + node.ownUtf16 + (right?.allUtf16 ?? 0);
   node.allUtf8 = (left?.allUtf8 ?? 0) + node.ownUtf8 + (right?.allUtf8 ?? 0);
+  node.allZeroWidth =
+    (left?.allZeroWidth ?? 0) + node.ownZeroWidth + (right?.allZeroWidth ?? 0);
   recomputeVisibility(node);
   node.firstId = left?.firstId ?? node.ownFirstId;
   node.lastId = right?.lastId ?? node.ownLastId;
@@ -2892,6 +3076,7 @@ function applyNodeDeleted<T extends IndexedSequenceElement>(
   node.visibleCount = 0;
   node.visibleUtf16 = 0;
   node.visibleUtf8 = 0;
+  node.visibleZeroWidth = 0;
   if (tracksLineBreaks(metrics)) lineBreakMetrics(node).visible = 0;
   node.firstVisibleId = undefined;
   node.lastVisibleId = undefined;
@@ -2912,6 +3097,7 @@ function applyNodeVisible<T extends IndexedSequenceElement>(
   node.visibleCount = node.allCount;
   node.visibleUtf16 = node.allUtf16;
   node.visibleUtf8 = node.allUtf8;
+  node.visibleZeroWidth = node.allZeroWidth;
   if (tracksLineBreaks(metrics)) {
     const value = lineBreakMetrics(node);
     value.visible = value.all;
@@ -3097,6 +3283,44 @@ function visitInOrder<T extends IndexedSequenceElement>(
     node = stack.pop()!;
     visit(node);
     node = node.right;
+  }
+}
+
+function visitPhysicalIdRuns<T extends IndexedSequenceElement>(
+  node: SequenceNode<T> | undefined,
+  start: number,
+  end: number,
+  visit: (start: SequenceId, length: number) => void,
+): void {
+  if (node === undefined || start >= end) return;
+  if (start === 0 && end === node.allCount && node.idRunCount === 1) {
+    visit(node.firstId, node.allCount);
+    return;
+  }
+  const leftCount = allCount(node.left);
+  if (start < leftCount) {
+    visitPhysicalIdRuns(node.left, start, Math.min(end, leftCount), visit);
+  }
+  const ownCount = nodeLength(node);
+  const ownStart = Math.max(0, start - leftCount);
+  const ownEnd = Math.min(ownCount, end - leftCount);
+  if (ownStart < ownEnd) {
+    if (ownStart === 0 && ownEnd === ownCount && node.ownIdRunCount === 1) {
+      visit(node.ownFirstId, ownCount);
+    } else {
+      for (let offset = ownStart; offset < ownEnd; offset += 1) {
+        visit(nodeId(node, offset), 1);
+      }
+    }
+  }
+  const rightStart = leftCount + ownCount;
+  if (end > rightStart) {
+    visitPhysicalIdRuns(
+      node.right,
+      Math.max(0, start - rightStart),
+      end - rightStart,
+      visit,
+    );
   }
 }
 

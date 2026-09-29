@@ -9,6 +9,9 @@ the same binary and JSON data as Rust (`loro-crdt`) and give the same results.
   [context/loro-js-performance.md](../context/loro-js-performance.md).
 - Randomized Text comparison with Rust (build the nodejs WASM package first):
   [context/loro-js-rust-differential.md](../context/loro-js-rust-differential.md).
+- Rich text: style anchors live in the Text sequence and op positions count
+  them. Read [context/loro-js-richtext-anchors.md](../context/loro-js-richtext-anchors.md)
+  before changing Text positions, marks, or Text snapshot state.
 - Encoding formats: [context/internal-encoding.md](../context/internal-encoding.md)
   and `docs/encoding*.md`.
 

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "start_version": {},
+  "peers": [
+    "1"
+  ],
+  "changes": [
+    {
+      "id": "0@0",
+      "timestamp": 0,
+      "deps": [],
+      "lamport": 0,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 0,
+            "text": "abcd"
+          },
+          "counter": 0
+        },
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "mark",
+            "start": 0,
+            "end": 2,
+            "style_key": "bold",
+            "style_value": true,
+            "info": 132
+          },
+          "counter": 4
+        },
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "mark_end"
+          },
+          "counter": 5
+        },
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 3,
+            "text": "X"
+          },
+          "counter": 6
+        },
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "delete",
+            "pos": 1,
+            "len": 1,
+            "start_id": "1@0"
+          },
+          "counter": 7
+        }
+      ]
+    }
+  ]
+}

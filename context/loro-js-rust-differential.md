@@ -1,6 +1,6 @@
 # loro-js Differential Tests Against Rust
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-29.
 
 `loro-js/tests/richtext-differential.test.ts` runs random multi-peer Text
 scenarios in loro.js and in Rust (`loro-crdt`, nodejs WASM build) side by side
@@ -38,6 +38,20 @@ per runtime with the same peer ID. Actions:
   split a change or an op (a mark with only its start anchor, for example), so
   transitions also run between historical and mid-change versions;
 - full and shallow snapshot export from either runtime, imported into both;
+  a full snapshot's copies then check out three versions in a row (picked like
+  `checkout`'s), diff the last two, and attach, so an imported state moves back
+  and forward over elements it already holds. The loro.js diff must turn the
+  `from` text into the `to` text; Rust's is only logged, because between
+  concurrent versions it can put a style value on the wrong side (seed 162 at
+  120 steps, September 29: its diff sets `hl:false` on text its own checkout
+  shows with `hl:"x"`);
+- movable-list inserts and sets, written by Rust and imported by loro.js. The
+  list is not compared; its set ops keep checkouts off the incremental path, so
+  they replay the text's records (the path of the `duplicate sequence id`
+  regression that seed 19 catches). Moves and deletes are left out: loro.js and
+  Rust disagree on such lists (loro-dev/loro#1132), and Rust panics
+  (`movable_list_state.rs` "consistency check failed") when it checks out a
+  snapshot loro.js wrote with the differing state;
 - cursor creation, then cursor resolution after every later step;
 - `revertTo` and undo/redo.
 
@@ -80,8 +94,18 @@ tolerates them, so it also runs against older reference builds:
   can diverge from its own full-history import when they are wrong. The harness
   compares loro.js with the source document instead.
 
-Snapshot-import checkout (`snapshotCheckout`) is off by default until loro.js
-can check out a document imported from a snapshot (loro-dev/loro#1126).
+Checkout after a full snapshot import (`snapshotCheckout`) is on. Checkout into
+the retained range of a shallow snapshot (`shallowCheckout`) is off: loro.js
+still diverges there when it wrote the snapshot. `#calculateShallowStart` in
+`loro-js/src/runtime/document.ts` uses the requested frontiers as the root,
+while Rust moves the root back to the nearest critical version, and retained
+ops concurrent with a non-critical root do not replay from its state. The
+harness visits only a few versions per export and fails 6 of 40 rich and 5 of
+20 plain 120-step seeds (September 29). An exhaustive check of every retained
+version from every commit root (second review of loro-dev/loro#1136/#1137)
+finds most multi-peer histories affected: over half of the non-critical-root
+versions diverge, and none with a critical root. The fix is to choose the root
+like Rust; it is not done yet.
 
 ## Data written by loro.js 0.2
 
