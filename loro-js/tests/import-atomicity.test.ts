@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import {
   LoroDoc,
+  LoroMap,
+  LoroText,
   UndoManager,
   VersionVector,
   type JsonSchema,
@@ -235,4 +237,43 @@ describe("import is atomic", () => {
     expect(undo.undo()).toBe(true);
     expect(target.getMovableList("list").toJSON()).toEqual(["a", "b", "c"]);
   });
+
+  test("an import costs the same however many texts a snapshot hydrated", () => {
+    /** Best of three runs of 200 one-character imports into a document with n hydrated texts. */
+    function importsMs(size: number): number {
+      const source = doc(1);
+      const items = source.getList("items");
+      for (let index = 0; index < size; index += 1) {
+        const item = items.insertContainer(index, new LoroMap());
+        item.setContainer("title", new LoroText()).insert(0, "t");
+      }
+      source.commit();
+      const target = new LoroDoc();
+      // A subscriber hydrates every text, and each becomes a snapshot sequence.
+      target.subscribe(() => {});
+      target.import(source.export({ mode: "snapshot" }));
+      const title = (items.get(0) as LoroMap).get("title") as LoroText;
+      const updates: Uint8Array[] = [];
+      for (let step = 0; step < 600; step += 1) {
+        const version = source.oplogVersion();
+        title.insert(0, "x");
+        source.commit();
+        updates.push(source.export({ mode: "update", from: version }));
+      }
+      let best = Infinity;
+      for (let run = 0; run < 3; run += 1) {
+        const started = performance.now();
+        for (const update of updates.slice(run * 200, run * 200 + 200)) {
+          target.import(update);
+        }
+        best = Math.min(best, performance.now() - started);
+      }
+      expect(target.toJSON()).toEqual(source.toJSON());
+      return best;
+    }
+    // Each import copied the table of snapshot sequences to roll it back
+    // (16x the texts took about 10x the time).
+    const ratio = importsMs(8_000) / importsMs(500);
+    expect(ratio).toBeLessThan(4);
+  }, 60_000);
 });
