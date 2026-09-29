@@ -10805,6 +10805,8 @@ function eventValuesEqual(left: unknown, right: unknown): boolean {
     return bytesEqual(left, right);
   }
   if (isContainer(left) && isContainer(right)) return left.id === right.id;
+  // A container never equals a plain value; its fields are not its value.
+  if (isContainer(left) || isContainer(right)) return false;
   if (Array.isArray(left) && Array.isArray(right)) {
     return (
       left.length === right.length &&

@@ -2540,6 +2540,8 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     // A MovableList keeps positions and elements in `_state`; the inherited
     // element sequence stays empty. Fail loudly if a list-only path reads it.
     Object.defineProperty(this, "_sequence", {
+      // Hidden from generic walks (`Object.entries`), which must not trip it.
+      enumerable: false,
       get(): never {
         throw new Error("LoroMovableList has no element sequence; use _state");
       },
