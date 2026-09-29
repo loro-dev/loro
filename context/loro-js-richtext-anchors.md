@@ -1,6 +1,6 @@
 # loro-js Rich-Text Anchors
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-29.
 
 loro.js keeps rich-text style anchors in the text sequence, as Rust does, so a
 Text op position means the same thing in both runtimes. This article covers the
@@ -103,6 +103,14 @@ Remote ops:
   event baseline is started when an anchor op is collected; without it, a
   version with a start anchor but no end anchor was diffed against an empty
   text and reported the whole text as inserted.
+- Anchors are sequence elements, so a checkout that leaves them hidden in the
+  state must not insert them again. When a transition cannot run incrementally
+  (a movable-list set, for example) and would apply the forward records
+  directly, `hasMaterializedSequenceInsertions` in `document.ts` counts
+  `text-mark`/`text-mark-end` ops with the inserts and sends the checkout to a
+  rebuild; `diff` rebuilds its `from` state in the same case. Missing that
+  threw `duplicate sequence id` on `attach` after a snapshot import and two
+  checkouts.
 - Undoing a mark gives back, wherever it changed the value, the value from just
   before its op (`LoroText._undoStyle`). That matches Rust for local histories;
   loro.js undo still does not transform against remote edits the way Rust's

@@ -430,4 +430,58 @@ describe.each(runtimes)("rich-text anchors in %s", (runtimeName, runtime) => {
       expect(normalizeDelta(mirror)).toEqual(normalizeDelta(text.toDelta()));
     }
   });
+
+  test("a snapshot's anchors survive moving between old versions", () => {
+    const source = new runtime.LoroDoc();
+    source.setPeerId(1);
+    source.configTextStyle({ link: { expand: "none" } });
+    source.getText("t").insert(0, "init");
+    source.getText("t").mark({ start: 1, end: 4 }, "link", "y");
+    // The movable-list set keeps the checkout from moving through anchors only.
+    source.getMovableList("ml").insert(0, 37);
+    source.getMovableList("ml").set(0, 56);
+    source.commit();
+    const snapshot = source.export({ mode: "snapshot" });
+    const styled = [{ insert: "i" }, { insert: "nit", attributes: { link: "y" } }];
+    const at = (counter: number): Frontiers => [{ peer: "1", counter }];
+
+    for (const [first, second] of [
+      [5, 3],
+      [4, 3],
+    ] as const) {
+      const doc = new runtime.LoroDoc();
+      doc.configTextStyle({ link: { expand: "none" } });
+      doc.import(snapshot);
+      const latest = doc.frontiers();
+      doc.checkout(at(first));
+      doc.checkout(at(second));
+      expect(doc.getText("t").toDelta()).toEqual([{ insert: "init" }]);
+      doc.checkout(at(7));
+      expect(normalizeDelta(doc.getText("t").toDelta())).toEqual(normalizeDelta(styled));
+      expect(doc.getMovableList("ml").toJSON()).toEqual([56]);
+      doc.checkout(at(second));
+      doc.attach();
+      expect(doc.frontiers()).toEqual(latest);
+      expect(normalizeDelta(doc.getText("t").toDelta())).toEqual(normalizeDelta(styled));
+    }
+
+    const doc = new runtime.LoroDoc();
+    doc.configTextStyle({ link: { expand: "none" } });
+    doc.import(snapshot);
+    doc.checkout(at(5));
+    doc.checkout(at(3));
+    const diff = doc.diff(at(3), at(7));
+    expect(diff).toEqual([
+      [
+        "cid:root-t:Text",
+        {
+          type: "text",
+          diff: [{ retain: 1 }, { retain: 3, attributes: { link: "y" } }],
+        },
+      ],
+      ["cid:root-ml:MovableList", { type: "list", diff: [{ insert: [56] }] }],
+    ]);
+    doc.attach();
+    expect(normalizeDelta(doc.getText("t").toDelta())).toEqual(normalizeDelta(styled));
+  });
 });

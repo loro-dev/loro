@@ -1168,7 +1168,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     let materializedVersion = restoreVersion;
     let failed = false;
     try {
-      if (materializedVersion.compare(fromVersion) !== 0) {
+      // Applying the forward records directly would insert again the sequence
+      // elements that an earlier checkout left hidden in the state.
+      const rebuildFrom =
+        !useIncrementalTransition &&
+        retreatRecords.length === 0 &&
+        hasMaterializedSequenceInsertions(forwardRecords, this.#containers);
+      if (rebuildFrom || materializedVersion.compare(fromVersion) !== 0) {
         if (useIncrementalTransition) {
           this.#applyVersionTransition(
             currentToFromRetreat,
@@ -7444,8 +7450,11 @@ function hasMaterializedSequenceInsertions(
   for (const { change } of records) {
     for (const operation of change.operations) {
       const content = operation.content;
+      // Style anchors are sequence elements too (text-mark and text-mark-end).
       if (
         content.type !== "text-insert" &&
+        content.type !== "text-mark" &&
+        content.type !== "text-mark-end" &&
         content.type !== "list-insert" &&
         content.type !== "movable-list-insert"
       ) {
