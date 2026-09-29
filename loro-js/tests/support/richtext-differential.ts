@@ -400,10 +400,7 @@ export class RichtextScenario {
         this.#commit(peer);
         // Two versions in a row, so transitions also run between historical
         // versions, not only from and back to the latest one.
-        for (const roll of [
-          action.version,
-          Math.imul(action.version, 0x9e37_79b1) >>> 0,
-        ]) {
+        for (const roll of [action.version, secondRoll(action.version)]) {
           const version = this.#versionToVisit(peer, roll);
           if (version === undefined) continue;
           this.#both(peer, `checkout(${JSON.stringify(version)})`, (r) =>
@@ -786,6 +783,14 @@ export class RichtextScenario {
  * ops of merged changes depending on internal encoding state, so this form
  * ignores how atoms are grouped into ops.
  */
+/**
+ * A second roll derived from `roll`. The product's high bits, because the
+ * multiplier is 1 modulo 16, so its low bits repeat `roll`'s.
+ */
+function secondRoll(roll: number): number {
+  return Math.imul(roll, 0x9e37_79b1) >>> 16;
+}
+
 function atomicOps(doc: Doc): string[] {
   const json = doc.exportJsonUpdates();
   const peers = json.peers;
