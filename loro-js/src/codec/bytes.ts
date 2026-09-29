@@ -252,11 +252,14 @@ export function compareBytes(a: Uint8Array, b: Uint8Array): number {
   return a.length - b.length;
 }
 
+const HEX_BYTES = Array.from({ length: 256 }, (_, byte) =>
+  byte.toString(16).padStart(2, "0"),
+);
+
 export function bytesToHex(bytes: Uint8Array): string {
   let output = "";
-  for (const byte of bytes) {
-    output += byte.toString(16).padStart(2, "0");
-  }
+  for (let index = 0; index < bytes.length; index += 1)
+    output += HEX_BYTES[bytes[index]!];
   return output;
 }
 
