@@ -205,3 +205,31 @@ describe("tree items that cannot apply reject the batch", () => {
     }
   });
 });
+
+describe("deep trees", () => {
+  test("diff, import and checkout with a subscriber stay linear in depth", () => {
+    // Each node used to walk to the root to check whether it is hidden, so an
+    // 8,000-deep chain took seconds (quadratic).
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    let node = doc.getTree("t").createNode();
+    for (let depth = 0; depth < 8_000; depth += 1) {
+      node = node.createNode();
+      node.data.set("k", depth);
+    }
+    doc.commit();
+    const update = doc.export({ mode: "update" });
+    const started = performance.now();
+    const diff = doc.diff([], doc.frontiers(), true);
+    expect(diff.length).toBeGreaterThan(8_000);
+    const replica = new LoroDoc();
+    let events = 0;
+    replica.subscribe(() => (events += 1));
+    replica.import(update);
+    const latest = replica.frontiers();
+    replica.checkout([]);
+    replica.checkout(latest);
+    expect(events).toBe(3);
+    expect(performance.now() - started).toBeLessThan(1_500);
+  });
+});

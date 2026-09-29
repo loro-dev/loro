@@ -1251,12 +1251,13 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         mapKeysAtTo = this.#captureMapKeys(changed);
       }
       materializedVersion = toVersion;
+      const hiddenNodes = new Map<LoroTree, Map<string, boolean>>();
       const entries = [...changed]
         .flatMap((id) => {
           const container = this.#containers.get(id);
           // As in Rust, a container that is not reachable at `to` (deleted,
           // under a deleted tree node, or a hidden mergeable child) has no entry.
-          return container === undefined || !this.#isReachable(container)
+          return container === undefined || !this.#isReachable(container, hiddenNodes)
             ? []
             : [container];
         })
@@ -1829,7 +1830,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return indexOf(entry, slot);
     };
     const fractionalIndex = (record: TreeNodeRecord): string =>
-      bytesToHex(record.position).toUpperCase();
+      fractionalIndexHex(record.position);
     const parentId = (parent: CodecId | undefined): TreeID | undefined =>
       parent === undefined ? undefined : formatTreeId(parent);
 
@@ -1873,7 +1874,19 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   /** Whether `container` is reachable from a root container in the current state. */
-  #isReachable(container: LoroContainer): boolean {
+  /**
+   * `hiddenNodes` memoizes, per tree, which nodes are hidden, so the nodes of
+   * a deep tree resolve in linear time over one call site's containers.
+   */
+  #isReachable(
+    container: LoroContainer,
+    hiddenNodes: Map<LoroTree, Map<string, boolean>> = new Map(),
+  ): boolean {
+    const hiddenCacheFor = (tree: LoroTree): Map<string, boolean> => {
+      let cache = hiddenNodes.get(tree);
+      if (cache === undefined) hiddenNodes.set(tree, (cache = new Map()));
+      return cache;
+    };
     for (let current: LoroContainer | undefined = container; current !== undefined; ) {
       const id = current._codecId;
       if (id?.kind === "root" && !isMergeableContainerId(id))
@@ -1886,7 +1899,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (
         binding?.kind === "tree" &&
         parent instanceof LoroTree &&
-        this.#isTreeRecordHidden(parent, binding.record)
+        this.#isTreeRecordHidden(parent, binding.record, hiddenCacheFor(parent))
       ) {
         return false;
       }
@@ -10626,6 +10639,21 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
+}
+
+const UPPER_HEX_DIGITS = Array.from("0123456789ABCDEF", (digit) => digit.charCodeAt(0));
+
+/**
+ * A tree position as Rust prints a fractional index: uppercase hex, built as
+ * one flat string (appending pieces leaves ropes that a large diff keeps).
+ */
+function fractionalIndexHex(position: Uint8Array): string {
+  const codes = new Array<number>(position.length * 2);
+  for (let index = 0; index < position.length; index += 1) {
+    codes[index * 2] = UPPER_HEX_DIGITS[position[index]! >> 4]!;
+    codes[index * 2 + 1] = UPPER_HEX_DIGITS[position[index]! & 15]!;
+  }
+  return String.fromCharCode(...codes);
 }
 
 /** Counts present positions; `present` gives each one's initial state. */
