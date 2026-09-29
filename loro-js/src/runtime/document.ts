@@ -2210,6 +2210,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     entries: readonly (readonly [ContainerID, LoroEvent["diff"]])[],
     fromVersion: VersionVector,
     changesOnly: boolean,
+    forEvent = false,
   ): [ContainerID, LoroEvent["diff"]][] {
     const diffs = new Map<ContainerID, LoroEvent["diff"]>(entries);
     for (const [id, diff] of diffs) {
@@ -2250,10 +2251,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             // Public diffs report its full state, as Rust's `LoroDoc::diff`
             // does (a full-state batch); revertTo applies only its actual
             // change (Rust's `KeptChange`) so identity is kept.
+            // For an event, only a movable-list move keeps the moved child: a
+            // listener resets any other attached child, including one that a
+            // whole-value List diff (the replay fallback) deletes and inserts
+            // again.
             if (
               !parentCreated &&
               ((changesOnly && isMergeableContainerId(child._codecId!)) ||
-                this.#reachableThroughParentAt(child, parent, fromVersion))
+                ((!forEvent || parent instanceof LoroMovableList) &&
+                  this.#reachableThroughParentAt(child, parent, fromVersion)))
             ) {
               continue;
             }
@@ -8551,6 +8557,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         entries,
         this.#causalVersionForKnownFrontiers(from),
         false,
+        true,
       );
     }
     const events: LoroEvent[] = entries.map(([target, diff]) => ({
