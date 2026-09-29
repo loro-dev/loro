@@ -818,6 +818,56 @@ describe("diff and revertTo for containers attached by the range", () => {
     expect(undo._trackedRangeCount()).toBe(0);
   });
 
+  test("a commit with an UndoManager does not scan its stacks", () => {
+    // Pruning the tracked ranges on every commit used to visit both stacks,
+    // so a long session was quadratic (about 19 s here).
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const map = doc.getMap("m");
+    const undo = new UndoManager(doc, { mergeInterval: 0, maxUndoSteps: 1e8 });
+    const started = performance.now();
+    for (let round = 0; round < 20_000; round += 1) {
+      map.set("x", round);
+      doc.commit();
+    }
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(undo._trackedRangeCount()).toBe(1);
+  });
+
+  test("undo keeps the ranges of another peer that a stacked move may meet", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("l");
+    for (const value of ["A", "B", "C"]) list.push(value);
+    doc.commit();
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      excludeOriginPrefixes: ["sys"],
+    });
+    list.move(0, 2);
+    doc.commit();
+    doc.setPeerId(2);
+    list.move(2, 0);
+    doc.commit();
+    // An excluded edit splits peer 2's tracked ranges.
+    doc.getMap("m").set("k", 1);
+    doc.commit({ origin: "sys" });
+    list.move(1, 2);
+    doc.commit();
+    const steps: unknown[] = [];
+    while (undo.canUndo()) {
+      undo.undo();
+      steps.push(list.toJSON());
+    }
+    // Rust drops the peer 1 item when the peer changes; loro.js keeps it, and
+    // peer 2's undone move must still count as tracked when undoing it.
+    expect(steps).toEqual([
+      ["A", "B", "C"],
+      ["B", "C", "A"],
+      ["A", "B", "C"],
+    ]);
+  });
+
   test("tree delete indexes follow the order the deletes are applied in", () => {
     for (const newRootIndex of [0, 1]) {
       const doc = new LoroDoc();

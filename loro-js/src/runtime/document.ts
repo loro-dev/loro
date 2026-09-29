@@ -3137,6 +3137,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    * history (edits it recorded, including undone ones, and the ops its undo
    * and redo wrote). Without it, every op of this document's peer counts.
    */
+  /** The lamport of op `counter` of `peer` (internal; used by UndoManager). */
+  _lamportOf(peer: PeerID, counter: number): number {
+    return this.#lamportAt({ peer: BigInt(peer), counter });
+  }
+
   _undoIdSpan(
     peer: PeerID,
     range: CounterSpan,
