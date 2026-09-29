@@ -4109,6 +4109,19 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       SequenceElement,
       { readonly history: readonly SequenceMoveMeta[]; readonly indices: Set<number> }
     >();
+    // The inserted elements and style anchors each sequence must still hold,
+    // checked once per container below: one tree walk per operation made a
+    // checkout O(operations * elements).
+    const requiredRuns = new Map<LoroList | LoroText, SequenceIdRun[]>();
+    const requireRun = (
+      container: LoroList | LoroText,
+      start: CodecId,
+      length: number,
+    ): void => {
+      const runs = requiredRuns.get(container);
+      if (runs === undefined) requiredRuns.set(container, [{ start, length }]);
+      else runs.push({ start, length });
+    };
     for (const { change } of records) {
       const causalVersion = this.#causalVersionAt(change.dependencies);
       for (const operation of change.operations) {
@@ -4174,40 +4187,24 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           if (!(container instanceof LoroText) || !container._attributeHistoryComplete) {
             return false;
           }
-          if (
-            !container._sequence.containsIdRuns([
-              { start: { peer: change.id.peer, counter: operation.counter }, length: 1 },
-            ])
-          ) {
-            return false;
-          }
+          requireRun(container, { peer: change.id.peer, counter: operation.counter }, 1);
         } else if (content.type === "text-insert") {
           if (!(container instanceof LoroText)) return false;
-          if (
-            !container._sequence.containsIdRuns([
-              {
-                start: { peer: change.id.peer, counter: operation.counter },
-                length: operation.length,
-              },
-            ])
-          ) {
-            return false;
-          }
+          requireRun(
+            container,
+            { peer: change.id.peer, counter: operation.counter },
+            operation.length,
+          );
         } else if (
           content.type === "list-insert" ||
           content.type === "movable-list-insert"
         ) {
           if (!(container instanceof LoroList)) return false;
-          if (
-            !container._sequence.containsIdRuns([
-              {
-                start: { peer: change.id.peer, counter: operation.counter },
-                length: operation.length,
-              },
-            ])
-          ) {
-            return false;
-          }
+          requireRun(
+            container,
+            { peer: change.id.peer, counter: operation.counter },
+            operation.length,
+          );
         } else if (
           content.type === "text-delete" ||
           content.type === "list-delete" ||
@@ -4251,6 +4248,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           ),
         );
       }
+    }
+    for (const [container, runs] of requiredRuns) {
+      if (!container._sequence.containsIdRuns(runs)) return false;
     }
     for (const { history, indices } of moveSuffixes.values()) {
       const first = Math.min(...indices);

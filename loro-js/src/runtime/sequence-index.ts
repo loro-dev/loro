@@ -3505,7 +3505,7 @@ function countPhysicalIdsInRanges<T extends IndexedSequenceElement>(
   }
   let count = countPhysicalIdsInRanges(node.left, targets);
   for (let offset = 0; offset < nodeLength(node); offset += 1) {
-    const id = nodeElement(node, offset).id;
+    const id = nodeId(node, offset);
     if (counterRangeRelation(targets, id.peer, id.counter, id.counter + 1) === 1) {
       count += 1;
     }
