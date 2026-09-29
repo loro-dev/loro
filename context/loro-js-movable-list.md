@@ -225,6 +225,10 @@ them (see the comments in `harness.ts` and `fuzz.ts`):
   snapshot already contains (loro-dev/loro#1163).
 - Some shallow-snapshot imports that Rust accepts are rejected by loro.js with
   "cannot import updates that depend on an outdated version".
+- `diff()` of a child container created in the range omits a map whose keys
+  were all set and deleted again in that range; Rust lists those keys as
+  deleted. It happens under List, Map and MovableList parents alike. The suite
+  skips such map entries when it compares `diff()`.
 - Multi-blob `importBatch` events are labeled `by: "checkout"` by Rust and
   `"import"` by loro.js; checkout events carry origin `"checkout"` only in
   Rust. Rust's `oplogVersion()` also counts the pending transaction.
