@@ -213,6 +213,15 @@ writeFileSync(
   treeLeft.export({ mode: "shallow-snapshot", frontiers: treeShallowRoot }),
 );
 
+// MovableList state written by loro.js: moved elements, sets by other peers,
+// and a dead position left by concurrent moves (see movable-snapshot.blob).
+const movableFromRust = new LoroDoc();
+movableFromRust.import(fixture("movable-snapshot-updates.blob"));
+writeFileSync(
+  fixtureUrl("movable-snapshot.ts.blob"),
+  movableFromRust.export({ mode: "snapshot" }),
+);
+
 const cursorDoc = new LoroDoc();
 cursorDoc.setPeerId(99);
 cursorDoc.getText("text").insert(0, "abc");

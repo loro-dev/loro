@@ -46,6 +46,7 @@
   "scripts": {
     "bench:b4": "pnpm build && node --expose-gc benchmarks/b4.mjs",
     "bench:complexity": "pnpm build && node --expose-gc benchmarks/complexity.mjs",
+    "bench:movable-list": "pnpm build && node --expose-gc benchmarks/movable-list.mjs",
     "bench:snapshot-memory": "pnpm build && node --expose-gc benchmarks/snapshot-memory.mjs",
     "bench:subscribers": "pnpm build && node --expose-gc benchmarks/container-subscriber.mjs",
     "bench:text-buffer": "pnpm build && node --expose-gc benchmarks/text-buffer.mjs",

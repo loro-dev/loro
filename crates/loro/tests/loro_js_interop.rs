@@ -49,6 +49,14 @@ const TS_RICHTEXT_SNAPSHOT: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/richtext-snapshot.ts.blob");
 const TS_RICHTEXT_EXPECTED_JSON: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/richtext.expected.json");
+const TS_MOVABLE_SNAPSHOT: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/movable-snapshot.ts.blob");
+const RUST_MOVABLE_UPDATES: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/movable-snapshot-updates.blob");
+const RUST_MOVABLE_PEER3: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/movable-snapshot-peer3.blob");
+const RUST_MOVABLE_PEER4: &[u8] =
+    include_bytes!("../../../loro-js/tests/fixtures/rust/movable-snapshot-peer4.blob");
 const TS_CURSOR: &[u8] = include_bytes!("../../../loro-js/tests/fixtures/rust/cursor.ts.blob");
 const TS_AWARENESS: &[u8] =
     include_bytes!("../../../loro-js/tests/fixtures/rust/awareness.ts.blob");
@@ -367,4 +375,37 @@ fn imports_legacy_typescript_tree_snapshots_with_unordered_siblings() {
             doc.get_deep_value().to_json_value()
         );
     }
+}
+
+fn movable_list_metadata(doc: &LoroDoc) -> Vec<(Option<u64>, Option<u64>, Option<u64>)> {
+    let list = doc.get_movable_list("list");
+    (0..list.len())
+        .map(|index| {
+            (
+                list.get_creator_at(index),
+                list.get_last_mover_at(index),
+                list.get_last_editor_at(index),
+            )
+        })
+        .collect()
+}
+
+/// loro.js writes a MovableList snapshot with its list item, element and
+/// last-set IDs, so later edits converge with a replica that has the history.
+#[test]
+fn imports_typescript_movable_list_snapshot_with_its_metadata() {
+    let expected = LoroDoc::new();
+    expected.import(RUST_MOVABLE_UPDATES).unwrap();
+    let doc = LoroDoc::new();
+    doc.import(TS_MOVABLE_SNAPSHOT)
+        .expect("Rust should import a MovableList snapshot produced by loro.js");
+    assert_eq!(doc.get_deep_value(), expected.get_deep_value());
+    assert_eq!(movable_list_metadata(&doc), movable_list_metadata(&expected));
+
+    for update in [RUST_MOVABLE_PEER4, RUST_MOVABLE_PEER3] {
+        doc.import(update).unwrap();
+        expected.import(update).unwrap();
+    }
+    assert_eq!(doc.get_deep_value(), expected.get_deep_value());
+    assert_eq!(movable_list_metadata(&doc), movable_list_metadata(&expected));
 }

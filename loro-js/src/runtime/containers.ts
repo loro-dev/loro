@@ -8,6 +8,7 @@ import type { ContainerId as CodecContainerId, Id as CodecId } from "../codec/ty
 import { formatContainerId, formatTreeId, parseContainerId } from "./ids";
 import type { LoroDoc } from "./document";
 import { fractionalIndexBetween, fractionalIndexesBetween } from "./fractional-index";
+import { MovableListState, type MovableElement } from "./movable-list";
 import { OrderedIndex } from "./ordered-index";
 import { SequenceIndex, SequenceSpan } from "./sequence-index";
 import type { SequenceIdRun } from "./sequence-index";
@@ -53,32 +54,6 @@ export interface SequenceElement {
   deletedBy?: CodecId[] | undefined;
   deletedByPeer?: bigint | undefined;
   deletedByCounter?: number | undefined;
-  valueHistory?: SequenceValueMeta[] | undefined;
-  moveHistory?: SequenceMoveMeta[] | undefined;
-}
-
-export interface SequenceValueMeta {
-  readonly id: CodecId;
-  readonly lamport: number;
-  readonly value: RuntimeValue;
-}
-
-export interface SequenceMoveMeta {
-  readonly id: CodecId;
-  readonly lamport: number;
-  readonly beforePrevious: CodecId | undefined;
-  readonly beforeNext: CodecId | undefined;
-  readonly afterPrevious: CodecId | undefined;
-  readonly afterNext: CodecId | undefined;
-  /**
-   * The element physically after the moved one before the move, deleted or
-   * not; `null` when it was last. Undo puts the element back there, so undone
-   * moves and restored deletions keep their relative order. Undefined when
-   * unknown (e.g. metadata rebuilt from a snapshot).
-   */
-  readonly beforePhysicalNext?: CodecId | null | undefined;
-  /** The element physically before it, deleted or not; `null` when it was first. */
-  readonly beforePhysicalPrevious?: CodecId | null | undefined;
 }
 
 export type CausalVersion = ReadonlyMap<bigint, number>;
@@ -97,9 +72,8 @@ interface ListState extends SequenceContainerState {
   readonly detachedCounter: number;
 }
 
-interface MovableListState extends ListState {
-  readonly valueHistoryComplete: boolean;
-  readonly moveHistoryComplete: boolean;
+interface MovableListSwapState extends SequenceContainerState {
+  readonly movable: MovableListState;
 }
 
 interface TextState extends SequenceContainerState {
@@ -116,6 +90,7 @@ interface ParentLink {
   readonly binding?:
     | { readonly kind: "map"; readonly key: string }
     | { readonly kind: "sequence"; readonly element: SequenceElement }
+    | { readonly kind: "movable"; readonly element: MovableElement }
     | { readonly kind: "tree"; readonly record: TreeNodeRecord };
 }
 
@@ -549,9 +524,6 @@ export class LoroList<T = unknown> extends LoroContainer {
         deleted: false,
         originLeft: undefined,
         originRight: undefined,
-        ...(this instanceof LoroMovableList
-          ? { valueHistory: [{ id, lamport, value }] }
-          : {}),
       };
     });
     this._sequence.insertAtVisible(position, elements);
@@ -575,19 +547,9 @@ export class LoroList<T = unknown> extends LoroContainer {
         deleted: false,
         originLeft: undefined,
         originRight: undefined,
-        ...(this instanceof LoroMovableList
-          ? { valueHistory: [{ id, lamport: elementLamport, value }] }
-          : {}),
       };
     });
-    insertFugueElements(
-      this._sequence,
-      position,
-      elements,
-      causalVersion,
-      // Moves break the origin-tree preorder used by the direct-child index.
-      !(this instanceof LoroMovableList),
-    );
+    insertFugueElements(this._sequence, position, elements, causalVersion);
     this._bindChildren(elements);
   }
 
@@ -759,8 +721,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
   #attributes: Map<number, Map<string, RuntimeValue>> | undefined;
   #attributeMeta: Map<number, Map<string, TextStyleMeta>> | undefined;
   #attributeHistory: Map<number, Map<string, TextStyleMeta[]>> | undefined;
-  #valueHistory: Map<number, SequenceValueMeta[]> | undefined;
-  #moveHistory: Map<number, SequenceMoveMeta[]> | undefined;
 
   static fromText(
     text: string,
@@ -816,8 +776,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
         offset,
         element.attributeHistory,
       );
-      span.#valueHistory = setOffsetMap(span.#valueHistory, offset, element.valueHistory);
-      span.#moveHistory = setOffsetMap(span.#moveHistory, offset, element.moveHistory);
       span.retain(offset, element);
     }
     span.#deletedBits >>>= 0;
@@ -934,8 +892,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     output.#attributes = copyOffsetMap(this.#attributes, start, end);
     output.#attributeMeta = copyOffsetMap(this.#attributeMeta, start, end);
     output.#attributeHistory = copyOffsetMap(this.#attributeHistory, start, end);
-    output.#valueHistory = copyOffsetMap(this.#valueHistory, start, end);
-    output.#moveHistory = copyOffsetMap(this.#moveHistory, start, end);
     return output;
   }
 
@@ -986,12 +942,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
       other.#attributeHistory,
       oldLength,
     );
-    this.#valueHistory = appendOffsetMap(
-      this.#valueHistory,
-      other.#valueHistory,
-      oldLength,
-    );
-    this.#moveHistory = appendOffsetMap(this.#moveHistory, other.#moveHistory, oldLength);
     return true;
   }
 
@@ -1105,22 +1055,6 @@ class TextSequenceSpan extends SequenceSpan<TextElement> {
     value: Map<string, TextStyleMeta[]> | undefined,
   ): void {
     this.#attributeHistory = setOffsetMap(this.#attributeHistory, offset, value);
-  }
-
-  valueHistoryAt(offset: number): SequenceValueMeta[] | undefined {
-    return this.#valueHistory?.get(offset);
-  }
-
-  setValueHistoryAt(offset: number, value: SequenceValueMeta[] | undefined): void {
-    this.#valueHistory = setOffsetMap(this.#valueHistory, offset, value);
-  }
-
-  moveHistoryAt(offset: number): SequenceMoveMeta[] | undefined {
-    return this.#moveHistory?.get(offset);
-  }
-
-  setMoveHistoryAt(offset: number, value: SequenceMoveMeta[] | undefined): void {
-    this.#moveHistory = setOffsetMap(this.#moveHistory, offset, value);
   }
 
   #number(offset: number, column: number): number {
@@ -1346,22 +1280,6 @@ class PackedTextElement implements TextElement, CodecId {
 
   set attributeHistory(value: Map<string, TextStyleMeta[]> | undefined) {
     this.#span.setAttributeHistoryAt(this.#offset, value);
-  }
-
-  get valueHistory(): SequenceValueMeta[] | undefined {
-    return this.#span.valueHistoryAt(this.#offset);
-  }
-
-  set valueHistory(value: SequenceValueMeta[] | undefined) {
-    this.#span.setValueHistoryAt(this.#offset, value);
-  }
-
-  get moveHistory(): SequenceMoveMeta[] | undefined {
-    return this.#span.moveHistoryAt(this.#offset);
-  }
-
-  set moveHistory(value: SequenceMoveMeta[] | undefined) {
-    this.#span.setMoveHistoryAt(this.#offset, value);
   }
 
   _retarget(span: TextSequenceSpan, offset: number): void {
@@ -2611,21 +2529,123 @@ function styleValuesEqual(left: unknown, right: unknown): boolean {
 }
 
 export class LoroMovableList<T = unknown> extends LoroList<T> {
-  _valueHistoryComplete = true;
-  _moveHistoryComplete = true;
+  _state: MovableListState = new MovableListState((element) =>
+    this._bindElement(element),
+  );
+  /** Values of a list that is not attached to a document. */
+  _detachedValues: RuntimeValue[] = [];
+
+  constructor() {
+    super();
+    // A MovableList keeps positions and elements in `_state`; the inherited
+    // element sequence stays empty. Fail loudly if a list-only path reads it.
+    Object.defineProperty(this, "_sequence", {
+      // Hidden from generic walks (`Object.entries`), which must not trip it.
+      enumerable: false,
+      get(): never {
+        throw new Error("LoroMovableList has no element sequence; use _state");
+      },
+    });
+  }
 
   kind(): "MovableList" {
     return "MovableList";
   }
 
+  override get _elements(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  override get length(): number {
+    if (this._doc === undefined) return this._detachedValues.length;
+    this._ensureHydrated();
+    return this._state.length;
+  }
+
+  override get(index: number): T | undefined {
+    if (this._doc === undefined) {
+      return cloneRuntimeValue(this._detachedValues[index]) as T | undefined;
+    }
+    this._ensureHydrated();
+    return cloneRuntimeValue(this._state.elementAt(index)?.value) as T | undefined;
+  }
+
+  override toArray(): T[] {
+    return this._rawValues().map((value) => cloneRuntimeValue(value)) as T[];
+  }
+
+  override toJSON(): unknown[] {
+    return this._rawValues().map((value) => runtimeValueToJson(value));
+  }
+
+  override getShallowValue(): unknown[] {
+    return this._rawValues().map((value) => runtimeValueToShallow(value));
+  }
+
+  override insert(pos: number, value: T): void {
+    this._validateInsertPosition(pos);
+    if (isContainer(value))
+      throw new TypeError("use insertContainer() to attach a child container");
+    if (this._doc === undefined) {
+      this._detachedValues.splice(pos, 0, normalizeDetachedValue(value));
+      return;
+    }
+    this._doc._listInsert(this, pos, value);
+  }
+
+  override delete(pos: number, len: number): void {
+    validateRange(pos, len, this.length);
+    if (len === 0) return;
+    if (this._doc === undefined) {
+      this._detachedValues.splice(pos, len);
+      return;
+    }
+    this._doc._sequenceDelete(this, pos, len);
+  }
+
+  override insertContainer<C extends Container>(pos: number, child: C): C {
+    this._validateInsertPosition(pos);
+    if (this._doc === undefined) {
+      this._detachedValues.splice(pos, 0, child);
+      child._parentLink = { container: this };
+      return child;
+    }
+    return this._doc._listInsertContainer(this, pos, child);
+  }
+
+  /** The ID of the list item (position) at `pos`, which a cursor also anchors. */
+  override getIdAt(pos: number): { peer: string; counter: number } | undefined {
+    if (this._doc === undefined) return undefined;
+    this._ensureHydrated();
+    const id = this._state.positionAt(pos)?.id;
+    return id === undefined
+      ? undefined
+      : { peer: id.peer.toString(), counter: id.counter };
+  }
+
+  /** Like Rust, a cursor anchors the list item ID, which a move leaves behind. */
+  override getCursor(pos: number, side: Side = 0): Cursor | undefined {
+    if (!Number.isSafeInteger(pos) || pos < 0 || this._doc === undefined)
+      return undefined;
+    this._ensureHydrated();
+    const length = this._state.length;
+    if (length === 0) return new Cursor(this.id, undefined, side === 0 ? -1 : side, 0);
+    if (pos >= length) return new Cursor(this.id, undefined, 1, length);
+    return new Cursor(this.id, this._state.positionAt(pos)!.id, side, pos);
+  }
+
   move(from: number, to: number): void {
+    // Like Rust's attached `mov`, moving an index onto itself is a no-op even
+    // when it is out of range.
+    if (this._doc !== undefined && from === to && Number.isSafeInteger(from)) return;
     validateIndex(from, this.length);
     if (!Number.isSafeInteger(to) || to < 0 || to >= this.length) {
       throw new RangeError(`movable-list destination ${to} is out of range`);
     }
     if (from === to) return;
     if (this._doc === undefined) {
-      this._applyMove(from, to);
+      const [value] = this._detachedValues.splice(from, 1);
+      this._detachedValues.splice(to, 0, value!);
       return;
     }
     this._doc._movableMove(this, from, to);
@@ -2640,7 +2660,7 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
     if (isContainer(value))
       throw new TypeError("use setContainer() to attach a child container");
     if (this._doc === undefined) {
-      this._sequence.atVisible(pos)!.value = normalizeDetachedValue(value);
+      this._detachedValues[pos] = normalizeDetachedValue(value);
       return;
     }
     this._doc._movableSet(this, pos, value);
@@ -2649,163 +2669,95 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
   setContainer<C extends Container>(pos: number, child: C): C {
     validateIndex(pos, this.length);
     if (this._doc === undefined) {
-      const element = this._sequence.atVisible(pos)!;
-      element.value = child;
-      this._bindChildren([element]);
+      this._detachedValues[pos] = child;
+      child._parentLink = { container: this };
       return child;
     }
     return this._doc._movableSetContainer(this, pos, child);
   }
 
   getCreatorAt(pos: number): string | undefined {
-    return this._sequence.atVisible(pos)?.id.peer.toString();
+    if (this._doc === undefined) return undefined;
+    this._ensureHydrated();
+    return this._state.elementAt(pos)?.peer.toString();
   }
 
   getLastMoverAt(pos: number): string | undefined {
-    return this._sequence.atVisible(pos)?.id.peer.toString();
+    if (this._doc === undefined) return undefined;
+    this._ensureHydrated();
+    return this._state.positionAt(pos)?.id.peer.toString();
   }
 
   getLastEditorAt(pos: number): string | undefined {
-    return this._sequence.atVisible(pos)?.id.peer.toString();
+    if (this._doc === undefined) return undefined;
+    this._ensureHydrated();
+    return this._state.elementAt(pos)?.valueWriter.peer.toString();
   }
 
-  /** Physical placement for the next `_applyMove` of `element` (used by undo). */
-  _physicalMoveHint:
-    | { readonly element: SequenceElement; readonly before: SequenceElement | undefined }
-    | undefined;
-
-  _applyMove(
-    from: number,
-    to: number,
-    operation?: Pick<SequenceMoveMeta, "id" | "lamport">,
-    replaceExisting = false,
-  ): void {
-    const element = this._sequence.atVisible(from);
-    if (element === undefined) return;
-    const beforePrevious = this._sequence.previousVisible(element)?.id;
-    const beforeNext = this._sequence.nextVisible(element)?.id;
-    const physical = this._sequence.physicalIndexOf(element);
-    const beforePhysicalNext =
-      physical === undefined
-        ? undefined
-        : (this._sequence.atPhysical(physical + 1)?.id ?? null);
-    const beforePhysicalPrevious =
-      physical === undefined
-        ? undefined
-        : physical === 0
-          ? null
-          : (this._sequence.atPhysical(physical - 1)?.id ?? null);
-    const hint = this._physicalMoveHint;
-    this._physicalMoveHint = undefined;
-    if (hint !== undefined && hint.element === element) {
-      this._sequence.moveBefore(element, hint.before);
-    } else {
-      this._sequence.moveVisible(from, to);
-    }
-    if (operation === undefined) return;
-    const meta: SequenceMoveMeta = {
-      ...operation,
-      beforePrevious,
-      beforeNext,
-      beforePhysicalNext,
-      beforePhysicalPrevious,
-      afterPrevious: this._sequence.previousVisible(element)?.id,
-      afterNext: this._sequence.nextVisible(element)?.id,
-    };
-    let history = element.moveHistory;
-    if (history === undefined) {
-      history = [];
-      element.moveHistory = history;
-    }
-    const index = lowerBoundSequenceMoveMeta(history, meta);
-    const existing = history[index];
-    if (
-      existing !== undefined &&
-      existing.id.peer === meta.id.peer &&
-      existing.id.counter === meta.id.counter
-    ) {
-      if (replaceExisting) history[index] = meta;
-    } else {
-      history.splice(index, 0, meta);
-    }
+  /** Current values without cloning, attached or not. */
+  _rawValues(): RuntimeValue[] {
+    if (this._doc === undefined) return this._detachedValues;
+    this._ensureHydrated();
+    return this._state.visibleElements().map((element) => element.value);
   }
 
-  _moveToAnchors(
-    element: SequenceElement,
-    previousId: CodecId | undefined,
-    nextId: CodecId | undefined,
-  ): void {
-    if (element.deleted) return;
-    if (nextId === undefined) {
-      if (this._sequence.nextVisible(element) !== undefined) {
-        this._sequence.moveBefore(element, undefined);
-      }
-      return;
-    }
-    const next = this._sequence.findById(nextId);
-    if (next !== undefined && !next.deleted && next !== element) {
-      this._sequence.moveBefore(element, next);
-      return;
-    }
-    const previous =
-      previousId === undefined ? undefined : this._sequence.findById(previousId);
-    if (previous !== undefined && !previous.deleted && previous !== element) {
-      const successor = this._sequence.nextVisible(previous);
-      if (successor !== element) this._sequence.moveBefore(element, successor);
-      return;
-    }
-    if (previousId === undefined) {
-      const first = this._sequence.atVisible(0);
-      if (first !== undefined && first !== element) {
-        this._sequence.moveBefore(element, first);
-      }
-    }
+  override _visibleElements(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
   }
 
-  _applySet(
-    element: SequenceElement,
-    value: RuntimeValue,
-    meta?: SequenceValueMeta,
-  ): void {
-    if (meta === undefined) {
-      element.value = value;
-      this._bindChildren([element]);
-      return;
+  override _visibleElementsRange(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  override _visibleElementAt(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  override _valuesRange(start: number, end: number): unknown[] {
+    if (this._doc === undefined) {
+      return this._detachedValues
+        .slice(start, end)
+        .map((value) => cloneRuntimeValue(value));
     }
-    let history = element.valueHistory;
-    if (history === undefined) {
-      history = [];
-      element.valueHistory = history;
+    this._ensureHydrated();
+    return this._state
+      .visibleElementsRange(start, end)
+      .map((element) => cloneRuntimeValue(element.value));
+  }
+
+  override _insertVisible(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  override _insertFugue(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  override _deleteIdSpan(): never {
+    throw new Error("LoroMovableList has no element sequence; use _state");
+  }
+
+  _bindElement(element: MovableElement): void {
+    if (element.value instanceof LoroContainer) {
+      element.value._setParentBinding(this, { kind: "movable", element });
     }
-    const index = lowerBoundSequenceValueMeta(history, meta);
-    const existing = history[index];
-    if (
-      existing === undefined ||
-      existing.id.peer !== meta.id.peer ||
-      existing.id.counter !== meta.id.counter
-    ) {
-      history.splice(index, 0, meta);
-    }
-    const winner = history.at(-1)!;
-    element.value = winner.value;
-    this._bindChildren([element]);
   }
 
   override _reset(): void {
-    super._reset();
-    this._valueHistoryComplete = true;
-    this._moveHistoryComplete = true;
+    this._state.reset();
+    this._detachedValues = [];
   }
 
+  /** Installs `state`, or an empty state, and returns the replaced state. */
   override _swapState(state?: SequenceContainerState): SequenceContainerState {
-    const previous: MovableListState = {
-      ...(super._swapState(state) as ListState),
-      valueHistoryComplete: this._valueHistoryComplete,
-      moveHistoryComplete: this._moveHistoryComplete,
+    const previous: MovableListSwapState = {
+      sequence: this._state.positions as unknown as SequenceIndex<SequenceElement>,
+      movable: this._state,
     };
-    const next = state as MovableListState | undefined;
-    this._valueHistoryComplete = next?.valueHistoryComplete ?? true;
-    this._moveHistoryComplete = next?.moveHistoryComplete ?? true;
+    this._state =
+      (state as MovableListSwapState | undefined)?.movable ??
+      new MovableListState((element) => this._bindElement(element));
+    for (const element of this._state.allElements()) this._bindElement(element);
     return previous;
   }
 }
@@ -3519,6 +3471,9 @@ function containerValueWithId(container: Container): unknown {
     };
     return container._childrenOf(undefined).map(visit);
   }
+  if (container instanceof LoroMovableList) {
+    return container._rawValues().map((value) => runtimeValueDeepWithId(value));
+  }
   return container
     ._visibleElements()
     .map((element) => runtimeValueDeepWithId(element.value));
@@ -3572,12 +3527,13 @@ function normalizeDetachedValue(value: unknown): RuntimeValue {
   throw new TypeError(`unsupported Loro value type: ${typeof value}`);
 }
 
-function insertFugueElements<T extends SequenceElement>(
+export function insertFugueElements<T extends SequenceElement>(
   sequence: SequenceIndex<T>,
   position: number,
   inserted: T[],
   causalVersion: CausalVersion,
   useOriginIndex = true,
+  positionHint?: FuguePositionHint<T>,
 ): void {
   if (inserted.length === 0) return;
 
@@ -3587,6 +3543,7 @@ function insertFugueElements<T extends SequenceElement>(
     inserted[0]!.id,
     causalVersion,
     useOriginIndex,
+    positionHint,
   );
   const { insertIndex, originLeft, originRight } = insertion;
 
@@ -3627,7 +3584,7 @@ interface FugueInsertionResult {
   readonly indexUpdate?: FugueOriginIndex | undefined;
 }
 
-interface FuguePositionHint<T extends SequenceElement> {
+export interface FuguePositionHint<T extends SequenceElement> {
   readonly current: boolean;
   readonly left: T | undefined;
   readonly startIndex?: number | undefined;
@@ -4039,49 +3996,6 @@ function compareWriters(left: LastWriter, right: LastWriter): number {
     left.lamport - right.lamport ||
     (left.peer < right.peer ? -1 : left.peer > right.peer ? 1 : 0)
   );
-}
-
-function compareSequenceValueMeta(
-  left: SequenceValueMeta,
-  right: SequenceValueMeta,
-): number {
-  return compareWriters(
-    { peer: left.id.peer, lamport: left.lamport },
-    { peer: right.id.peer, lamport: right.lamport },
-  );
-}
-
-function lowerBoundSequenceValueMeta(
-  history: readonly SequenceValueMeta[],
-  meta: SequenceValueMeta,
-): number {
-  let low = 0;
-  let high = history.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (compareSequenceValueMeta(history[middle]!, meta) < 0) low = middle + 1;
-    else high = middle;
-  }
-  return low;
-}
-
-function lowerBoundSequenceMoveMeta(
-  history: readonly SequenceMoveMeta[],
-  meta: SequenceMoveMeta,
-): number {
-  let low = 0;
-  let high = history.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    const current = history[middle]!;
-    const order = compareWriters(
-      { peer: current.id.peer, lamport: current.lamport },
-      { peer: meta.id.peer, lamport: meta.lamport },
-    );
-    if (order < 0) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function validateRange(position: number, length: number, total: number): void {

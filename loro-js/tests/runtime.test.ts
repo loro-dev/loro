@@ -1417,6 +1417,51 @@ describe("loro-wasm-compatible runtime", () => {
     expect(target.getAllChanges()).toEqual(source.getAllChanges());
   });
 
+  test("creates the root containers of an import that is only pending", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    source.getText("t").insert(0, "a");
+    source.commit();
+    const version = source.version();
+    source.getMap("m").set("k", 1);
+    source.getMovableList("l").push(1);
+    source.commit();
+    const update = source.export({ mode: "update", from: version });
+
+    // Like Rust: the roots exist, empty, until their changes apply.
+    const target = new LoroDoc();
+    expect(target.import(update).pending).not.toBeNull();
+    expect(target.toJSON()).toEqual({ l: [], m: {} });
+    const edited = new LoroDoc();
+    edited.getText("t").insert(0, "q");
+    edited.commit();
+    edited.import(update);
+    expect(edited.toJSON()).toEqual({ t: "q", l: [], m: {} });
+  });
+
+  test("keeps pending changes when a lazy snapshot's history is materialized", () => {
+    const source = new LoroDoc();
+    source.setPeerId(9);
+    source.getText("text").insert(0, "a");
+    source.commit();
+    const snapshot = source.export({ mode: "snapshot" });
+    const version = source.version();
+    source.getText("text").push("b");
+    source.commit();
+    const missing = source.export({ mode: "update", from: version });
+    const afterMissing = source.version();
+    source.getText("text").push("c");
+    source.commit();
+    const later = source.export({ mode: "update", from: afterMissing });
+
+    const target = LoroDoc.fromSnapshot(snapshot);
+    expect(target.import(later).pending).not.toBeNull();
+    // History queries decode the snapshot's history.
+    expect(target.changeCount()).toBe(1);
+    target.import(missing);
+    expect(target.toJSON()).toEqual({ text: "abc" });
+  });
+
   test("keeps deferred history atomic when snapshot metadata is inconsistent", () => {
     const source = new LoroDoc();
     source.setPeerId(11);
@@ -1791,6 +1836,12 @@ describe("loro-wasm-compatible runtime", () => {
     expect(count(() => doc.getCounter("counter").increment(0))).toBe(1);
     // Attaching a detached counter increments it by its value, even 0.
     expect(count(() => map.setContainer("child", new LoroCounter()))).toBe(2);
+    // A movable-list set is recorded even when the value is unchanged.
+    const movable = doc.getMovableList("movable");
+    movable.push("same");
+    doc.commit();
+    expect(count(() => movable.set(0, "same"))).toBe(1);
+    expect(movable.toJSON()).toEqual(["same"]);
   });
 
   test("lets a delete of an absent map key win against a concurrent set", () => {
