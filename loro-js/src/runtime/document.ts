@@ -2158,11 +2158,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   /**
-   * Validates every entry before anything is applied, so a malformed batch is
-   * rejected as a whole. List lengths are simulated in batch order: an entry
-   * starts from the list's current length (looked up without creating
-   * anything), or 0 for a child that an earlier entry creates, and later
-   * entries for the same list see the length the earlier ones leave.
+   * Checks the list deltas of every entry before anything is applied, so a
+   * list delta out of range rejects the batch as a whole. List lengths are
+   * simulated in batch order: an entry starts from the list's current length
+   * (looked up without creating anything), the hidden length of a mergeable
+   * child, or 0 for a child that an earlier entry creates, and later entries
+   * for the same list see the length the earlier ones leave.
    */
   #validateDiffBatch(
     diffBatch: readonly (readonly [ContainerID, Diff | JsonDiff])[],
@@ -2172,7 +2173,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     const created = new Set<ContainerID>();
     const noteChild = (value: unknown): void => {
       const childId = diffContainerId(value);
-      if (childId === undefined) return;
+      // A mergeable child is re-activated with the state it holds here.
+      if (childId === undefined || isMergeableContainerId(parseContainerId(childId))) {
+        return;
+      }
       const existing = this.#peekDiffContainer(childId);
       if (existing === undefined) created.add(childId);
     };
@@ -2189,9 +2193,14 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (diff?.type !== "list") continue;
       let length = lengths.get(id);
       if (length === undefined) {
-        const existing = this.#peekDiffContainer(id);
+        const parsed = parseContainerId(id);
+        // A hidden mergeable child keeps its state: re-ensuring it (an earlier
+        // entry or the map diff that attaches it) resurfaces that length.
+        const existing = isMergeableContainerId(parsed)
+          ? this.getContainerById(id)
+          : this.#peekDiffContainer(id);
         if (existing instanceof LoroList) length = existing.length;
-        else if (created.has(id) || parseContainerId(id).kind === "root") length = 0;
+        else if (created.has(id) || parsed.kind === "root") length = 0;
       }
       const next = validateListDelta(diff.diff, length);
       if (next !== undefined) {

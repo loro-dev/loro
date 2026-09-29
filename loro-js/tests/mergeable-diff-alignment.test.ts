@@ -172,3 +172,72 @@ describe("mergeable children in diff and applyDiff", () => {
     ]);
   });
 });
+
+describe("batch validation of a hidden mergeable list (Rust main results)", () => {
+  for (const kind of ["List", "MovableList"] as const) {
+    const ensureList = (doc: LoroDoc) =>
+      kind === "List"
+        ? doc.getMap("m").ensureMergeableList("s")
+        : doc.getMap("m").ensureMergeableMovableList("s");
+
+    test(`revertTo re-activates a ${kind} edited remotely while hidden`, () => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = ensureList(doc);
+      list.insert(0, 1);
+      list.insert(1, 2);
+      doc.commit();
+      const alive = doc.frontiers();
+      const remote = new LoroDoc();
+      remote.setPeerId(2);
+      remote.import(doc.export({ mode: "snapshot" }));
+      doc.getMap("m").delete("s");
+      doc.commit();
+      ensureList(remote).insert(2, 9);
+      remote.commit();
+      doc.import(remote.export({ mode: "update" }));
+      doc.revertTo(alive);
+      doc.commit();
+      expect(doc.toJSON()).toEqual({ m: { s: [1, 2] } });
+    });
+
+    test(`an event mirror accepts a re-ensured ${kind} edited in the same commit`, () => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const mirror = new LoroDoc();
+      mirror.setPeerId(9);
+      doc.subscribe((batch) => {
+        mirror.applyDiff(batch.events.map((event) => [event.target, event.diff]));
+        mirror.commit();
+      });
+      const list = ensureList(doc);
+      list.insert(0, 1);
+      list.insert(1, 2);
+      doc.commit();
+      doc.getMap("m").delete("s");
+      doc.commit();
+      ensureList(doc).insert(1, "new");
+      doc.commit();
+      expect(mirror.toJSON()).toEqual({ m: { s: [1, "new", 2] } });
+    });
+
+    test(`a delta beyond a hidden ${kind}'s length is still rejected`, () => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = ensureList(doc);
+      list.insert(0, 1);
+      list.insert(1, 2);
+      doc.commit();
+      doc.getMap("m").delete("s");
+      doc.commit();
+      const id = `cid:root-🤝:$m>s:${kind}` as const;
+      expect(() =>
+        doc.applyDiff([
+          ["cid:root-m:Map", { type: "map", updated: { s: `🦜:${id}` } }],
+          [id, { type: "list", diff: [{ retain: 3 }, { insert: ["x"] }] }],
+        ]),
+      ).toThrow(/consumes 3 items but the list has 2/);
+      expect(doc.toJSON()).toEqual({ m: {} });
+    });
+  }
+});
