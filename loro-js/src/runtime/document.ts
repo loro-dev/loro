@@ -2210,6 +2210,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     entries: readonly (readonly [ContainerID, LoroEvent["diff"]])[],
     fromVersion: VersionVector,
     changesOnly: boolean,
+    forEvent = false,
   ): [ContainerID, LoroEvent["diff"]][] {
     const diffs = new Map<ContainerID, LoroEvent["diff"]>(entries);
     for (const [id, diff] of diffs) {
@@ -2250,10 +2251,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             // Public diffs report its full state, as Rust's `LoroDoc::diff`
             // does (a full-state batch); revertTo applies only its actual
             // change (Rust's `KeptChange`) so identity is kept.
+            // For an event, only a movable-list move keeps the moved child: a
+            // listener resets any other attached child, including one that a
+            // whole-value List diff (the replay fallback) deletes and inserts
+            // again.
             if (
               !parentCreated &&
               ((changesOnly && isMergeableContainerId(child._codecId!)) ||
-                this.#reachableThroughParentAt(child, parent, fromVersion))
+                ((!forEvent || parent instanceof LoroMovableList) &&
+                  this.#reachableThroughParentAt(child, parent, fromVersion)))
             ) {
               continue;
             }
@@ -3009,9 +3015,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
     const before = this.#frontiersCodec();
+    // Like Rust's `_checkout_without_emitting`: checking out the current
+    // version changes nothing, and it re-attaches when that version is the
+    // latest one.
+    const currentFrontiers = this.frontiers();
+    if (sameFrontierSet(currentFrontiers, frontiers)) {
+      if (sameFrontierSet(frontiers, this.oplogFrontiers())) {
+        this.#checkoutVersion = undefined;
+        this.#detached = false;
+      }
+      if (this.#detachedEditing) this.#renewPeerId();
+      return;
+    }
     const currentVersion = this.version();
     const targetVersion = this.frontiersToVV(frontiers);
     this.#assertVersionNotBeforeShallowRoot(targetVersion);
+    if (sameFrontierSet(currentFrontiers, this.vvToFrontiers(targetVersion))) {
+      if (this.#detachedEditing) this.#renewPeerId();
+      return;
+    }
     const forwardRecords = this.#recordsInVersionRange(currentVersion, targetVersion);
     const retreatRecords = this.#recordsInVersionRange(targetVersion, currentVersion);
     const changed = changedContainerIds([...forwardRecords, ...retreatRecords]);
@@ -4026,8 +4048,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _mapDelete(container: LoroMap, key: string): void {
-    const current = container._entries.get(key);
-    if (current === undefined || current.deleted) return;
+    // Rust records a delete even when the key is absent: it can still win
+    // against a concurrent set.
     this.#appendAndApply(container, { type: "map-delete", key }, 1);
   }
 
@@ -4180,7 +4202,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _counterIncrement(container: LoroCounter, value: number): void {
-    if (value === 0) return;
     this.#appendAndApply(
       container,
       { type: "future", property: 0, value: { type: "double", value } },
@@ -7737,18 +7758,15 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
 
-    let start = parsed;
-    if (start.length > 1) {
-      const versions = start.map((frontier) => this.#causalVersionAt([frontier]));
-      const peers = new Set(versions.flatMap((version) => [...version.keys()]));
-      const common = new VersionVector();
-      for (const peer of peers) {
-        const counter = Math.min(...versions.map((version) => version.get(peer) ?? 0));
-        if (counter > 0) common.set(peer, counter);
-      }
-      const commonFrontiers = this.#frontiersForVersion(common);
-      start = commonFrontiers.length === 1 ? commonFrontiers : [];
-    }
+    // Every retained op must be causally before or after the root, so a
+    // branch merged after `requested` that forked below it moves the root
+    // down (loro-dev/loro#1095).
+    let start =
+      parsed.length === 0
+        ? []
+        : this.#latestSingleHeadCriticalVersion(parsed, [
+            ...this.#historyFrontiers.values(),
+          ]);
 
     if (start.length === 1) {
       const operation = this.#operationAt(start[0]!);
@@ -7765,6 +7783,130 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return this.#shallowRootFrontiers.map((id) => ({ ...id }));
     }
     return start;
+  }
+
+  /**
+   * Port of Rust's `latest_single_head_critical_version` (`dag.rs`): the
+   * newest op `v` such that every other op in the union of both histories is
+   * an ancestor of `v` or causally after it, or the empty version when no
+   * such op exists. The heap is always a cut of the unexplored region, so the
+   * first time it narrows to one span, that span's last op is the answer.
+   */
+  #latestSingleHeadCriticalVersion(
+    left: readonly CodecId[],
+    right: readonly CodecId[],
+  ): CodecId[] {
+    interface Span {
+      readonly peer: bigint;
+      readonly counter: number;
+      readonly lamport: number;
+      len: number;
+      readonly deps: readonly CodecId[];
+    }
+    const spanOf = (id: CodecId): Span | undefined => {
+      const record = this.#recordContaining(id);
+      if (record === undefined) return undefined;
+      const change = record.change;
+      return {
+        peer: change.id.peer,
+        counter: change.id.counter,
+        lamport: change.lamport,
+        len: id.counter - change.id.counter + 1,
+        deps: change.dependencies,
+      };
+    };
+    const lastCounter = (span: Span): number => span.counter + span.len - 1;
+    const lastLamport = (span: Span): number => span.lamport + span.len - 1;
+    const contains = (span: Span, peer: bigint, counter: number): boolean =>
+      span.peer === peer && span.counter <= counter && counter <= lastCounter(span);
+    // Max-heap order: last lamport, then peer; a shorter span with the same
+    // last op is greater.
+    const greater = (a: Span, b: Span): boolean =>
+      lastLamport(a) !== lastLamport(b)
+        ? lastLamport(a) > lastLamport(b)
+        : a.peer !== b.peer
+          ? a.peer > b.peer
+          : a.len < b.len;
+    const heap: Span[] = [];
+    const push = (span: Span): void => {
+      heap.push(span);
+      for (let index = heap.length - 1; index > 0; ) {
+        const parent = (index - 1) >> 1;
+        if (!greater(heap[index]!, heap[parent]!)) break;
+        [heap[index], heap[parent]] = [heap[parent]!, heap[index]!];
+        index = parent;
+      }
+    };
+    const pop = (): Span => {
+      const top = heap[0]!;
+      const last = heap.pop()!;
+      if (heap.length > 0) {
+        heap[0] = last;
+        for (let index = 0; ; ) {
+          const leftChild = index * 2 + 1;
+          const rightChild = leftChild + 1;
+          let largest = index;
+          if (leftChild < heap.length && greater(heap[leftChild]!, heap[largest]!)) {
+            largest = leftChild;
+          }
+          if (rightChild < heap.length && greater(heap[rightChild]!, heap[largest]!)) {
+            largest = rightChild;
+          }
+          if (largest === index) break;
+          [heap[index], heap[largest]] = [heap[largest]!, heap[index]!];
+          index = largest;
+        }
+      }
+      return top;
+    };
+    for (const id of [...left, ...right]) {
+      const span = spanOf(id);
+      if (span === undefined) return [];
+      push(span);
+    }
+    while (heap.length > 0) {
+      const node = pop();
+      while (
+        heap.length > 0 &&
+        heap[0]!.peer === node.peer &&
+        lastCounter(heap[0]!) === lastCounter(node)
+      ) {
+        pop();
+      }
+      if (heap.length === 0) return [{ peer: node.peer, counter: lastCounter(node) }];
+      const other = heap[0]!;
+      if (contains(node, other.peer, lastCounter(other))) {
+        node.len = lastCounter(other) - node.counter + 1;
+        push(node);
+        continue;
+      }
+      if (node.len > 1) {
+        node.len =
+          lastLamport(other) >= node.lamport
+            ? Math.min(lastLamport(other) - node.lamport + 1, node.len - 1)
+            : 1;
+        push(node);
+        continue;
+      }
+      const deps: Span[] = [];
+      for (const dependency of node.deps) {
+        const span = spanOf(dependency);
+        if (span === undefined) return [];
+        deps.push(span);
+      }
+      if (node.counter > 0) {
+        const previous = spanOf({ peer: node.peer, counter: node.counter - 1 });
+        if (
+          previous !== undefined &&
+          !deps.some((dep) => contains(dep, previous.peer, lastCounter(previous)))
+        ) {
+          deps.push(previous);
+        }
+      }
+      if (deps.length === 0) return [];
+      for (const dep of deps) push(dep);
+    }
+    return [];
   }
 
   #causalVersionForKnownFrontiers(frontiers: readonly CodecId[]): VersionVector {
@@ -8455,6 +8597,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         entries,
         this.#causalVersionForKnownFrontiers(from),
         false,
+        true,
       );
     }
     const events: LoroEvent[] = entries.map(([target, diff]) => ({
@@ -10247,7 +10390,8 @@ function restoreBlueprint(container: Container, blueprint: ContainerBlueprint): 
   } else if (container instanceof LoroText) {
     container.applyDelta(blueprint.value as never);
   } else if (container instanceof LoroCounter) {
-    if ((blueprint.value as number) !== 0) container.increment(blueprint.value as number);
+    // Rust's CounterHandler::attach increments by the detached value, even 0.
+    container.increment(blueprint.value as number);
   } else if (container instanceof LoroList) {
     for (const value of blueprint.value as unknown[]) {
       if (isContainer(value)) container.pushContainer(value);
@@ -11203,6 +11347,12 @@ function sameOptionalCodecId(
   return left === undefined || right === undefined
     ? left === right
     : idsEqual(left, right);
+}
+
+function sameFrontierSet(left: readonly OpId[], right: readonly OpId[]): boolean {
+  if (left.length !== right.length) return false;
+  const keys = new Set(left.map((id) => `${id.counter}@${id.peer}`));
+  return right.every((id) => keys.has(`${id.counter}@${id.peer}`));
 }
 
 interface StyleRedaction {
