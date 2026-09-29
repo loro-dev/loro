@@ -1597,13 +1597,17 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       return false;
     };
 
-    const changed = new Set(items.map((item) => item.target));
-    const deletes: TreeDiffItem[] = [];
-    const deletedSoFar: { parent: string; key: TreeSiblingKey }[] = [];
+    // Deletes come first, as in Rust: the diff's own deletes, then the old
+    // copies of moved-in live nodes that a revived subtree recreates.
+    const deleteTargets: CodecId[] = [];
+    for (const item of items) {
+      if (item.action === "delete") deleteTargets.push(parseTreeId(item.target));
+    }
     const body: TreeDiffItem[] = [];
     for (const item of items) {
-      if (item.action === "delete" || !revived.has(item.target)) {
-        if (item.action === "delete" || !insideRevived(item.target)) body.push(item);
+      if (item.action === "delete") continue;
+      if (!revived.has(item.target)) {
+        if (!insideRevived(item.target)) body.push(item);
         continue;
       }
       if (insideRevived(item.target)) continue;
@@ -1638,34 +1642,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       for (let position = 1; position < records.length; position += 1) {
         const record = records[position]!;
         if (!alive.has(idKey(record.id))) continue;
-        const placement = this.#treeNodePlacementAt(tree, record.id, from)!;
-        if (placement.parent !== undefined && alive.has(idKey(placement.parent)))
-          continue;
-        // Emitted before every other item, so the index is the one at `from`,
-        // less the siblings deleted by earlier such items.
-        const parentKey = placement.parent === undefined ? "" : idKey(placement.parent);
-        const key = siblingKey(record.id, placement);
-        let oldIndex = this.#treeIndexAt(
-          tree,
-          record.id,
-          placement.parent,
-          key,
-          from,
-          changed,
-        );
-        for (const deleted of deletedSoFar) {
-          if (deleted.parent === parentKey && compareSiblingKeys(deleted.key, key) < 0) {
-            oldIndex -= 1;
-          }
-        }
-        deletedSoFar.push({ parent: parentKey, key });
-        deletes.push({
-          target: formatTreeId(record.id),
-          action: "delete",
-          oldParent:
-            placement.parent === undefined ? undefined : formatTreeId(placement.parent),
-          oldIndex,
-        });
+        const parent = this.#treeNodePlacementAt(tree, record.id, from)?.parent;
+        if (parent !== undefined && alive.has(idKey(parent))) continue;
+        deleteTargets.push(record.id);
       }
       for (let position = 0; position < records.length; position += 1) {
         const record = records[position]!;
@@ -1678,40 +1657,83 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         });
       }
     }
-    return [...deletes, ...body];
+    const changed = new Set(items.map((item) => item.target));
+    return [...this.#treeDeletesAt(tree, deleteTargets, changed, from), ...body];
   }
 
   /**
-   * `node`'s index among its siblings under `parent` at `from`. Siblings whose
-   * placement did not change in the range are the current children; the
-   * changed ones are resolved from their placement at `from`.
+   * Delete items for `targets`, applied in order to the tree as it was at
+   * `from`: each `oldParent` and `oldIndex` come from the target's placement at
+   * `from`, less the siblings deleted by earlier items. The sibling order of
+   * each affected parent is built once, from its unchanged current children
+   * and the changed nodes placed under it at `from` (both resolved without
+   * the `to` state, which lacks nodes that only exist at `from`), and indexes
+   * are counted with a Fenwick tree: O((changed + siblings) log n).
    */
-  #treeIndexAt(
+  #treeDeletesAt(
     tree: LoroTree,
-    node: CodecId,
-    parent: CodecId | undefined,
-    key: TreeSiblingKey,
-    from: VersionVector,
+    targets: readonly CodecId[],
     changed: ReadonlySet<string>,
-  ): number {
-    let index = 0;
-    const parentKey = parent === undefined ? undefined : idKey(parent);
-    for (const child of tree._childrenOf(parent)) {
-      const target = formatTreeId(child.id);
-      if (changed.has(target) || idKey(child.id) === idKey(node)) continue;
-      if (compareSiblingKeys(siblingKey(child.id, child), key) < 0) index += 1;
+    from: VersionVector,
+  ): TreeDiffItem[] {
+    if (targets.length === 0) return [];
+    const placements = new Map<string, TreePlacement | undefined>();
+    const placementOf = (node: CodecId): TreePlacement | undefined => {
+      const key = idKey(node);
+      if (!placements.has(key))
+        placements.set(key, this.#treeNodePlacementAt(tree, node, from));
+      return placements.get(key);
+    };
+    const parentKey = (parent: CodecId | undefined): string =>
+      parent === undefined ? "" : idKey(parent);
+    const affected = new Map<string, CodecId | undefined>();
+    for (const target of targets) {
+      const placement = placementOf(target);
+      if (placement !== undefined)
+        affected.set(parentKey(placement.parent), placement.parent);
     }
+    // Changed nodes placed under an affected parent at `from`.
+    const changedByParent = new Map<string, TreeSiblingKey[]>();
     for (const target of changed) {
-      const record = tree._nodes.get(target);
-      if (record === undefined || idKey(record.id) === idKey(node)) continue;
-      const placement = this.#treeNodePlacementAt(tree, record.id, from);
+      const node = parseTreeId(target);
+      const placement = placementOf(node);
       if (placement === undefined || placement.deleted) continue;
-      const placementParent =
-        placement.parent === undefined ? undefined : idKey(placement.parent);
-      if (placementParent !== parentKey) continue;
-      if (compareSiblingKeys(siblingKey(record.id, placement), key) < 0) index += 1;
+      const key = parentKey(placement.parent);
+      if (!affected.has(key)) continue;
+      let list = changedByParent.get(key);
+      if (list === undefined) changedByParent.set(key, (list = []));
+      list.push(siblingKey(node, placement));
     }
-    return index;
+    const orders = new Map<string, { position: Map<string, number>; counts: Fenwick }>();
+    for (const [key, parent] of affected) {
+      const siblings = [...(changedByParent.get(key) ?? [])];
+      for (const child of tree._childrenOf(parent)) {
+        if (!changed.has(formatTreeId(child.id)))
+          siblings.push(siblingKey(child.id, child));
+      }
+      siblings.sort(compareSiblingKeys);
+      const position = new Map(
+        siblings.map((sibling, index) => [idKey(sibling.id), index]),
+      );
+      orders.set(key, { position, counts: new Fenwick(siblings.length) });
+    }
+    const deletes: TreeDiffItem[] = [];
+    for (const target of targets) {
+      const placement = placementOf(target);
+      const order =
+        placement === undefined ? undefined : orders.get(parentKey(placement.parent));
+      const index = order?.position.get(idKey(target));
+      if (placement === undefined || order === undefined || index === undefined) continue;
+      deletes.push({
+        target: formatTreeId(target),
+        action: "delete",
+        oldParent:
+          placement.parent === undefined ? undefined : formatTreeId(placement.parent),
+        oldIndex: order.counts.prefix(index),
+      });
+      order.counts.remove(index);
+    }
+    return deletes;
   }
 
   #isTreeRecordHidden(tree: LoroTree, record: TreeNodeRecord): boolean {
@@ -10055,6 +10077,33 @@ function isTextEventValue(value: unknown): value is TextEventValue {
     typeof (value as TextEventValue).text === "string" &&
     Array.isArray((value as TextEventValue).delta)
   );
+}
+
+/** Counts present positions; all start present. */
+class Fenwick {
+  readonly #tree: Int32Array;
+
+  constructor(length: number) {
+    this.#tree = new Int32Array(length + 1);
+    for (let index = 1; index <= length; index += 1) {
+      this.#tree[index] = this.#tree[index]! + 1;
+      const parent = index + (index & -index);
+      if (parent <= length) this.#tree[parent] = this.#tree[parent]! + this.#tree[index]!;
+    }
+  }
+
+  /** Present positions before `index`. */
+  prefix(index: number): number {
+    let sum = 0;
+    for (let at = index; at > 0; at -= at & -at) sum += this.#tree[at]!;
+    return sum;
+  }
+
+  remove(index: number): void {
+    for (let at = index + 1; at < this.#tree.length; at += at & -at) {
+      this.#tree[at] = this.#tree[at]! - 1;
+    }
+  }
 }
 
 interface TreePlacement {

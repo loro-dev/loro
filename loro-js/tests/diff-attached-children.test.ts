@@ -817,6 +817,70 @@ describe("diff and revertTo for containers attached by the range", () => {
     undo.clear();
     expect(undo._trackedRangeCount()).toBe(0);
   });
+
+  test("tree delete indexes follow the order the deletes are applied in", () => {
+    for (const newRootIndex of [0, 1]) {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const tree = doc.getTree("t");
+      tree.enableFractionalIndex(0);
+      const parent = tree.createNode();
+      const child = parent.createNode();
+      child.data.set("k", "v");
+      doc.commit();
+      const target = doc.frontiers();
+      tree.delete(parent.id);
+      doc.commit();
+      child.move();
+      doc.commit();
+      const extra = tree.createNode(undefined, newRootIndex);
+      extra.data.set("q", 1);
+      doc.commit();
+      const diff = doc.diff(doc.frontiers(), target, true);
+      const items = diff.find(([id]) => id === tree.id)![1] as {
+        diff: { action: string; target: string; oldIndex?: number }[];
+      };
+      // Same as Rust: the new root first, then the moved-in child.
+      expect(
+        items.diff.map((item) =>
+          item.action === "delete"
+            ? `delete ${item.target}@${item.oldIndex}`
+            : item.action,
+        ),
+      ).toEqual([
+        `delete ${extra.id}@${newRootIndex}`,
+        `delete ${child.id}@0`,
+        "create",
+        "create",
+      ]);
+    }
+  });
+
+  test("recomputes delete indexes for many moved-in nodes in near-linear time", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("t");
+    tree.enableFractionalIndex(0);
+    const parent = tree.createNode();
+    const children = Array.from({ length: 4000 }, () => parent.createNode());
+    doc.commit();
+    const target = doc.frontiers();
+    tree.delete(parent.id);
+    doc.commit();
+    for (const child of children) child.move();
+    doc.commit();
+    const started = performance.now();
+    const diff = doc.diff(doc.frontiers(), target, true);
+    // 784f/cabb took about 3 s here.
+    expect(performance.now() - started).toBeLessThan(1500);
+    const items = diff.find(([id]) => id === tree.id)![1] as {
+      diff: { action: string; oldIndex?: number }[];
+    };
+    const deletes = items.diff.filter((item) => item.action === "delete");
+    expect(deletes).toHaveLength(4000);
+    // Deleted front to back from the root, each one is at index 0 by then.
+    expect(deletes.every((item) => item.oldIndex === 0)).toBe(true);
+  }, 60_000);
 });
 
 interface TreeJson {
