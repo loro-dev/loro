@@ -4026,8 +4026,8 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _mapDelete(container: LoroMap, key: string): void {
-    const current = container._entries.get(key);
-    if (current === undefined || current.deleted) return;
+    // Rust records a delete even when the key is absent: it can still win
+    // against a concurrent set.
     this.#appendAndApply(container, { type: "map-delete", key }, 1);
   }
 
@@ -4180,7 +4180,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   }
 
   _counterIncrement(container: LoroCounter, value: number): void {
-    if (value === 0) return;
     this.#appendAndApply(
       container,
       { type: "future", property: 0, value: { type: "double", value } },
@@ -10344,7 +10343,8 @@ function restoreBlueprint(container: Container, blueprint: ContainerBlueprint): 
   } else if (container instanceof LoroText) {
     container.applyDelta(blueprint.value as never);
   } else if (container instanceof LoroCounter) {
-    if ((blueprint.value as number) !== 0) container.increment(blueprint.value as number);
+    // Rust's CounterHandler::attach increments by the detached value, even 0.
+    container.increment(blueprint.value as number);
   } else if (container instanceof LoroList) {
     for (const value of blueprint.value as unknown[]) {
       if (isContainer(value)) container.pushContainer(value);

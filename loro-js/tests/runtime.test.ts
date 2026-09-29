@@ -1726,22 +1726,42 @@ describe("loro-wasm-compatible runtime", () => {
     expect(() => root.ensureMergeableMap("regular")).toThrow(/non-mergeable value/u);
   });
 
-  test("does not record semantic no-op edits", () => {
+  // loro-crdt skips setting a map key to its current value, but records a
+  // delete of an absent key and a zero counter increment. Matching it keeps op
+  // IDs and concurrent outcomes the same for the same API calls.
+  test("records the same local ops as loro-crdt for no-op-looking edits", () => {
     const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("value", { nested: [1, true, null] });
-    const movable = doc.getMovableList("movable");
-    movable.push("same");
     doc.commit();
-    const opCount = doc.opCount();
+    const count = (edit: () => void): number => {
+      const before = doc.opCount();
+      edit();
+      doc.commit();
+      return doc.opCount() - before;
+    };
 
-    map.set("value", { nested: [1, true, null] });
-    map.delete("missing");
-    movable.set(0, "same");
-    doc.getCounter("counter").increment(0);
-    doc.commit();
+    expect(count(() => map.set("value", { nested: [1, true, null] }))).toBe(0);
+    expect(count(() => map.delete("missing"))).toBe(1);
+    expect(count(() => doc.getCounter("counter").increment(0))).toBe(1);
+    // Attaching a detached counter increments it by its value, even 0.
+    expect(count(() => map.setContainer("child", new LoroCounter()))).toBe(2);
+  });
 
-    expect(doc.opCount()).toBe(opCount);
+  test("lets a delete of an absent map key win against a concurrent set", () => {
+    const a = new LoroDoc();
+    a.setPeerId(1);
+    const b = new LoroDoc();
+    b.setPeerId(2);
+    a.getMap("map").set("key", 1);
+    a.commit();
+    b.getMap("map").delete("key");
+    b.commit();
+    a.import(b.export({ mode: "update" }));
+    b.import(a.export({ mode: "update" }));
+    // Same lamport; the larger peer's delete wins, as in loro-crdt.
+    expect(a.toJSON()).toEqual({ map: {} });
+    expect(b.toJSON()).toEqual({ map: {} });
   });
 
   test("resurfaces preserved state and switches mergeable kinds", () => {
