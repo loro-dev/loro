@@ -207,29 +207,38 @@ describe("tree items that cannot apply reject the batch", () => {
 });
 
 describe("deep trees", () => {
-  test("diff, import and checkout with a subscriber stay linear in depth", () => {
-    // Each node used to walk to the root to check whether it is hidden, so an
-    // 8,000-deep chain took seconds (quadratic).
+  /** Best of two runs of diff, import and checkout (with a subscriber) on an n-deep chain. */
+  function deepChainMs(depth: number): number {
     const doc = new LoroDoc();
     doc.setPeerId(1);
     let node = doc.getTree("t").createNode();
-    for (let depth = 0; depth < 8_000; depth += 1) {
+    for (let level = 0; level < depth; level += 1) {
       node = node.createNode();
-      node.data.set("k", depth);
+      node.data.set("k", level);
     }
     doc.commit();
     const update = doc.export({ mode: "update" });
-    const started = performance.now();
-    const diff = doc.diff([], doc.frontiers(), true);
-    expect(diff.length).toBeGreaterThan(8_000);
-    const replica = new LoroDoc();
-    let events = 0;
-    replica.subscribe(() => (events += 1));
-    replica.import(update);
-    const latest = replica.frontiers();
-    replica.checkout([]);
-    replica.checkout(latest);
-    expect(events).toBe(3);
-    expect(performance.now() - started).toBeLessThan(1_500);
+    let best = Infinity;
+    for (let run = 0; run < 2; run += 1) {
+      const started = performance.now();
+      expect(doc.diff([], doc.frontiers(), true).length).toBeGreaterThan(depth);
+      const replica = new LoroDoc();
+      let events = 0;
+      replica.subscribe(() => (events += 1));
+      replica.import(update);
+      const latest = replica.frontiers();
+      replica.checkout([]);
+      replica.checkout(latest);
+      expect(events).toBe(3);
+      best = Math.min(best, performance.now() - started);
+    }
+    return best;
+  }
+
+  test("diff, import and checkout with a subscriber stay linear in depth", () => {
+    // Each node used to walk to the root to check whether it is hidden
+    // (quadratic: 4x the depth took about 17x the time). Linear is about 5x.
+    const ratio = deepChainMs(8_000) / deepChainMs(2_000);
+    expect(ratio).toBeLessThan(12);
   });
 });
