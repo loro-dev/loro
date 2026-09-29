@@ -279,6 +279,10 @@ loro.js, not specific to MovableList:
 - Cursors: loro.js List/Text add one to a side-1 cursor's offset and anchor an
   end cursor to the last item; Rust does neither, and resolves a MovableList
   cursor whose item was moved away to `undefined`. Not compared.
+- `diff()` of a child container created in the range omits a map whose keys
+  were all set and deleted again in that range; Rust lists those keys as
+  deleted. It happens under List, Map and MovableList parents alike (also on
+  `main`). The suite skips such map entries when it compares `diff()`.
 - Event labels: multi-blob `importBatch` is `by: "checkout"` in Rust, and
   checkout events carry origin `"checkout"` only in Rust. Rust's
   `oplogVersion()` also counts the pending transaction.
