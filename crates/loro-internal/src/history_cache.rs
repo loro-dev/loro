@@ -289,14 +289,6 @@ impl ContainerHistoryCache {
         }
     }
 
-    pub(crate) fn get_importing_cache(
-        &self,
-        container_idx: &ContainerIdx,
-        _: HasImportingCacheMark,
-    ) -> Option<&HistoryCacheForImporting> {
-        self.for_importing.as_ref().unwrap().get(container_idx)
-    }
-
     pub(crate) fn get_tree(
         &self,
         container_idx: &ContainerIdx,
@@ -357,6 +349,35 @@ impl ContainerHistoryCache {
             for (k, v) in m.iter() {
                 cache.map.record_shallow_root_state_entry(idx, k, v);
             }
+        }
+    }
+
+    /// Whether the movable list `idx` holds `elem_id` in the shallow root state.
+    ///
+    /// Elements created before the shallow root cannot be resolved from the trimmed
+    /// history; the checkout index only knows the ones still alive at the root
+    /// (`MovableListHistoryCache::record_shallow_root_state`).
+    pub(crate) fn shallow_root_has_movable_list_elem(
+        &self,
+        idx: ContainerIdx,
+        elem_id: IdLp,
+    ) -> bool {
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return false;
+        };
+        let mut store = state.store.lock();
+        let Some(c) = store.get_mut(idx) else {
+            return false;
+        };
+        let ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
+        match c.get_state_mut(idx, ctx) {
+            crate::state::State::MovableListState(l) => {
+                l.elements().contains_key(&elem_id.compact())
+            }
+            _ => false,
         }
     }
 

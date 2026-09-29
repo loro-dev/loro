@@ -1,6 +1,6 @@
 # loro.js Differential Fuzzing
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-29.
 
 `loro-js/tests/fuzz/differential.ts` drives several `loro.js` peers through
 random edits, update exchanges, and checkouts, and checks them against
@@ -51,11 +51,15 @@ shallow snapshots exchanged in both directions are compared too, including the
 shallow root each side picks. `FUZZ_VALIDATE_HARNESS=1` checks only Rust's own
 event mirror; use it after changing `EventMirror`.
 
-Build the reference with
-`cd crates/loro-wasm && deno run -A ./scripts/build.ts release nodejs`.
+`FUZZ_WASM=1` loads the same reference as the other differential suites
+(`tests/support/rust-reference.ts`, `LORO_WASM_NODEJS` overrides the path).
 Lockstep requires both implementations to emit the same local ops for the same
 API calls; an op-generation difference shows up as `lockstep` or
-`lockstep-throws` on the first affected action.
+`lockstep-throws` on the first affected action. On `main` without #1145 and #1143,
+most lockstep seeds diverge at the first delete of an absent map key, zero
+counter increment, or checkout of the current version; with both, 49 of 50
+Map/List/Text/Counter seeds matched Rust step by step, and the remaining one
+was the #1143 case.
 
 ## Running
 
@@ -72,20 +76,24 @@ prints each action as it runs, which finds hangs. The report groups failures by
 signature (oracle plus first differing root or normalized error) and stores the
 minimized action list and a trace written as `loro.js` API calls.
 
-Seeds that are fixed in the CI run go into `CI_RUNS[].seeds`; a seed that fails
-on `main` for a known reason goes into `pending` with that reason until its fix
-lands.
+The CI run is 120 fixed seeds of Map/List/Text/Counter with the replay,
+checkout, full-snapshot, and event oracles (about 3 s locally). A seed that
+fails on `main` for a known reason goes into `pending` with that reason until
+its fix lands; the list is empty on 2026-09-29.
 
-## Divergences found on main (2026-09-28)
+## Divergences found (2026-09-28/29)
 
-Fixed in separate PRs: Fugue insert order after the origin's last child
-(#1139), doubled checkout events for concurrent deletes (#1140), a
-`checkout(currentFrontiers)` that detached (#1143), shallow roots that were
-not critical versions (#1144), local op generation for absent-key map deletes,
-zero counter increments, and text delete run order (#1145), deletes imported
-while detached (#1146), liveness of containers under deleted ancestors
-(#1147), local tree positions and no-op moves (#1148), and events for child
-containers that a checkout attaches (#1150, on #1131).
+Fixed on `main`: Fugue insert order after the origin's last child, doubled
+checkout events for concurrent deletes, and text delete run order (#1136);
+deletes imported while detached (#1126).
+
+Open PRs: a `checkout(currentFrontiers)` that detached (#1143), shallow roots
+that were not critical versions (#1144; without it shallow snapshots still
+give wrong values after retained checkouts, sometimes also at the latest
+version), absent-key map deletes and zero counter increments (#1145),
+liveness of containers under deleted ancestors (#1147), local tree positions
+and no-op moves (#1148), and a List child that a replay-fallback event
+re-inserts (#1150, on #1131).
 
 Still open, so `CI_RUNS` does not enable them yet:
 
@@ -97,9 +105,8 @@ Still open, so `CI_RUNS` does not enable them yet:
   `diff_calc/tree.rs`). A port needs, per tree, the ops in that order with an
   effective flag. A new op applies directly when it is the newest; otherwise
   the suffix after it is retreated and reapplied. Version transitions replay
-  the suffix from the lowest changed op. This rewrites the tree branch of
-  `#applyVersionTransition`, which #1127 changes for shallow roots, and the
-  tree logic #1131 adds for `diff()`, so it waits for those PRs.
+  the suffix from the lowest changed op, and the shallow-root placement
+  fallback from #1127 applies when a node's retained ops are all retreated.
 - Tree events: items are a before/after snapshot diff that lists final
   indexes in op order. Importing two roots created at index 0 emits
   `create 0@2 @1, create 1@2 @0` (Rust: `@0, @0`); creating a child and
@@ -109,25 +116,17 @@ Still open, so `CI_RUNS` does not enable them yet:
   (`TreeState::apply_diff_and_convert`). This belongs with the port above.
 - Events for containers that are unreachable after the batch: Rust drops them
   (`DocState::get_path`); `loro.js` still sends them. Needs #1147's liveness.
-- Snapshot and shallow checkouts: see #1126–#1128.
-- MovableList and rich-text styles are covered by their own reworks
-  (`loro-js/tests/differential/` in #1132, and #1135). `loro.js` also skips a
-  movable-list `set` to the current value, which Rust records.
+- Shallow snapshots in the harness need #1144 (the root check fails first on
+  every seed without it).
+- MovableList: `loro.js` skips a movable-list `set` to the current value,
+  which Rust records.
 
 ## Rust-side findings
 
-Found while comparing, reproducible with `loro-crdt` alone:
-
-- With a subscriber, `checkout` then `attach`, then `text.delete` across an
-  astral character panics with `Op/hint length mismatch` (`txn.rs`); #1135
-  fixes the same panic for backspacing inside a transaction.
-- With a subscriber, some checkout sequences panic at `tree_state.rs:1075`
-  (`get_index_by_tree_id(..).unwrap()` on a `Create`), e.g. a change that
-  creates a node and a child after a list op, and a branch that imported only
-  that list op.
-- Checking out from a version that contains a tree node's creation to a
-  concurrent version that does not can keep the node (a direct checkout of the
-  second version is correct).
-- After `isDeleted()` is queried on the metadata of a node under a deleted
-  ancestor, a local move that revives the subtree leaves that metadata marked
-  deleted until the document is reloaded.
+Found while comparing; all four reproduce on the 1.16 release and are fixed
+on `main` (checked on 2026-09-29 at `c0ff1255`, after #1135, #1152, and
+#1153): an `Op/hint length mismatch` panic when deleting across an astral
+character after `checkout` + `attach` with a subscriber; a `tree_state.rs`
+panic in a subscribed checkout sequence; a tree node kept by a checkout path
+between concurrent versions; and tree metadata left marked deleted after a
+local move revived it.

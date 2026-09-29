@@ -1,0 +1,80 @@
+{
+  "delta": [
+    {
+      "insert": "abcd",
+      "attributes": {
+        "bold": true
+      }
+    }
+  ],
+  "checkouts": [
+    {
+      "frontiers": [
+        {
+          "peer": "1",
+          "counter": 2
+        }
+      ],
+      "delta": [
+        {
+          "insert": "abc"
+        }
+      ]
+    }
+  ],
+  "updates": {
+    "schema_version": 1,
+    "start_version": {},
+    "peers": [
+      "1"
+    ],
+    "changes": [
+      {
+        "id": "0@0",
+        "timestamp": 0,
+        "deps": [],
+        "lamport": 0,
+        "msg": null,
+        "ops": [
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "insert",
+              "pos": 0,
+              "text": "abc"
+            },
+            "counter": 0
+          },
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "mark",
+              "start": 0,
+              "end": 3,
+              "style_key": "bold",
+              "style_value": true,
+              "info": 132
+            },
+            "counter": 3
+          },
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "mark_end"
+            },
+            "counter": 4
+          },
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "insert",
+              "pos": 4,
+              "text": "d"
+            },
+            "counter": 5
+          }
+        ]
+      }
+    ]
+  }
+}

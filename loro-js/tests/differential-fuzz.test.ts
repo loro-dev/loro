@@ -13,6 +13,7 @@ import {
   runScenario,
 } from "./fuzz/differential";
 import type { FuzzChecks, FuzzFeatures, RustOracle } from "./fuzz/differential";
+import { loadRustReference } from "./support/rust-reference";
 
 // See context/loro-js-differential-fuzz.md. Without FUZZ_SEEDS this file runs
 // the fixed CI seeds below. Large runs, e.g.:
@@ -22,7 +23,8 @@ import type { FuzzChecks, FuzzFeatures, RustOracle } from "./fuzz/differential";
 //
 // FUZZ_FEATURES: core | all | comma list of FuzzFeatures keys.
 // FUZZ_CHECKS:   comma list of FuzzChecks keys (default: all).
-// FUZZ_WASM:     1 for crates/loro-wasm/nodejs, or a path to loro_wasm.js.
+// FUZZ_WASM:     1 for the reference in tests/support/rust-reference.ts (honors
+//                LORO_WASM_NODEJS), or a path to a loro-crdt nodejs build.
 // FUZZ_LOCKSTEP: 0 to compare with Rust only after the scenario.
 // FUZZ_ACTIONS:  actions per scenario. FUZZ_TRACE: print actions as they run.
 // FUZZ_VALIDATE_HARNESS: check only Rust's own event mirror.
@@ -47,19 +49,11 @@ const CI_RUNS: readonly {
   readonly pending: ReadonlyMap<number, string>;
 }[] = [
   {
-    name: "Map/List/Text/Counter: replay, checkout, and event oracles",
+    name: "Map/List/Text/Counter: replay, checkout, snapshot, and event oracles",
     features: MAP_LIST_TEXT_COUNTER,
-    checks: { events: true, checkout: true, snapshot: false, shallow: false },
+    checks: { events: true, checkout: true, snapshot: true, shallow: false },
     seeds: Array.from({ length: 120 }, (_, index) => index),
-    pending: new Map([
-      [7, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [21, "delete imported while detached (#1146)"],
-      [29, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [44, "delete imported while detached (#1146)"],
-      [52, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [61, "concurrent deletes emitted twice in checkout events (#1140)"],
-      [69, "Fugue interval after the last child of the origin (#1139)"],
-    ]),
+    pending: new Map(),
   },
 ];
 
@@ -125,12 +119,18 @@ function parseChecks(input: string | undefined): FuzzChecks {
 
 function loadRust(): RustOracle | undefined {
   if (env.FUZZ_WASM === undefined) return undefined;
-  const path =
-    env.FUZZ_WASM === "1" ? "../../crates/loro-wasm/nodejs/loro_wasm.js" : env.FUZZ_WASM;
-  const wasm = createRequire(import.meta.url)(path) as Record<string, unknown> & {
-    LoroDoc: new () => ReturnType<RustOracle["newDoc"]>;
-    callPendingEvents(): void;
-  };
+  const wasm = (
+    env.FUZZ_WASM === "1"
+      ? loadRustReference()
+      : createRequire(import.meta.url)(env.FUZZ_WASM)
+  ) as
+    | (Record<string, unknown> & {
+        LoroDoc: new () => ReturnType<RustOracle["newDoc"]>;
+        callPendingEvents(): void;
+      })
+    | undefined;
+  if (wasm === undefined)
+    throw new Error("FUZZ_WASM=1 needs the Rust WASM reference build");
   return {
     newDoc: () => new wasm.LoroDoc(),
     newContainer: (type) => new (wasm[`Loro${type}`] as new () => unknown)(),
