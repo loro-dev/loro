@@ -32,12 +32,16 @@ impl ContainerState for UnknownState {
         false
     }
 
-    fn apply_diff_and_convert(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
-        unreachable!()
+    // An unknown container created and edited within one import/checkout still
+    // receives its (empty) diff; there is nothing to apply.
+    fn apply_diff_and_convert(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> Diff {
+        assert!(matches!(diff, InternalDiff::Unknown), "{diff:?}");
+        Diff::Unknown
     }
 
-    fn apply_diff(&mut self, _diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
-        unreachable!()
+    fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
+        assert!(matches!(diff, InternalDiff::Unknown), "{diff:?}");
+        Ok(())
     }
 
     fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {

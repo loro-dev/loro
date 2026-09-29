@@ -459,7 +459,7 @@ ancestry(B) 中的事件并发。Eg-walker 的理论最优是"发生在双方之
    text/list 依赖下游守卫兜底——本类不受 2026-09 变更影响：L13 只在
    第 2 类（保守回退）触发，本类的 meet 基准永远不会被认证为
    critical，守卫（base == from ∧ ¬source_not_in_op_context）仍是
-   唯一保障。Tree 的 Checkout 路径见 Q7（已核查安全）。
+   唯一保障。Tree 的 Checkout 路径不再依赖基准，见 Q7。
 
 因此严格的安全陈述是**双层契约**：「(ans, mode) + 下游守卫」合起来
 保证收敛；单看走查，无条件承诺的只有 S1/S2/S3/T。用论文语言可以把
@@ -632,20 +632,22 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   Tree 不成立，故不再把守卫当作 IGU 正确性的依据：入场检查（L12）使
   S3/S4 直接成立。守卫仍是 text/list 在 Checkout 模式下的兜底，其公理
   化留给 Q7。
-- **Q7**（已核查，2026-08-01：安全）Checkout 模式下 meet 非 critical 时
-  Tree 的 checkout_diff 是否一致？机制审计发现 Tree 的 Checkout 路径是
-  **相对**计算（retreat/forward 都按 meet 前沿的 change 起点 lamport 开窗，
-  窗外 op 静默跳过）——窗口隐含 critical 假设。但可证明修复后恒安全：
-  区域内经会合进入公共历史的 op 必 ≥ 某 meet 头（在窗口内）；与 meet 头
-  并发的 op 必产生 uncovered 死路 → L11 扫描 → critical 基准 → 窗口从
-  基准起点覆盖全区域。实证：非 critical meet 菱形（tree/movable list/
-  text）与低 lamport 并发分支两组 checkout 探针全部 canonical，已钉为
-  回归测试 `checkout_across_non_critical_meet_stays_canonical` 与
-  `checkout_with_low_lamport_concurrent_branch_stays_canonical`
-  （后者显式保护"扫描 ↔ Tree 窗口"的耦合：削弱扫描会静默破坏它）。
-  2026-09 注：oplog 的重放基准可能比 Tree 自算的窗口基准**更晚**
-  （L13 多头 ≥ L11 单头），重放区域只会更小、仍被窗口覆盖；反向
-  （把多头基准喂给 Tree 窗口）需要重做本证明，故未做。
+- **Q7**（2026-08-01 判为安全；2026-09-28 推翻并改掉）Checkout 模式下
+  meet 非 critical 时 Tree 的 checkout_diff 是否一致？原机制按 meet 前沿
+  的 change 起点 lamport 开窗，窗外 op 静默跳过。原论证称"与 meet 头并发
+  的 op 必产生 uncovered 死路 → L11 扫描 → critical 基准"，但这不成立：
+  并发 op 的依赖可以先走进 meet 之下的公共历史而会合，不留死路。反例
+  （`crates/loro/tests/tree_checkout_path.rs`）：`0@3`（lamport 1，建树
+  节点，依赖 `0@1`）与 meet 头 `2@2`（lamport 2）并发；从 `[3@2]` 切到
+  `[1@1]` 时 meet = `[2@2]`、无死路，窗口从 2 起，`0@3` 永不被撤回；反方向
+  则前进时漏掉父节点的创建而应用子节点的创建，带订阅者时在
+  `TreeState::apply_diff_and_convert` panic。修法：Tree 不再用重放基准，
+  而取 from/to 两个版本对称差中最小的 lamport 作窗口（每个 peer 的差段
+  只看首个 op，O(peers)），撤回窗口内全部缓存 op，再按 (lamport, peer)
+  顺序应用 to 的窗口内 op；窗口下的 op 两侧相同。此后 Tree 的 Checkout
+  路径与基准选择无关，本问题关闭。详见
+  `context/tree-checkout-window.md`；随机回归
+  `crates/fuzz/tests/checkout_path.rs` 覆盖全部版本对。
 - **Q10**（新，2026-09）L13 的搜索只在 ≤ meet 的范围内进行，长期离线
   分叉后的每次导入仍付出 O(分歧量)（分岔点确为最晚 critical
   version，无状态的基准选择无法更好）。是否值得为这一形状缓存

@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "start_version": {},
+  "peers": [
+    "1",
+    "2",
+    "3"
+  ],
+  "changes": [
+    {
+      "id": "0@0",
+      "timestamp": 0,
+      "deps": [],
+      "lamport": 0,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 0,
+            "text": "b"
+          },
+          "counter": 0
+        }
+      ]
+    },
+    {
+      "id": "0@1",
+      "timestamp": 0,
+      "deps": [],
+      "lamport": 0,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 0,
+            "text": "9"
+          },
+          "counter": 0
+        }
+      ]
+    },
+    {
+      "id": "1@1",
+      "timestamp": 0,
+      "deps": [
+        "0@0",
+        "0@1"
+      ],
+      "lamport": 1,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 1,
+            "text": "é"
+          },
+          "counter": 1
+        }
+      ]
+    },
+    {
+      "id": "0@2",
+      "timestamp": 0,
+      "deps": [
+        "0@0"
+      ],
+      "lamport": 1,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-t:Text",
+          "content": {
+            "type": "insert",
+            "pos": 1,
+            "text": "a"
+          },
+          "counter": 0
+        }
+      ]
+    }
+  ]
+}
