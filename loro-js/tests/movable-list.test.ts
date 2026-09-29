@@ -312,6 +312,37 @@ describe("MovableList versions, undo and diffs", () => {
     ]);
   });
 
+  test("applyDiff writes Rust's ops: deletes first, then inserts", () => {
+    const d = doc(1);
+    const list = d.getMovableList("l");
+    for (const value of ["a", "b", "c"]) list.push(value);
+    d.commit();
+    const version = d.oplogVersion();
+    d.applyDiff([
+      [
+        list.id,
+        {
+          type: "list",
+          diff: [
+            { insert: ["x"] },
+            { retain: 1 },
+            { delete: 1 },
+            { retain: 1 },
+            { insert: ["y"] },
+          ],
+        },
+      ],
+    ]);
+    d.commit();
+    expect(d.toJSON()).toEqual({ l: ["x", "a", "c", "y"] });
+    // Rust's `apply_delta` since loro-dev/loro#1138; op IDs must match its.
+    expect(d.exportJsonUpdates(version).changes[0]!.ops.map((op) => op.content)).toEqual([
+      { type: "delete", pos: 1, len: 1, start_id: "1@0" },
+      { type: "insert", pos: 0, value: ["x"] },
+      { type: "insert", pos: 3, value: ["y"] },
+    ]);
+  });
+
   test("revertTo deletes before it inserts, like Rust's apply_delta", () => {
     const p3 = doc(3);
     p3.getMovableList("list").insert(0, "v2");
