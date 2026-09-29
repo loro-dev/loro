@@ -349,8 +349,7 @@ describe("loro-wasm-compatible runtime", () => {
     const doc = new LoroDoc();
     doc.setPeerId(2);
     doc.import(base);
-    const checkedOut = doc.frontiers();
-    doc.checkout(checkedOut);
+    doc.detach();
 
     source.getText("text").push(" latest");
     doc.import(source.export({ mode: "update", from: doc.oplogVersion() }));
@@ -359,6 +358,52 @@ describe("loro-wasm-compatible runtime", () => {
 
     doc.checkoutToLatest();
     expect(doc.getText("text").toString()).toBe("base latest");
+  });
+
+  // Rust's checkout returns early when the target is the current version and
+  // re-attaches when that version is the latest one.
+  test("keeps a checkout of the current version attached like loro-crdt", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getText("text").insert(0, "x");
+    doc.commit();
+    doc.getText("text").insert(1, "y");
+    doc.commit();
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((batch) => batches.push(batch));
+
+    doc.checkout(doc.frontiers());
+    expect(doc.isDetached()).toBe(false);
+    expect(batches).toHaveLength(0);
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.getText("text").insert(0, "B");
+    remote.commit();
+    doc.import(remote.export({ mode: "update" }));
+    expect(doc.getText("text").toString()).toBe("xyB");
+
+    // A dominated extra frontier still names the current version.
+    doc.checkout([...doc.frontiers(), { peer: "1", counter: 0 }]);
+    expect(doc.isDetached()).toBe(false);
+
+    doc.checkout([{ peer: "1", counter: 0 }]);
+    doc.checkout([{ peer: "1", counter: 0 }]);
+    expect(doc.isDetached()).toBe(true);
+    expect(doc.getText("text").toString()).toBe("x");
+    // Checking out the latest version from an older one stays detached.
+    doc.checkout(doc.oplogFrontiers());
+    expect(doc.isDetached()).toBe(true);
+    expect(doc.getText("text").toString()).toBe("xyB");
+
+    // detach() at the latest version, then checkout of it, re-attaches.
+    doc.checkoutToLatest();
+    doc.detach();
+    doc.checkout(doc.frontiers());
+    expect(doc.isDetached()).toBe(false);
+    doc.getText("text").insert(0, "!");
+    doc.commit();
+    expect(doc.getText("text").toString()).toBe("!xyB");
+    expect(doc.version().compare(doc.oplogVersion())).toBe(0);
   });
 
   test("holds causally incomplete updates pending until dependencies arrive", () => {

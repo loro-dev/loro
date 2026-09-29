@@ -3015,9 +3015,25 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
     const before = this.#frontiersCodec();
+    // Like Rust's `_checkout_without_emitting`: checking out the current
+    // version changes nothing, and it re-attaches when that version is the
+    // latest one.
+    const currentFrontiers = this.frontiers();
+    if (sameFrontierSet(currentFrontiers, frontiers)) {
+      if (sameFrontierSet(frontiers, this.oplogFrontiers())) {
+        this.#checkoutVersion = undefined;
+        this.#detached = false;
+      }
+      if (this.#detachedEditing) this.#renewPeerId();
+      return;
+    }
     const currentVersion = this.version();
     const targetVersion = this.frontiersToVV(frontiers);
     this.#assertVersionNotBeforeShallowRoot(targetVersion);
+    if (sameFrontierSet(currentFrontiers, this.vvToFrontiers(targetVersion))) {
+      if (this.#detachedEditing) this.#renewPeerId();
+      return;
+    }
     const forwardRecords = this.#recordsInVersionRange(currentVersion, targetVersion);
     const retreatRecords = this.#recordsInVersionRange(targetVersion, currentVersion);
     const changed = changedContainerIds([...forwardRecords, ...retreatRecords]);
@@ -11298,6 +11314,12 @@ function treeNodeAtPath(
   if (part.includes("@")) return tree.getNodeByID(part as TreeID);
   const index = parseOptionalPathIndex(part);
   return index === undefined ? undefined : tree._nodeAt(undefined, index);
+}
+
+function sameFrontierSet(left: readonly OpId[], right: readonly OpId[]): boolean {
+  if (left.length !== right.length) return false;
+  const keys = new Set(left.map((id) => `${id.counter}@${id.peer}`));
+  return right.every((id) => keys.has(`${id.counter}@${id.peer}`));
 }
 
 interface StyleRedaction {
