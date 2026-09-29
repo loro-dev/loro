@@ -63,6 +63,8 @@ export interface Change {
 }
 
 export type JsonOpID = `${number}@${PeerID}`;
+/** A lamport-based element ID, `L{lamport}@{peer}`, as used by movable-list moves and sets. */
+export type JsonIdLp = `L${number}@${PeerID}`;
 export type JsonValue =
   | string
   | number
@@ -96,9 +98,9 @@ export type JsonOpContent =
       readonly type: "move";
       readonly from: number;
       readonly to: number;
-      readonly elem_id: JsonOpID;
+      readonly elem_id: JsonIdLp;
     }
-  | { readonly type: "set"; readonly elem_id: JsonOpID; readonly value: JsonValue }
+  | { readonly type: "set"; readonly elem_id: JsonIdLp; readonly value: JsonValue }
   | {
       readonly type: "create" | "move";
       readonly target: TreeID;
@@ -106,7 +108,13 @@ export type JsonOpContent =
       readonly fractional_index?: string;
     }
   | { readonly type: "delete"; readonly target: TreeID }
-  | { readonly type: "counter"; readonly value: number; readonly prop: number }
+  | {
+      readonly type: "counter";
+      /** Rust's `OwnedValue` tag. Written on export; import treats a missing tag as `f64`. */
+      readonly value_type?: "f64" | "i64" | "delta_int";
+      readonly value: number;
+      readonly prop: number;
+    }
   | {
       readonly type: "unknown";
       readonly prop: number;
@@ -202,6 +210,20 @@ export type MapDiff = {
   readonly type: "map";
   readonly updated: Readonly<Record<string, unknown>>;
 };
+/** Options for `LoroDoc.applyDiff`. */
+export interface ApplyDiffOptions {
+  /**
+   * Re-activated mergeable children in the batch carry their full state, and
+   * each is aligned with the hidden state this document holds at its container
+   * ID instead of being applied on top of it. Set it for a batch from `diff()`
+   * and, when mirroring events, for `import` and `checkout` batches, which
+   * also carry that full state. Leave it unset for `local` batches: a local
+   * re-ensure has no child entry, which a full-state batch reads as "empty".
+   * As in loro-crdt.
+   */
+  readonly fullState?: boolean;
+}
+
 export type TreeDiffItem =
   | {
       readonly target: TreeID;

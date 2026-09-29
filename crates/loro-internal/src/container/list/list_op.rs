@@ -2,12 +2,13 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
-use loro_common::{ContainerType, HasId, HasIdSpan, IdLp, LoroValue, ID};
+use loro_common::{ContainerType, HasId, HasIdSpan, IdLp, LoroError, LoroResult, LoroValue, ID};
 use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     container::richtext::richtext_state::unicode_to_utf8_index,
+    container::richtext::tracker::UNKNOWN_SPAN_LEN,
     container::richtext::TextStyleInfoFlag,
     op::{ListSlice, SliceRange},
     InternalString,
@@ -88,6 +89,37 @@ impl ListOp<'_> {
 }
 
 impl InnerListOp {
+    /// Reject positions that no real sequence can reach.
+    ///
+    /// Diff calculation replays ops on a tracker whose unreplayed history is one
+    /// placeholder span of [`UNKNOWN_SPAN_LEN`] items, and positions past it panic
+    /// inside the tracker. Positions are op-index based (deleted items included), so
+    /// a valid document stays many orders of magnitude below this. Smaller
+    /// out-of-bounds positions are rejected later by state validation.
+    pub(crate) fn check_positions(&self) -> LoroResult<()> {
+        const MAX_POS: i64 = UNKNOWN_SPAN_LEN as i64 - 1;
+        let in_range = |pos: i64| (0..=MAX_POS).contains(&pos);
+        let ok = match self {
+            InnerListOp::Insert { pos, .. } => in_range(*pos as i64),
+            InnerListOp::InsertText { pos, .. } => in_range(*pos as i64),
+            InnerListOp::Delete(span) => {
+                in_range(span.start() as i64) && in_range(span.last() as i64)
+            }
+            InnerListOp::Move { from, to, .. } => in_range(*from as i64) && in_range(*to as i64),
+            InnerListOp::StyleStart { start, end, .. } => {
+                in_range(*start as i64) && in_range(*end as i64)
+            }
+            InnerListOp::Set { .. } | InnerListOp::StyleEnd => true,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(LoroError::DecodeError(
+                format!("Sequence op position is out of range: {self:?}").into_boxed_str(),
+            ))
+        }
+    }
+
     pub fn new_del(id: ID, pos: usize, len: isize) -> Self {
         assert!(len != 0);
         Self::Delete(DeleteSpanWithId {

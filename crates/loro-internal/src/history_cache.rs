@@ -289,14 +289,6 @@ impl ContainerHistoryCache {
         }
     }
 
-    pub(crate) fn get_importing_cache(
-        &self,
-        container_idx: &ContainerIdx,
-        _: HasImportingCacheMark,
-    ) -> Option<&HistoryCacheForImporting> {
-        self.for_importing.as_ref().unwrap().get(container_idx)
-    }
-
     pub(crate) fn get_tree(
         &self,
         container_idx: &ContainerIdx,
@@ -357,6 +349,35 @@ impl ContainerHistoryCache {
             for (k, v) in m.iter() {
                 cache.map.record_shallow_root_state_entry(idx, k, v);
             }
+        }
+    }
+
+    /// Whether the movable list `idx` holds `elem_id` in the shallow root state.
+    ///
+    /// Elements created before the shallow root cannot be resolved from the trimmed
+    /// history; the checkout index only knows the ones still alive at the root
+    /// (`MovableListHistoryCache::record_shallow_root_state`).
+    pub(crate) fn shallow_root_has_movable_list_elem(
+        &self,
+        idx: ContainerIdx,
+        elem_id: IdLp,
+    ) -> bool {
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return false;
+        };
+        let mut store = state.store.lock();
+        let Some(c) = store.get_mut(idx) else {
+            return false;
+        };
+        let ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
+        match c.get_state_mut(idx, ctx) {
+            crate::state::State::MovableListState(l) => {
+                l.elements().contains_key(&elem_id.compact())
+            }
+            _ => false,
         }
     }
 
@@ -679,78 +700,84 @@ impl MapHistoryCache {
         });
     }
 
-    /// Resolve the winning op at `vv` for a restricted set of keys.
+    /// The entry of the op that wins `key` at `vv`, if any.
+    fn latest_entry_at_vv(
+        &self,
+        container: ContainerIdx,
+        key: u32,
+        vv: &VersionVector,
+    ) -> Option<&MapHistoryCacheEntry> {
+        let bound = |lamport, peer| MapHistoryCacheEntry {
+            container,
+            key,
+            lamport,
+            peer,
+            counter_or_value: Either::Left(0),
+        };
+        self.map
+            .range(bound(0, 0)..=bound(Lamport::MAX, PeerID::MAX))
+            .rev()
+            .find(|entry| match &entry.counter_or_value {
+                Either::Left(cnt) => vv.get(&entry.peer).copied().unwrap_or(0) > *cnt,
+                // Shallow-root entries are part of every version the doc can reach.
+                Either::Right(_) => true,
+            })
+    }
+
+    fn entry_info(entry: &MapHistoryCacheEntry, oplog: &OpLog) -> GroupedMapOpInfo {
+        let value = match &entry.counter_or_value {
+            Either::Left(cnt) => {
+                let op = oplog
+                    .get_op_that_includes(ID::new(entry.peer, *cnt))
+                    .unwrap();
+                debug_assert_eq!(op.atom_len(), 1);
+                match &op.content {
+                    InnerContent::Map(map) => map.value.clone(),
+                    _ => unreachable!(),
+                }
+            }
+            Either::Right(v) => (**v).clone(),
+        };
+        GroupedMapOpInfo {
+            value,
+            lamport: entry.lamport,
+            peer: entry.peer,
+        }
+    }
+
+    /// For each key, the op that wins it at `to_vv` when that differs from the
+    /// op that wins it at `from_vv`; `None` when no op sets the key at `to_vv`.
     ///
     /// Every key whose value can differ between two versions must have been
     /// written by an op inside the replayed span, so a diff only ever needs the
     /// candidate keys instead of the whole container. This keeps map diffing
     /// proportional to the update instead of to the size of the map.
-    pub fn get_container_latest_op_at_vv_for_keys(
+    ///
+    /// Winners are compared by op id only, so only the `to` value is ever
+    /// fetched. A different winner can still carry an equal value; the caller's
+    /// state has the `from` value and tells the two cases apart (see
+    /// `MapDiffCalculator::calculate_diff`).
+    pub fn changed_winners_for_keys(
         &self,
         container: ContainerIdx,
-        vv: &VersionVector,
+        from_vv: &VersionVector,
+        to_vv: &VersionVector,
         keys: impl Iterator<Item = InternalString>,
         oplog: &OpLog,
-    ) -> FxHashMap<InternalString, GroupedMapOpInfo> {
-        let mut ans = FxHashMap::default();
+    ) -> Vec<(InternalString, Option<GroupedMapOpInfo>)> {
+        let mut ans = Vec::new();
         for key in keys {
             let Some(key_idx) = self.keys.get(&key) else {
                 continue;
             };
-
             let key_idx = key_idx as u32;
-            let range = (
-                Bound::Included(MapHistoryCacheEntry {
-                    container,
-                    key: key_idx,
-                    lamport: 0,
-                    peer: 0,
-                    counter_or_value: Either::Left(0),
-                }),
-                Bound::Included(MapHistoryCacheEntry {
-                    container,
-                    key: key_idx,
-                    lamport: Lamport::MAX,
-                    peer: PeerID::MAX,
-                    counter_or_value: Either::Left(0),
-                }),
-            );
-
-            for entry in self.map.range(range).rev() {
-                match &entry.counter_or_value {
-                    Either::Left(cnt) => {
-                        if vv.get(&entry.peer).copied().unwrap_or(0) > *cnt {
-                            let id = ID::new(entry.peer, *cnt);
-                            let op = oplog.get_op_that_includes(id).unwrap();
-                            debug_assert_eq!(op.atom_len(), 1);
-                            match &op.content {
-                                InnerContent::Map(map) => {
-                                    ans.insert(
-                                        key,
-                                        GroupedMapOpInfo {
-                                            value: map.value.clone(),
-                                            lamport: entry.lamport,
-                                            peer: entry.peer,
-                                        },
-                                    );
-                                }
-                                _ => unreachable!(),
-                            }
-                            break;
-                        }
-                    }
-                    Either::Right(v) => {
-                        ans.insert(
-                            key,
-                            GroupedMapOpInfo {
-                                value: (**v).clone(),
-                                lamport: entry.lamport,
-                                peer: entry.peer,
-                            },
-                        );
-                        break;
-                    }
-                }
+            let from = self.latest_entry_at_vv(container, key_idx, from_vv);
+            let to = self.latest_entry_at_vv(container, key_idx, to_vv);
+            match (from, to) {
+                (None, None) => {}
+                (Some(_), None) => ans.push((key, None)),
+                (Some(a), Some(b)) if a.lamport == b.lamport && a.peer == b.peer => {}
+                (_, Some(b)) => ans.push((key, Some(Self::entry_info(b, oplog)))),
             }
         }
 

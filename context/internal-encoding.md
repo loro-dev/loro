@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-27.
+Verified against code 2026-09-28.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -114,6 +114,67 @@ matching the root frontiers (that kept almost every container). So "deleted
 before the root" is safe to drop only for non-tree children; see
 `crates/loro/tests/shallow_snapshot_deleted_containers.rs`, which also checks
 checkout into the retained range against a full-history replica.
+
+The cached-root reuse branch (a shallow doc re-exported at its own root, which
+also serves `ExportMode::Snapshot` on a shallow doc) applies the same rule. The
+cached keys cannot be trusted as the retention set: exporters before #1119 kept
+containers deleted before the root whenever they shipped an overlay, and a
+re-export was the only way to scrub them. `prune_cached_root` runs on a scratch
+doc in two steps:
+
+1. `DocState::unreached_stored_containers(root_vv)` is a cheap filter that
+   returns candidate keys. It reads each stored container's parent from its
+   encoded header, and it decodes only the containers that are the header
+   parent of another stored container. Leaf maps, texts and tree metas are
+   never decoded; a tree that parents stored metas is decoded for its node
+   list. Two kinds of entries are never candidates. The first is containers
+   created after the root (`!root_vv.includes_id(..)`): a root state written
+   by the checkout/overlay path keeps an empty placeholder for them that
+   nothing at the root references yet. The second is stored children of a
+   *reached*, stored container of an unknown type: unknown states decode to
+   `Null`, so no walk can list their children. An unknown id that appears
+   only as a header parent, or an unreferenced unknown entry, protects
+   nothing. With no candidates, the root is reused as-is. That is the case
+   for roots written by current exporters with only valid, reachable
+   entries. Debug builds assert that the full walk agrees when no
+   unknown-type container is stored.
+2. With candidates, the full `ensure_all_alive_containers` walk runs as well.
+   A container counts as reached in step 1 only through its header parent, so
+   a forged header makes it a candidate; the full walk then rejects the
+   inconsistency with `Err` instead of dropping a container that is still
+   referenced. Only keys that both steps leave unreached are removed. The
+   filter protects placeholders and unknown subtrees that the walk cannot see,
+   and the walk vetoes anything it still reaches. Never drop keys on either
+   step's word alone.
+
+The overlay (>256 ops) branch still rejects unknown root keys, as before.
+
+The result (`None`, or the pruned bytes plus the removed keys) is memoized in
+`GcStore::pruned_root` because the cached root never changes. Only the first
+re-export of a root pays for the check. Repeated re-exports cost the same as
+before the fix, legacy roots are not re-encoded every time, and import is
+unaffected. `LoroDoc::fork` uses `encode_snapshot_inner_for_fork`
+(`CachedShallowRoot::Verbatim`): a fork copies the cached root verbatim, so it
+never fails the check or panics on an inconsistent root. Do not replace the
+check with the latest state's alive set: tree metas that are dead at the latest
+version but alive inside the retained range would be lost.
+`legacy_*.bin` fixtures in the same test file pin both the dead-map drop and
+tree-meta revival for such blobs. The forged-header and unknown-container
+regressions are `cached_root_*` unit tests in `shallow_snapshot.rs`.
+`crates/loro/tests/perf_shallow_reexport.rs` is the ignored release benchmark
+for first and repeated re-export and import.
+
+The pure TypeScript runtime (`loro-js`) uses the same retention rule when it
+rebuilds both states in `LoroDoc.#encodeShallowSnapshot`. The root state keeps
+`#retainedContainerKeys()` at the root: root containers (every mergeable
+container is one, as in Rust's `existing_retention_roots`, so a child hidden by
+a deleted or different-kind marker keeps its state), visible Map/List children,
+and every tree node's meta, including deleted nodes. The latest state
+additionally keeps containers alive at the latest version and containers whose
+creation id the root version does not include. `loro-js` always rebuilds the
+root state by replay instead of reusing its cached root store, so re-exporting
+an older blob at the same root also prunes it (the #1123 case). Tests are in
+`loro-js/tests/shallow-snapshot-deleted-containers.test.ts`.
 
 Two import-side pieces support revived tree nodes. `TreeOpGroup::record_shallow_root_state`
 seeds the tree diff cache with deleted nodes as well (directly deleted as
@@ -252,14 +313,18 @@ after the root, never concurrent with it (loro-dev/loro#1095). The meet of
 the requested heads is not enough: a branch merged later that
 forked below the requested version is concurrent with it. `StateOnly` retains
 history only up to its target, so it uses the target on both sides.
-`crates/loro/tests/shallow_root_critical.rs` checks the property op by op. The
+`crates/loro/tests/shallow_root_critical.rs` checks the property op by op.
+Because the root state is materialized by a checkout, it is only as correct as
+the checkout's winner metadata (lamport/peer), not just its values: see
+"Winner metadata, not just values" in
+[crates/loro-internal/docs/diff_calc.md](../crates/loro-internal/docs/diff_calc.md). The
 root is then moved past a rich-text StyleStart when necessary and clamped to
 an existing shallow root. The root state carries `fr`; a later state overlay
 does not. Import loads the root first and then either overlays the later state
 or replays retained changes when the state section is `E`. Unknown handling is
 path-dependent: rebuilding a root, or reusing a cached root to build an
-overlay, rejects unknown root containers; the cached-root replay-only `E` fast
-path reuses the root bytes without that check. Containers introduced after the
+overlay, rejects unknown root-state containers that survive retention
+filtering; the cached-root replay-only `E` fast path skips that check. Containers introduced after the
 root are not checked again and can survive either in retained operations (`E`)
 or as raw/lazy overlay state bytes.
 

@@ -3,9 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import {
+  ContainerType,
+  EncodeMode,
   decodeFastSnapshot,
   decodePostcardVersionVector,
   decodeSstable,
+  encodeChangeBlock,
+  encodeDocument,
+  encodeFastUpdatesBody,
   encodeFastSnapshot,
   encodePostcardVersionVector,
   encodeSstable,
@@ -344,8 +349,7 @@ describe("loro-wasm-compatible runtime", () => {
     const doc = new LoroDoc();
     doc.setPeerId(2);
     doc.import(base);
-    const checkedOut = doc.frontiers();
-    doc.checkout(checkedOut);
+    doc.detach();
 
     source.getText("text").push(" latest");
     doc.import(source.export({ mode: "update", from: doc.oplogVersion() }));
@@ -354,6 +358,52 @@ describe("loro-wasm-compatible runtime", () => {
 
     doc.checkoutToLatest();
     expect(doc.getText("text").toString()).toBe("base latest");
+  });
+
+  // Rust's checkout returns early when the target is the current version and
+  // re-attaches when that version is the latest one.
+  test("keeps a checkout of the current version attached like loro-crdt", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getText("text").insert(0, "x");
+    doc.commit();
+    doc.getText("text").insert(1, "y");
+    doc.commit();
+    const batches: LoroEventBatch[] = [];
+    doc.subscribe((batch) => batches.push(batch));
+
+    doc.checkout(doc.frontiers());
+    expect(doc.isDetached()).toBe(false);
+    expect(batches).toHaveLength(0);
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.getText("text").insert(0, "B");
+    remote.commit();
+    doc.import(remote.export({ mode: "update" }));
+    expect(doc.getText("text").toString()).toBe("xyB");
+
+    // A dominated extra frontier still names the current version.
+    doc.checkout([...doc.frontiers(), { peer: "1", counter: 0 }]);
+    expect(doc.isDetached()).toBe(false);
+
+    doc.checkout([{ peer: "1", counter: 0 }]);
+    doc.checkout([{ peer: "1", counter: 0 }]);
+    expect(doc.isDetached()).toBe(true);
+    expect(doc.getText("text").toString()).toBe("x");
+    // Checking out the latest version from an older one stays detached.
+    doc.checkout(doc.oplogFrontiers());
+    expect(doc.isDetached()).toBe(true);
+    expect(doc.getText("text").toString()).toBe("xyB");
+
+    // detach() at the latest version, then checkout of it, re-attaches.
+    doc.checkoutToLatest();
+    doc.detach();
+    doc.checkout(doc.frontiers());
+    expect(doc.isDetached()).toBe(false);
+    doc.getText("text").insert(0, "!");
+    doc.commit();
+    expect(doc.getText("text").toString()).toBe("!xyB");
+    expect(doc.version().compare(doc.oplogVersion())).toBe(0);
   });
 
   test("holds causally incomplete updates pending until dependencies arrive", () => {
@@ -580,6 +630,35 @@ describe("loro-wasm-compatible runtime", () => {
     doc.revertTo([]);
     expect(doc.toJSON()).toEqual({ list: [], title: "" });
     expect(doc.isDetached()).toBe(false);
+  });
+
+  test("reverts child containers whose content did not change in the range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const map = doc.getMap("map");
+    const sub = map.setContainer("sub", new LoroMap());
+    sub.set("k", "v");
+    sub.setContainer("text", new LoroText()).insert(0, "hi");
+    doc.getList("list").insertContainer(0, new LoroMap()).set("x", 1);
+    doc.commit();
+    const populated = doc.frontiers();
+    const expected = doc.toJSON();
+
+    // Detach both children without touching their own content.
+    map.set("sub", "not a map");
+    doc.getList("list").delete(0, 1);
+    doc.commit();
+
+    const diff = new Map(doc.diff(doc.frontiers(), populated));
+    expect(diff.get(sub.id)).toMatchObject({ type: "map", updated: { k: "v" } });
+    expect(diff.get((sub.get("text") as LoroText).id)).toEqual({
+      type: "text",
+      diff: [{ insert: "hi" }],
+    });
+
+    doc.revertTo(populated);
+    expect(doc.toJSON()).toEqual(expected);
+    expect((map.get("sub") as LoroMap).id).not.toBe(sub.id);
   });
 
   test("undoes and redoes local commit groups", () => {
@@ -809,6 +888,135 @@ describe("loro-wasm-compatible runtime", () => {
       target.importJsonUpdates(update);
       expect(target.toJSON()).toEqual(source.toJSON());
       expect(target.export({ mode: "update" })).toBeInstanceOf(Uint8Array);
+    }
+  });
+
+  test("reads and writes movable-list element IDs in the Rust JSON format", () => {
+    // Rust writes `L{lamport}@{peer}`; this fixture contains moves and sets.
+    const rustJson = readFileSync(
+      new URL("./fixtures/rust/updates.json", import.meta.url),
+      "utf8",
+    );
+    // The JSON schema stores binary values as number arrays, in Rust as well.
+    const withoutBinary = (doc: LoroDoc): unknown =>
+      JSON.parse(
+        JSON.stringify(doc.toJSON(), (_key, value: unknown) =>
+          value instanceof Uint8Array ? [...value] : value,
+        ),
+      );
+    const fromJson = new LoroDoc();
+    fromJson.importJsonUpdates(rustJson);
+    const fromBinary = new LoroDoc();
+    fromBinary.import(fixture("updates.blob"));
+    expect(withoutBinary(fromJson)).toEqual(withoutBinary(fromBinary));
+
+    const elementIds = fromBinary
+      .exportJsonUpdates()
+      .changes.flatMap((change) => change.ops)
+      .flatMap(({ content }) => ("elem_id" in content ? [content.elem_id] : []));
+    expect(elementIds.length).toBeGreaterThan(0);
+    for (const id of elementIds) expect(id).toMatch(/^L\d+@\d+$/u);
+
+    // loro.js 0.2.1 and earlier wrote the ID without the `L` prefix.
+    const legacy = JSON.parse(rustJson.replaceAll(/"elem_id": "L/gu, '"elem_id": "'));
+    const fromLegacy = new LoroDoc();
+    fromLegacy.importJsonUpdates(legacy);
+    expect(withoutBinary(fromLegacy)).toEqual(withoutBinary(fromBinary));
+  });
+
+  test("writes counter, binary, and mergeable-marker JSON values like Rust", () => {
+    // Exported by loro-crdt from the same edits (tests/fixtures/rust/json-values.json).
+    const rust = JSON.parse(
+      readFileSync(new URL("./fixtures/rust/json-values.json", import.meta.url), "utf8"),
+    );
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    doc.getCounter("c").increment(2.5);
+    doc.getMap("m").set("b", Uint8Array.of(0, 255));
+    doc.getMap("m").ensureMergeableText("s").insert(0, "hello");
+    doc.commit();
+    const exported = doc.exportJsonUpdates();
+    expect(JSON.parse(JSON.stringify(exported))).toEqual(rust);
+    const ops = exported.changes[0]!.ops;
+    expect(ops[0]!.content).toEqual({
+      type: "counter",
+      value_type: "f64",
+      value: 2.5,
+      prop: 0,
+    });
+    expect(Array.isArray((ops[1]!.content as { value: unknown }).value)).toBe(true);
+
+    // The JSON schema has no binary type: Rust imports byte arrays, including
+    // mergeable markers, as number lists. loro.js reads them the same way.
+    const imported = new LoroDoc();
+    imported.importJsonUpdates(rust);
+    expect(imported.toJSON()).toEqual({
+      c: 2.5,
+      m: { b: [0, 255], s: [0, 76, 77, 1, 2, 220, 22, 216] },
+    });
+  });
+
+  test("round-trips i64 counter values through JSON like Rust", () => {
+    const counterJson = (value: string): string =>
+      `{"schema_version":1,"start_version":{},"peers":["1"],"changes":[{"id":"0@0","timestamp":0,"deps":[],"lamport":0,"msg":null,"ops":[{"container":"cid:root-c:Counter","counter":0,"content":{"type":"counter","value_type":"i64","value":${value},"prop":0}}]}]}`;
+    // Rust's counter is an f64: it reads an i64 tag with `c as f64`.
+    for (const [text, expected] of [
+      ["9007199254740992", 2 ** 53],
+      ["9223372036854775807", 2 ** 63],
+      ["-9223372036854775808", -(2 ** 63)],
+      ["3", 3],
+    ] as const) {
+      const doc = new LoroDoc();
+      doc.importJsonUpdates(counterJson(text));
+      expect(doc.toJSON()).toEqual({ c: expected });
+      const again = new LoroDoc();
+      again.importJsonUpdates(JSON.stringify(doc.exportJsonUpdates()));
+      expect(again.toJSON()).toEqual({ c: expected });
+    }
+
+    // A binary update may carry an i64 counter value at either i64 endpoint.
+    for (const value of [9007199254740992n, 2n ** 63n - 1n, -(2n ** 63n)]) {
+      const block = encodeChangeBlock({
+        peers: [1n],
+        keys: [],
+        containers: [],
+        positions: [],
+        changes: [
+          {
+            id: { peer: 1n, counter: 0 },
+            timestamp: 0n,
+            dependencies: [],
+            lamport: 0,
+            message: undefined,
+            operations: [
+              {
+                container: {
+                  kind: "root",
+                  name: "c",
+                  containerType: ContainerType.Counter,
+                },
+                counter: 0,
+                length: 1,
+                content: { type: "future", property: 0, value: { type: "i64", value } },
+              },
+            ],
+          },
+        ],
+      });
+      const doc = new LoroDoc();
+      doc.import(encodeDocument(EncodeMode.FastUpdates, encodeFastUpdatesBody([block])));
+      const json = doc.exportJsonUpdates();
+      expect(json.changes[0]!.ops[0]!.content).toEqual({
+        type: "counter",
+        value_type: "f64",
+        value: Number(value),
+        prop: 0,
+      });
+      for (const input of [json, JSON.stringify(json)]) {
+        const again = new LoroDoc();
+        again.importJsonUpdates(input);
+        expect(again.toJSON()).toEqual(doc.toJSON());
+      }
     }
   });
 
@@ -1563,22 +1771,42 @@ describe("loro-wasm-compatible runtime", () => {
     expect(() => root.ensureMergeableMap("regular")).toThrow(/non-mergeable value/u);
   });
 
-  test("does not record semantic no-op edits", () => {
+  // loro-crdt skips setting a map key to its current value, but records a
+  // delete of an absent key and a zero counter increment. Matching it keeps op
+  // IDs and concurrent outcomes the same for the same API calls.
+  test("records the same local ops as loro-crdt for no-op-looking edits", () => {
     const doc = new LoroDoc();
     const map = doc.getMap("map");
     map.set("value", { nested: [1, true, null] });
-    const movable = doc.getMovableList("movable");
-    movable.push("same");
     doc.commit();
-    const opCount = doc.opCount();
+    const count = (edit: () => void): number => {
+      const before = doc.opCount();
+      edit();
+      doc.commit();
+      return doc.opCount() - before;
+    };
 
-    map.set("value", { nested: [1, true, null] });
-    map.delete("missing");
-    movable.set(0, "same");
-    doc.getCounter("counter").increment(0);
-    doc.commit();
+    expect(count(() => map.set("value", { nested: [1, true, null] }))).toBe(0);
+    expect(count(() => map.delete("missing"))).toBe(1);
+    expect(count(() => doc.getCounter("counter").increment(0))).toBe(1);
+    // Attaching a detached counter increments it by its value, even 0.
+    expect(count(() => map.setContainer("child", new LoroCounter()))).toBe(2);
+  });
 
-    expect(doc.opCount()).toBe(opCount);
+  test("lets a delete of an absent map key win against a concurrent set", () => {
+    const a = new LoroDoc();
+    a.setPeerId(1);
+    const b = new LoroDoc();
+    b.setPeerId(2);
+    a.getMap("map").set("key", 1);
+    a.commit();
+    b.getMap("map").delete("key");
+    b.commit();
+    a.import(b.export({ mode: "update" }));
+    b.import(a.export({ mode: "update" }));
+    // Same lamport; the larger peer's delete wins, as in loro-crdt.
+    expect(a.toJSON()).toEqual({ map: {} });
+    expect(b.toJSON()).toEqual({ map: {} });
   });
 
   test("resurfaces preserved state and switches mergeable kinds", () => {

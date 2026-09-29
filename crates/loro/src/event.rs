@@ -254,6 +254,7 @@ impl From<ValueOrHandler> for ValueOrContainer {
 pub struct DiffBatch {
     cid_to_events: FxHashMap<ContainerID, Diff<'static>>,
     order: Vec<ContainerID>,
+    full_state: bool,
 }
 
 impl std::fmt::Debug for DiffBatch {
@@ -287,6 +288,34 @@ impl DiffBatch {
                 Ok(())
             }
         }
+    }
+
+    /// Whether a mergeable child this batch re-activates carries its full state.
+    ///
+    /// Batches from [`crate::LoroDoc::diff`] set it. [`crate::LoroDoc::apply_diff`] then aligns
+    /// that full state with whatever hidden state the target doc keeps for the child (none,
+    /// the same, or different), so the batch applies to any doc. Otherwise (the default, e.g.
+    /// a batch built from events) the child's entry is applied as an increment, which is right
+    /// for a doc that shares the source's hidden state.
+    pub fn is_full_state(&self) -> bool {
+        self.full_state
+    }
+
+    /// Sets [`DiffBatch::is_full_state`].
+    ///
+    /// Only set it for batches whose re-activated mergeable children carry their full state:
+    /// results of [`crate::LoroDoc::diff`] (already set), or a batch rebuilt from one, e.g.
+    /// after serialization. Events from an import or a checkout also qualify, since they
+    /// report a revived child with its full state.
+    ///
+    /// Never set it on a batch built from **local** events (commits of this doc). A local
+    /// re-activation (such as `ensure_mergeable_counter` over a deleted key) reports only the
+    /// parent marker plus the transaction's own ops, because the child's content did not
+    /// change. A full-state batch reads a missing child entry as "empty" and an entry as the
+    /// whole content, so applying such a batch would clear or overwrite the hidden child
+    /// (e.g. a counter at 7 becomes 0).
+    pub fn set_full_state(&mut self, full_state: bool) {
+        self.full_state = full_state;
     }
 
     pub(crate) fn validate_for_apply(&self) -> LoroResult<()> {
@@ -354,6 +383,7 @@ impl From<InnerDiffBatch> for DiffBatch {
         DiffBatch {
             cid_to_events: map,
             order: value.order,
+            full_state: value.full_state,
         }
     }
 }
@@ -426,6 +456,7 @@ impl From<DiffBatch> for InnerDiffBatch {
         InnerDiffBatch {
             cid_to_events: map,
             order: value.order,
+            full_state: value.full_state,
         }
     }
 }

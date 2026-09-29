@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "start_version": {},
+  "peers": [
+    "1"
+  ],
+  "changes": [
+    {
+      "id": "0@0",
+      "timestamp": 0,
+      "deps": [],
+      "lamport": 0,
+      "msg": null,
+      "ops": [
+        {
+          "container": "cid:root-c:Counter",
+          "content": {
+            "type": "counter",
+            "value_type": "f64",
+            "value": 2.5,
+            "prop": 0
+          },
+          "counter": 0
+        },
+        {
+          "container": "cid:root-m:Map",
+          "content": {
+            "type": "insert",
+            "key": "b",
+            "value": [
+              0,
+              255
+            ]
+          },
+          "counter": 1
+        },
+        {
+          "container": "cid:root-m:Map",
+          "content": {
+            "type": "insert",
+            "key": "s",
+            "value": [
+              0,
+              76,
+              77,
+              1,
+              2,
+              220,
+              22,
+              216
+            ]
+          },
+          "counter": 2
+        },
+        {
+          "container": "cid:root-🤝:$m>s:Text",
+          "content": {
+            "type": "insert",
+            "pos": 0,
+            "text": "hello"
+          },
+          "counter": 3
+        }
+      ]
+    }
+  ]
+}

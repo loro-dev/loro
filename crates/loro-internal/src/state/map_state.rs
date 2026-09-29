@@ -262,8 +262,12 @@ impl ContainerState for MapState {
 
             let mut changed = false;
             if force {
-                self.insert(key.clone(), value.clone());
-                changed = true;
+                let prev = self.insert(key.clone(), value.clone());
+                // A checkout diff carries every key whose winning op changed,
+                // including ones whose value did not (see `MapDiffCalculator`):
+                // those only refresh the lamport/peer and report no change.
+                changed = mode != DiffMode::Checkout
+                    || !matches!(prev, Some(prev) if prev.value == value.value);
             } else {
                 match self.map.get(&key) {
                     Some(old_value) if old_value > &value => {}
@@ -394,13 +398,21 @@ impl MapState {
 
     pub fn insert(&mut self, key: InternalString, value: MapValue) -> Option<MapValue> {
         let value_yes = value.value.is_some();
-        if let Some(LoroValue::Container(id)) = &value.value {
-            self.child_containers.insert(id.clone(), key.clone());
-        }
+        let new_child = match &value.value {
+            Some(LoroValue::Container(id)) => {
+                self.child_containers.insert(id.clone(), key.clone());
+                Some(id.clone())
+            }
+            _ => None,
+        };
 
         let result = self.map.insert(key.clone(), value);
         if let Some(Some(LoroValue::Container(c))) = result.as_ref().map(|x| &x.value) {
-            self.child_containers.remove(c);
+            // Re-inserting the same child (e.g. a metadata-only checkout update)
+            // must keep its parent edge.
+            if new_child.as_ref() != Some(c) {
+                self.child_containers.remove(c);
+            }
         }
 
         match (&result, value_yes) {

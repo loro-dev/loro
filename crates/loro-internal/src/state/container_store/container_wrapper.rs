@@ -148,7 +148,10 @@ impl ContainerWrapper {
         let parent = arena
             .get_parent(idx)
             .and_then(|p| arena.get_container_id(p));
-        let depth = arena.get_depth(idx).unwrap().get() as usize;
+        let depth = arena
+            .get_depth(idx)
+            .expect("InternalError: a container gets state only once its parent is known")
+            .get() as usize;
         Self {
             depth,
             parent,
@@ -554,6 +557,12 @@ impl ContainerWrapper {
     /// [`ContainerWrapper`] value (after the kind byte, depth, and parent id).
     pub(crate) fn payload_offset(bytes: &[u8]) -> LoroResult<usize> {
         Ok(Self::decode_header(bytes)?.payload_offset)
+    }
+
+    /// Parent id encoded in the header of a stored container wrapper, read
+    /// without touching the state payload.
+    pub(crate) fn try_decode_parent(bytes: &[u8]) -> LoroResult<Option<ContainerID>> {
+        Ok(Self::decode_header(bytes)?.parent)
     }
 
     #[allow(unused)]
