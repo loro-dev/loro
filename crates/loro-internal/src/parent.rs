@@ -35,6 +35,27 @@ pub(super) fn register_container_and_parent_link(arena: &SharedArena, change: &C
     }
 }
 
+/// A transaction registers the parent of every container its ops create when it applies them
+/// ([`DocState::set_container_parent_by_raw_op`]), before the change is committed. Until then
+/// the op log cannot tell the parent, so a container a local op path forgot to link reads as
+/// deleted instead of failing (see `SharedArena::get_parent`). Check it on commit.
+#[cfg(debug_assertions)]
+pub(super) fn assert_local_parent_links_registered(arena: &SharedArena, change: &Change) {
+    for op in change.ops.iter() {
+        op.content.visit_created_children(arena, &mut |c| {
+            let parent = arena
+                .id_to_idx(c)
+                .and_then(|idx| arena.get_registered_parent(idx));
+            assert_eq!(
+                parent,
+                Some(Some(op.container)),
+                "InternalError: local op {} created {c} without registering its parent",
+                loro_common::ID::new(change.id.peer, op.counter)
+            );
+        });
+    }
+}
+
 impl DocState {
     /// This is used in txn to short cut the process of applying an op to the state.
     /// So the op here has not been registered on the oplog yet.
@@ -106,5 +127,25 @@ impl DocState {
         for id in to_ensure {
             self.ensure_container(&id);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use loro_common::ID;
+
+    use crate::{arena::SharedArena, LoroDoc, TreeParentId};
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "without registering its parent")]
+    fn a_local_op_must_link_the_containers_it_creates() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_tree("tree").create(TreeParentId::Root).unwrap();
+        doc.commit_then_renew();
+        let change = doc.oplog().lock().get_change_at(ID::new(1, 0)).unwrap();
+        // An arena that the transaction did not register the node's meta in.
+        super::assert_local_parent_links_registered(&SharedArena::new(), &change);
     }
 }
