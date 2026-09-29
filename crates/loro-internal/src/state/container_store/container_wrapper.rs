@@ -148,7 +148,10 @@ impl ContainerWrapper {
         let parent = arena
             .get_parent(idx)
             .and_then(|p| arena.get_container_id(p));
-        let depth = arena.get_depth(idx).unwrap().get() as usize;
+        let depth = arena
+            .get_depth(idx)
+            .expect("InternalError: a container gets state only once its parent is known")
+            .get() as usize;
         Self {
             depth,
             parent,
