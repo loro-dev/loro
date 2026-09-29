@@ -152,6 +152,130 @@ JavaScript constant factor.
   staging document before installing them. Import subscribers retain eager
   state hydration because their import event must describe every changed
   container.
+- Text, List, and MovableList state hydrated from a snapshot (eager, lazy, or a
+  shallow root) has no tombstones, deletion index, or style, value, and move
+  history for the snapshot's operations. `LoroDoc.#snapshotSequences` records
+  each such container with its snapshot version. Before `checkout`,
+  `checkoutToLatest`, `diff`, or a detached snapshot export
+  (`#encodeLatestState`) transitions, `#prepareSnapshotTransition` looks only
+  at the containers the transition
+  touches: it hydrates lazily encoded ones (an untouched lazy container still
+  holds its latest state, which is its state at the current version) and, when
+  the transition crosses a snapshot operation, rebuilds that one container from
+  its own operations (`#completeSnapshotSequence`, from its shallow root entry
+  in a shallow document). Operations applied after hydration are indexed like
+  any others, and Map, Tree, and Counter state needs no rebuild. The per-container
+  record index is built once per history revision. Consecutive text inserts that
+  continue each other replay as one span (`coalescedTextInsert`). Unrelated
+  containers are never replayed and the lazy SSTable is kept, so snapshot export
+  copies every untouched entry and rewrites only the touched ones. A delete
+  transition is still refused unless the deletion index recorded that delete,
+  for example one imported while detached.
+- loro.js does not count Rust rich-text style anchors in Text operation
+  positions, so a replay of Rust-created styled text can differ from its
+  snapshot state (for example, an insert right after a mark's end anchor). The
+  completion therefore compares the replay of a Text or List with the snapshot
+  state (visible ids, plus the delta when styled). When they differ, the replay
+  is discarded and the container becomes `unreplayable`: it keeps its snapshot
+  state, encoded once, and is never given a replay. A transition that touches
+  it runs without its operations and then moves it separately
+  (`#planSnapshotStates`): when the installed state already has every forward
+  operation (tracked as `applied`), a Text is toggled by id and style version,
+  O(delta) as for a state without history; otherwise (for example an update
+  imported while detached) it is rebuilt from the snapshot state plus the later
+  operations the target includes (`#rebuildFromSnapshotState`, O(container
+  size + its operations)). Events come from the transition's recording, or from
+  whole-container values when style operations are crossed, since their ranges
+  come from positions.
+- What that guarantees: the latest state, imports, and exports equal the
+  snapshot state plus the later operations, as loro.js applies them. A later
+  operation concurrent with a delete that the snapshot already applied can
+  still land at another position than in Rust, as on main (loro-dev/loro#1163).
+  An older version is approximate: the snapshot state cannot restore text
+  deleted before it. In the round-3 review's random Rust histories, older
+  versions and `revertTo` differed from Rust more often than on main (437 vs
+  317 checked versions, 287 vs 151 reverts), while main corrupted the latest
+  state after a checkout round trip in 57 of 90 seeds and the PR in none.
+  The anchor model (loro-dev/loro#1137) makes such text replayable and removes
+  both costs. Two more gaps are also on main: after an update imported while
+  detached, a shallow export on the live document can change its latest state
+  (plain text too; loro-dev/loro#1136 fixes the plain-text case), and a shallow
+  export that throws midway leaves the live document at the root or in
+  between, since `#encodeShallowSnapshot` rebuilds it without a restore.
+- A MovableList is not a snapshot sequence at all (`#markSnapshotSequence`);
+  it behaves as on main. Its snapshot state names each element by its Rust
+  position id (`#hydrateContainerState` takes `listItemIds` in order, and after
+  a move they include invisible positions), while a replay names elements by
+  their insert ids, and Rust encodes element ids as (peer, lamport), so no
+  comparison with a replay is meaningful. The hydrated state also has no move
+  or value history (`_moveHistoryComplete`, `_valueHistoryComplete`), so
+  `#canTransitionRecords` refuses to cross its snapshot moves, sets, and
+  deletes, and the transition replays to the target; later transitions are
+  incremental, and a later move or set by element id resolves. Replaying the
+  list to the current version and then retreating instead (as round 3 did)
+  carried loro.js's MovableList non-convergence at the latest version into
+  older versions. Completing only lists whose snapshot names elements by insert
+  ids was also tried: it makes a snapshot document transition like a
+  full-history one, and loro.js's incremental MovableList transitions have
+  their own bugs with concurrent moves and sets (a full-history document on
+  main shows them too), so random Rust histories got 167 mismatching versions
+  against main's 91; leaving every MovableList on main's path gives 56. Until
+  the MovableList model work (loro-dev/loro#1132 and follow-ups) hydrates
+  element ids, a MovableList whose loro.js replay differs from Rust can change
+  its latest state at the first such transition, also as on main. Once the
+  list is replayed, later transitions are incremental and can still show a
+  wrong older version where main, which replays on every such checkout, is
+  right (round-4 review, seed 22: after checking out v11, v12, then v13, the
+  list shows `[11]` where Rust, main, and a full-history document show `[9]`;
+  the latest state and `revertTo` are right). This is loro.js's MovableList
+  transition gap, left to loro-dev/loro#1132.
+- A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
+  `forkAt`) first checks the snapshot-hydrated Text containers that have or
+  had styles, including lazily encoded ones, and then rebuilds unreplayable
+  containers the same way. "Had" matters: when every marked character was
+  deleted, the snapshot state has no style, but the mark's anchors still shift
+  later Rust positions, so the replay differs (`#hasStyleHistory`: a mark
+  operation in the history, indexed as `#markedTexts`, or styles in the shallow
+  root state). Plain text is not checked, so it pays no extra replay. Only the root state of a shallow export uses the replay, since the
+  snapshot state is later than the root. `forkAt` keeps a snapshot state only
+  in a fork whose version includes that state's version; an older fork has
+  none of the operations needed to undo later ones in that state, so it keeps
+  the replay of its own history, as on main, and stays consistent with its own
+  operations. `tests/snapshot-checkout.test.ts` checks random checkouts,
+  detaches, and imports on Rust rich-text histories (`rich-text-history.json`)
+  against a document that only imports, plus forks, Rust MovableList moves
+  (`movable-moves.json`), and a Rust text whose marked characters were deleted
+  (`deleted-mark.json`).
+- Transitions deduplicate sequence elements by id (`SequenceElementSet`): a
+  packed Text span returns a new wrapper per lookup, so two concurrent deletes
+  of one character used to delete it twice. A completion that throws
+  reinstalls the snapshot state and leaves the container hydrated. A checkout
+  that throws restores its previous version and state (`#transitionTo`, which
+  also prepares inside its `try`), and `diff` restores the current state with a
+  full rebuild when it or its move back throws.
+- First checkout after importing a 262,144-operation single-peer Text snapshot
+  takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
+  versus about 148 ms for the earlier whole-document replay; 65,536 operations
+  take 25 versus 43 ms, and a subscriber adds nothing measurable (earlier 192
+  ms at 262,144). The replay of that one container dominates. Later checkouts
+  stay around 0.1–0.4 ms. A doc with 32,768 child Maps that retreats one of them
+  needs no replay: 57–61 ms versus 152 ms, with the same 234 MiB peak RSS as
+  before the fix (earlier 284 MiB). The coalesced inserts also make importing
+  the B4 trace as one update about 30% faster (about 195 versus 275 ms).
+- A shallow history trims the ops that wrote root-time Map values and Tree
+  placements (the root commit's other ops). When a Map or Tree retreat finds no
+  retained winner at or below the target, it uses the shallow root state entry
+  (`#shallowRootMapRecord`, `#shallowRootTreeNode`) instead of dropping the key
+  or node; a retained Tree delete whose placement was trimmed takes the root
+  placement and stays deleted. The root store entry for a container comes from
+  `#shallowRootEntryIndex`: the key index the import builds to merge the root
+  and latest states, or while hydrating the root store for a replay (Rust omits
+  the latest state for a short retained tail). Each container's key/node index
+  is built on first lookup. A retreat therefore touches only the maps and trees
+  it changes, as in Rust's per-map checkout index seeding (loro-dev/loro#1120,
+  #1124): the first such retreat in a shallow doc with 32,768 child Maps takes
+  under 1 ms for both loro.js- and Rust-written snapshots, flat from 1,024
+  Maps, and later ones about 0.02–0.03 ms.
 
 When an element's deleted flag, tree parent/position, or map visibility changes,
 mutate it through its owning index helper. Direct mutation leaves subtree or

@@ -472,6 +472,10 @@ pub(crate) fn decode_op(
         }),
     };
 
+    if let crate::op::InnerContent::List(list_op) = &content {
+        list_op.check_positions()?;
+    }
+
     Ok(content)
 }
 

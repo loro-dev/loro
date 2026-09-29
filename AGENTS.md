@@ -24,11 +24,16 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/mergeable-containers.md](context/mergeable-containers.md).
 - `import_batch` force-detach, batch-wide rollback scope, and the never-exit-detached
   invariant: [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
+- Movable-list `Move`/`Set` import validation, and why a move of a deleted element
+  is applied rather than rejected:
+  [context/movable-list-op-validation.md](context/movable-list-op-validation.md).
 - Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
   root-whitelisted latest state):
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
 - Rich-text insert positions next to style anchors, the insert cursor cache,
   and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
+- Tree diff cache transitions and why their lamport window comes from the two
+  versions, not the replay base: [context/tree-checkout-window.md](context/tree-checkout-window.md).
 - User-facing Loro usage, sync, editor integration, and performance guidance:
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:
@@ -43,8 +48,16 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).
+- How the arena learns a container's parent (parsed changes, state KV, the op
+  log's creator resolver), its locking (including `ChangeStore`'s lock order),
+  and import rollback: [context/arena-parent-links.md](context/arena-parent-links.md).
+- Which deletions `DocState::is_deleted` caches, and how tree/movable-list
+  children are revived: [context/dead-container-cache.md](context/dead-container-cache.md).
 - Movable-list `apply_diff`/undo: delete + re-insert of a child becomes a move,
   cursor invariant, pitfalls: [context/movable-list-apply-diff.md](context/movable-list-apply-diff.md).
+- Unknown container types (newer-version containers): never created locally,
+  `apply_diff`/undo pre-check, events, test forging:
+  [context/unknown-containers.md](context/unknown-containers.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands
