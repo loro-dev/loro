@@ -179,6 +179,21 @@ describe("MovableList positions and elements", () => {
     }
   });
 
+  test("replacing a MovableList value with a plain object emits its event", () => {
+    const d = doc(1);
+    const events: LoroEventBatch[] = [];
+    d.subscribe((event) => events.push(event));
+    const map = d.getMap("m");
+    map.setContainer("k", new LoroMovableList()).push(1);
+    d.commit();
+    map.set("k", { n: 2 });
+    d.commit();
+    expect(d.toJSON()).toEqual({ m: { k: { n: 2 } } });
+    expect(events.at(-1)!.events.map(({ diff }) => diff)).toEqual([
+      { type: "map", updated: { k: { n: 2 } } },
+    ]);
+  });
+
   test("records a set even when the value does not change", () => {
     const a = doc(1);
     const list = a.getMovableList("list");
