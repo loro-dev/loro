@@ -1,0 +1,63 @@
+{
+  "delta": [
+    {
+      "insert": ">"
+    },
+    {
+      "insert": "H",
+      "attributes": {
+        "bold": true
+      }
+    },
+    {
+      "insert": "el",
+      "attributes": {
+        "em": true
+      }
+    },
+    {
+      "insert": "lo!?",
+      "attributes": {
+        "bold": true,
+        "hl": "yellow"
+      }
+    },
+    {
+      "insert": " ",
+      "attributes": {
+        "hl": "yellow"
+      }
+    },
+    {
+      "insert": "World"
+    }
+  ],
+  "base": {
+    "frontiers": [
+      {
+        "peer": "21",
+        "counter": 16
+      }
+    ],
+    "delta": [
+      {
+        "insert": "Hello",
+        "attributes": {
+          "bold": true
+        }
+      },
+      {
+        "insert": " "
+      },
+      {
+        "insert": "😀",
+        "attributes": {
+          "link": "https://loro.dev"
+        }
+      },
+      {
+        "insert": " World"
+      }
+    ]
+  }
+}
