@@ -632,6 +632,35 @@ describe("loro-wasm-compatible runtime", () => {
     expect(doc.isDetached()).toBe(false);
   });
 
+  test("reverts child containers whose content did not change in the range", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const map = doc.getMap("map");
+    const sub = map.setContainer("sub", new LoroMap());
+    sub.set("k", "v");
+    sub.setContainer("text", new LoroText()).insert(0, "hi");
+    doc.getList("list").insertContainer(0, new LoroMap()).set("x", 1);
+    doc.commit();
+    const populated = doc.frontiers();
+    const expected = doc.toJSON();
+
+    // Detach both children without touching their own content.
+    map.set("sub", "not a map");
+    doc.getList("list").delete(0, 1);
+    doc.commit();
+
+    const diff = new Map(doc.diff(doc.frontiers(), populated));
+    expect(diff.get(sub.id)).toMatchObject({ type: "map", updated: { k: "v" } });
+    expect(diff.get((sub.get("text") as LoroText).id)).toEqual({
+      type: "text",
+      diff: [{ insert: "hi" }],
+    });
+
+    doc.revertTo(populated);
+    expect(doc.toJSON()).toEqual(expected);
+    expect((map.get("sub") as LoroMap).id).not.toBe(sub.id);
+  });
+
   test("undoes and redoes local commit groups", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
