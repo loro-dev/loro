@@ -5367,7 +5367,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       seenCommittedPeers: new Set(this.#seenCommittedPeers),
       deferredSnapshotHistory: this.#deferredSnapshotHistory,
       deferredSnapshotState: this.#deferredSnapshotState,
-      snapshotSequences: new Map(this.#snapshotSequences),
+      // Journaled per write (`#journalSnapshotSequence`): a document can hold
+      // one entry per hydrated sequence, too many to copy on every import.
+      snapshotSequences: pristine
+        ? new Map(this.#snapshotSequences)
+        : this.#snapshotSequences,
       shallowRootEntries: this.#shallowRootEntries,
       shallowStartVersion: this.#shallowStartVersion,
       shallowRootVersion: this.#shallowRootVersion,
@@ -6406,8 +6410,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       );
     }
     for (const [key, entry] of this.#snapshotSequences) {
-      if (entry.kind === "hydrated") this.#snapshotSequences.delete(key);
-      else if (!replaySnapshotStates) this.#rebuildFromSnapshotState(key, target);
+      if (entry.kind === "hydrated") {
+        this.#journalSnapshotSequence(key);
+        this.#snapshotSequences.delete(key);
+      } else if (!replaySnapshotStates) this.#rebuildFromSnapshotState(key, target);
     }
   }
 
@@ -6419,8 +6425,20 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    */
   #markSnapshotSequence(container: LoroContainer, version: VersionVector): void {
     if (container instanceof LoroList || container instanceof LoroText) {
+      this.#journalSnapshotSequence(container.id);
       this.#snapshotSequences.set(container.id, { kind: "hydrated", version });
     }
+  }
+
+  /** Records how to undo a write of `key` in `#snapshotSequences`. */
+  #journalSnapshotSequence(key: string): void {
+    if (!this.#importUndo) return;
+    const sequences = this.#snapshotSequences;
+    const entry = sequences.get(key);
+    this.#importUndo.push(() => {
+      if (entry === undefined) sequences.delete(key);
+      else sequences.set(key, entry);
+    });
   }
 
   /**
@@ -6624,6 +6642,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       container._swapState(snapshot);
       throw error;
     }
+    this.#journalSnapshotSequence(key);
     if (same) {
       this.#snapshotSequences.delete(key);
       return false;
@@ -6718,6 +6737,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const { peer, counter } of version._codecEntriesUnsorted()) {
       if (counter > (applied.get(peer) ?? 0)) applied.set(peer, counter);
     }
+    this.#journalSnapshotSequence(key);
     this.#snapshotSequences.set(key, { ...entry, applied });
     this.#dirtySnapshotContainers.add(key);
   }

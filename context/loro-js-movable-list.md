@@ -334,6 +334,9 @@ Differences in form, not in effect:
 - Event deltas of multi-op imports can differ in shape, or be a no-op where
   Rust reports nothing (see "Versions, events, snapshots"); the suite then
   checks that each engine's deltas turn the previous value into the new one.
+- Rust's `diff()` can list a sequence whose delta is empty (two peers
+  concurrently moving one element), where loro.js omits the container. The
+  suite ignores such entries.
 
 Rust issues found:
 

@@ -120,10 +120,13 @@ through `LoroDoc.#atomically`:
 
 - While an import runs, every in-place change to history structures (records,
   per-peer arrays and ends, merged records, Map/Tree operation indexes,
-  containers and roots) pushes an undo closure onto `#importUndo`. Fields the
-  import replaces wholesale (frontiers, pending changes, deferred snapshot
-  history/state, shallow root and its entry index, snapshot-sequence entries,
-  counters) are saved by reference or copied, since they are small.
+  containers and roots) and to the snapshot-sequence entries
+  (`#journalSnapshotSequence`) pushes an undo closure onto `#importUndo`. The
+  snapshot-sequence table can hold one entry per hydrated Text/List/MovableList,
+  so copying it made every import O(hydrated containers). Fields the import
+  replaces wholesale (frontiers, pending changes, deferred snapshot
+  history/state, shallow root and its entry index, counters) are saved by
+  reference or copied, since they are small.
 - On failure the closures run in reverse and the saved fields are restored.
   If the import had started to change container state (`#applyRecords`,
   `#hydrateState` or `#rebuildFromHistory` ran), state is rebuilt from the
