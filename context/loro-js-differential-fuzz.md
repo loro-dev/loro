@@ -76,10 +76,11 @@ prints each action as it runs, which finds hangs. The report groups failures by
 signature (oracle plus first differing root or normalized error) and stores the
 minimized action list and a trace written as `loro.js` API calls.
 
-The CI run is 120 fixed seeds of Map/List/Text/Counter with the replay,
-checkout, full-snapshot, and event oracles (about 3 s locally). A seed that
-fails on `main` for a known reason goes into `pending` with that reason until
-its fix lands; the list is empty on 2026-09-29.
+CI runs 120 fixed seeds of Map/List/Text/Counter, and 120 more with nested
+child containers and snapshot imports, with the replay, checkout,
+full-snapshot, and event oracles. A seed that fails on `main` for a known
+reason goes into `pending` with that reason until its fix lands; both lists are
+empty on 2026-09-29 (`main` at #1131).
 
 ## Divergences found (2026-09-28/29)
 
@@ -93,7 +94,9 @@ give wrong values after retained checkouts, sometimes also at the latest
 version), absent-key map deletes and zero counter increments (#1145),
 liveness of containers under deleted ancestors (#1147), local tree positions
 and no-op moves (#1148), and a List child that a replay-fallback event
-re-inserts (#1150, on #1131).
+re-inserts (#1150). With nested children and snapshot imports, seeds 297,
+315, 344, 422, 452, and 559 of 0–599 fail on `main` in the event oracle;
+#1150 fixes all six.
 
 Still open, so `CI_RUNS` does not enable them yet:
 
