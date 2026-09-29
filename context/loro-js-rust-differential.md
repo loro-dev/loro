@@ -80,8 +80,13 @@ tolerates them, so it also runs against older reference builds:
   can diverge from its own full-history import when they are wrong. The harness
   compares loro.js with the source document instead.
 
-Snapshot-import checkout (`snapshotCheckout`) is off by default until loro.js
-can check out a document imported from a snapshot (loro-dev/loro#1126).
+Snapshot-import checkout (`snapshotCheckout`) is off by default. Since
+loro-dev/loro#1126, checkout after importing a full snapshot matches Rust, but
+checkout into the retained range of a shallow snapshot that loro.js exported
+still diverges: about 20% of 120-step seeds, plain and rich text alike
+(September 29). The replay of such a snapshot differs from its state, so the
+text becomes `unreplayable` (see [loro-js-performance.md](loro-js-performance.md));
+the export gap itself is not fixed yet.
 
 ## Data written by loro.js 0.2
 

@@ -9,11 +9,7 @@ import {
   type DecodedOperationContent,
 } from "../codec/change-block-codec";
 import type { ChangeLoroValue, ChangeValue } from "../codec/change-value";
-import {
-  containerTypeFromRawByte,
-  containerTypeToRawByte,
-  decodeContainerId,
-} from "../codec/container-id";
+import { containerTypeFromRawByte, containerTypeToRawByte } from "../codec/container-id";
 import {
   decodeDocument,
   decodeFastSnapshotBody,
@@ -28,7 +24,6 @@ import {
 import { decodeChangeBlockKey, encodeChangeBlockKey } from "../codec/id";
 import { decodeSstable, encodeSstable, type SstableEntry } from "../codec/sstable";
 import {
-  decodeContainerStateWrapper,
   decodeLazyStateSnapshotStore,
   decodeStateSnapshotStore,
   encodeStateSnapshotStore,
@@ -291,9 +286,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #movableOrderHistory = new Map<string, OrderedIndex<IndexedHistoryOperation>>();
   #movableMovePeers = new Map<string, Set<bigint>>();
   #containersWithOperations = new Set<string>();
-  // Text containers with a mark operation in their history
-  // (#checkSnapshotSequences).
-  #markedTexts = new Set<string>();
   #containerKeys = new WeakMap<CodecContainerId, string>();
   #pendingHistory = new Map<string, HistoryRecord>();
   #deferredSnapshotHistory: DeferredSnapshotHistory | undefined;
@@ -1192,7 +1184,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
             rebuilds,
           );
         } else {
-          this.#rebuildFromHistory(fromVersion, restoreVersion);
+          this.#rebuildFromHistory(fromVersion);
         }
         materializedVersion = fromVersion;
       }
@@ -1240,7 +1232,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       } else {
         before = this.#captureContainerEventValues(changed);
         mapKeysAtFrom = this.#captureMapKeys(changed);
-        this.#rebuildFromHistory(toVersion, fromVersion);
+        this.#rebuildFromHistory(toVersion);
         mapKeysAtTo = this.#captureMapKeys(changed);
       }
       materializedVersion = toVersion;
@@ -1275,7 +1267,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       // no hydrated sequence, so that version is what the rest reflects.
       try {
         if (failed) {
-          this.#rebuildFromHistory(restoreVersion, restoreVersion);
+          this.#rebuildFromHistory(restoreVersion);
         } else if (materializedVersion.compare(restoreVersion) !== 0) {
           if (useIncrementalTransition) {
             if (materializedVersion.compare(toVersion) === 0) {
@@ -1310,11 +1302,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
               );
             }
           } else {
-            this.#rebuildFromHistory(restoreVersion, materializedVersion);
+            this.#rebuildFromHistory(restoreVersion);
           }
         }
       } catch (restoreError) {
-        if (!failed) this.#rebuildFromHistory(restoreVersion, restoreVersion);
+        if (!failed) this.#rebuildFromHistory(restoreVersion);
         // eslint-disable-next-line no-unsafe-finally
         throw restoreError;
       }
@@ -1826,7 +1818,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#commit({}, true);
     const version = this.#versionForExistingFrontiers(frontiers);
     this.#assertVersionNotBeforeShallowRoot(version);
-    this.#checkSnapshotSequences(this.version());
     const fork = new LoroDoc<T>();
     fork.#recordTimestamp = this.#recordTimestamp;
     fork.#changeMergeInterval = this.#changeMergeInterval;
@@ -2006,7 +1997,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         this.#applyRecords(forward, recording);
       } else {
         if (subscribed) beforeValues = this.#captureContainerEventValues(changed);
-        this.#rebuildFromHistory(target, current);
+        this.#rebuildFromHistory(target);
         return { beforeValues, preparedDiffs };
       }
       this.#applySnapshotStates(plan, retreatRecords, forwardRecords, target, recording);
@@ -2018,7 +2009,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (versionSet) {
         this.#checkoutVersion = previousCheckoutVersion;
         this.#detached = previousDetached;
-        this.#rebuildFromHistory(current, current);
+        this.#rebuildFromHistory(current);
       }
       throw error;
     }
@@ -5096,21 +5087,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
 
   /**
    * Resets every container and replays history up to `version`, or the latest
-   * version. `previousVersion` is the version that the current state reflects
-   * (after a failed transition, the version before it: a transition changes
-   * only the containers it prepared). The snapshot-hydrated sequences whose
-   * replay can differ from their snapshot state are checked at that version
-   * first, and every container that loro.js cannot replay is then rebuilt from
+   * version. Every container that loro.js cannot replay is then rebuilt from
    * its snapshot state (#rebuildFromSnapshotState), unless
    * `replaySnapshotStates` asks for the plain replay (a shallow root state).
    */
-  #rebuildFromHistory(
-    version?: VersionVector,
-    previousVersion?: VersionVector,
-    replaySnapshotStates = false,
-  ): void {
+  #rebuildFromHistory(version?: VersionVector, replaySnapshotStates = false): void {
     const target = version ?? this.#historyVersion();
-    if (previousVersion !== undefined) this.#checkSnapshotSequences(previousVersion);
     this.#discardDeferredSnapshotState();
     for (const container of this.#containers.values()) container._reset();
     if (this.#shallowRootStore !== undefined) {
@@ -5142,57 +5124,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     ) {
       this.#snapshotSequences.set(container.id, { kind: "hydrated", version });
     }
-  }
-
-  /**
-   * Checks, before a full replay replaces every state, the snapshot-hydrated
-   * sequences whose replay can differ from their snapshot state: Text that has
-   * or had styles, including lazily encoded ones. A mark whose characters were
-   * all deleted leaves no style in the snapshot state, but its anchors still
-   * shift the positions of later Rust operations, so the history counts too
-   * (#hasStyleHistory). `version` is the version that their state reflects.
-   */
-  #checkSnapshotSequences(version: VersionVector): void {
-    const lazy = this.#deferredSnapshotState;
-    if (lazy === undefined && this.#snapshotSequences.size === 0) return;
-    // Mark operations are indexed once the history is loaded.
-    this.#materializeDeferredHistory();
-    if (lazy !== undefined) {
-      for (const { key, value } of lazy.store.table.entries()) {
-        if (bytesEqual(key, FRONTIERS_KEY)) continue;
-        const id = decodeContainerId(key);
-        if (id.containerType !== CodecContainerType.Text) continue;
-        if (!this.#hasStyleHistory(this.#containerKey(id))) {
-          const { state } = decodeContainerStateWrapper(value);
-          if (state.kind !== CodecContainerType.Text || state.marks.length === 0)
-            continue;
-        }
-        this.#getOrCreateContainer(id);
-      }
-    }
-    for (const [key, entry] of this.#snapshotSequences) {
-      const container = this.#containers.get(key);
-      if (
-        entry.kind === "hydrated" &&
-        container instanceof LoroText &&
-        (!container._styleIndex.isEmpty || this.#hasStyleHistory(key))
-      ) {
-        this.#completeSnapshotSequence(container, key, version);
-      }
-    }
-  }
-
-  /**
-   * Whether a Text had styles before its current state: a mark operation in
-   * its history, or styles in its shallow root state.
-   */
-  #hasStyleHistory(key: string): boolean {
-    if (this.#markedTexts.has(key)) return true;
-    const root =
-      this.#shallowRootStore === undefined
-        ? undefined
-        : this.#shallowRootEntryIndex().get(key)?.wrapper.state;
-    return root?.kind === CodecContainerType.Text && root.marks.length > 0;
   }
 
   /**
@@ -5266,9 +5197,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   /**
    * Rebuilds a snapshot-hydrated sequence container from its own operations up
    * to `version`, starting from its shallow root state in a shallow document,
-   * and returns whether the replay differed from the snapshot state. loro.js
-   * does not count Rust rich-text style anchors in operation positions, so a
-   * replay of Rust rich text can differ. Such a container keeps its snapshot
+   * and returns whether the replay differed from the snapshot state. With the
+   * style anchors in the sequence (loro-dev/loro#1137), loro.js replays Rust
+   * and loro.js histories, styled or not, to their snapshot state; a replay
+   * differs only when the snapshot state disagrees with its own history, as in
+   * a snapshot written by loro.js 0.2. Such a container keeps its snapshot
    * state and becomes `unreplayable` (see #rebuildFromSnapshotState and
    * context/loro-js-performance.md).
    */
@@ -5668,9 +5601,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     for (const operation of record.change.operations) {
       this.#containersWithOperations.add(this.#containerKey(operation.container));
       const content = operation.content;
-      if (content.type === "text-mark") {
-        this.#markedTexts.add(this.#containerKey(operation.container));
-      }
       const indexed = {
         record,
         operation,
@@ -5925,7 +5855,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     this.#movableOrderHistory = staged.#movableOrderHistory;
     this.#movableMovePeers = staged.#movableMovePeers;
     this.#containersWithOperations = staged.#containersWithOperations;
-    this.#markedTexts = staged.#markedTexts;
     this.#containerKeys = staged.#containerKeys;
     this.#pendingHistory = staged.#pendingHistory;
     this.#deferredSnapshotHistory = undefined;
@@ -6334,7 +6263,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       restored = true;
       return state;
     } finally {
-      if (!restored) this.#rebuildFromHistory(current, current);
+      if (!restored) this.#rebuildFromHistory(current);
     }
   }
 
@@ -6403,10 +6332,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     // text at the root, and only those in the latest state
     // (context/shallow-snapshot-style-redaction.md).
     const redacted = new Set<string>();
-    this.#rebuildFromHistory(rootVersion, restoreVersion, true);
+    this.#rebuildFromHistory(rootVersion, true);
     const rootRetained = this.#retainedContainerKeys();
     const rootStore = this.#buildStateStore(startFrontiers, rootRetained, { redacted });
-    this.#rebuildFromHistory(latestVersion, rootVersion);
+    this.#rebuildFromHistory(latestVersion);
     const latestRetained = this.#retainedContainerKeys();
     for (const key of rootRetained) latestRetained.add(key);
     for (const [key, container] of this.#containers) {
@@ -6420,7 +6349,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       only: redacted,
     });
     if (restoreVersion.compare(latestVersion) !== 0) {
-      this.#rebuildFromHistory(restoreVersion, latestVersion);
+      this.#rebuildFromHistory(restoreVersion);
     }
 
     const historyEntries = this.#recordsInVersionRange(startVersion, latestVersion).map(

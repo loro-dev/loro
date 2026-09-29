@@ -178,12 +178,16 @@ JavaScript constant factor.
   copies every untouched entry and rewrites only the touched ones. A delete
   transition is still refused unless the deletion index recorded that delete,
   for example one imported while detached.
-- loro.js does not count Rust rich-text style anchors in Text operation
-  positions, so a replay of Rust-created styled text can differ from its
-  snapshot state (for example, an insert right after a mark's end anchor). The
-  completion therefore compares the replay of a Text or List with the snapshot
-  state (visible ids, plus the delta when styled). When they differ, the replay
-  is discarded and the container becomes `unreplayable`: it keeps its snapshot
+- The completion compares the replay of a Text or List with the snapshot state
+  (visible ids, plus the values). With style anchors in the sequence
+  (loro-dev/loro#1137) a replay of Rust or loro.js history, styled or not,
+  equals its snapshot state; before, loro.js did not count the anchors and a
+  replay of Rust-created styled text could differ. A replay now differs only
+  when the snapshot state disagrees with its own history: a snapshot written by
+  loro.js 0.2 (see `loro-js/README.md`, "Upgrading from 0.2"), or a loro.js
+  shallow snapshot with the retained-range gap described in
+  [loro-js-rust-differential.md](loro-js-rust-differential.md). When they
+  differ, the replay is discarded and the container becomes `unreplayable`: it keeps its snapshot
   state, encoded once, and is never given a replay. A transition that touches
   it runs without its operations and then moves it separately
   (`#planSnapshotStates`): when the installed state already has every forward
@@ -237,13 +241,13 @@ JavaScript constant factor.
   the latest state and `revertTo` are right). This is loro.js's MovableList
   transition gap, left to loro-dev/loro#1132.
 - A full `#rebuildFromHistory` (the non-incremental fallback, shallow export,
-  `forkAt`) first checks the snapshot-hydrated Text containers that have or
-  had styles, including lazily encoded ones, and then rebuilds unreplayable
-  containers the same way. "Had" matters: when every marked character was
-  deleted, the snapshot state has no style, but the mark's anchors still shift
-  later Rust positions, so the replay differs (`#hasStyleHistory`: a mark
-  operation in the history, indexed as `#markedTexts`, or styles in the shallow
-  root state). Plain text is not checked, so it pays no extra replay. Only the root state of a shallow export uses the replay, since the
+  `forkAt`) rebuilds unreplayable containers the same way. It no longer checks
+  snapshot-hydrated styled Text first (`#checkSnapshotSequences`, removed in
+  loro-dev/loro#1137): that extra replay per styled Text existed because the
+  anchors shifted Rust positions, which the anchor model now counts. So styled
+  and plain Text behave alike: a hydrated container that no transition has
+  completed takes the replay of its history, which for a 0.2 snapshot is Rust's
+  reading. Only the root state of a shallow export uses the replay, since the
   snapshot state is later than the root. `forkAt` keeps a snapshot state only
   in a fork whose version includes that state's version; an older fork has
   none of the operations needed to undo later ones in that state, so it keeps

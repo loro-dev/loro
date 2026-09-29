@@ -148,7 +148,9 @@ op position must mean the same thing in both runtimes; documents shared with
 other positions); and a marker would need an encoding change that Rust does
 not have. The cost: in a document edited only with 0.2, every op after a mark
 can apply elsewhere, and a 0.2 snapshot keeps its 0.2 state while its history
-reads like Rust (a checkout there and back switches to Rust's reading). The
+reads like Rust (checkouts keep that state through the `unreplayable` fallback
+of loro-dev/loro#1126 and show older versions approximately; a fork or shallow
+export rebuilds it from history, which is Rust's reading). The
 package version is major; `loro-js/README.md` ("Upgrading from 0.2") gives the
 migration paths, and `loro-js/tests/legacy-data.test.ts` pins the readings of
 0.2 fixtures in both runtimes.
