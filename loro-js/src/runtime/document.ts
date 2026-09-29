@@ -2965,31 +2965,61 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     }
     const meta = history[metaIndex]!;
     const from = list._sequence.visibleIndexOf(element)!;
-    if (meta.beforePhysicalNext !== undefined) {
-      // Put the element back at its exact physical slot, next to deleted
-      // neighbors too, so a later restore of those keeps the relative order.
-      const before =
-        meta.beforePhysicalNext === null
-          ? undefined
-          : list._sequence.findById(meta.beforePhysicalNext);
-      if (meta.beforePhysicalNext === null || before !== undefined) {
-        const physicalFrom = list._sequence.physicalIndexOf(element)!;
-        let to =
-          before === undefined ? list.length - 1 : list._sequence.visibleIndexOf(before)!;
-        if (
-          before !== undefined &&
-          physicalFrom < list._sequence.physicalIndexOf(before)!
-        ) {
-          to -= 1;
-        }
-        list._physicalMoveHint = { element, before };
-        try {
-          this._movableMove(list, from, to);
-        } finally {
-          list._physicalMoveHint = undefined;
-        }
+    // Put the element back into its old physical slot, next to deleted
+    // neighbors too, so a later restore of those keeps the relative order. The
+    // slot is next to the physical predecessor unless that has since been
+    // moved by an untracked op, else before the successor under the same rule,
+    // as Rust keeps an element where later remote moves leave it.
+    const slotNeighbor = (
+      id: CodecId | null | undefined,
+    ): { found: boolean; element: SequenceElement | undefined } => {
+      if (id === undefined) return { found: false, element: undefined };
+      if (id === null) return { found: true, element: undefined };
+      const neighbor = list._sequence.findById(id);
+      if (neighbor === undefined) return { found: false, element: undefined };
+      const movedSince = (neighbor.moveHistory ?? []).some(
+        (move) => move.lamport > meta.lamport && !isTracked(move.id),
+      );
+      return movedSince
+        ? { found: false, element: undefined }
+        : { found: true, element: neighbor };
+    };
+    const physicalAfter = (
+      anchor: SequenceElement | undefined,
+    ): SequenceElement | undefined => {
+      let index = anchor === undefined ? 0 : list._sequence.physicalIndexOf(anchor)! + 1;
+      let next = list._sequence.atPhysical(index);
+      if (next === element) next = list._sequence.atPhysical((index += 1));
+      return next;
+    };
+    const previousSlot = slotNeighbor(meta.beforePhysicalPrevious);
+    const nextSlot = slotNeighbor(meta.beforePhysicalNext);
+    if (previousSlot.found || nextSlot.found) {
+      const before = previousSlot.found
+        ? physicalAfter(previousSlot.element)
+        : nextSlot.element;
+      const physicalFrom = list._sequence.physicalIndexOf(element)!;
+      let to =
+        before === undefined ? list.length - 1 : list._sequence.visibleIndexOf(before)!;
+      if (
+        before !== undefined &&
+        physicalFrom < list._sequence.physicalIndexOf(before)!
+      ) {
+        to -= 1;
+      }
+      if (to === from) {
+        // Already at that visible index: only the local physical slot changes,
+        // which no other peer observes, so no op is written.
+        list._sequence.moveBefore(element, before);
         return;
       }
+      list._physicalMoveHint = { element, before };
+      try {
+        this._movableMove(list, from, to);
+      } finally {
+        list._physicalMoveHint = undefined;
+      }
+      return;
     }
     const visibleIndex = (id: CodecId | undefined): number | undefined => {
       if (id === undefined) return undefined;

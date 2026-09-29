@@ -77,6 +77,8 @@ export interface SequenceMoveMeta {
    * unknown (e.g. metadata rebuilt from a snapshot).
    */
   readonly beforePhysicalNext?: CodecId | null | undefined;
+  /** The element physically before it, deleted or not; `null` when it was first. */
+  readonly beforePhysicalPrevious?: CodecId | null | undefined;
 }
 
 export type CausalVersion = ReadonlyMap<bigint, number>;
@@ -2150,6 +2152,12 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
       physical === undefined
         ? undefined
         : (this._sequence.atPhysical(physical + 1)?.id ?? null);
+    const beforePhysicalPrevious =
+      physical === undefined
+        ? undefined
+        : physical === 0
+          ? null
+          : (this._sequence.atPhysical(physical - 1)?.id ?? null);
     const hint = this._physicalMoveHint;
     this._physicalMoveHint = undefined;
     if (hint !== undefined && hint.element === element) {
@@ -2163,6 +2171,7 @@ export class LoroMovableList<T = unknown> extends LoroList<T> {
       beforePrevious,
       beforeNext,
       beforePhysicalNext,
+      beforePhysicalPrevious,
       afterPrevious: this._sequence.previousVisible(element)?.id,
       afterNext: this._sequence.nextVisible(element)?.id,
     };

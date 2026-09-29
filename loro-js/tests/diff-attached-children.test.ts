@@ -762,6 +762,38 @@ describe("diff and revertTo for containers attached by the range", () => {
       });
     }
   });
+
+  test("undo keeps a move's slot when its old neighbor changed afterwards", () => {
+    const build = () => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = doc.getMovableList("l");
+      for (const value of ["A", "B", "C", "D"]) {
+        list.insertContainer(list.length, new LoroText()).insert(0, value);
+      }
+      doc.commit();
+      const undo = new UndoManager(doc, {
+        mergeInterval: 0,
+        excludeOriginPrefixes: ["system"],
+      });
+      list.move(0, 1);
+      doc.commit();
+      return { doc, list, undo };
+    };
+    // The old successor B is moved away by an excluded edit: A stays, as in Rust.
+    const moved = build();
+    moved.list.move(0, 3);
+    moved.doc.commit({ origin: "system" });
+    moved.undo.undo();
+    expect(moved.doc.toJSON()).toEqual({ l: ["A", "C", "D", "B"] });
+
+    // Something is inserted before the old successor: A goes back to the front.
+    const inserted = build();
+    inserted.list.insert(0, "new");
+    inserted.doc.commit({ origin: "system" });
+    inserted.undo.undo();
+    expect(inserted.doc.toJSON()).toEqual({ l: ["A", "new", "B", "C", "D"] });
+  });
 });
 
 interface TreeJson {
