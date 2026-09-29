@@ -445,6 +445,21 @@ build takes 7.1/19/362 ms to retreat 1k/4k/16k such marks, and building the 16k
 history takes 402 s in loro.js and 542 s in Rust. Every other
 `bench:complexity` entry stays flat from 1k to 8k.
 
+The zero-width counters are four more fields in every treap node, maintained
+on every update even for text without anchors, so plain Text edits pay a
+constant cost: 8,000 subscribed middle inserts take 15.4–15.8 ms against
+14.3–14.4 ms without them, and `text-subscribed-batch`, `history-commit`, and
+`history-update-batch-import` are 12–20% slower at 8k (September 29, Node 22,
+alternating runs at 1-minute load 6–8). No entry grows with size because of
+them. Moving them into a sidecar that only anchored sequences allocate, like
+the line-break totals, would remove that cost.
+
+Reading a Rust-written styled Text from a snapshot (16k characters, 200 marks,
+2k later edits) and checking out a middle version takes 24.7–25.0 ms the
+first time, 4.1–4.3 ms back to the latest, and 11.8–12.2 ms for a fork; `main`
+takes 35.9–37.2, 3.1–3.3, and 29.8–30.5 ms but shows wrong text, because it
+marks the text unreplayable and toggles its snapshot state.
+
 These costs were reviewed and accepted (loro-dev/loro#1137). The review measured,
 on Node 26 at 1-minute load 25–40, typing 1,000 characters inside a 64k bold
 range at 2.9–4.4 ms (1.9 ms on `main`) and the 8k repeated-mark tail retreat and
