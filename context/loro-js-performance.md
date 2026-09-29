@@ -253,6 +253,14 @@ JavaScript constant factor.
   that throws restores its previous version and state (`#transitionTo`, which
   also prepares inside its `try`), and `diff` restores the current state with a
   full rebuild when it or its move back throws.
+- Before a transition, `#canTransitionRecords` checks that each sequence still
+  holds the elements that the crossed insert operations name. It collects the
+  runs per container and calls `containsIdRuns` once per container, reading IDs
+  without building element views: O(elements + runs log runs). One call per
+  operation made a checkout O(operations × elements): across 2k scattered
+  inserts in an 8k text it took 698 ms on `main` and takes 4.2 ms now
+  (`text-scattered-edits-checkout`, 13 → 698 ms from 1k to 8k before, 1.0 →
+  4.2 ms now; September 29, Node 22, 1-minute load 6–9).
 - First checkout after importing a 262,144-operation single-peer Text snapshot
   takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
   versus about 148 ms for the earlier whole-document replay; 65,536 operations
