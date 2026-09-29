@@ -103,7 +103,32 @@ JavaScript constant factor.
   keep their single-child edge implicit, and `SequenceIndex` can skip an entire
   future ID run while finding the next causally included element. Ordinary local
   edits keep the smaller unindexed path. MovableList continues to use the scan
-  because moves break the origin-tree physical preorder.
+  because moves break the origin-tree physical preorder. Sibling subtrees are
+  contiguous, so the gap between two direct children belongs to the earlier
+  child. After the last child the interval can also hold concurrent elements
+  whose origin is left of `originLeft`; Rust's scan stops before them. The index
+  therefore checks whether the interval's last element descends from
+  `originLeft` and otherwise binary-searches the boundary. The descent test
+  walks origin-left links but jumps over each implicit run through per-peer
+  sorted counters of explicit (non-consecutive) elements, so it costs
+  O(explicit links · log n), like Rust's span-based scan, instead of one probe
+  per scalar in a long concurrent run (loro-dev/loro#1139). A walk over the
+  physical ID runs of the last sibling's subtree finds the same boundary in
+  O((runs + 1) log n) and was measured against it (September 28, Node 22,
+  1-minute load 8–17): with the B4 trace as the sibling subtree the binary
+  search takes 7.3 ms versus 11.1 ms, but on a deep chain of explicit links
+  (two positions typed alternately, 64k elements) 60.6 ms versus 15.5 ms,
+  because each of its O(log n) probes walks the chain. Realistic traces favor
+  the binary search. With a warm origin index, importing one concurrent
+  character after a 512k-character typed run takes 0.28–0.31 ms (0.29–0.30 ms
+  on `main`, which misorders other cases; a per-scalar walk took 9.7–10.7 ms),
+  and `text-concurrent-insert-after-long-run` stays at 0.18–0.30 ms from 64k to
+  512k characters (September 28, Node 22, interleaved, 1-minute load 7–17).
+- An imported Text delete is resolved by its position in the op's causal view,
+  like Rust's tracker (`LoroText._deleteTargets`): O(log n + runs) through
+  `visibleIdRuns` or the cached causal view. The recorded `start_id` is only a
+  fallback, because Rust's WASM build can record one that is off by the UTF-16
+  length of astral text. Local deletes skip the lookup.
 - Merging adjacent changes appends only the new operations and key-table entries
   to the retained record. The cached operation length, peer end, frontier set,
   operation indexes, and subscriber update slice are updated incrementally, so
@@ -228,6 +253,14 @@ JavaScript constant factor.
   that throws restores its previous version and state (`#transitionTo`, which
   also prepares inside its `try`), and `diff` restores the current state with a
   full rebuild when it or its move back throws.
+- Before a transition, `#canTransitionRecords` checks that each sequence still
+  holds the elements that the crossed insert operations name. It collects the
+  runs per container and calls `containsIdRuns` once per container, reading IDs
+  without building element views: O(elements + runs log runs). One call per
+  operation made a checkout O(operations × elements): across 2k scattered
+  inserts in an 8k text it took 698 ms on `main` and takes 4.2 ms now
+  (`text-scattered-edits-checkout`, 13 → 698 ms from 1k to 8k before, 1.0 →
+  4.2 ms now; September 29, Node 22, 1-minute load 6–9).
 - First checkout after importing a 262,144-operation single-peer Text snapshot
   takes about 57 ms (medians of 5 alternating runs on a loaded Apple M5 Pro),
   versus about 148 ms for the earlier whole-document replay; 65,536 operations
