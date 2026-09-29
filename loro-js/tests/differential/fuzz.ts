@@ -231,7 +231,8 @@ export class FuzzRun {
     );
     for (const from of peers) {
       for (const to of peers) {
-        if (from === to) continue;
+        // A peer can leave the run during these syncs (see applySync).
+        if (from === to || !this.twins.has(from) || !this.twins.has(to)) continue;
         yield { kind: "sync", from, to, mode: "update", cross: this.profile.crossEngine };
       }
     }
