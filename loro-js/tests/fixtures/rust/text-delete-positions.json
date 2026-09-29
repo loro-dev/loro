@@ -1,0 +1,49 @@
+{
+  "text": "b",
+  "updates": {
+    "schema_version": 1,
+    "start_version": {},
+    "peers": [
+      "7"
+    ],
+    "changes": [
+      {
+        "id": "0@0",
+        "timestamp": 0,
+        "deps": [],
+        "lamport": 0,
+        "msg": null,
+        "ops": [
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "insert",
+              "pos": 0,
+              "text": "a😀b"
+            },
+            "counter": 0
+          },
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "insert",
+              "pos": 2,
+              "text": "x"
+            },
+            "counter": 3
+          },
+          {
+            "container": "cid:root-text:Text",
+            "content": {
+              "type": "delete",
+              "pos": 0,
+              "len": 3,
+              "start_id": "0@0"
+            },
+            "counter": 4
+          }
+        ]
+      }
+    ]
+  }
+}

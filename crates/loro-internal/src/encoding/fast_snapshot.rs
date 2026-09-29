@@ -251,7 +251,7 @@ pub(crate) fn decode_snapshot_inner(
 
     if let Err(e) = decode_result {
         state.reset_to_empty_for_failed_snapshot_import();
-        oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint);
+        oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &state);
         return Err(e);
     }
     drop(state);
@@ -260,12 +260,10 @@ pub(crate) fn decode_snapshot_inner(
         doc.set_detached(true);
         if let Err(e) = doc._checkout_to_latest_without_commit_as_import(false, checkout_origin) {
             doc.set_detached(false);
-            doc.app_state()
-                .lock()
-                .reset_to_empty_for_failed_snapshot_import();
-            doc.oplog()
-                .lock()
-                .reset_to_empty_for_failed_snapshot_import(arena_checkpoint);
+            let mut oplog = doc.oplog().lock();
+            let mut state = doc.app_state().lock();
+            state.reset_to_empty_for_failed_snapshot_import();
+            oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &state);
             return Err(e);
         }
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());

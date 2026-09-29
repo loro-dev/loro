@@ -130,8 +130,6 @@ fn diagnose_block(block: &EncodedBlock) {
     info!("  values: {} bytes", block.values.len());
 }
 
-const VERSION: u16 = 0;
-
 // MARK: encode_block
 /// It's assume that every change in the block share the same peer.
 pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
@@ -463,19 +461,16 @@ impl ValueDecodedArenasTrait for ValueDecodeArena<'_> {
     }
 }
 
+/// Read the counter and lamport ranges from the first fields of an encoded block
+/// without decoding the rest.
+///
+/// The block is a postcard-encoded [`EncodedBlock`], whose leading `u32` fields are
+/// varints, so they can be read as LEB128 in declaration order. There is no version
+/// prefix: reading one shifted every field and broke lamport lookups on blocks that
+/// only live in the KV store (`ChangeStore::get_change_by_lamport_lte`).
 pub fn decode_block_range(
     mut bytes: &[u8],
 ) -> LoroResult<((Counter, Counter), (Lamport, Lamport))> {
-    let version = leb128::read::unsigned(&mut bytes).map_err(|e| {
-        LoroError::DecodeError(format!("Failed to read version: {e}").into_boxed_str())
-    })?;
-
-    if version as u16 != VERSION {
-        return Err(LoroError::DecodeError(
-            "Version mismatch".to_string().into_boxed_str(),
-        ));
-    }
-
     let counter_start = leb128::read::unsigned(&mut bytes).map_err(|e| {
         LoroError::DecodeError(format!("Failed to read counter start: {e}").into_boxed_str())
     })? as Counter;

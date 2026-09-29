@@ -2,4 +2,4 @@
 "loro.js": patch
 ---
 
-Fix `loro.js` events for child containers that a checkout or import attaches again, for example a map key set back to an older text, or a restored list element that holds a container. The event for such a child now carries its whole state, like `loro-crdt`, instead of nothing or a delta against the state it had while it was hidden. A listener that mirrors events into its own model (starting an attached child from empty) now ends up with the document's state. Events are also ordered parent first.
+Fix a `loro.js` checkout event for a child container in a List when the checkout falls back to replaying history, for example after updates were imported while the document was detached. The List diff could delete and re-insert an unchanged child container without sending its content, so a listener that starts an inserted child from empty lost that child's content. The child's whole state is now sent, as for any other re-attached child.
