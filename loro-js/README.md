@@ -172,7 +172,9 @@ checkout there and back.
    every replica. Do not import old updates or snapshots into it. Reading the state
    with 1.0 right after importing a 0.2 snapshot gives the same result only when
    that snapshot is the final version: if updates were stored after it, 1.0 (like
-   Rust) reads those updates the Rust way.
+   Rust) reads those updates the Rust way. For a 0.2 snapshot of bold `ab` in
+   `abcd` followed by the update that inserted `X` at 3 and deleted 1, 0.2 shows
+   `[a]cXd` and 1.0 and Rust show `[bX]cd`; read such data with 0.2.
 2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not
    snapshots) on every replica, and check the content, because it can differ from
    what 0.2 showed.
