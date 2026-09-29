@@ -2962,7 +2962,7 @@ export class LoroTree<
     const records = this._subtreeRecords(this._childrenOf(undefined));
     if (options.withDeleted === true) {
       const deleted = [...this._nodes.values()].filter((record) => record.deleted);
-      records.push(...this._subtreeRecords(deleted));
+      for (const record of this._subtreeRecords(deleted)) records.push(record);
     }
     return records.map((record) => new LoroTreeNode<T>(this, record.id));
   }
@@ -2978,7 +2978,7 @@ export class LoroTree<
   _subtreeRecords(starts: readonly TreeNodeRecord[]): TreeNodeRecord[] {
     const output = [...starts];
     for (let index = 0; index < output.length; index += 1) {
-      output.push(...this._childrenOf(output[index]!.id));
+      for (const child of this._childrenOf(output[index]!.id)) output.push(child);
     }
     return output;
   }

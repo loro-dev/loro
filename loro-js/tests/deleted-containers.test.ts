@@ -86,4 +86,38 @@ describe("deleted containers and tree nodes", () => {
     expect(grandchild.isDeleted()).toBe(true);
     expect(doc.getPathToContainer(grandchild.id)).toBeUndefined();
   });
+
+  // V8 caps the arguments of one call (about 125k on Node's main thread), so
+  // spreading a child list into push() threw a RangeError for a node with that
+  // many children, or that many deleted nodes with `withDeleted`. Building
+  // such a tree is too slow for CI, so check the widest push() at 2,000.
+  test("lists nodes without passing a whole child list to one call", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const tree = doc.getTree("tree");
+    const parent = tree.createNode();
+    for (let index = 0; index < 2_000; index += 1) tree.createNode(parent.id);
+    doc.commit();
+    const widestPush = (list: () => unknown[]): number => {
+      const push = Array.prototype.push;
+      let widest = 0;
+      Array.prototype.push = function (this: unknown[], ...items: unknown[]) {
+        widest = Math.max(widest, items.length);
+        return push.apply(this, items);
+      };
+      try {
+        list();
+      } finally {
+        Array.prototype.push = push;
+      }
+      return widest;
+    };
+
+    expect(tree.getNodes()).toHaveLength(2_001);
+    expect(widestPush(() => tree.getNodes())).toBeLessThan(100);
+    tree.delete(parent.id);
+    doc.commit();
+    expect(tree.getNodes({ withDeleted: true })).toHaveLength(2_001);
+    expect(widestPush(() => tree.getNodes({ withDeleted: true }))).toBeLessThan(100);
+  });
 });
