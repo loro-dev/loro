@@ -1473,6 +1473,12 @@ impl LoroDoc {
     /// Apply a diff to the current document state.
     ///
     /// Internally, it will apply the diff to the current state.
+    ///
+    /// A mergeable child that the batch makes visible again is handled according to
+    /// [`DiffBatch::is_full_state`]. Batches from [`LoroDoc::diff`] carry the child's full state
+    /// and are aligned with whatever hidden state this doc keeps for it, so they apply to any
+    /// doc. Other batches (e.g. built from events) are applied as increments, which is right
+    /// when this doc shares the source's hidden state.
     #[inline]
     pub fn apply_diff(&self, diff: DiffBatch) -> LoroResult<()> {
         diff.validate_for_apply()?;
@@ -3864,11 +3870,20 @@ impl UndoManager {
     }
 
     /// Undo the last change made by the peer.
+    ///
+    /// Returns `Err(LoroError::ArgErr)` without changing the doc if the step
+    /// would have to recreate a container of a type unknown to this version
+    /// (written by a newer Loro). That step is dropped and its edits stay; the
+    /// next call undoes the step before it, rebased over the dropped step's
+    /// edits like over a remote peer's.
     pub fn undo(&mut self) -> LoroResult<bool> {
         self.0.undo()
     }
 
     /// Redo the last change made by the peer.
+    ///
+    /// Fails like [`UndoManager::undo`] on steps that would recreate a
+    /// container of an unknown type.
     pub fn redo(&mut self) -> LoroResult<bool> {
         self.0.redo()
     }

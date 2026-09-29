@@ -338,4 +338,138 @@ mod loom_test {
             assert_eq!(doc.get_text("text").len_utf8(), 2);
         });
     }
+
+    /// A snapshot where peer 2 created node `0@2` under a parent that peer 1 deleted
+    /// concurrently, then more history. A document loaded from it finds the parent of the
+    /// node's meta only by parsing the change that created the node (loro-dev/loro#1158).
+    fn deleted_parent_snapshot() -> (Vec<u8>, loro::TreeID) {
+        let a = LoroDoc::new();
+        a.set_peer_id(1).unwrap();
+        let parent = a.get_tree("tree").create(loro::TreeParentId::Root).unwrap();
+        a.commit();
+        let b = LoroDoc::new();
+        b.set_peer_id(2).unwrap();
+        b.import(&a.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        let child = b.get_tree("tree").create(parent).unwrap();
+        b.commit();
+        a.get_tree("tree").delete(parent).unwrap();
+        a.commit();
+        a.import(&b.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        for i in 0..3 {
+            a.get_map("m").insert("k", i).unwrap();
+            a.commit();
+        }
+        (a.export(ExportMode::Snapshot).unwrap(), child)
+    }
+
+    /// The creator resolver reaches the change store without the op log lock (here under the
+    /// state lock, from `is_deleted` and `has_container`), while another thread reads the
+    /// store under the op log lock. Both must take the store's locks in the same order.
+    #[test]
+    fn resolving_a_meta_parent_while_another_thread_reads_the_history() {
+        for reader in 0..3 {
+            loom::model(move || {
+                let (snapshot, child) = deleted_parent_snapshot();
+                let doc = LoroDoc::new();
+                doc.import(&snapshot).unwrap();
+                let meta = doc.get_tree("tree").get_meta(child).unwrap();
+                let meta_id = loro::ContainerTrait::id(&meta);
+                let doc2 = doc.clone();
+                let h0 = loom::thread::spawn(move || {
+                    if reader == 2 {
+                        assert!(doc.has_container(&meta_id));
+                    } else {
+                        assert!(loro::ContainerTrait::is_deleted(&meta));
+                    }
+                });
+                let h1 = loom::thread::spawn(move || {
+                    if reader == 0 {
+                        assert!(doc2.len_changes() > 0);
+                    } else {
+                        doc2.export(ExportMode::all_updates()).unwrap();
+                    }
+                });
+                h0.join().unwrap();
+                h1.join().unwrap();
+            });
+        }
+    }
+
+    /// An import that fails before its rollback scope begins (here while decoding JSON) rolls
+    /// the arena back to where it started. A block that the resolver parsed on another thread
+    /// in the meantime must not keep indices that the rollback drops.
+    #[test]
+    fn resolving_a_meta_parent_while_an_import_fails() {
+        struct Fixture {
+            snapshot: Vec<u8>,
+            meta: loro::ContainerID,
+            bad_json: String,
+            vv: loro::VersionVector,
+            history: String,
+        }
+        // Built once, in a single-threaded model of its own, so the racing model does not
+        // explore it.
+        static FIXTURE: std::sync::Mutex<Option<std::sync::Arc<Fixture>>> =
+            std::sync::Mutex::new(None);
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100_000;
+        builder.check(|| {
+            let (snapshot, child) = deleted_parent_snapshot();
+            // A separate document, so that exporting parses nothing in the tested one.
+            let reference = LoroDoc::new();
+            reference.import(&snapshot).unwrap();
+            let vv = reference.oplog_vv();
+            let history =
+                serde_json::to_string(&reference.export_json_updates(&Default::default(), &vv))
+                    .unwrap();
+            // Another peer creates a container, so decoding its change registers one. The
+            // empty change after it fails the decode.
+            let e = LoroDoc::new();
+            e.set_peer_id(9).unwrap();
+            e.import(&snapshot).unwrap();
+            e.get_map("x")
+                .insert_container("c", loro::LoroMap::new())
+                .unwrap()
+                .insert("q", 1)
+                .unwrap();
+            e.commit();
+            let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+            let changes = json["changes"].as_array_mut().unwrap();
+            let mut empty = changes.last().unwrap().clone();
+            empty["ops"] = serde_json::json!([]);
+            changes.push(empty);
+            *FIXTURE.lock().unwrap() = Some(std::sync::Arc::new(Fixture {
+                snapshot,
+                meta: child.associated_meta_container(),
+                bad_json: serde_json::to_string(&json).unwrap(),
+                vv,
+                history,
+            }));
+        });
+        let f = FIXTURE.lock().unwrap().clone().unwrap();
+
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 100_000;
+        builder.check(move || {
+            let doc = LoroDoc::new();
+            doc.import(&f.snapshot).unwrap();
+            let (doc1, doc2) = (doc.clone(), doc.clone());
+            let (f1, f2) = (f.clone(), f.clone());
+            let h0 = loom::thread::spawn(move || {
+                doc1.has_container(&f1.meta);
+            });
+            let h1 = loom::thread::spawn(move || {
+                assert!(doc2.import_json_updates(f2.bad_json.as_str()).is_err());
+            });
+            h0.join().unwrap();
+            h1.join().unwrap();
+            assert!(doc.has_container(&f.meta));
+            let history =
+                serde_json::to_string(&doc.export_json_updates(&Default::default(), &f.vv))
+                    .unwrap();
+            assert_eq!(history, f.history);
+        });
+    }
 }

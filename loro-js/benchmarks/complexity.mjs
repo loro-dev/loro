@@ -509,6 +509,45 @@ for (const size of sizes) {
   });
   unsubscribeImport();
 
+  // A concurrent character that Fugue orders after a sibling's whole run of
+  // 64 * size characters. Peer 1's character first builds the origin index.
+  const concurrentUpdate = (peer, text) => {
+    const doc = new LoroDoc();
+    doc.setPeerId(peer);
+    doc.getText("text").insert(0, text);
+    doc.commit();
+    return doc.export({ mode: "update" });
+  };
+  const concurrentTarget = new LoroDoc();
+  concurrentTarget.import(concurrentUpdate(2, "x".repeat(size * 64)));
+  concurrentTarget.import(concurrentUpdate(1, "y"));
+  const concurrentTail = concurrentUpdate(3, "z");
+  measure("text-concurrent-insert-after-long-run", size, () => {
+    concurrentTarget.import(concurrentTail);
+    return concurrentTarget.getText("text").length;
+  });
+
+  // Checking out across size / 4 scattered inserts: the transition checks each
+  // op's elements, once per container rather than one tree walk per op.
+  const scatteredDoc = new LoroDoc();
+  scatteredDoc.setPeerId(4);
+  const scatteredText = scatteredDoc.getText("text");
+  scatteredText.insert(0, "x".repeat(size));
+  scatteredDoc.commit();
+  const scatteredBase = scatteredDoc.frontiers();
+  let scatteredSeed = 1;
+  for (let index = 0; index < size >>> 2; index += 1) {
+    scatteredSeed = (scatteredSeed * 1_103_515_245 + 12_345) >>> 0;
+    scatteredText.insert(scatteredSeed % scatteredText.length, "y");
+    if (index % 16 === 0) scatteredDoc.commit();
+  }
+  scatteredDoc.commit();
+  measure("text-scattered-edits-checkout", size, () => {
+    scatteredDoc.checkout(scatteredBase);
+    scatteredDoc.checkoutToLatest();
+    return scatteredText.length;
+  });
+
   const checkoutTextDoc = new LoroDoc();
   checkoutTextDoc.setPeerId(3);
   checkoutTextDoc.getText("text").insert(0, "x".repeat(size));
