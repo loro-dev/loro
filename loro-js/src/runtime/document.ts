@@ -1377,9 +1377,10 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
    * existing element instead of an empty copy; every other insert and delete
    * is applied as is. Positions are resolved through element identity rather
    * than index bookkeeping, so unmerged delta items (`delete 1, delete 2`) and
-   * several children moved out of one deleted range stay correct. Returns
-   * false, leaving the O(delta) path to the caller, when no inserted child
-   * currently sits in a deleted range.
+   * several children moved out of one deleted range stay correct. As in Rust
+   * (loro-dev/loro#1138), the deleted ranges go first, right to left, and the
+   * inserts after them, so the ops get Rust's IDs. Returns false, leaving the
+   * O(delta) path to the caller, only for a delta without deletes.
    */
   #applyMovableListMoves(
     list: LoroMovableList,
@@ -1413,7 +1414,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
         }
       }
     }
-    if (insertedChildren.length === 0 || deletedRanges.length === 0) return false;
+    // Rust deletes before it inserts, right to left, even without moved
+    // children, and the op IDs this assigns must match its.
+    if (deletedRanges.length === 0) return false;
 
     const inDeletedRange = (position: number): boolean => {
       let low = 0;
@@ -1444,7 +1447,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       if (!moved.has(sourceId))
         moved.set(sourceId, { element: binding.element, index: position });
     }
-    if (moved.size === 0) return false;
 
     // Walk the delta once more: each inserted item is placed right after its
     // predecessor in the final order (a retained element or an earlier item).
