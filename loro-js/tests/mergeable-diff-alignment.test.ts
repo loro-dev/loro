@@ -299,3 +299,52 @@ describe("default applyDiff on a doc that holds the hidden state (Rust main resu
     });
   });
 });
+
+describe("event mirrors (Rust main results)", () => {
+  function mirrorRun(fullStateForNonLocal: boolean): unknown[] {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const mirror = new LoroDoc();
+    mirror.setPeerId(9);
+    doc.subscribe((batch) => {
+      mirror.applyDiff(
+        batch.events.map((event) => [event.target, event.diff]),
+        fullStateForNonLocal && batch.by !== "local" ? { fullState: true } : undefined,
+      );
+      mirror.commit();
+    });
+    const list = doc.getMap("m").ensureMergeableList("s");
+    list.push(1);
+    list.push(2);
+    doc.commit();
+    const alive = doc.frontiers();
+    doc.getMap("m").delete("s");
+    doc.commit();
+    doc.checkout(alive);
+    const afterCheckout = mirror.toJSON();
+    doc.checkoutToLatest();
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.import(doc.export({ mode: "snapshot" }));
+    remote.getMap("m").ensureMergeableList("s");
+    remote.commit();
+    doc.import(remote.export({ mode: "update", from: doc.oplogVersion() }));
+    return [afterCheckout, mirror.toJSON(), doc.toJSON()];
+  }
+
+  test("import and checkout batches carry full state, so mirrors pass fullState", () => {
+    expect(mirrorRun(true)).toEqual([
+      { m: { s: [1, 2] } },
+      { m: { s: [1, 2] } },
+      { m: { s: [1, 2] } },
+    ]);
+  });
+
+  test("a default mirror applies that full state on top of its hidden copy", () => {
+    expect(mirrorRun(false)).toEqual([
+      { m: { s: [1, 2, 1, 2] } },
+      { m: { s: [1, 2, 1, 2, 1, 2] } },
+      { m: { s: [1, 2] } },
+    ]);
+  });
+});

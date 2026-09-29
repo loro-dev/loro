@@ -213,10 +213,13 @@ export type MapDiff = {
 /** Options for `LoroDoc.applyDiff`. */
 export interface ApplyDiffOptions {
   /**
-   * The batch comes from `diff()` and re-activated mergeable children carry
-   * their full state. Each such child's full state is aligned with the hidden
-   * state this document holds at its container ID instead of being applied on
-   * top of it. Leave unset for event batches (incremental), as in loro-crdt.
+   * Re-activated mergeable children in the batch carry their full state, and
+   * each is aligned with the hidden state this document holds at its container
+   * ID instead of being applied on top of it. Set it for a batch from `diff()`
+   * and, when mirroring events, for `import` and `checkout` batches, which
+   * also carry that full state. Leave it unset for `local` batches: a local
+   * re-ensure has no child entry, which a full-state batch reads as "empty".
+   * As in loro-crdt.
    */
   readonly fullState?: boolean;
 }
