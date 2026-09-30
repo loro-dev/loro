@@ -21,6 +21,8 @@ before changing mergeable child behavior.
   shallow-snapshot export; read
   [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
   before changing the richtext snapshot codec or that pass.
+  `tree_state.rs` builds tree events two ways depending on the diff mode:
+  [../../../../context/tree-events.md](../../../../context/tree-events.md).
   `movable_list_state.rs` import validation and the Checkout-mode fallback for
   moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).

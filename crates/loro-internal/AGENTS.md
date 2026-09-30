@@ -37,6 +37,8 @@ over graceful degradation.
 - `src/diff_calc/`: diff calculation when moving between versions. The tree
   calculator's cache transitions:
   [../../context/tree-checkout-window.md](../../context/tree-checkout-window.md).
+  Which tree diff modes carry raw ops, and how tree events are built for each:
+  [../../context/tree-events.md](../../context/tree-events.md).
 - `src/container/richtext/`: text state with style anchors. Where local inserts
   go next to anchors, the insert cursor cache, and delete `start_id`s:
   [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).

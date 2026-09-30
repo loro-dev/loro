@@ -1041,6 +1041,128 @@ pub(crate) enum FractionalIndexGenResult {
     NotConfigured,
 }
 
+impl TreeState {
+    /// Applies a raw `Create` or `Move` op (`Linear` and `ImportGreaterUpdates`
+    /// modes) and pushes the events that turn the alive tree before it into
+    /// the alive tree after it:
+    ///
+    /// - alive before and after: `Move`, unless nothing visible changed (e.g. a
+    ///   `Create` op for a child that the revival of its parent already
+    ///   brought back where it is);
+    /// - alive before only: `Delete`, which covers the subtree;
+    /// - alive after only: `Create` for the node and for every node below it,
+    ///   because a node that leaves a deleted subtree brings its subtree back;
+    /// - neither: nothing.
+    ///
+    /// With `with_check`, an op that would create a cycle is skipped, as in
+    /// `apply_diff`.
+    fn apply_raw_move_and_convert(
+        &mut self,
+        target: TreeID,
+        parent: TreeParentId,
+        last_move_op: IdFull,
+        position: &FractionalIndex,
+        with_check: bool,
+        ans: &mut Vec<TreeDiffItem>,
+    ) {
+        let old = self
+            .trees
+            .get(&target)
+            .map(|node| (node.parent, node.position.as_ref() == Some(position)));
+        let old_index = match &old {
+            Some(_) if !self.is_node_deleted(&target).unwrap() => {
+                Some(self.get_index_by_tree_id(&target).unwrap())
+            }
+            _ => None,
+        };
+        let result = self.mov(
+            target,
+            parent,
+            last_move_op,
+            Some(position.clone()),
+            with_check,
+        );
+        if with_check {
+            if result.is_err() {
+                return;
+            }
+        } else {
+            result.unwrap();
+        }
+
+        let alive = !self.is_node_deleted(&target).unwrap();
+        match (old, old_index) {
+            (Some((old_parent, same_position)), Some(old_index)) => {
+                if !alive {
+                    ans.push(TreeDiffItem {
+                        target,
+                        action: TreeExternalDiff::Delete {
+                            old_parent,
+                            old_index,
+                        },
+                    });
+                    return;
+                }
+                let index = self.get_index_by_tree_id(&target).unwrap();
+                if old_parent == parent && old_index == index && same_position {
+                    return;
+                }
+                ans.push(TreeDiffItem {
+                    target,
+                    action: TreeExternalDiff::Move {
+                        parent,
+                        index,
+                        position: position.clone(),
+                        old_parent,
+                        old_index,
+                    },
+                });
+            }
+            (old, _) => {
+                if !alive {
+                    return;
+                }
+                ans.push(TreeDiffItem {
+                    target,
+                    action: TreeExternalDiff::Create {
+                        parent,
+                        index: self.get_index_by_tree_id(&target).unwrap(),
+                        position: position.clone(),
+                    },
+                });
+                // A node that did not exist has no children yet.
+                if old.is_some() {
+                    self.push_subtree_creation(target, ans);
+                }
+            }
+        }
+    }
+
+    /// Pushes a `Create` for every node below `root`: parents before their
+    /// children and siblings in order, so each `index` is valid when the
+    /// events are applied in sequence.
+    fn push_subtree_creation(&self, root: TreeID, ans: &mut Vec<TreeDiffItem>) {
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            let parent = TreeParentId::Node(node);
+            let Some(children) = self.children.get(&parent) else {
+                continue;
+            };
+            for (index, (position, &child)) in children.iter().enumerate() {
+                ans.push(TreeDiffItem {
+                    target: child,
+                    action: TreeExternalDiff::Create {
+                        parent,
+                        index,
+                        position: position.position.clone(),
+                    },
+                });
+                stack.push(child);
+            }
+        }
+    }
+}
+
 impl ContainerState for TreeState {
     fn container_idx(&self) -> crate::container::idx::ContainerIdx {
         self.idx
@@ -1058,6 +1180,12 @@ impl ContainerState for TreeState {
         ctx: DiffApplyContext,
     ) -> Diff {
         let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);
+        // In `Checkout` mode the items come from `TreeDiffCalculator`, which
+        // has already classified them against its cache and follows every
+        // `Create` with the node's subtree. In `Linear` and
+        // `ImportGreaterUpdates` modes they are the raw ops, so the events are
+        // derived from the state. See `context/tree-events.md`.
+        let raw_ops = !matches!(ctx.mode, DiffMode::Checkout);
         let mut ans = vec![];
         if let InternalDiff::Tree(tree) = &diff {
             // assert never cause cycle move
@@ -1066,6 +1194,19 @@ impl ContainerState for TreeState {
                 let target = diff.target;
                 // create associated metadata container
                 match &diff.action {
+                    TreeInternalDiff::Create { parent, position }
+                    | TreeInternalDiff::Move { parent, position }
+                        if raw_ops =>
+                    {
+                        self.apply_raw_move_and_convert(
+                            target,
+                            *parent,
+                            last_move_op,
+                            position,
+                            need_check,
+                            &mut ans,
+                        );
+                    }
                     TreeInternalDiff::Create { parent, position } => {
                         self.mov(target, *parent, last_move_op, Some(position.clone()), false)
                             .unwrap();
@@ -1092,84 +1233,41 @@ impl ContainerState for TreeState {
                         // If this is some, the node is still alive at the moment
                         let old_index = self.get_index_by_tree_id(&target);
                         let was_alive = !self.is_node_deleted(&target).unwrap();
-                        if need_check {
-                            if self
-                                .mov(target, *parent, last_move_op, Some(position.clone()), true)
-                                .is_ok()
-                            {
-                                if self.is_node_deleted(&target).unwrap() {
-                                    if was_alive {
-                                        // delete event
-                                        ans.push(TreeDiffItem {
-                                            target,
-                                            action: TreeExternalDiff::Delete {
-                                                old_parent,
-                                                old_index: old_index.unwrap(),
-                                            },
-                                        });
-                                    }
-                                    // Otherwise, it's a normal move inside deleted nodes, no event is needed
-                                } else if was_alive {
-                                    // normal move
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Move {
-                                            parent: *parent,
-                                            index: self.get_index_by_tree_id(&target).unwrap(),
-                                            position: position.clone(),
-                                            old_parent,
-                                            old_index: old_index.unwrap(),
-                                        },
-                                    });
-                                } else {
-                                    // create event
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Create {
-                                            parent: *parent,
-                                            index: self.get_index_by_tree_id(&target).unwrap(),
-                                            position: position.clone(),
-                                        },
-                                    });
-                                }
-                            }
-                        } else {
-                            self.mov(target, *parent, last_move_op, Some(position.clone()), false)
-                                .unwrap();
+                        self.mov(target, *parent, last_move_op, Some(position.clone()), false)
+                            .unwrap();
 
-                            if let TreeParentId::Node(p) = parent {
-                                // reuse diff cache, at this time,it's "move in deleted"
-                                if self.is_node_deleted(p).unwrap() {
-                                    continue;
-                                }
+                        if let TreeParentId::Node(p) = parent {
+                            // reuse diff cache, at this time,it's "move in deleted"
+                            if self.is_node_deleted(p).unwrap() {
+                                continue;
                             }
+                        }
 
-                            let index = self.get_index_by_tree_id(&target).unwrap();
-                            match was_alive {
-                                true => {
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Move {
-                                            parent: *parent,
-                                            index,
-                                            position: position.clone(),
-                                            old_parent,
-                                            old_index: old_index.unwrap(),
-                                        },
-                                    });
-                                }
-                                false => {
-                                    ans.push(TreeDiffItem {
-                                        target,
-                                        action: TreeExternalDiff::Create {
-                                            parent: *parent,
-                                            index,
-                                            position: position.clone(),
-                                        },
-                                    });
-                                }
+                        let index = self.get_index_by_tree_id(&target).unwrap();
+                        match was_alive {
+                            true => {
+                                ans.push(TreeDiffItem {
+                                    target,
+                                    action: TreeExternalDiff::Move {
+                                        parent: *parent,
+                                        index,
+                                        position: position.clone(),
+                                        old_parent,
+                                        old_index: old_index.unwrap(),
+                                    },
+                                });
                             }
-                        };
+                            false => {
+                                ans.push(TreeDiffItem {
+                                    target,
+                                    action: TreeExternalDiff::Create {
+                                        parent: *parent,
+                                        index,
+                                        position: position.clone(),
+                                    },
+                                });
+                            }
+                        }
                     }
                     TreeInternalDiff::Delete { parent, position } => {
                         let mut send_event = true;
