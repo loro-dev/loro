@@ -27,8 +27,8 @@ pub(crate) struct LoadAllFlag;
 type ParentResolver = dyn Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static;
 /// Loads the change holding the op with the given ID, if the op log has it. Parsing a change
 /// registers the parent link of every container its ops create, and a normal container's ID is
-/// the ID of the op that created it. It panics if the op log has the change but cannot parse
-/// it. See `context/arena-parent-links.md`.
+/// the ID of the op that created it. It answers [`CreatorOp::Corrupt`] if the op log has the
+/// change but cannot parse it. See `context/arena-parent-links.md`.
 type CreatorResolver = dyn Fn(&SharedArena, ID) -> CreatorOp + Send + Sync + 'static;
 
 /// What the op log's history knows about an op ID, answered by the [`CreatorResolver`].
@@ -40,6 +40,11 @@ pub(crate) enum CreatorOp {
     /// The history has no op with this ID: it was not received or committed yet, or it is
     /// before the shallow root.
     Absent,
+    /// A change block holds the op but cannot be decoded or parsed, so nothing is known about
+    /// the containers it creates. The op log records the block and reports it from the next
+    /// fallible entry point (import, export, checkout); the lookup itself answers like
+    /// `Absent` instead of panicking under the state lock.
+    Corrupt,
 }
 
 #[derive(Default)]
@@ -575,7 +580,7 @@ impl SharedArena {
             return match resolver(self, ID::new(*peer, *counter)) {
                 // Registered unless the op does not create this container.
                 CreatorOp::Loaded => self.get_registered_parent(child),
-                CreatorOp::Absent => None,
+                CreatorOp::Absent | CreatorOp::Corrupt => None,
             };
         }
 
@@ -594,7 +599,7 @@ impl SharedArena {
         let resolver = self.inner.containers.read().creator_resolver.clone()?;
         match resolver(self, ID::new(*peer, *counter)) {
             CreatorOp::Loaded => self.id_to_idx(id),
-            CreatorOp::Absent => None,
+            CreatorOp::Absent | CreatorOp::Corrupt => None,
         }
     }
 
@@ -1064,7 +1069,7 @@ mod tests {
 
     #[test]
     fn a_container_that_no_op_creates_has_no_parent() {
-        for answer in [CreatorOp::Loaded, CreatorOp::Absent] {
+        for answer in [CreatorOp::Loaded, CreatorOp::Absent, CreatorOp::Corrupt] {
             // `Loaded`: the op exists but creates something else.
             let arena = SharedArena::new();
             arena.set_creator_resolver(move |_: &SharedArena, _: ID| answer);

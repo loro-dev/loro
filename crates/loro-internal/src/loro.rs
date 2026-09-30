@@ -166,7 +166,7 @@ impl LoroDoc {
     pub fn fork(&self) -> Self {
         if self.is_detached() {
             return self
-                .fork_at(&self.state_frontiers())
+                .fork_at_inner(&self.state_frontiers(), false)
                 .expect("fork_at on detached doc should not fail");
         }
 
@@ -770,6 +770,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
         let changes = match decode_changes(&mut oplog)
             .and_then(|changes| oplog.check_and_trim_known_part_of_changes(changes, values))
@@ -1396,6 +1397,7 @@ impl LoroDoc {
     }
 
     /// With `changes_only`, only [`DiffBatch::from_changes`] of the result is meaningful.
+    // Both callers return a `Result`, so a history that cannot be parsed is rejected here.
     fn diff_events(
         &self,
         a: &Frontiers,
@@ -1406,6 +1408,7 @@ impl LoroDoc {
             // Check whether a and b are valid before checkout so this returns a normal error
             // instead of panicking on shallow docs.
             let oplog = self.oplog.lock();
+            oplog.check_history_parsable()?;
             let validate_frontiers = |frontiers: &Frontiers| -> LoroResult<()> {
                 for id in frontiers.iter() {
                     if !oplog.dag.contains(id) {
@@ -2455,6 +2458,9 @@ impl LoroDoc {
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        // Checked here and not in `_checkout_without_emitting`: undo, `checkout_to_latest`
+        // and the exporters call that and cannot return this error.
+        self.oplog.lock().check_history_parsable()?;
         let was_detached = self.is_detached();
         let (options, guard) = self.implicit_commit_then_stop();
         let result = self._checkout_without_emitting(frontiers, true, true);
@@ -2597,7 +2603,9 @@ impl LoroDoc {
     ///
     /// After `a.merge(b)` and `b.merge(a)`, `a` and `b` will have the same content if they are in attached mode.
     pub fn merge(&self, other: &Self) -> LoroResult<ImportStatus> {
-        let updates = other.export(ExportMode::updates(&self.oplog_vv())).unwrap();
+        let updates = other
+            .export(ExportMode::updates(&self.oplog_vv()))
+            .map_err(LoroError::from)?;
         self.import(&updates)
     }
 
@@ -2942,7 +2950,21 @@ impl LoroDoc {
 
     #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
+        self.export_inner(mode, true)
+    }
+
+    /// With `reject_partial_history`, the export fails if a change block that cannot be
+    /// parsed was found, before or during the export, instead of returning bytes that
+    /// silently miss those changes. `fork` passes `false`: it has no error to return.
+    pub(crate) fn export_inner(
+        &self,
+        mode: ExportMode,
+        reject_partial_history: bool,
+    ) -> Result<Vec<u8>, LoroEncodeError> {
         self.with_barrier(|| {
+            if reject_partial_history {
+                self.oplog.lock().check_history_parsable()?;
+            }
             let ans = match mode {
                 ExportMode::Snapshot => export_fast_snapshot(self)?,
                 ExportMode::Updates { from } => export_fast_updates(self, &from),
@@ -2956,6 +2978,9 @@ impl LoroDoc {
                 },
                 ExportMode::SnapshotAt { version } => export_snapshot_at(self, &version)?,
             };
+            if reject_partial_history {
+                self.oplog.lock().check_history_parsable()?;
+            }
             Ok(ans)
         })
     }
