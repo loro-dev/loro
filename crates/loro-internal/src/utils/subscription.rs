@@ -323,10 +323,15 @@ where
                 };
 
                 if let Either::Left(subscribers) = subscribers {
-                    subscribers.remove(&subscriber_id);
+                    let removed = subscribers.remove(&subscriber_id);
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
                     }
+                    // Drop the subscriber only after releasing the lock: its callback
+                    // may own another `Subscription` (or an `UndoManager`) on this set,
+                    // whose drop takes this lock again (loro-dev/loro#1162).
+                    drop(lock);
+                    drop(removed);
                     return;
                 }
 
@@ -374,7 +379,10 @@ where
         let subscribers = lock.subscribers.remove(emitter);
         // A subscriber parked mid-emit belongs to the emitter being
         // removed; it never became visible, so it goes with it.
-        lock.pending_subscribers.remove(emitter);
+        let parked = lock.pending_subscribers.remove(emitter);
+        // Drop callbacks outside the lock; see the unsubscribe closure in `insert`.
+        drop(lock);
+        drop(parked);
         subscribers
             .and_then(|x| x.left().map(|s| s.into_values()))
             .into_iter()
@@ -453,9 +461,10 @@ where
         }
 
         // Remove any dropped subscriptions that were dropped while invoking the callback.
+        let mut removed = Vec::new();
         for (dropped_emitter, dropped_subscription_id) in mem::take(&mut lock.dropped_subscribers) {
             if *emitter == dropped_emitter {
-                subscribers.remove(&dropped_subscription_id);
+                removed.extend(subscribers.remove(&dropped_subscription_id));
             } else {
                 lock.dropped_subscribers
                     .insert((dropped_emitter, dropped_subscription_id));
@@ -464,6 +473,9 @@ where
 
         lock.subscribers
             .insert(emitter.clone(), Either::Left(subscribers));
+        // Drop callbacks outside the lock; see the unsubscribe closure in `insert`.
+        drop(lock);
+        drop(removed);
         Ok(())
     }
 
