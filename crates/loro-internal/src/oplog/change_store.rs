@@ -23,7 +23,7 @@ use loro_common::{
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::AtomicI64;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
@@ -308,35 +308,59 @@ impl ChangeStore {
     }
 
     pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        // A change store needs each peer's counters to be contiguous, so merge the
+        // ranges of each peer and put the k-th range of every peer into the k-th
+        // store. The blocks of all stores are written one after another, which the
+        // update decoder reads the same way (loro-dev/loro#1155).
+        let mut ranges: FxHashMap<PeerID, Vec<(Counter, Counter)>> = FxHashMap::default();
         for span in spans {
             let mut span = *span;
             span.normalize_();
-            if span.counter.end <= 0 {
-                continue;
-            }
-
-            span.counter.start = span.counter.start.max(0);
-            span.counter.end = span.counter.end.max(0);
-            if span.counter.start >= span.counter.end {
-                continue;
-            }
-
-            // PERF: this can be optimized by reusing the current encoded blocks
-            // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
-                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
-                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
-                if start == end {
-                    continue;
-                }
-
-                let ch = c.slice(start, end);
-                new_store.insert_change(ch, false, false);
+            let start = span.counter.start.max(0);
+            let end = span.counter.end.max(0);
+            if start < end {
+                ranges.entry(span.peer).or_default().push((start, end));
             }
         }
 
-        encode_blocks_in_store(new_store, &self.arena, w);
+        let mut layers: Vec<Vec<IdSpan>> = Vec::new();
+        for (peer, mut peer_ranges) in ranges {
+            peer_ranges.sort_unstable();
+            let mut merged: Vec<(Counter, Counter)> = Vec::with_capacity(peer_ranges.len());
+            for (start, end) in peer_ranges {
+                match merged.last_mut() {
+                    Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                    _ => merged.push((start, end)),
+                }
+            }
+            for (i, (start, end)) in merged.into_iter().enumerate() {
+                if layers.len() <= i {
+                    layers.push(Vec::new());
+                }
+                layers[i].push(IdSpan::new(peer, start, end));
+            }
+        }
+
+        for layer in layers {
+            let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+            for span in layer {
+                // PERF: this can be optimized by reusing the current encoded blocks
+                // In the current method, it needs to parse and re-encode the blocks
+                for c in self.iter_changes(span) {
+                    let start =
+                        ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                    let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+                    if start == end {
+                        continue;
+                    }
+
+                    let ch = c.slice(start, end);
+                    new_store.insert_change(ch, false, false);
+                }
+            }
+
+            encode_blocks_in_store(new_store, &self.arena, w);
+        }
     }
 
     fn encode_from(
