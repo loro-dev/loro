@@ -426,8 +426,10 @@ fn move_of_element_deleted_before_shallow_root_is_rejected() {
 /// (and no validation) was opened. With `two_peers`, `C1` is by peer 2 and `C2` by
 /// peer 3.
 fn forged_after_map_change(container: &str, forged_op: Value, two_peers: bool) -> String {
+    // Peer 2 is taken by `base_with_concurrent_edit`; reusing its `2@0` for other
+    // content is rejected as `UsedOpID` before the movable-list check runs.
     let (peers, c1_id, c2_id, c2_deps, c2_counter) = if two_peers {
-        (json!(["1", "2", "3"]), "0@1", "0@2", "0@1", 0)
+        (json!(["1", "4", "3"]), "0@1", "0@2", "0@1", 0)
     } else {
         (json!(["1"]), "4@0", "5@0", "4@0", 5)
     };

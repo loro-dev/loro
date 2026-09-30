@@ -358,6 +358,12 @@ impl ChangeStore {
         self.external_kv.lock().export_all()
     }
 
+    /// Decode the changes of a snapshot imported into a non-empty doc.
+    ///
+    /// Changes this doc already has are kept, because
+    /// `OpLog::check_and_trim_known_part_of_changes` compares them with the local
+    /// history before trimming them. When nothing is new, return no changes and
+    /// skip the clones.
     pub(crate) fn decode_snapshot_for_updates(
         bytes: Bytes,
         arena: &SharedArena,
@@ -365,46 +371,22 @@ impl ChangeStore {
     ) -> Result<Vec<Change>, LoroError> {
         let change_store = ChangeStore::new_mem(arena, Arc::new(AtomicI64::new(0)));
         let _ = change_store.import_all(bytes)?;
-        let mut changes = Vec::new();
+        let mut has_new = false;
         change_store.visit_all_changes(&mut |c| {
-            let cnt_threshold = self_vv.get(&c.id.peer).copied().unwrap_or(0);
-            if c.id.counter >= cnt_threshold {
-                changes.push(c.clone());
-                return;
-            }
-
-            let change_end = c.ctr_end();
-            if change_end > cnt_threshold {
-                changes.push(c.slice((cnt_threshold - c.id.counter) as usize, c.atom_len()));
-            }
+            has_new |= c.ctr_end() > self_vv.get(&c.id.peer).copied().unwrap_or(0);
         });
+        let mut changes = Vec::new();
+        if has_new {
+            change_store.visit_all_changes(&mut |c| changes.push(c.clone()));
+        }
 
         Ok(changes)
     }
 
-    pub(crate) fn decode_block_bytes(
-        bytes: Bytes,
-        arena: &SharedArena,
-        self_vv: &VersionVector,
-    ) -> LoroResult<Vec<Change>> {
-        let mut ans = ChangesBlockBytes::new(bytes).parse(arena)?;
-        if ans.is_empty() {
-            return Ok(ans);
-        }
-
-        let start = self_vv.get(&ans[0].peer()).copied().unwrap_or(0);
-        ans.retain_mut(|c| {
-            if c.id.counter >= start {
-                true
-            } else if c.ctr_end() > start {
-                *c = c.slice((start - c.id.counter) as usize, c.atom_len());
-                true
-            } else {
-                false
-            }
-        });
-
-        Ok(ans)
+    /// Decode an update block. Changes the doc already has are kept; see
+    /// [`Self::decode_snapshot_for_updates`].
+    pub(crate) fn decode_block_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Vec<Change>> {
+        ChangesBlockBytes::new(bytes).parse(arena)
     }
 
     /// Rolls back the store and the arena (to `arena`, the checkpoint taken when the import

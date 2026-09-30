@@ -630,6 +630,15 @@ impl SharedArena {
         (self.inner.values.lock()[range]).to_vec()
     }
 
+    /// Whether the values in two ranges are equal, without cloning them.
+    pub(crate) fn value_slices_eq(&self, a: Range<usize>, b: Range<usize>) -> bool {
+        let values = self.inner.values.lock();
+        match (values.get(a), values.get(b)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
+    }
+
     /// Borrow the values in `range` without cloning them (unlike
     /// [`Self::get_values`], which clones into a fresh `Vec`).
     #[inline]

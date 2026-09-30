@@ -52,6 +52,9 @@ over graceful degradation.
 - Movable-list `Move`/`Set` element validation on import, plus change-store
   rollback records and KV block-range decoding:
   [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).
+- Imported changes that reuse local op ids are checked against local history
+  before anything is applied (`src/oplog/known_history.rs`):
+  [../../context/import-peer-id-reuse.md](../../context/import-peer-id-reuse.md).
 - `import_batch` force-detach, its batch-wide rollback scope, and the
   never-exit-detached invariant:
   [../../context/import-batch-atomicity.md](../../context/import-batch-atomicity.md).

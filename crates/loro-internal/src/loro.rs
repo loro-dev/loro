@@ -27,7 +27,7 @@ use crate::{
     id::PeerID,
     json::JsonChange,
     op::InnerContent,
-    oplog::{loro_dag::FrontiersNotIncluded, OpLog},
+    oplog::{loro_dag::FrontiersNotIncluded, ImportedValues, OpLog},
     state::DocState,
     subscription::{LocalUpdateCallback, Observer, Subscriber},
     undo::DiffBatch,
@@ -660,6 +660,7 @@ impl LoroDoc {
                 } else {
                     self.import_changes_and_apply_delta_to_state_if_needed(
                         |oplog| encoding::decode_oplog_changes(oplog, parsed),
+                        ImportedValues::Exact,
                         origin,
                     )
 
@@ -671,6 +672,7 @@ impl LoroDoc {
             }
             EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| encoding::decode_oplog_changes(oplog, parsed),
+                ImportedValues::Exact,
                 origin,
             ),
             EncodeMode::Auto => {
@@ -764,11 +766,14 @@ impl LoroDoc {
     pub(crate) fn import_changes_and_apply_delta_to_state_if_needed(
         &self,
         decode_changes: impl FnOnce(&mut OpLog) -> Result<Vec<Change>, LoroError>,
+        values: ImportedValues,
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
-        let changes = match decode_changes(&mut oplog) {
+        let changes = match decode_changes(&mut oplog)
+            .and_then(|changes| oplog.check_and_trim_known_part_of_changes(changes, values))
+        {
             Ok(changes) => changes,
             Err(e) => {
                 oplog.rollback_arena(arena_checkpoint, &self.state.lock());
@@ -950,6 +955,7 @@ impl LoroDoc {
         self.with_barrier(|| {
             let result = self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
+                ImportedValues::Lossy,
                 Default::default(),
             );
             self.emit_events();

@@ -543,11 +543,13 @@ The updates APIs differ only in which changes are selected:
 shallow root), while `UpdatesInRange` emits the normalized requested ID spans.
 Both produce the exact body above.
 
-On import, each decoded block is filtered against the receiver's current
+On import, the decoded changes are filtered against the receiver's current
 VersionVector. A change entirely before the receiver's exclusive counter end is
-dropped; a change crossing that boundary is sliced at the boundary. The
-remaining changes from every block are then sorted by starting Lamport value
-before application. Block order in the byte stream is therefore not application
+dropped; a change crossing that boundary is sliced at the boundary. Before
+that, when the import brings anything new, the part of each change the receiver
+already has is compared with its local history, and a mismatch (a reused peer
+id) fails the import with `UsedOpID`. The changes from every block are sorted by
+starting Lamport value before application. Block order in the byte stream is therefore not application
 order. These selection and ordering rules are API behavior around the wire
 format; they do not add fields to it.
 
@@ -555,8 +557,9 @@ Selection:
 [`ChangeStore::export_blocks_from`](../crates/loro-internal/src/oplog/change_store.rs#L543-L577),
 [`export_blocks_in_range`](../crates/loro-internal/src/oplog/change_store.rs#L203-L233).
 Import filtering and ordering:
-[`ChangeStore::decode_block_bytes`](../crates/loro-internal/src/oplog/change_store.rs#L278-L300),
-[`fast_snapshot.rs::decode_updates`](../crates/loro-internal/src/encoding/fast_snapshot.rs#L360-L388).
+[`fast_snapshot.rs::decode_updates`](../crates/loro-internal/src/encoding/fast_snapshot.rs),
+[`OpLog::check_and_trim_known_part_of_changes`](../crates/loro-internal/src/oplog/known_history.rs)
+(see [`context/import-peer-id-reuse.md`](../context/import-peer-id-reuse.md)).
 
 ## 7. Postcard change block
 

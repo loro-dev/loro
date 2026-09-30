@@ -24,6 +24,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/mergeable-containers.md](context/mergeable-containers.md).
 - `import_batch` force-detach, batch-wide rollback scope, and the never-exit-detached
   invariant: [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
+- Imports that reuse local op ids (a shared peer id): the known-history check,
+  what counts as equal, and what it cannot catch:
+  [context/import-peer-id-reuse.md](context/import-peer-id-reuse.md).
 - Movable-list `Move`/`Set` import validation, and why a move of a deleted element
   is applied rather than rejected:
   [context/movable-list-op-validation.md](context/movable-list-op-validation.md).
