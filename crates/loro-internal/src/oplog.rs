@@ -447,6 +447,23 @@ impl OpLog {
         self.refresh_visible_op_count();
     }
 
+    /// [`Self::rollback_import`] without the arena rollback, for a scope that only inserted a
+    /// discarded local transaction (`LoroDoc::rollback_apply_diff_scope`): its containers were
+    /// registered by the transaction, and undoing it from the state may register old
+    /// containers and create state for them. See `context/apply-diff-atomicity.md`.
+    pub(crate) fn rollback_import_keeping_arena(&mut self, _state: &DocState) {
+        let Some(rollback) = self.import_rollback.take() else {
+            return;
+        };
+
+        self.change_store
+            .rollback_import_keeping_arena(rollback.change_store);
+        self.dag.rollback_import();
+        rollback.pending.rollback(&mut self.pending_changes);
+        self.history_cache.lock().free_all();
+        self.refresh_visible_op_count();
+    }
+
     /// Rolls the arena back to a checkpoint taken before an import that failed before its
     /// import rollback scope began. See [`ChangeStore::rollback_arena`], and
     /// [`Self::rollback_import`] for `state`.

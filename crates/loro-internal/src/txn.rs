@@ -166,6 +166,52 @@ pub struct Transaction {
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
     pub(super) is_peer_first_appearance: bool,
+    /// The DAG's frontiers when the txn began, before its first op.
+    dag_frontiers_at_start: Frontiers,
+    /// Set while `LoroDoc::apply_diff` or `revert_to` runs a batch in this txn,
+    /// which is rolled back if the batch fails (context/apply-diff-atomicity.md).
+    rollback_scope: Option<RollbackScope>,
+}
+
+/// See [`Transaction::begin_rollback_scope`].
+#[derive(Debug)]
+struct RollbackScope {
+    id: u64,
+    thread: usize,
+    /// Another thread applied an op in this txn while the batch ran.
+    foreign_ops: bool,
+    /// The txn's next counter and lamport when the batch began.
+    counter: Counter,
+    lamport: Lamport,
+    is_peer_first_appearance: bool,
+    /// For each container the batch gave an event hint to: how many hints it
+    /// had before, and the last one, which the batch's first hint may have been
+    /// merged into.
+    event_hints: FxHashMap<ContainerIdx, (usize, Option<EventHint>)>,
+}
+
+/// Identifies the current thread for [`RollbackScope`]: the address of a
+/// thread local is unique among the live threads.
+fn current_thread_mark() -> usize {
+    thread_local!(static MARK: u8 = const { 0 });
+    MARK.with(|m| m as *const u8 as usize)
+}
+
+/// What [`Transaction::roll_back_scope`] took out of a txn.
+pub(crate) struct RolledBackBatch {
+    pub(crate) peer: PeerID,
+    /// The txn's first op, its lamport, and the version it was applied on.
+    pub(crate) txn_start_counter: Counter,
+    pub(crate) txn_start_lamport: Lamport,
+    pub(crate) deps: Frontiers,
+    /// The DAG's frontiers before the txn's first op.
+    pub(crate) dag_frontiers_at_start: Frontiers,
+    /// The batch's ops are `batch_start..batch_end`; the txn keeps the ops before.
+    pub(crate) batch_start: Counter,
+    pub(crate) batch_end: Counter,
+    /// Every op of the txn, including the batch's.
+    pub(crate) ops: RleVec<[Op; 1]>,
+    pub(crate) timestamp: Timestamp,
 }
 
 impl std::fmt::Debug for Transaction {
@@ -350,6 +396,7 @@ impl Transaction {
         let peer = state_lock.peer.load(std::sync::atomic::Ordering::Relaxed);
         let next_counter = oplog_lock.next_id(peer).counter;
         let next_lamport = oplog_lock.dag.frontiers_to_next_lamport(&frontiers);
+        let dag_frontiers_at_start = oplog_lock.dag.frontiers().clone();
         let latest_timestamp = oplog_lock.get_greatest_timestamp(&frontiers);
         if let Err(err) =
             oplog_lock.check_change_greater_than_last_peer_id(peer, next_counter, &frontiers)
@@ -377,6 +424,8 @@ impl Transaction {
             msg: None,
             latest_timestamp,
             is_peer_first_appearance: false,
+            dag_frontiers_at_start,
+            rollback_scope: None,
         })
     }
 
@@ -532,6 +581,82 @@ impl Transaction {
         Ok(None)
     }
 
+    /// Mark the start of a batch that `LoroDoc` rolls back if it fails
+    /// ([`Self::roll_back_scope`]). The txn may already hold ops; they are kept.
+    pub(crate) fn begin_rollback_scope(&mut self, id: u64) {
+        debug_assert!(self.rollback_scope.is_none());
+        self.rollback_scope = Some(RollbackScope {
+            id,
+            thread: current_thread_mark(),
+            foreign_ops: false,
+            counter: self.next_counter,
+            lamport: self.next_lamport,
+            is_peer_first_appearance: self.is_peer_first_appearance,
+            event_hints: FxHashMap::default(),
+        });
+    }
+
+    pub(crate) fn has_rollback_scope(&self) -> bool {
+        self.rollback_scope.is_some()
+    }
+
+    pub(crate) fn end_rollback_scope(&mut self, id: u64) {
+        if self.rollback_scope.as_ref().is_some_and(|s| s.id == id) {
+            self.rollback_scope = None;
+        }
+    }
+
+    /// Whether this is the txn scope `id` began in and every op in it came from
+    /// the thread that began it.
+    pub(crate) fn rollback_scope_is_intact(&self, id: u64) -> bool {
+        self.rollback_scope
+            .as_ref()
+            .is_some_and(|s| s.id == id && !s.foreign_ops)
+    }
+
+    /// Take the ops of scope `id` (which must be intact) out of the txn: it
+    /// keeps its ops from before the scope, and its counters and event hints are
+    /// as they were then. The ops stay applied to the state and the DAG's
+    /// version; the caller undoes them.
+    pub(crate) fn roll_back_scope(&mut self, id: u64) -> RolledBackBatch {
+        assert!(self.rollback_scope_is_intact(id));
+        let scope = self.rollback_scope.take().unwrap();
+        let ops = take(&mut self.local_ops);
+        for op in ops.iter() {
+            let end = op.counter + op.atom_len() as Counter;
+            if end <= scope.counter {
+                self.local_ops.push(op.clone());
+            } else if op.counter < scope.counter {
+                self.local_ops
+                    .push(op.slice(0, (scope.counter - op.counter) as usize));
+            }
+        }
+        for (container, (len, last)) in scope.event_hints {
+            if len == 0 {
+                self.event_hints.remove(&container);
+                continue;
+            }
+            let hints = self.event_hints.get_mut(&container).unwrap();
+            hints.truncate(len);
+            *hints.last_mut().unwrap() = last.unwrap();
+        }
+        let batch_end = self.next_counter;
+        self.next_counter = scope.counter;
+        self.next_lamport = scope.lamport;
+        self.is_peer_first_appearance = scope.is_peer_first_appearance;
+        RolledBackBatch {
+            peer: self.peer,
+            txn_start_counter: self.start_counter,
+            txn_start_lamport: self.start_lamport,
+            deps: self.frontiers.clone(),
+            dag_frontiers_at_start: self.dag_frontiers_at_start.clone(),
+            batch_start: scope.counter,
+            batch_end,
+            ops,
+            timestamp: self.latest_timestamp,
+        }
+    }
+
     fn take_options(&self) -> CommitOptions {
         let mut options = CommitOptions::new();
         if !self.origin.is_empty() {
@@ -578,6 +703,12 @@ impl Transaction {
                 })
                 .unwrap_or(found);
             return Err(LoroError::UnmatchedContext { expected, found });
+        }
+
+        if let Some(scope) = &mut self.rollback_scope {
+            if scope.thread != current_thread_mark() {
+                scope.foreign_ops = true;
+            }
         }
 
         let len = content.content_len();
@@ -639,6 +770,12 @@ impl Transaction {
         );
 
         let container_hints = self.event_hints.entry(container).or_default();
+        if let Some(scope) = &mut self.rollback_scope {
+            scope
+                .event_hints
+                .entry(container)
+                .or_insert_with(|| (container_hints.len(), container_hints.last().cloned()));
+        }
 
         match container_hints.last_mut() {
             Some(last) if last.can_merge(&event) => {

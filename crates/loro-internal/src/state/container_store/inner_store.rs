@@ -61,6 +61,10 @@ pub(crate) struct InnerStore {
     /// longer implies `store` contains every entry in `kv`, so `load_all()`
     /// must re-scan `kv` instead of short-circuiting.
     evicted_since_full_load: bool,
+    /// While `Some`, the containers given new (not loaded) state are recorded, so
+    /// a rolled back local transaction can remove them again
+    /// (`DocState::begin_local_rollback`).
+    created_journal: Option<Vec<ContainerIdx>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,11 +136,15 @@ impl InnerStore {
         if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
-            let container = self
-                .kv
-                .get(&key)
-                .map(ContainerWrapper::new_from_bytes)
-                .unwrap_or_else(f);
+            let container = match self.kv.get(&key) {
+                Some(bytes) => ContainerWrapper::new_from_bytes(bytes),
+                None => {
+                    if let Some(journal) = &mut self.created_journal {
+                        journal.push(idx);
+                    }
+                    f()
+                }
+            };
             Self::insert_entry(&mut self.store, idx, container);
         }
 
@@ -160,8 +168,37 @@ impl InnerStore {
             return;
         }
 
+        if let Some(journal) = &mut self.created_journal {
+            journal.push(idx);
+        }
         let c = f();
         Self::insert_entry(&mut self.store, idx, c);
+    }
+
+    /// Start recording the containers that get new state. See `created_journal`.
+    pub(crate) fn begin_created_journal(&mut self) {
+        self.created_journal = Some(Vec::new());
+    }
+
+    /// Stop recording and return the containers that got new state since
+    /// [`Self::begin_created_journal`].
+    pub(crate) fn take_created_journal(&mut self) -> Vec<ContainerIdx> {
+        self.created_journal.take().unwrap_or_default()
+    }
+
+    /// Drop the state of containers that got new state while a rolled back
+    /// local transaction ran. They had no state and no KV entry before it (the
+    /// KV store is only written by `flush`), so this restores the store.
+    pub(crate) fn remove_created(&mut self, created: &[ContainerIdx]) {
+        for &idx in created {
+            debug_assert!(self
+                .arena
+                .get_container_id(idx)
+                .is_none_or(|id| self.kv.get(&id.to_bytes()).is_none()));
+            if let Some(slot) = self.store.get_mut(Self::slot(idx)) {
+                *slot = None;
+            }
+        }
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
@@ -659,6 +696,7 @@ impl InnerStore {
             config,
             value_cache_queue: VecDeque::new(),
             evicted_since_full_load: false,
+            created_journal: None,
         }
     }
 

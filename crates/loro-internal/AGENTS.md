@@ -9,6 +9,8 @@ over graceful degradation.
 
 - `src/loro.rs`: document-level orchestration for commit, import/export,
   checkout, barriers, state/oplog coordination, and event emission.
+  `apply_diff`/`revert_to` roll a failed batch back:
+  [../../context/apply-diff-atomicity.md](../../context/apply-diff-atomicity.md).
 - `src/encoding.rs`: public/internal `ExportMode`, binary header parsing,
   checksum verification, `EncodeMode` dispatch, import metadata, and the bridge
   from decoded changes into `OpLog`.

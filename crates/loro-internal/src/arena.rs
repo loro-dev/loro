@@ -462,6 +462,30 @@ impl SharedArena {
         self.inner.containers.write().set_parent(child, parent);
     }
 
+    /// Forget the parent links of the normal containers whose creating op is `peer`'s op at
+    /// `start_counter` or later, after such ops were discarded (a rolled back local
+    /// transaction). The next op at that id may create the container under another parent,
+    /// and until then the container has no parent, so it reads as deleted without being
+    /// cached as deleted. The registrations stay: other code may hold their indices. The
+    /// caller removes their state. See `context/apply-diff-atomicity.md`.
+    pub(crate) fn forget_parents_of_discarded_ops(&self, peer: PeerID, start_counter: Counter) {
+        let mut containers = self.inner.containers.write();
+        let discarded: Vec<ContainerIdx> = containers
+            .container_idx_to_id
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| {
+                matches!(id, ContainerID::Normal { peer: p, counter, .. }
+                    if *p == peer && *counter >= start_counter)
+            })
+            .map(|(i, id)| ContainerIdx::from_index_and_type(i as u32, id.container_type()))
+            .collect();
+        for idx in discarded {
+            containers.parents.remove(&idx);
+            containers.depth[idx.to_index() as usize] = None;
+        }
+    }
+
     pub fn log_hierarchy(&self) {
         if cfg!(debug_assertions) {
             let containers = self.inner.containers.read();

@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-09-28 (after #1134, #1152, #1153; third review of #1142).
+Verified against code 2026-09-30 (after #1134, #1152, #1153; third review of #1142; #1154).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -24,11 +24,14 @@ All of these return `LoroError::ArgErr` built by
 
 ## Why `_apply_diff` checks before applying
 
-Local ops have no rollback: an op changes the state, the oplog DAG's local
-version and the arena as it is applied, and `_apply_diff` keeps applying the
-rest of a batch after an error (#1154). So an unknown container has to be found
-before the first entry is applied. The loop changes its own inputs as it runs,
-so the check predicts that from the whole batch:
+`_apply_diff` keeps applying the rest of a batch after an error. `apply_diff`
+and `revert_to` now roll a failed batch back
+([apply-diff-atomicity.md](apply-diff-atomicity.md), #1154), but undo/redo
+calls `_apply_diff` without a rollback and keeps what applied. So an unknown
+container has to be found before the first entry is applied; for `apply_diff`
+the check is also the cheaper rejection and keeps its debug assertions on the
+loop. The loop changes its own inputs as it runs, so the check predicts that
+from the whole batch:
 
 - *fresh*: container values of Map/List diffs, the metas of created or moved
   tree nodes, and the mergeable children of those are recreated under new ids

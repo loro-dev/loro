@@ -19,6 +19,17 @@ pub struct CounterState {
 }
 
 impl CounterState {
+    pub(crate) fn value(&self) -> f64 {
+        self.value
+    }
+
+    /// For rolling back local ops (`DocState::finish_local_rollback`).
+    pub(crate) fn set_value(&mut self, value: f64) {
+        self.value = value;
+    }
+}
+
+impl CounterState {
     pub(crate) fn new(idx: ContainerIdx) -> Self {
         Self { idx, value: 0. }
     }

@@ -420,9 +420,28 @@ impl ChangeStore {
         rollback: ChangeStoreRollback,
         arena: SharedArenaRollback,
     ) {
+        let mut inner = self.inner.lock();
+        Self::rollback_changes_in(&self.arena, &mut inner, rollback);
+        self.rollback_arena_in(&mut inner, arena);
+    }
+
+    /// [`Self::rollback_import`] without rolling the arena back: everything registered in it
+    /// since the scope began stays registered. For a scope that only held changes whose
+    /// containers were registered before it (a rolled back local transaction), where freeing
+    /// the registrations made while undoing it from the state would leave state entries at
+    /// freed indices.
+    pub(crate) fn rollback_import_keeping_arena(&self, rollback: ChangeStoreRollback) {
+        let mut inner = self.inner.lock();
+        Self::rollback_changes_in(&self.arena, &mut inner, rollback);
+    }
+
+    fn rollback_changes_in(
+        arena: &SharedArena,
+        inner: &mut ChangeStoreInner,
+        rollback: ChangeStoreRollback,
+    ) {
         // The name set may already include names from changes this rollback removes. That is
         // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
-        let mut inner = self.inner.lock();
         let mut touched_peers = FxHashSet::default();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
@@ -448,7 +467,7 @@ impl ChangeStore {
             let changes = Arc::make_mut(
                 block
                     .content
-                    .changes_mut(&self.arena)
+                    .changes_mut(arena)
                     .expect("an unflushed block always holds parsed changes"),
             );
             changes.truncate(shape.n_changes);
@@ -475,8 +494,6 @@ impl ChangeStore {
                 .mem_parsed_kv
                 .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
-
-        self.rollback_arena_in(&mut inner, arena);
     }
 
     /// Rolls the arena back to `arena`, a checkpoint taken before a failed import, and drops
