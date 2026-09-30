@@ -19,7 +19,10 @@ pub struct Configure {
 
 impl LoroDoc {
     pub(crate) fn set_config(&self, config: &Configure) {
-        self.config_text_style(config.text_style_config.read().clone());
+        // Forks need both explicit styles and the fallback for unused keys.
+        // config_text_style intentionally only replaces the explicit map.
+        let text_style_config = config.text_style_config.read().clone();
+        *self.config.text_style_config.write() = text_style_config;
         self.set_record_timestamp(config.record_timestamp());
         self.set_change_merge_interval(config.merge_interval());
         self.set_detached_editing(config.detached_editing());

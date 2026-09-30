@@ -19,15 +19,15 @@ impl DeadContainersCache {
     /// revive any container.
     pub fn clear(&mut self) {
         self.final_deletions.clear();
-        self.revivable.clear();
+        self.clear_revivable();
     }
 
     /// Must be called whenever a tree or movable-list change is applied going
     /// forward, because it may move a deleted node or element back.
     pub fn clear_revivable(&mut self) {
-        if !self.revivable.is_empty() {
-            self.revivable.clear();
-        }
+        // Reusing a large table makes interleaved deletion queries and moves
+        // repeatedly clear its peak capacity, even with only one live entry.
+        self.revivable = FxHashSet::default();
     }
 
     fn contains(&self, idx: &ContainerIdx) -> bool {
