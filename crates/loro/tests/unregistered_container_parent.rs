@@ -950,3 +950,347 @@ mod random {
         }
     }
 }
+
+/// Rewrite a change-block value and both checksum layers, as in the independent
+/// #1172 verifier. Import must remain lazy: no earlier query records the failure.
+fn snapshot_with_truncated_history(snapshot: &[u8], block_index: usize) -> (Vec<u8>, ID) {
+    snapshot_with_broken_history(snapshot, block_index, true)
+}
+
+fn snapshot_with_broken_history(
+    snapshot: &[u8],
+    block_index: usize,
+    truncate: bool,
+) -> (Vec<u8>, ID) {
+    use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
+    use std::ops::Bound;
+    let mut at = 22;
+    let mut sections = Vec::new();
+    for _ in 0..3 {
+        let len = u32::from_le_bytes(snapshot[at..at + 4].try_into().unwrap()) as usize;
+        at += 4;
+        sections.push(snapshot[at..at + len].to_vec());
+        at += len;
+    }
+    let mut kv = MemKvStore::new(MemKvConfig::new());
+    kv.import_all(sections[0].clone().into()).unwrap();
+    let blocks: Vec<_> = kv
+        .scan(Bound::Unbounded, Bound::Unbounded)
+        .filter(|(key, _)| key.len() == 12 && ID::from_bytes(key).peer == 1)
+        .collect();
+    assert!(blocks.len() >= 3);
+    let index = match block_index {
+        0 => 0,
+        1 => blocks.len() / 2,
+        _ => blocks.len() - 1,
+    };
+    let (key, bytes) = &blocks[index];
+    let id = ID::from_bytes(key).inc(1);
+    if truncate {
+        kv.set(key, bytes.slice(..bytes.len() / 2));
+    } else {
+        // Keep the header intact; the compressed body fails only when parsed.
+        let mut body = bytes.to_vec();
+        let at = body.len() - 3;
+        body[at] ^= 0xff;
+        kv.set(key, body.into());
+    }
+    sections[0] = kv.export_all().to_vec();
+    let mut forged = snapshot[..22].to_vec();
+    for section in sections {
+        forged.extend_from_slice(&(section.len() as u32).to_le_bytes());
+        forged.extend_from_slice(&section);
+    }
+    let checksum = xxhash_rust::xxh32::xxh32(&forged[20..], u32::from_le_bytes(*b"LORO"));
+    forged[16..20].copy_from_slice(&checksum.to_le_bytes());
+    (forged, id)
+}
+
+#[test]
+fn register_only_import_rolls_back_when_only_old_block_headers_were_read() {
+    use loro::Frontiers;
+    let source = LoroDoc::new();
+    source.set_peer_id(1).unwrap();
+    source.set_change_merge_interval(-1);
+    for i in 0..600 {
+        source
+            .get_text("text")
+            .insert(0, &format!("line-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx"))
+            .unwrap();
+        source.get_map("map").insert("key", i).unwrap();
+        source.commit();
+    }
+    source.set_peer_id(2).unwrap();
+    for _ in 0..300 {
+        source.get_text("text").insert(0, &"y".repeat(30)).unwrap();
+        source.commit();
+    }
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let remote = LoroDoc::new();
+    remote.set_peer_id(10).unwrap();
+    remote.get_map("map").insert("key", -1).unwrap();
+    let updates = remote.export(ExportMode::all_updates()).unwrap();
+    for block in 0..3 {
+        let (forged, _) = snapshot_with_broken_history(&snapshot, block, false);
+        if block == 0 {
+            if let Some(path) = std::env::var_os("LORO_BODY_FIXTURE") {
+                std::fs::write(path, &forged).unwrap();
+            }
+        }
+        let doc = LoroDoc::new();
+        doc.import(&forged).unwrap();
+        // These load every DAG header, draining unparsed_vv, but not block bodies.
+        for peer in [1, 2] {
+            assert!(doc
+                .try_frontiers_to_vv(&Frontiers::from(ID::new(peer, 0)))
+                .unwrap()
+                .is_some());
+        }
+        let value = doc.get_deep_value();
+        let frontiers = doc.state_frontiers();
+        let vv = doc.oplog_vv();
+        assert_eq!(doc.oplog_frontiers(), frontiers);
+        let error = doc.import(&updates).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot parse change block"),
+            "block={block}: {error}"
+        );
+        assert_eq!(doc.get_deep_value(), value, "block={block}");
+        assert_eq!(doc.state_frontiers(), frontiers, "block={block}");
+        assert_eq!(doc.oplog_frontiers(), frontiers, "block={block}");
+        assert_eq!(doc.oplog_vv(), vv, "block={block}");
+        assert!(!doc.is_detached(), "block={block}");
+        assert!(doc
+            .checkout(&frontiers)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot parse change block"));
+    }
+}
+
+#[test]
+fn fallible_history_readers_reject_a_truncated_block_on_the_first_read() {
+    use loro::{Frontiers, VersionVector};
+    let source = LoroDoc::new();
+    source.set_peer_id(1).unwrap();
+    source.set_change_merge_interval(-1);
+    for i in 0..600 {
+        source
+            .get_text("text")
+            .insert(0, &format!("line-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx"))
+            .unwrap();
+        source.get_map("map").insert("key", i).unwrap();
+        source.commit();
+    }
+    source.set_peer_id(2).unwrap();
+    for _ in 0..300 {
+        source.get_text("text").insert(0, &"y".repeat(30)).unwrap();
+        source.commit();
+    }
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let remote = LoroDoc::new();
+    remote.set_peer_id(9).unwrap();
+    remote.get_text("text").insert(0, "concurrent").unwrap();
+    let updates = remote.export(ExportMode::all_updates()).unwrap();
+    // Register-only imports normally skip state-apply rollback. Lazy history can
+    // still fail after these changes are appended, so test that path separately.
+    let map_remote = LoroDoc::new();
+    map_remote.set_peer_id(10).unwrap();
+    map_remote.get_map("map").insert("key", -1).unwrap();
+    let map_updates = map_remote.export(ExportMode::all_updates()).unwrap();
+    let json = remote.export_json_updates_without_peer_compression(
+        &VersionVector::default(),
+        &remote.oplog_vv(),
+    );
+    for block in 0..3 {
+        let (forged, id) = snapshot_with_truncated_history(&snapshot, block);
+        // Regenerate the WASM regression fixture from the same public-API rewrite:
+        // LORO_HISTORY_FIXTURE=<path> cargo test -p loro --test
+        // unregistered_container_parent fallible_history_readers
+        if block == 0 {
+            if let Some(path) = std::env::var_os("LORO_HISTORY_FIXTURE") {
+                std::fs::write(path, &forged).unwrap();
+            }
+        }
+        let mid = Frontiers::from(id);
+        let dependent = source.fork_at(&mid).unwrap();
+        dependent
+            .get_text("text")
+            .insert(0, "depends on the broken block")
+            .unwrap();
+        let dependent_updates = dependent
+            .export(ExportMode::updates(&source.oplog_vv()))
+            .unwrap();
+        let latest = source.oplog_frontiers();
+        // This vector/frontier forces a two-peer walk through the broken block.
+        let mut vv = VersionVector::default();
+        vv.set_end(id.inc(1));
+        vv.set_end(latest.as_single().unwrap().inc(1));
+        let redundant = Frontiers::from(vec![id, latest.as_single().unwrap()]);
+        for api in [
+            "checkout",
+            "diff",
+            "revert_to",
+            "import",
+            "import_map",
+            "import_batch",
+            "import_batch_multiple",
+            "import_json",
+            "detached_import",
+            "fork_at",
+            "find_id_spans_between",
+            "frontiers_to_vv",
+            "vv_to_frontiers",
+            "minimize_frontiers",
+            "travel_change_ancestors",
+            "get_change_at",
+            "get_change_at_lamport",
+            "get_remote_change_at",
+            "get_changed_containers_in",
+            "cmp_frontiers",
+            "export_updates",
+            "export_updates_in_range",
+            "export_shallow",
+            "export_state_only",
+            "export_snapshot_at",
+        ] {
+            let doc = LoroDoc::new();
+            doc.import(&forged).unwrap();
+            if api == "detached_import" {
+                doc.detach();
+            }
+            let value = doc.get_deep_value();
+            let frontiers = doc.state_frontiers();
+            let old_vv = doc.oplog_vv();
+            let detached = doc.is_detached();
+            let mut visits = 0;
+            let result: Result<(), String> = match api {
+                "checkout" => doc.checkout(&mid).map_err(|e| e.to_string()),
+                "diff" => doc
+                    .diff(&mid, &latest)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "revert_to" => doc.revert_to(&mid).map_err(|e| e.to_string()),
+                "import" => doc.import(&updates).map(|_| ()).map_err(|e| e.to_string()),
+                "import_map" => doc
+                    .import(&map_updates)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "detached_import" => doc
+                    .import(&dependent_updates)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "import_batch" => doc
+                    .import_batch(std::slice::from_ref(&updates))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "import_batch_multiple" => doc
+                    .import_batch(&[updates.clone(), map_updates.clone()])
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "import_json" => doc
+                    .import_json_updates(json.clone())
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "fork_at" => doc.fork_at(&mid).map(|_| ()).map_err(|e| e.to_string()),
+                "find_id_spans_between" => doc
+                    .try_find_id_spans_between(&mid, &latest)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "frontiers_to_vv" => doc
+                    .try_frontiers_to_vv(&mid)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "vv_to_frontiers" => doc
+                    .try_vv_to_frontiers(&vv)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "minimize_frontiers" => doc
+                    .try_minimize_frontiers(&redundant)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "travel_change_ancestors" => doc
+                    .travel_change_ancestors(&[id], &mut |_| {
+                        visits += 1;
+                        std::ops::ControlFlow::Continue(())
+                    })
+                    .map_err(|e| e.to_string()),
+                "get_change_at" => doc
+                    .try_get_change(id)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "get_change_at_lamport" => doc
+                    .with_oplog(|oplog| oplog.try_get_change_with_lamport_lte(1, id.counter as u32))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "get_remote_change_at" => doc
+                    .with_oplog(|oplog| oplog.try_get_remote_change_at(id))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "get_changed_containers_in" => doc
+                    .try_get_changed_containers_in(id, 1)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "cmp_frontiers" => doc
+                    .cmp_frontiers(&mid, &latest)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "export_updates" => doc
+                    .export(ExportMode::all_updates())
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "export_updates_in_range" => doc
+                    .export(ExportMode::updates_in_range(vec![loro::IdSpan::new(
+                        1,
+                        id.counter,
+                        *source.oplog_vv().get(&1).unwrap(),
+                    )]))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "export_shallow" => doc
+                    .export(ExportMode::shallow_snapshot(&mid))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "export_state_only" => doc
+                    .export(ExportMode::state_only(Some(&mid)))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                "export_snapshot_at" => doc
+                    .export(ExportMode::snapshot_at(&mid))
+                    .map(|_| ())
+                    .map_err(|e| e.to_string()),
+                _ => unreachable!(),
+            };
+            let err = result.unwrap_err();
+            assert!(
+                err.contains("cannot parse change block"),
+                "{api}, block={block}: {err}"
+            );
+            assert_eq!(doc.get_deep_value(), value, "{api}, block={block}");
+            assert_eq!(doc.state_frontiers(), frontiers, "{api}, block={block}");
+            assert_eq!(doc.oplog_vv(), old_vv, "{api}, block={block}");
+            assert_eq!(doc.is_detached(), detached, "{api}, block={block}");
+            assert_eq!(visits, 0);
+            // Locks are usable and every subsequent fallible reader sees the record.
+            assert!(doc
+                .checkout(&latest)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse change block"));
+        }
+    }
+    // Initial shallow import itself needs the root's DAG node, unlike a full
+    // snapshot import. Its first unreadable block must also roll back cleanly.
+    let root = Frontiers::from(ID::new(1, 38));
+    let shallow = source.export(ExportMode::shallow_snapshot(&root)).unwrap();
+    let (forged, _) = snapshot_with_truncated_history(&shallow, 0);
+    let doc = LoroDoc::new();
+    let value = doc.get_deep_value();
+    let err = doc.import(&forged).unwrap_err();
+    assert!(err.to_string().contains("cannot parse change block"));
+    assert_eq!(doc.get_deep_value(), value);
+    assert!(doc.oplog_vv().is_empty());
+    assert!(!doc.is_detached());
+    doc.import(&snapshot).unwrap();
+    assert_eq!(doc.get_deep_value(), source.get_deep_value());
+}

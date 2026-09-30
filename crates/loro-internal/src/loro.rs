@@ -32,7 +32,7 @@ use crate::{
     subscription::{LocalUpdateCallback, Observer, Subscriber},
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
-    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
+    version::{Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
     VersionVector,
 };
@@ -707,7 +707,7 @@ impl LoroDoc {
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
-                let (diff, diff_mode) = diff.calc_diff_internal(
+                let computed = diff.try_calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -715,6 +715,13 @@ impl LoroDoc {
                     oplog.dag.get_frontiers(),
                     None,
                 );
+                let (diff, diff_mode) = match computed {
+                    Ok(diff) => diff,
+                    Err(err) => {
+                        oplog.rollback_owned_import(owns_rollback, &mut self.state.lock());
+                        return Err(err);
+                    }
+                };
                 let mut state = self.state.lock();
                 if let Err(e) = state.apply_diff(
                     InternalDocDiff {
@@ -782,7 +789,13 @@ impl LoroDoc {
             }
         };
 
-        let preflight = oplog.preflight_import_changes(&changes);
+        let preflight = match oplog.preflight_import_changes(&changes) {
+            Ok(preflight) => preflight,
+            Err(err) => {
+                oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
+                return Err(err);
+            }
+        };
         if preflight.has_deps_before_shallow_root
             && (self.is_detached() || !preflight.applies_to_dag)
         {
@@ -831,7 +844,7 @@ impl LoroDoc {
             return Ok(result.status);
         }
 
-        let old_vv = oplog.vv().clone();
+        let old_vv = Arc::new(oplog.vv().clone());
         let old_frontiers = oplog.frontiers().clone();
         // Checked before the changes are applied, while the store still holds only old history.
         let isolated_batch = isolated_scalar_root_batch(&oplog, &changes).filter(|(_, names)| {
@@ -841,13 +854,14 @@ impl LoroDoc {
                 !state.store.contains_id(&id)
             })
         });
-        let rollback_enabled = preflight.needs_state_apply_rollback;
+        let rollback_enabled =
+            preflight.needs_state_apply_rollback || oplog.change_store().may_have_unparsed_bodies();
         if rollback_enabled {
-            oplog.begin_import_rollback_with_arena(arena_checkpoint);
+            oplog.begin_import_rollback_with_version(arena_checkpoint, old_vv.clone());
         }
 
         let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
-        if &old_vv != oplog.vv() {
+        if old_vv.as_ref() != oplog.vv() {
             // The preflight enables rollback whenever the imported or unlocked
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
@@ -869,37 +883,54 @@ impl LoroDoc {
                         *end == old_end.max(component_end)
                     })
             });
-            let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
-                #[cfg(test)]
-                ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
-                let component_frontiers = oplog.dag.vv_to_frontiers(&component_vv);
-                let (diff, _) = calc.calc_diff_internal(
-                    &oplog,
-                    &VersionVector::default(),
-                    &Frontiers::default(),
-                    &component_vv,
-                    &component_frontiers,
-                    None,
-                );
-                (diff, DiffMode::Import)
-            } else {
-                calc.calc_diff_internal(
-                    &oplog,
-                    &old_vv,
-                    &old_frontiers,
-                    oplog.vv(),
-                    oplog.dag.get_frontiers(),
-                    None,
-                )
+            let computed = (|| -> LoroResult<_> {
+                let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
+                    #[cfg(test)]
+                    ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
+                    let component_frontiers = oplog.dag.try_vv_to_frontiers(&component_vv)?;
+                    let (diff, _) = calc.try_calc_diff_internal(
+                        &oplog,
+                        &VersionVector::default(),
+                        &Frontiers::default(),
+                        &component_vv,
+                        &component_frontiers,
+                        None,
+                    )?;
+                    (diff, DiffMode::Import)
+                } else {
+                    calc.try_calc_diff_internal(
+                        &oplog,
+                        &old_vv,
+                        &old_frontiers,
+                        oplog.vv(),
+                        oplog.dag.get_frontiers(),
+                        None,
+                    )?
+                };
+                oplog.check_history_parsable()?;
+                Ok((diff, diff_mode))
+            })();
+            let (diff, diff_mode) = match computed {
+                Ok(diff) => diff,
+                Err(err) => {
+                    oplog.rollback_owned_import(rollback_enabled, &mut self.state.lock());
+                    return Err(err);
+                }
             };
             let mut state = self.state.lock();
-            let diff = recalc_in_checkout_mode_if_needed(
+            let diff = match recalc_in_checkout_mode_if_needed(
                 &mut state,
                 &oplog,
                 &old_vv,
                 &old_frontiers,
                 diff,
-            );
+            ) {
+                Ok(diff) => diff,
+                Err(err) => {
+                    oplog.rollback_owned_import(rollback_enabled, &mut state);
+                    return Err(err);
+                }
+            };
             if let Err(e) = state.apply_diff(
                 InternalDocDiff {
                     origin,
@@ -2206,7 +2237,11 @@ impl LoroDoc {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        self.oplog().lock().cmp_frontiers(a, b)
+        let oplog = self.oplog.lock();
+        oplog
+            .check_history_parsable()
+            .map_err(FrontiersNotIncluded::unreadable)?;
+        oplog.cmp_frontiers(a, b)
     }
 
     pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
@@ -2535,7 +2570,7 @@ impl LoroDoc {
         }
 
         let frontiers = if to_shrink_frontiers {
-            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
+            crate::version::try_shrink_frontiers(frontiers, &oplog.dag)?
         } else {
             frontiers.clone()
         };
@@ -2552,24 +2587,33 @@ impl LoroDoc {
             }
         }
 
-        let before = oplog.dag.frontiers_to_vv(&state.frontiers).ok_or_else(|| {
-            LoroError::NotFoundError(
-                format!(
-                    "Cannot find the current state version {:?}",
-                    state.frontiers
+        let before = oplog
+            .dag
+            .try_frontiers_to_vv(&state.frontiers)?
+            .ok_or_else(|| {
+                LoroError::NotFoundError(
+                    format!(
+                        "Cannot find the current state version {:?}",
+                        state.frontiers
+                    )
+                    .into_boxed_str(),
                 )
-                .into_boxed_str(),
-            )
-        })?;
-        let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
+            })?;
+        let Some(after) = &oplog.dag.try_frontiers_to_vv(&frontiers)? else {
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
 
+        let (diff, diff_mode) = calc.try_calc_diff_internal(
+            &oplog,
+            &before,
+            &state.frontiers,
+            after,
+            &frontiers,
+            None,
+        )?;
         self.set_detached(true);
-        let (diff, diff_mode) =
-            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
                 origin,
@@ -2597,6 +2641,34 @@ impl LoroDoc {
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.oplog.lock().dag.frontiers_to_vv(frontiers)
+    }
+
+    /// Converts frontiers to a version vector, reporting unreadable history.
+    pub fn try_frontiers_to_vv(&self, frontiers: &Frontiers) -> LoroResult<Option<VersionVector>> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        oplog.dag.try_frontiers_to_vv(frontiers)
+    }
+
+    /// Converts a version vector to frontiers, reporting unreadable history.
+    pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        oplog.dag.try_vv_to_frontiers(vv)
+    }
+
+    /// Removes redundant frontiers, reporting unreadable history or an absent id.
+    pub fn try_minimize_frontiers(&self, frontiers: &Frontiers) -> LoroResult<Frontiers> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        crate::version::try_shrink_frontiers(frontiers, &oplog.dag)
+    }
+
+    /// Reads change metadata, distinguishing unreadable history from an absent id.
+    pub fn try_get_change(&self, id: ID) -> LoroResult<Option<ChangeMeta>> {
+        let oplog = self.oplog.lock();
+        let change = oplog.try_get_change_at(id)?;
+        Ok(change.as_deref().map(ChangeMeta::from_change))
     }
 
     /// Import ops from other doc.
@@ -3020,6 +3092,22 @@ impl LoroDoc {
         self.oplog().lock().dag.find_path(from, to)
     }
 
+    /// Finds operation spans between versions, reporting unreadable history.
+    pub fn try_find_id_spans_between(
+        &self,
+        from: &Frontiers,
+        to: &Frontiers,
+    ) -> LoroResult<VersionVectorDiff> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        for id in from.iter().chain(to.iter()) {
+            if !oplog.vv().includes_id(id) {
+                return Err(LoroError::FrontiersNotFound(id));
+            }
+        }
+        oplog.dag.try_find_path(from, to)
+    }
+
     /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
     /// will be merged into the current commit.
     ///
@@ -3180,7 +3268,10 @@ fn isolated_scalar_root_batch(
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChangeTravelError {
+    #[error(transparent)]
+    HistoryUnreadable(#[from] LoroError),
     #[error("Target id not found {0:?}")]
     TargetIdNotFound(ID),
     #[error("The shallow history of the doc doesn't include the target version")]
@@ -3218,43 +3309,49 @@ impl LoroDoc {
             }
         }
 
-        for id in ids {
-            let op_log = &self.oplog().lock();
-            if !op_log.vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetIdNotFound(*id));
-            }
-            if op_log.dag.shallow_since_vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetVersionNotIncluded);
-            }
-        }
-
-        let mut visited = FxHashSet::default();
-        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        for id in ids {
-            pending.push(PendingNode(ChangeMeta::from_change(
-                &self.oplog().lock().get_change_at(*id).unwrap(),
-            )));
-        }
-        while let Some(PendingNode(node)) = pending.pop() {
-            let deps = node.deps.clone();
-            if f(node).is_break() {
-                break;
+        let ans = (|| {
+            for id in ids {
+                let op_log = &self.oplog().lock();
+                op_log.check_history_parsable()?;
+                if !op_log.vv().includes_id(*id) {
+                    return Err(ChangeTravelError::TargetIdNotFound(*id));
+                }
+                if op_log.dag.shallow_since_vv().includes_id(*id) {
+                    return Err(ChangeTravelError::TargetVersionNotIncluded);
+                }
             }
 
-            for dep in deps.iter() {
-                let Some(dep_node) = self.oplog().lock().get_change_at(dep) else {
-                    continue;
-                };
-                if visited.contains(&dep_node.id) {
-                    continue;
+            let mut visited = FxHashSet::default();
+            let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+            for id in ids {
+                let change = self
+                    .oplog()
+                    .lock()
+                    .try_get_change_at(*id)?
+                    .ok_or(ChangeTravelError::TargetIdNotFound(*id))?;
+                pending.push(PendingNode(ChangeMeta::from_change(&change)));
+            }
+            while let Some(PendingNode(node)) = pending.pop() {
+                let deps = node.deps.clone();
+                if f(node).is_break() {
+                    break;
                 }
 
-                visited.insert(dep_node.id);
-                pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
-            }
-        }
+                for dep in deps.iter() {
+                    let Some(dep_node) = self.oplog().lock().try_get_change_at(dep)? else {
+                        continue;
+                    };
+                    if visited.contains(&dep_node.id) {
+                        continue;
+                    }
 
-        let ans = Ok(());
+                    visited.insert(dep_node.id);
+                    pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
+                }
+            }
+
+            Ok(())
+        })();
         self.renew_txn_if_auto_commit(options);
         ans
     }
@@ -3285,6 +3382,18 @@ impl LoroDoc {
             }
             set
         })
+    }
+
+    /// Gets modified container IDs, reporting unreadable history.
+    pub fn try_get_changed_containers_in(
+        &self,
+        id: ID,
+        len: usize,
+    ) -> LoroResult<FxHashSet<ContainerID>> {
+        self.oplog.lock().check_history_parsable()?;
+        let containers = self.get_changed_containers_in(id, len);
+        self.oplog.lock().check_history_parsable()?;
+        Ok(containers)
     }
 
     pub fn delete_root_container(&self, cid: ContainerID) {
@@ -3397,21 +3506,21 @@ fn recalc_in_checkout_mode_if_needed(
     old_vv: &VersionVector,
     old_frontiers: &Frontiers,
     diff: Vec<crate::event::InternalContainerDiff>,
-) -> Vec<crate::event::InternalContainerDiff> {
+) -> LoroResult<Vec<crate::event::InternalContainerDiff>> {
     if !state.needs_checkout_diff(&diff) {
-        return diff;
+        return Ok(diff);
     }
 
-    DiffCalculator::new(true)
-        .calc_diff_internal(
+    Ok(DiffCalculator::new(true)
+        .try_calc_diff_internal(
             oplog,
             old_vv,
             old_frontiers,
             oplog.vv(),
             oplog.dag.get_frontiers(),
             None,
-        )
-        .0
+        )?
+        .0)
 }
 
 impl BatchImportGuard<'_> {

@@ -186,6 +186,11 @@ impl LoroDoc {
         Some(ChangeMeta::from_change(&change))
     }
 
+    /// Reads change metadata, reporting unreadable history instead of an absent change.
+    pub fn try_get_change(&self, id: ID) -> LoroResult<Option<ChangeMeta>> {
+        self.doc.try_get_change(id)
+    }
+
     /// Decodes the metadata for an imported blob from the provided bytes.
     ///
     /// # Example
@@ -862,6 +867,21 @@ impl LoroDoc {
         self.doc.vv_to_frontiers(vv)
     }
 
+    /// Converts frontiers to a version vector, reporting unreadable history.
+    pub fn try_frontiers_to_vv(&self, frontiers: &Frontiers) -> LoroResult<Option<VersionVector>> {
+        self.doc.try_frontiers_to_vv(frontiers)
+    }
+
+    /// Converts a version vector to frontiers, reporting unreadable history.
+    pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
+        self.doc.try_vv_to_frontiers(vv)
+    }
+
+    /// Removes redundant frontiers, reporting unreadable history or an absent id.
+    pub fn try_minimize_frontiers(&self, frontiers: &Frontiers) -> LoroResult<Frontiers> {
+        self.doc.try_minimize_frontiers(frontiers)
+    }
+
     /// Access the `OpLog`.
     ///
     /// NOTE: The API in `OpLog` is unstable. Keep the closure short; avoid calling methods
@@ -1441,6 +1461,24 @@ impl LoroDoc {
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
+    }
+
+    /// Finds operation spans between versions, reporting unreadable history.
+    pub fn try_find_id_spans_between(
+        &self,
+        from: &Frontiers,
+        to: &Frontiers,
+    ) -> LoroResult<VersionVectorDiff> {
+        self.doc.try_find_id_spans_between(from, to)
+    }
+
+    /// Gets modified container IDs, reporting unreadable history.
+    pub fn try_get_changed_containers_in(
+        &self,
+        id: ID,
+        len: usize,
+    ) -> LoroResult<FxHashSet<ContainerID>> {
+        self.doc.try_get_changed_containers_in(id, len)
     }
 
     /// Revert the current document state back to the target version
