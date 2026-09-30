@@ -782,7 +782,7 @@ impl LoroDoc {
             }
         };
 
-        let preflight = oplog.preflight_import_changes(&changes);
+        let preflight = oplog.preflight_import_changes(&changes, self.is_detached());
         if preflight.has_deps_before_shallow_root
             && (self.is_detached() || !preflight.applies_to_dag)
         {

@@ -1,6 +1,6 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-08-09.
+Verified against code 2026-10-01.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) does not import blobs the
 way `import` does. It stops the auto-commit txn, keeps the txn mutex for the whole
@@ -94,6 +94,15 @@ regression on out-of-order batches, where every blob parks and is later unlocked
   is set. A blob whose deps have not arrived leaves it false, so an out-of-order batch
   does not re-scan the pending set the earlier blobs grew, once per blob. Doing it
   eagerly made such a batch quadratic (12k blobs: 3.4s vs 0.45s).
+
+Standalone detached imports do not apply state, so preflight uses
+`import_op_can_reject(op, true)`: only MovableList `Move`/`Set` element validation
+requires a rollback scope. Text/List/Tree state validation still opens a scope
+when attached. An applied Text or scalar update can unlock a pre-existing bad
+MovableList pending change, so preflight includes pending `Move`/`Set` ops when
+`applies_to_dag` is true. The batch-wide scope remains unconditional and is not
+replaced or nested by this optimization. Regression:
+`detached_text_import_that_unlocks_invalid_movable_list_ops_rolls_back`.
 
 `crates/examples/examples/import_batch_perf.rs` is the ad-hoc probe for these shapes
 (not part of CI; run it on two revisions and compare).

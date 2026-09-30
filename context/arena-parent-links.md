@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-09-30.
+Verified against code 2026-10-01.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -142,8 +142,10 @@ Limits:
   from the change store and panics with "unparsed vv don't match with change
   store" (`loro_dag.rs`, `ensure_lazy_load_node`).
 - A read that returns before any failure was recorded is not undone: an
-  `import` or `checkout` that is the first to read the block finishes on the
-  partial history. Only `export` checks again at the end.
+  `import` or `checkout` using a general history reader can finish on partial
+  history when it is the first to read the block. Only `export` checks again at
+  the end. The direct cold Text comparison in `known_history.rs` returns its
+  decode error immediately and also records it in `parse_failures`.
 - Local edits still succeed after a failure was recorded, but they cannot be
   exported from this document any more. What can be salvaged is the current
   state (`get_deep_value`).
@@ -181,6 +183,20 @@ Measured with 2k IDs on a 20k-node, 100k-op document, `main` vs the resolver:
 A vv shortcut for IDs beyond the history would have to be exact for every path
 that writes the KV store, or a live container would read as deleted. Measured
 2026-09-28 (loro-dev/loro#1159).
+
+## Snapshot overlap decoding
+
+`ChangeStore::decode_snapshot_for_updates` uses a temporary arena for unmatched
+incoming blocks, rather than allocating a second known prefix in the document
+arena. Known-history comparison resolves container IDs across the two arenas;
+only checked, trimmed new ops are converted into document indices/value slices.
+`register_container_and_parent_link` runs on those converted changes before they
+leave the decoder. Temporary indices and parent links never escape into the
+document. A rejected comparison follows the existing arena rollback path.
+
+Cold Text-insert-only local blocks can also be compared directly from bytes
+without registering anything in the document arena. Other blocks still use the
+normal lazy reader. See [import-peer-id-reuse.md](import-peer-id-reuse.md).
 
 ## Import rollback
 

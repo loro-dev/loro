@@ -461,3 +461,45 @@ fn reimporting_into_a_shallow_doc_still_succeeds() -> LoroResult<()> {
     );
     Ok(())
 }
+
+/// Exercise many cold blocks, a merged update, and the snapshot scratch arena.
+/// The first mismatch must still name the exact atom far inside the prefix.
+#[test]
+fn cold_history_conflict_inside_a_large_known_prefix_is_rejected() -> LoroResult<()> {
+    let history = LoroDoc::new();
+    let other = LoroDoc::new();
+    for doc in [&history, &other] {
+        doc.set_peer_id(7)?;
+        doc.set_change_merge_interval(-1);
+    }
+    for i in 0..3000 {
+        history.get_text("t").insert(i, "a")?;
+        history.commit();
+        other
+            .get_text("t")
+            .insert(i, if i == 2000 { "O" } else { "a" })?;
+        other.commit();
+    }
+    other.get_text("t").insert(3000, "Z")?;
+    other.commit();
+    let base = history.export(ExportMode::Snapshot)?;
+    for blob in [
+        other.export(ExportMode::all_updates())?,
+        other.export(ExportMode::Snapshot)?,
+    ] {
+        for batch in [false, true] {
+            let target = LoroDoc::new();
+            target.import(&base)?;
+            let before = snapshot_of(&target);
+            let err = if batch {
+                target.import_batch(&[blob.clone()]).unwrap_err()
+            } else {
+                target.import(&blob).unwrap_err()
+            };
+            assert_used_op_id(err, ID::new(7, 2000));
+            assert_unchanged(&target, &before);
+            assert_still_usable(&target);
+        }
+    }
+    Ok(())
+}

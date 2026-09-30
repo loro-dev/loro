@@ -406,35 +406,158 @@ impl ChangeStore {
         self.external_kv.lock().export_all()
     }
 
-    /// Decode the changes of a snapshot imported into a non-empty doc.
-    ///
-    /// Changes this doc already has are kept, because
-    /// `OpLog::check_and_trim_known_part_of_changes` compares them with the local
-    /// history before trimming them. When nothing is new, return no changes and
-    /// skip the clones.
-    pub(crate) fn decode_snapshot_for_updates(
-        bytes: Bytes,
-        arena: &SharedArena,
-        self_vv: &VersionVector,
-    ) -> Result<Vec<Change>, LoroError> {
-        let change_store = ChangeStore::new_mem(arena, Arc::new(AtomicI64::new(0)));
-        let _ = change_store.import_all(bytes)?;
-        let mut has_new = false;
-        change_store.visit_all_changes(&mut |c| {
-            has_new |= c.ctr_end() > self_vv.get(&c.id.peer).copied().unwrap_or(0);
-        });
-        let mut changes = Vec::new();
-        if has_new {
-            change_store.visit_all_changes(&mut |c| changes.push(c.clone()));
+    /// Read a cold block for comparison without caching parsed ops in the arena.
+    /// Cached parsed history keeps using the ordinary, already cheap path.
+    pub(crate) fn unparsed_block_bytes(&self, id: ID) -> Option<Bytes> {
+        let external = self.external_kv.lock();
+        let inner = self.inner.lock();
+        if inner.retired {
+            return None;
         }
-
-        Ok(changes)
+        if let Some((_, block)) = inner.mem_parsed_kv.range(..=id).next_back() {
+            if block.peer == id.peer && block.counter_range.1 > id.counter {
+                return match &block.content {
+                    ChangesBlockContent::Bytes(b) => Some(b.bytes.clone()),
+                    _ => None,
+                };
+            }
+        }
+        let (key, bytes) = external
+            .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            .rfind(|(key, _)| key.len() == 12)?;
+        if ID::from_bytes(&key).peer != id.peer
+            || decode_block_range(&bytes).ok()?.0 .1 <= id.counter
+        {
+            return None;
+        }
+        Some(bytes)
     }
 
-    /// Decode an update block. Changes the doc already has are kept; see
-    /// [`Self::decode_snapshot_for_updates`].
+    pub(crate) fn encoded_block_counter_range(bytes: &[u8]) -> LoroResult<(Counter, Counter)> {
+        Ok(decode_block_range(bytes)?.0)
+    }
+
+    pub(crate) fn check_text_insert_block(
+        &self,
+        id: ID,
+        bytes: &[u8],
+        on_insert: impl FnMut(Counter, &ContainerID, u32, &str, u32, &Frontiers) -> LoroResult<()>,
+    ) -> LoroResult<bool> {
+        let result = block_encode::visit_text_insert_block(bytes, on_insert);
+        if let Err(err) = &result {
+            if !matches!(err, LoroError::UsedOpID { .. }) {
+                self.parse_failures.record(id, err);
+            }
+        }
+        result
+    }
+
+    /// Byte-identical, fully known blocks need neither decoding nor comparison.
+    /// An unflushed cached block shadows its older KV copy; never compare against
+    /// that stale copy. Different encodings fall back to semantic comparison.
+    pub(crate) fn contains_encoded_block(&self, id: ID, bytes: &[u8]) -> bool {
+        let external = self.external_kv.lock();
+        let inner = self.inner.lock();
+        if let Some(block) = inner.mem_parsed_kv.get(&id) {
+            return match &block.content {
+                ChangesBlockContent::Bytes(b) | ChangesBlockContent::Both(_, b) => {
+                    b.bytes.as_ref() == bytes
+                }
+                ChangesBlockContent::Changes(_) => false,
+            };
+        }
+        external
+            .get(&id.to_bytes())
+            .is_some_and(|b| b.as_ref() == bytes)
+    }
+
+    /// Decode only unmatched snapshot blocks in a temporary arena. Known content
+    /// never gets copied into the document's arena; move only the checked suffix.
+    pub(crate) fn decode_snapshot_for_updates(
+        bytes: Bytes,
+        oplog: &crate::OpLog,
+    ) -> Result<Vec<Change>, LoroError> {
+        let arena = SharedArena::new();
+        let store = ChangeStore::new_mem(&arena, Arc::new(AtomicI64::new(0)));
+        let _ = store.import_all(bytes)?;
+        let external = store.external_kv.lock();
+        let mut inner = store.inner.lock();
+        let mut changes = Vec::new();
+        for (key, bytes) in external.scan(Bound::Unbounded, Bound::Unbounded) {
+            if key.len() != 12 {
+                continue;
+            }
+            let id = ID::from_bytes(&key);
+            if oplog.change_store.contains_encoded_block(id, &bytes) {
+                continue;
+            }
+            // import_all parsed the frontier blocks. Take their changes instead
+            // of parsing them again or cloning changes that will be dropped.
+            if let Some(block) = inner.mem_parsed_kv.remove(&id) {
+                let block = Arc::try_unwrap(block).expect("temporary store owns its blocks");
+                match block.content {
+                    ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => {
+                        changes
+                            .extend(Arc::try_unwrap(c).expect("temporary store owns its changes"));
+                    }
+                    ChangesBlockContent::Bytes(b) => changes.extend(b.parse(&arena)?),
+                }
+            } else {
+                changes.extend(Self::decode_block_bytes(bytes, &arena)?);
+            }
+        }
+        drop(inner);
+        drop(external);
+        changes.sort_unstable_by_key(|c| c.lamport);
+        let changes = oplog.check_and_trim_known_part_in_arena(
+            changes,
+            super::ImportedValues::Exact,
+            &arena,
+        )?;
+        Ok(changes
+            .into_iter()
+            .map(|mut change| {
+                let mut ops = RleVec::new();
+                for op in change.ops.iter() {
+                    for remote in super::local_op_to_remote(&arena, op) {
+                        ops.push(oplog.arena.convert_single_op(
+                            &remote.container,
+                            change.id.peer,
+                            remote.counter,
+                            change.lamport + (remote.counter - change.id.counter) as Lamport,
+                            remote.content,
+                        ));
+                    }
+                }
+                change.ops = ops;
+                register_container_and_parent_link(&oplog.arena, &change);
+                change
+            })
+            .collect())
+    }
+
     pub(crate) fn decode_block_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Vec<Change>> {
         ChangesBlockBytes::new(bytes).parse(arena)
+    }
+
+    /// Reuse the header on fallback so a new block is decoded only once.
+    pub(crate) fn decode_update_block(
+        &self,
+        bytes: Bytes,
+        vv: &VersionVector,
+    ) -> LoroResult<Vec<Change>> {
+        let block = ChangesBlockBytes::new(bytes);
+        block.ensure_header()?;
+        let header = block.header.get().unwrap();
+        let id = ID::new(header.peer, header.counter);
+        if header.counters.last().copied().unwrap_or(0)
+            <= vv.get(&header.peer).copied().unwrap_or(0)
+            && self.contains_encoded_block(id, &block.bytes)
+        {
+            Ok(Vec::new())
+        } else {
+            block.parse(&self.arena)
+        }
     }
 
     /// Rolls back the store and the arena (to `arena`, the checkpoint taken when the import
@@ -2249,6 +2372,99 @@ mod test {
             changes.push(convert_change_to_remote(&oplog.arena, c));
         });
         assert_eq!(changes_parsed, changes);
+    }
+
+    #[test]
+    fn identical_encoded_block_stays_lazy_and_dirty_cache_shadows_kv() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.set_change_merge_interval(-1);
+        for _ in 0..40 {
+            let text = source.get_text("t");
+            text.insert(text.len_unicode(), "abcd", PosType::Unicode)
+                .unwrap();
+            source.commit_then_renew();
+        }
+        let bytes = {
+            let oplog = source.oplog().lock();
+            oplog.change_store.encode_all(oplog.vv(), oplog.frontiers())
+        };
+        let store = ChangeStore::new_for_test();
+        store.import_all(bytes).unwrap();
+        let (id, block_bytes) = store
+            .external_kv
+            .lock()
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .find(|(key, _)| key.len() == 12)
+            .map(|(key, bytes)| (ID::from_bytes(&key), bytes))
+            .unwrap();
+        assert!(!store.inner.lock().mem_parsed_kv.contains_key(&id));
+        let before = store.arena.utf16_len();
+        assert!(store
+            .decode_update_block(block_bytes.clone(), &source.oplog_vv())
+            .unwrap()
+            .is_empty());
+        assert_eq!(store.arena.utf16_len(), before);
+        assert!(!store.inner.lock().mem_parsed_kv.contains_key(&id));
+
+        let original = store.get_change(id).unwrap();
+        let mut dirty = original.block.as_ref().clone();
+        // Model an unflushed mutation. Its stale KV copy must not authorize a
+        // shortcut, even if the imported bytes match that old copy exactly.
+        let mut changes = dirty.content.try_changes().unwrap().clone();
+        changes[0].deps = Frontiers::from_id(ID::new(9, 0));
+        dirty.content = ChangesBlockContent::Changes(Arc::new(changes));
+        dirty.flushed = false;
+        store.inner.lock().mem_parsed_kv.insert(id, Arc::new(dirty));
+        assert!(!store.contains_encoded_block(id, &block_bytes));
+        assert!(!store
+            .decode_update_block(block_bytes, &source.oplog_vv())
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn repeated_snapshot_updates_allocate_only_the_new_text_and_list_values() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.set_change_merge_interval(-1);
+        for i in 0..40 {
+            let text = source.get_text("t");
+            text.insert(text.len_unicode(), "wörld 😀", PosType::Unicode)
+                .unwrap();
+            source.get_list("l").push(i).unwrap();
+            source.commit_then_renew();
+        }
+        let target = LoroDoc::new_auto_commit();
+        target
+            .import(&source.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        // Once local history is parsed, repeated snapshots must not allocate
+        // another copy of any known strings or list values, even with Unicode.
+        target
+            .oplog()
+            .lock()
+            .change_store
+            .visit_all_changes(&mut |_| {});
+        let text_before = target.oplog().lock().arena.utf16_len();
+        let value_count = |doc: &LoroDoc| doc.oplog().lock().arena.extent().values_for_test();
+        let values_before = value_count(&target);
+        for i in 0..4 {
+            let text = source.get_text("t");
+            text.insert(text.len_unicode(), "Z", PosType::Unicode)
+                .unwrap();
+            source.get_list("l").push(100 + i).unwrap();
+            source.commit_then_renew();
+            target
+                .import(&source.export(ExportMode::Snapshot).unwrap())
+                .unwrap();
+            assert_eq!(
+                target.oplog().lock().arena.utf16_len(),
+                text_before + i as usize + 1
+            );
+            assert_eq!(value_count(&target), values_before + i as usize + 1);
+        }
+        assert_eq!(target.get_deep_value(), source.get_deep_value());
     }
 
     #[test]
