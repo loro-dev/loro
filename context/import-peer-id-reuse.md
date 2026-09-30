@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-09-30.
+Verified against code 2026-10-01.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -51,9 +51,18 @@ is per atom range, not per change:
   (`unicode_start` is an arena offset), and a one-atom delete ignores the sign of
   `signed_len`, because slicing a reversed delete down to one atom yields `-1`
   where a forward one yields `1`.
-- **JSON imports** use `ImportedValues::Lossy`: JSON text does not round-trip every
-  value (`NaN` becomes `null`, binary may come back as a list), so value payloads
-  are not compared there. Containers, positions, text, keys, ids and deps still are.
+- **Value payloads** use `ImportedValues::Lossy` for both JSON and binary imports:
+  binary history may have been relayed through JSON before it was exported.
+  `ImportedValues::eq` accepts `Binary` versus a list of the same u8 numbers, and
+  non-finite doubles (`NaN`, positive or negative infinity) versus `Null`, in either
+  direction. It applies the same rules recursively inside lists and maps and to
+  rich-text style values. All other values are compared exactly; containers,
+  positions, text, keys, ids, style metadata and deps still must match.
+  The known prefix is then trimmed, so the receiver keeps its own values.
+  This fixes the 1.16.4 rejection of JSON-relayed history without changing the JSON
+  format: a JSON importer still gets a list instead of `Binary` (including mergeable
+  container markers), or `Null` instead of a non-finite double. It does not repair
+  that importer's lost values or make its state identical to the binary receiver's.
 - History below the shallow root, or any local change `get_change` cannot find,
   is not compared. The import then behaves as it did before this check.
 
@@ -88,3 +97,9 @@ for both "all updates + 1 change" and "snapshot + 1 change". Probe:
   and re-imports that must still succeed (piecewise vs merged change stores, every
   op kind including `NaN` and one-atom reversed deletes, shallow docs).
 - `crates/loro-wasm/tests/import_reused_peer_id.test.ts`.
+- `crates/loro/tests/import_json_relay.rs`: JSON-to-binary relays through full
+  updates, snapshots and batch import; binary values, mergeable text/counter,
+  non-finite doubles, nested/sequence/style values, both comparison directions,
+  later relay edits, and a genuine text conflict that must still be rejected.
+- `known_history.rs` unit tests: the precise value equivalences and rejection
+  boundaries, including nested values and byte-list contents.

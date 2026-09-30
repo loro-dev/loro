@@ -660,7 +660,7 @@ impl LoroDoc {
                 } else {
                     self.import_changes_and_apply_delta_to_state_if_needed(
                         |oplog| encoding::decode_oplog_changes(oplog, parsed),
-                        ImportedValues::Exact,
+                        ImportedValues::Lossy,
                         origin,
                     )
 
@@ -672,7 +672,7 @@ impl LoroDoc {
             }
             EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| encoding::decode_oplog_changes(oplog, parsed),
-                ImportedValues::Exact,
+                ImportedValues::Lossy,
                 origin,
             ),
             EncodeMode::Auto => {
