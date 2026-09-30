@@ -15,7 +15,6 @@ use crate::{
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use itertools::Itertools;
 use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport,
     LoroError, LoroResult, PeerID, ID,
@@ -370,7 +369,10 @@ impl ChangeStore {
             for span in layer {
                 // PERF: this can be optimized by reusing the current encoded blocks
                 // In the current method, it needs to parse and re-encode the blocks
-                for c in self.iter_changes(span) {
+                let Ok(changes) = self.try_iter_changes(span) else {
+                    return;
+                };
+                for c in changes {
                     let start =
                         ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
                     let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
@@ -710,76 +712,63 @@ impl ChangeStore {
     }
 
     pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
-        if id_span.counter.start == id_span.counter.end {
-            return vec![];
-        }
+        self.try_iter_blocks(id_span).unwrap_or_default()
+    }
 
+    fn try_iter_blocks(
+        &self,
+        id_span: IdSpan,
+    ) -> LoroResult<Vec<(Arc<ChangesBlock>, usize, usize)>> {
+        if id_span.counter.start == id_span.counter.end {
+            return Ok(vec![]);
+        }
         assert!(id_span.counter.start < id_span.counter.end);
-        self.ensure_block_loaded_in_range(
+        self.try_ensure_block_loaded_in_range(
             Bound::Included(id_span.id_start()),
             Bound::Excluded(id_span.id_end()),
-        );
+        )?;
         let mut inner = self.inner.lock();
-        let next_back = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back();
-        match next_back {
-            None => {
-                return vec![];
+        let Some((start_id, _)) = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back()
+        else {
+            return Ok(vec![]);
+        };
+        if start_id.peer != id_span.peer {
+            return Ok(vec![]);
+        }
+        let start_counter = start_id.counter;
+        let mut blocks = Vec::new();
+        for (block_id, block) in inner.mem_parsed_kv.range_mut(
+            ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
+        ) {
+            if block.counter_range.1 < id_span.counter.start {
+                continue;
             }
-            Some(next_back) => {
-                if next_back.0.peer != id_span.peer {
-                    return vec![];
-                }
+            if let Err(err) = block.ensure_changes(&self.arena) {
+                warn!(?block_id, ?err, "failed to parse change block");
+                self.parse_failures.record(*block_id, &err);
+                return Err(self.corrupt_block_error().unwrap_err());
+            }
+            let changes = block.content.try_changes().unwrap();
+            let (start, end) = if id_span.counter.start <= block.counter_range.0
+                && id_span.counter.end >= block.counter_range.1
+            {
+                (0, changes.len())
+            } else {
+                let start = block
+                    .get_change_index_by_counter(id_span.counter.start)
+                    .unwrap_or_else(|x| x);
+                let end = match block.get_change_index_by_counter(id_span.counter.end - 1) {
+                    Ok(end) => end + 1,
+                    Err(0) => continue,
+                    Err(end) => end,
+                };
+                (start, end)
+            };
+            if start != end {
+                blocks.push((block.clone(), start, end));
             }
         }
-        let start_counter = next_back.map(|(id, _)| id.counter).unwrap_or(0);
-        let ans = inner
-            .mem_parsed_kv
-            .range_mut(
-                ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
-            )
-            .filter_map(|(_id, block)| {
-                if block.counter_range.1 < id_span.counter.start {
-                    return None;
-                }
-
-                if let Err(err) = block.ensure_changes(&self.arena) {
-                    warn!(block_id = ?_id, ?err, "failed to parse change block");
-                    self.parse_failures.record(*_id, &err);
-                    return None;
-                }
-                let changes = block.content.try_changes().unwrap();
-                let start;
-                let end;
-                if id_span.counter.start <= block.counter_range.0
-                    && id_span.counter.end >= block.counter_range.1
-                {
-                    start = 0;
-                    end = changes.len();
-                } else {
-                    start = block
-                        .get_change_index_by_counter(id_span.counter.start)
-                        .unwrap_or_else(|x| x);
-
-                    match block.get_change_index_by_counter(id_span.counter.end - 1) {
-                        Ok(e) => {
-                            end = e + 1;
-                        }
-                        Err(0) => return None,
-                        Err(e) => {
-                            end = e;
-                        }
-                    }
-                }
-                if start == end {
-                    return None;
-                }
-
-                Some((block.clone(), start, end))
-            })
-            // TODO: PERF avoid alloc
-            .collect_vec();
-
-        ans
+        Ok(blocks)
     }
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
@@ -811,6 +800,21 @@ impl ChangeStore {
                 block: block.clone(),
             })
         })
+    }
+
+    /// Parse the range before handing any changes to a consumer: a missing middle
+    /// block must not become a counter gap in an export's scratch store.
+    pub(crate) fn try_iter_changes(
+        &self,
+        id_span: IdSpan,
+    ) -> LoroResult<impl Iterator<Item = BlockChangeRef>> {
+        let blocks = self.try_iter_blocks(id_span)?;
+        Ok(blocks.into_iter().flat_map(|(block, start, end)| {
+            (start..end).map(move |change_index| BlockChangeRef {
+                change_index,
+                block: block.clone(),
+            })
+        }))
     }
 
     #[allow(dead_code)]
@@ -939,7 +943,10 @@ impl ChangeStore {
 
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
+            let Ok(changes) = self.try_iter_changes(span) else {
+                return;
+            };
+            for c in changes {
                 let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
@@ -962,7 +969,7 @@ impl ChangeStore {
         start_vv: &ImVersionVector,
         frontiers: &Frontiers,
         vv: &VersionVector,
-    ) -> Bytes {
+    ) -> LoroResult<Bytes> {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
         for mut span in vv.sub_iter_im(start_vv) {
             let counter_lower_bound = start_vv.get(&span.peer).copied().unwrap_or(0);
@@ -974,7 +981,7 @@ impl ChangeStore {
 
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
+            for c in self.try_iter_changes(span)? {
                 let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
@@ -988,7 +995,7 @@ impl ChangeStore {
             }
         }
 
-        new_store.encode_all(vv, frontiers)
+        Ok(new_store.encode_all(vv, frontiers))
     }
 }
 
@@ -1695,6 +1702,23 @@ mod mut_inner_kv {
         /// This is fast because we don't actually parse the content.
         // TODO: PERF: This method feels slow.
         pub(super) fn ensure_block_loaded_in_range(&self, start: Bound<ID>, end: Bound<ID>) {
+            let _ = self.load_blocks_in_range(start, end, false);
+        }
+
+        pub(super) fn try_ensure_block_loaded_in_range(
+            &self,
+            start: Bound<ID>,
+            end: Bound<ID>,
+        ) -> LoroResult<()> {
+            self.load_blocks_in_range(start, end, true)
+        }
+
+        fn load_blocks_in_range(
+            &self,
+            start: Bound<ID>,
+            end: Bound<ID>,
+            stop_on_error: bool,
+        ) -> LoroResult<()> {
             let mut whether_need_scan_backward = match start {
                 Bound::Included(id) => Some(id),
                 Bound::Excluded(id) => Some(id.inc(1)),
@@ -1729,6 +1753,9 @@ mod mut_inner_kv {
                         Err(err) => {
                             warn!(?id, ?err, "failed to decode external change block");
                             self.parse_failures.record(id, &err);
+                            if stop_on_error {
+                                return Err(self.corrupt_block_error().unwrap_err());
+                            }
                             continue;
                         }
                     };
@@ -1737,24 +1764,33 @@ mod mut_inner_kv {
             }
 
             if let Some(start_id) = whether_need_scan_backward {
-                self.ensure_id_lte(start_id);
+                if stop_on_error {
+                    self.try_ensure_id_lte(start_id)?;
+                } else {
+                    self.ensure_id_lte(start_id);
+                }
             }
+            Ok(())
         }
 
         pub(super) fn ensure_id_lte(&self, id: ID) {
+            let _ = self.try_ensure_id_lte(id);
+        }
+
+        pub(super) fn try_ensure_id_lte(&self, id: ID) -> LoroResult<()> {
             let kv = self.external_kv.lock();
             let mut inner = self.inner.lock();
             let Some((next_back_id, next_back_bytes)) = kv
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .rfind(|(id, _)| id.len() == 12)
             else {
-                return;
+                return Ok(());
             };
 
             let next_back_id = ID::from_bytes(&next_back_id);
             if next_back_id.peer == id.peer {
                 if inner.mem_parsed_kv.contains_key(&next_back_id) {
-                    return;
+                    return Ok(());
                 }
 
                 let block = match ChangesBlock::from_bytes(next_back_bytes) {
@@ -1766,11 +1802,12 @@ mod mut_inner_kv {
                             "failed to decode external change block"
                         );
                         self.parse_failures.record(next_back_id, &err);
-                        return;
+                        return Err(self.corrupt_block_error().unwrap_err());
                     }
                 };
                 inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
             }
+            Ok(())
         }
     }
 }
@@ -2521,6 +2558,69 @@ mod test {
         assert!(doc.export(ExportMode::Snapshot).is_err());
         assert!(LoroDoc::new().merge(&doc).is_err());
         assert_eq!(doc.get_deep_value(), value);
+    }
+
+    #[test]
+    fn the_first_dag_reader_reports_unparsable_tree_history_without_changing_state() {
+        let (snapshot, _, peer) = snapshot_with_a_container_only_the_history_knows();
+        for api in ["checkout", "diff", "revert", "frontiers", "travel", "cmp"] {
+            let doc = LoroDoc::new();
+            doc.import(&snapshot).unwrap();
+            truncate_block(&doc.oplog().lock().change_store, ID::new(peer, 0));
+            assert!(doc.oplog().lock().check_history_parsable().is_ok());
+            let value = doc.get_deep_value();
+            let state_frontiers = doc.state_frontiers();
+            let mid = Frontiers::from(ID::new(peer, 10));
+            let result = match api {
+                "checkout" => doc.checkout(&mid).map_err(|err| err.to_string()),
+                "diff" => doc
+                    .diff(&mid, &state_frontiers)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                "revert" => doc.revert_to(&mid).map_err(|err| err.to_string()),
+                "frontiers" => doc
+                    .try_frontiers_to_vv(&mid)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                "travel" => doc
+                    .travel_change_ancestors(&[ID::new(peer, 10)], &mut |_| {
+                        std::ops::ControlFlow::Continue(())
+                    })
+                    .map_err(|err| err.to_string()),
+                "cmp" => doc
+                    .cmp_frontiers(&mid, &state_frontiers)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                _ => unreachable!(),
+            };
+            assert!(
+                result.unwrap_err().contains("cannot parse change block"),
+                "{api}"
+            );
+            assert_eq!(doc.get_deep_value(), value, "{api}");
+            assert_eq!(doc.state_frontiers(), state_frontiers, "{api}");
+            assert!(matches!(
+                doc.oplog().lock().check_history_parsable(),
+                Err(LoroError::DecodeError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn a_detached_fork_records_unparsable_history_before_its_infallible_boundary_panics() {
+        let (snapshot, _, peer) = snapshot_with_a_container_only_the_history_knows();
+        let doc = LoroDoc::new();
+        doc.import(&snapshot).unwrap();
+        truncate_block(&doc.oplog().lock().change_store, ID::new(peer, 0));
+        let value = doc.get_deep_value();
+        doc.detach();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.fork())).is_err());
+        assert_eq!(doc.get_deep_value(), value);
+        assert!(doc
+            .checkout(&doc.oplog_frontiers())
+            .unwrap_err()
+            .to_string()
+            .contains("cannot parse change block"));
     }
 
     #[test]

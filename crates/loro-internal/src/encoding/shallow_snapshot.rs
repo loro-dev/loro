@@ -307,7 +307,7 @@ pub(crate) fn export_shallow_snapshot_inner(
     cached_root: CachedShallowRoot,
 ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, start_from, oplog.frontiers());
+    let start_from = calc_shallow_doc_start(&oplog, start_from, oplog.frontiers())?;
     // `root_vv` is the version of the state at the shallow root; `start_vv`
     // additionally excludes the frontier ops themselves because the retained
     // history must include them.
@@ -324,14 +324,14 @@ pub(crate) fn export_shallow_snapshot_inner(
         if !start_from.is_empty() {
             assert!(start_from.len() == 1);
             let id = start_from.as_single().unwrap();
-            let node = oplog.dag.get(id).unwrap();
+            let node = oplog.dag.try_get(id)?.unwrap();
             if id.counter == node.cnt {
-                let vv = oplog.dag().frontiers_to_vv(&node.deps).unwrap();
+                let vv = oplog.dag().try_frontiers_to_vv(&node.deps)?.unwrap();
                 assert_eq!(vv, start_vv);
             } else {
                 let vv = oplog
                     .dag()
-                    .frontiers_to_vv(&Frontiers::from(id.inc(-1)))
+                    .try_frontiers_to_vv(&Frontiers::from(id.inc(-1)))?
                     .unwrap();
                 assert_eq!(vv, start_vv);
             }
@@ -820,7 +820,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
     let oplog = doc.oplog().lock();
-    let start_from = calc_shallow_doc_start(&oplog, target_frontiers, target_frontiers);
+    let start_from = calc_shallow_doc_start(&oplog, target_frontiers, target_frontiers)?;
     let root_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
     let mut start_vv = root_vv.clone();
     for id in start_from.iter() {
@@ -899,7 +899,7 @@ fn frontiers_to_vv_for_export(
     frontiers: &Frontiers,
     context: &str,
 ) -> Result<VersionVector, LoroEncodeError> {
-    oplog.dag().frontiers_to_vv(frontiers).ok_or_else(|| {
+    oplog.dag().try_frontiers_to_vv(frontiers)?.ok_or_else(|| {
         LoroEncodeError::FrontiersNotFound(format!(
             "{context}: unreachable frontiers {frontiers:?}"
         ))
@@ -941,7 +941,7 @@ fn calc_shallow_doc_start(
     oplog: &crate::OpLog,
     frontiers: &Frontiers,
     retained_to: &Frontiers,
-) -> Frontiers {
+) -> Result<Frontiers, LoroEncodeError> {
     if frontiers.is_empty() {
         return clamp_to_shallow_root(oplog, Frontiers::default());
     }
@@ -950,7 +950,7 @@ fn calc_shallow_doc_start(
     // version exists, e.g. for independent heads with no common history.
     let root = oplog
         .dag()
-        .latest_single_head_critical_version(frontiers, retained_to);
+        .try_latest_single_head_critical_version(frontiers, retained_to)?;
 
     let mut ans = Frontiers::new();
     for id in root.iter() {
@@ -979,19 +979,22 @@ fn calc_shallow_doc_start(
     clamp_to_shallow_root(oplog, ans)
 }
 
-fn clamp_to_shallow_root(oplog: &crate::OpLog, frontiers: Frontiers) -> Frontiers {
+fn clamp_to_shallow_root(
+    oplog: &crate::OpLog,
+    frontiers: Frontiers,
+) -> Result<Frontiers, LoroEncodeError> {
     if oplog.shallow_since_vv().is_empty() {
-        return frontiers;
+        return Ok(frontiers);
     }
 
-    let Some(vv) = oplog.dag().frontiers_to_vv(&frontiers) else {
-        return oplog.shallow_since_frontiers().clone();
+    let Some(vv) = oplog.dag().try_frontiers_to_vv(&frontiers)? else {
+        return Ok(oplog.shallow_since_frontiers().clone());
     };
 
     if vv.includes_vv(&oplog.shallow_since_vv().to_vv()) {
-        frontiers
+        Ok(frontiers)
     } else {
-        oplog.shallow_since_frontiers().clone()
+        Ok(oplog.shallow_since_frontiers().clone())
     }
 }
 
@@ -1076,7 +1079,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
                 "encode_snapshot_at: state is unexpectedly still in a transaction",
             ));
         }
-        let Some(oplog_bytes) = oplog.fork_changes_up_to(frontiers) else {
+        let oplog_bytes = match oplog.fork_changes_up_to(frontiers) {
+            Ok(bytes) => bytes,
+            Err(err) => break 'block Err(err.into()),
+        };
+        let Some(oplog_bytes) = oplog_bytes else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
                 frontiers
@@ -1096,7 +1103,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             }
         }
 
-        let Some(version) = oplog.dag.frontiers_to_vv(frontiers) else {
+        let version = match oplog.dag.try_frontiers_to_vv(frontiers) {
+            Ok(version) => version,
+            Err(err) => break 'block Err(err.into()),
+        };
+        let Some(version) = version else {
             break 'block Err(LoroEncodeError::FrontiersNotFound(format!(
                 "frontiers: {:?} when export in SnapshotAt mode",
                 frontiers

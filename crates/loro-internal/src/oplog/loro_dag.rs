@@ -4,7 +4,9 @@ use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
 use crate::sync::Mutex;
 use crate::version::{shrink_frontiers, Frontiers, ImVersionVector, VersionVector};
-use loro_common::{HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, PeerID};
+use loro_common::{
+    HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, LoroError, LoroResult, PeerID,
+};
 use once_cell::sync::OnceCell;
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use rustc_hash::FxHashSet;
@@ -596,9 +598,9 @@ impl AppDag {
         }
     }
 
-    fn ensure_lazy_load_node(&self, id: ID) {
+    fn ensure_lazy_load_node(&self, id: ID) -> LoroResult<()> {
         if self.shallow_since_vv.includes_id(id) {
-            return;
+            return Ok(());
         }
 
         loop {
@@ -609,7 +611,7 @@ impl AppDag {
                 unparsed_vv.get(&id.peer).copied().unwrap_or(0)
             };
             if unparsed_end <= id.counter {
-                return;
+                return Ok(());
             }
 
             let last_unparsed_id = ID::new(id.peer, unparsed_end - 1);
@@ -617,6 +619,10 @@ impl AppDag {
                 .change_store
                 .get_dag_nodes_that_contains(last_unparsed_id)
             else {
+                // An unreadable external block is recorded by ChangeStore; return its
+                // decode error. A parsable store missing an id promised by unparsed_vv
+                // is still an impossible internal inconsistency and must fail fast.
+                self.change_store.corrupt_block_error()?;
                 panic!("unparsed vv don't match with change store. Id:{id} is not in change store")
             };
 
@@ -624,11 +630,18 @@ impl AppDag {
         }
     }
 
+    pub(crate) fn has_unparsed_history(&self) -> bool {
+        !self.unparsed_vv.lock().is_empty()
+    }
+
     pub fn total_parsed_dag_node(&self) -> usize {
         self.map.lock().len()
     }
 
-    pub(crate) fn set_version_by_fast_snapshot_import(&mut self, v: BatchDecodeInfo) {
+    pub(crate) fn set_version_by_fast_snapshot_import(
+        &mut self,
+        v: BatchDecodeInfo,
+    ) -> LoroResult<()> {
         assert!(self.vv.is_empty());
         *self.unparsed_vv.lock() = v.vv.clone();
         self.vv = v.vv;
@@ -637,13 +650,14 @@ impl AppDag {
             if !f.is_empty() {
                 assert!(f.len() == 1);
                 let id = f.as_single().unwrap();
-                let node = self.get(id).unwrap();
+                let node = self.try_get(id)?.unwrap();
                 assert!(node.cnt == id.counter);
                 self.shallow_root_frontiers_deps = node.deps.clone();
             }
             self.shallow_since_frontiers = f;
             self.shallow_since_vv = ImVersionVector::from_vv(&vv);
         }
+        Ok(())
     }
 
     /// This method is slow and should only be used for debugging and testing.
@@ -669,7 +683,7 @@ impl AppDag {
                 let init_counter = self.shallow_since_vv.get(peer).copied().unwrap_or(0);
                 while end_cnt > init_counter {
                     let cnt = end_cnt - 1;
-                    self.ensure_lazy_load_node(ID::new(*peer, cnt));
+                    self.ensure_lazy_load_node(ID::new(*peer, cnt)).unwrap();
                     end_cnt = self.unparsed_vv.lock().get(peer).copied().unwrap_or(0);
                 }
             }
@@ -794,12 +808,16 @@ impl AppDag {
     }
 
     pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
+        self.try_import_deps_before_shallow_root(deps).unwrap()
+    }
+
+    pub(crate) fn try_import_deps_before_shallow_root(&self, deps: &Frontiers) -> LoroResult<bool> {
         if self.shallow_since_vv.is_empty() {
-            return false;
+            return Ok(false);
         }
 
         if deps.is_empty() {
-            return true;
+            return Ok(true);
         }
 
         // Deps equal to the root's own deps describe a change CONCURRENT with
@@ -810,12 +828,12 @@ impl AppDag {
         // be parked as pending and then panic in `calc_unknown_lamport_change`.
         // Reject it like any other pre-root update.
         if deps == &self.shallow_root_frontiers_deps {
-            return true;
+            return Ok(true);
         }
 
         let shallow_vv = VersionVector::from_im_vv(&self.shallow_since_vv);
-        if let Some(vv) = self.frontiers_to_vv(deps) {
-            return !vv.includes_vv(&shallow_vv);
+        if let Some(vv) = self.try_frontiers_to_vv(deps)? {
+            return Ok(!vv.includes_vv(&shallow_vv));
         }
 
         // Import only needs to reject updates whose causal source is older than
@@ -826,20 +844,20 @@ impl AppDag {
             .iter()
             .any(|id| self.shallow_since_frontiers.contains(&id))
         {
-            return false;
+            return Ok(false);
         }
 
-        deps.iter().any(|id| self.shallow_since_vv.includes_id(id))
+        Ok(deps.iter().any(|id| self.shallow_since_vv.includes_id(id)))
     }
 
     /// Travel the ancestors of the given id, and call the callback for each node
     ///
     /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest)
-    pub(crate) fn travel_ancestors(
+    pub(crate) fn try_travel_ancestors(
         &self,
         id: ID,
         f: &mut dyn FnMut(&AppDagNode) -> ControlFlow<()>,
-    ) {
+    ) -> LoroResult<()> {
         struct PendingNode(AppDagNode);
         impl PartialEq for PendingNode {
             fn eq(&self, other: &Self) -> bool {
@@ -863,14 +881,16 @@ impl AppDag {
 
         let mut visited = FxHashSet::default();
         let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        pending.push(PendingNode(self.get(id).unwrap()));
+        pending.push(PendingNode(
+            self.try_get(id)?.ok_or(LoroError::FrontiersNotFound(id))?,
+        ));
         while let Some(PendingNode(node)) = pending.pop() {
             if f(&node).is_break() {
                 break;
             }
 
             for dep in node.deps.iter() {
-                let Some(dep_node) = self.get(dep) else {
+                let Some(dep_node) = self.try_get(dep)? else {
                     continue;
                 };
                 if visited.contains(&dep_node.id_start()) {
@@ -881,6 +901,7 @@ impl AppDag {
                 pending.push(PendingNode(dep_node));
             }
         }
+        Ok(())
     }
 
     pub(crate) fn update_version_on_new_local_op(
@@ -1066,24 +1087,28 @@ impl Dag for AppDag {
     }
 
     fn get(&self, id: ID) -> Option<Self::Node> {
-        self.ensure_lazy_load_node(id);
+        self.try_get(id).unwrap()
+    }
+
+    fn try_get(&self, id: ID) -> LoroResult<Option<Self::Node>> {
+        self.ensure_lazy_load_node(id)?;
         let binding = self.map.lock();
         if let Some(x) = binding.range(..=id).next_back() {
             if x.1.contains_id(id) {
                 // PERF: do we need to optimize clone like this?
                 // by adding another layer of Arc?
-                return Some(x.1.clone());
+                return Ok(Some(x.1.clone()));
             }
         }
 
         if let Some(node) = &self.pending_txn_node {
             if node.peer == id.peer && node.cnt <= id.counter {
                 assert!(node.cnt + node.len as Counter > id.counter);
-                return Some(node.clone());
+                return Ok(Some(node.clone()));
             }
         }
 
-        None
+        Ok(None)
     }
 
     fn vv(&self) -> &VersionVector {
@@ -1108,6 +1133,13 @@ impl AppDag {
     }
 
     pub(crate) fn ensure_vv_for(&self, target_node: &AppDagNode) -> ImVersionVector {
+        self.try_ensure_vv_for(target_node).unwrap()
+    }
+
+    pub(crate) fn try_ensure_vv_for(
+        &self,
+        target_node: &AppDagNode,
+    ) -> LoroResult<ImVersionVector> {
         if target_node.vv.get().is_none() {
             // Iterative DFS. When the DAG contains a diamond, a dep can end
             // up on the stack multiple times (once for each ancestor that
@@ -1129,7 +1161,7 @@ impl AppDag {
                 } else {
                     let mut all_deps_processed = true;
                     for id in top_node.deps.iter() {
-                        let Some(node) = self.get(id) else {
+                        let Some(node) = self.try_get(id)? else {
                             if self.shallow_since_vv.includes_id(id) {
                                 continue;
                             }
@@ -1151,7 +1183,7 @@ impl AppDag {
                     }
 
                     for id in top_node.deps.iter() {
-                        let Some(node) = self.get(id) else {
+                        let Some(node) = self.try_get(id)? else {
                             if self.shallow_since_vv.includes_id(id) {
                                 ans_vv.extend_to_include_vv(self.shallow_since_vv.iter());
                                 continue;
@@ -1177,7 +1209,7 @@ impl AppDag {
             }
         }
 
-        target_node.vv.get().unwrap().clone()
+        Ok(target_node.vv.get().unwrap().clone())
     }
 
     /// Compare the causal order of two versions.
@@ -1193,44 +1225,63 @@ impl AppDag {
     }
 
     pub fn get_lamport(&self, id: &ID) -> Option<Lamport> {
-        self.get(*id).and_then(|node| {
+        self.try_get_lamport(id).unwrap()
+    }
+
+    pub fn try_get_lamport(&self, id: &ID) -> LoroResult<Option<Lamport>> {
+        Ok(self.try_get(*id)?.and_then(|node| {
             assert!(id.counter >= node.cnt);
             if node.cnt + node.len as Counter > id.counter {
                 Some(node.lamport + (id.counter - node.cnt) as Lamport)
             } else {
                 None
             }
-        })
+        }))
     }
 
     pub fn get_change_lamport_from_deps(&self, deps: &Frontiers) -> Option<Lamport> {
+        self.try_get_change_lamport_from_deps(deps).unwrap()
+    }
+
+    pub fn try_get_change_lamport_from_deps(
+        &self,
+        deps: &Frontiers,
+    ) -> LoroResult<Option<Lamport>> {
         let mut lamport = 0;
         for id in deps.iter() {
-            let x = self.get_lamport(&id)?;
+            let Some(x) = self.try_get_lamport(&id)? else {
+                return Ok(None);
+            };
             lamport = lamport.max(x + 1);
         }
 
-        Some(lamport)
+        Ok(Some(lamport))
     }
 
     /// Convert a frontiers to a version vector
     ///
     /// If the frontiers version is not found in the dag, return None
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
+        self.try_frontiers_to_vv(frontiers).unwrap()
+    }
+
+    pub fn try_frontiers_to_vv(&self, frontiers: &Frontiers) -> LoroResult<Option<VersionVector>> {
         if frontiers == &self.shallow_root_frontiers_deps {
             let vv = VersionVector::from_im_vv(&self.shallow_since_vv);
-            return Some(vv);
+            return Ok(Some(vv));
         }
 
         let mut vv: VersionVector = Default::default();
         for id in frontiers.iter() {
-            let x = self.get(id)?;
-            let target_vv = self.ensure_vv_for(&x);
+            let Some(x) = self.try_get(id)? else {
+                return Ok(None);
+            };
+            let target_vv = self.try_ensure_vv_for(&x)?;
             vv.extend_to_include_vv(target_vv.iter());
             vv.extend_to_include_last_id(id);
         }
 
-        Some(vv)
+        Ok(Some(vv))
     }
 
     #[allow(unused)]
@@ -1294,8 +1345,12 @@ impl AppDag {
     }
 
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
+        self.try_vv_to_frontiers(vv).unwrap()
+    }
+
+    pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
         if vv.is_empty() {
-            return Default::default();
+            return Ok(Default::default());
         }
 
         let this = vv;
@@ -1318,10 +1373,10 @@ impl AppDag {
             .collect();
 
         if last_ids.is_empty() {
-            return self.shallow_since_frontiers.clone();
+            return Ok(self.shallow_since_frontiers.clone());
         }
 
-        shrink_frontiers(&last_ids, self).unwrap()
+        crate::version::try_shrink_frontiers(&last_ids, self)
     }
 
     pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {
@@ -1376,17 +1431,44 @@ impl AppDag {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        let a = self.frontiers_to_vv(a).ok_or(FrontiersNotIncluded)?;
-        let b = self.frontiers_to_vv(b).ok_or(FrontiersNotIncluded)?;
+        let a = self
+            .try_frontiers_to_vv(a)
+            .map_err(FrontiersNotIncluded::unreadable)?
+            .ok_or(FrontiersNotIncluded)?;
+        let b = self
+            .try_frontiers_to_vv(b)
+            .map_err(FrontiersNotIncluded::unreadable)?
+            .ok_or(FrontiersNotIncluded)?;
         Ok(a.partial_cmp(&b))
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct FrontiersNotIncluded;
+pub struct FrontiersNotIncluded {
+    history_error: Option<Box<str>>,
+}
+
+// Retain the unit-like constructor used by existing callers and pattern matches.
+#[allow(non_upper_case_globals)]
+pub const FrontiersNotIncluded: FrontiersNotIncluded = FrontiersNotIncluded {
+    history_error: None,
+};
+
+impl FrontiersNotIncluded {
+    pub(crate) fn unreadable(error: LoroError) -> Self {
+        Self {
+            history_error: Some(error.to_string().into_boxed_str()),
+        }
+    }
+}
+
 impl Display for FrontiersNotIncluded {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("The given Frontiers are not included by the doc")
+        f.write_str(
+            self.history_error
+                .as_deref()
+                .unwrap_or("The given Frontiers are not included by the doc"),
+        )
     }
 }
 
@@ -1424,6 +1506,15 @@ mod ensure_vv_for_tests {
         dag.shallow_since_frontiers = Frontiers::from_id(ID::new(1, 2));
         dag.shallow_root_frontiers_deps = root_deps;
         dag
+    }
+
+    #[test]
+    #[should_panic(expected = "unparsed vv don't match with change store")]
+    fn a_missing_node_without_a_parse_failure_remains_an_internal_invariant() {
+        let store = ChangeStore::new_mem(&SharedArena::new(), Arc::new(AtomicI64::new(0)));
+        let dag = AppDag::new(store);
+        dag.unparsed_vv.lock().insert(1, 1);
+        let _ = dag.try_get(ID::new(1, 0));
     }
 
     /// Regression for loro-dev/loro#929: when computing the vv for a node

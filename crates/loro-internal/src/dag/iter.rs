@@ -197,7 +197,12 @@ pub(crate) struct IterReturn<T> {
 }
 
 impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
+    #[cfg(test)]
     pub fn new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> Self {
+        Self::try_new(dag, from, target).unwrap()
+    }
+
+    pub fn try_new(dag: &'a D, from: Frontiers, target: IdSpanVector) -> LoroResult<Self> {
         let mut out_degrees: FxHashMap<ID, usize> = FxHashMap::default();
         let mut succ: BTreeMap<ID, Vec<ID>> = BTreeMap::default();
         let mut stack = Vec::new();
@@ -213,7 +218,7 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
         // if out_degree is 0, then it can be iterated directly
         while let Some(id) = q.pop() {
             let client = id.peer;
-            let node = dag.get(id).unwrap();
+            let node = dag.try_get(id)?.ok_or(LoroError::FrontiersNotFound(id))?;
             let deps = node.deps();
             out_degrees.insert(
                 id,
@@ -273,14 +278,14 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
             true
         });
 
-        Self {
+        Ok(Self {
             dag,
             frontier: from,
             target,
             out_degrees,
             succ,
             stack,
-        }
+        })
     }
 }
 

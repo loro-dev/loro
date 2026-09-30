@@ -255,6 +255,17 @@ impl OpLog {
         Some(ans)
     }
 
+    pub fn try_get_change_with_lamport_lte(
+        &self,
+        peer: PeerID,
+        lamport: Lamport,
+    ) -> Result<Option<BlockChangeRef>, LoroError> {
+        self.check_history_parsable()?;
+        let change = self.get_change_with_lamport_lte(peer, lamport);
+        self.check_history_parsable()?;
+        Ok(change)
+    }
+
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
@@ -373,14 +384,17 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
+    pub(crate) fn preflight_import_changes(
+        &self,
+        changes: &[Change],
+    ) -> Result<ImportChangesPreflight, LoroError> {
         let mut ans = ImportChangesPreflight::default();
         for change in changes {
             if change.ctr_end() <= self.vv().get(&change.id.peer).copied().unwrap_or(0) {
                 continue;
             }
 
-            if self.dag.import_deps_before_shallow_root(&change.deps) {
+            if self.dag.try_import_deps_before_shallow_root(&change.deps)? {
                 ans.has_deps_before_shallow_root = true;
                 continue;
             }
@@ -397,7 +411,7 @@ impl OpLog {
 
             if self
                 .dag
-                .get_change_lamport_from_deps(&change.deps)
+                .try_get_change_lamport_from_deps(&change.deps)?
                 .is_some()
             {
                 ans.applies_to_dag = true;
@@ -428,7 +442,7 @@ impl OpLog {
             ans.needs_state_apply_rollback = true;
         }
 
-        ans
+        Ok(ans)
     }
 
     /// Undo the open import rollback scope, including the arena.
@@ -675,6 +689,13 @@ impl OpLog {
         self.change_store.get_change(id)
     }
 
+    pub fn try_get_change_at(&self, id: ID) -> Result<Option<BlockChangeRef>, LoroError> {
+        self.check_history_parsable()?;
+        let change = self.get_change_at(id);
+        self.check_history_parsable()?;
+        Ok(change)
+    }
+
     pub(crate) fn set_uncommitted_change(&mut self, change: Change) {
         self.uncommitted_change = Some(change);
     }
@@ -707,6 +728,14 @@ impl OpLog {
     pub fn get_remote_change_at(&self, id: ID) -> Option<Change<RemoteOp<'static>>> {
         let change = self.get_change_at(id)?;
         Some(convert_change_to_remote(&self.arena, &change))
+    }
+
+    pub fn try_get_remote_change_at(
+        &self,
+        id: ID,
+    ) -> Result<Option<Change<RemoteOp<'static>>>, LoroError> {
+        let change = self.try_get_change_at(id)?;
+        Ok(change.map(|change| convert_change_to_remote(&self.arena, &change)))
     }
 
     pub(crate) fn import_unknown_lamport_pending_changes(
@@ -752,12 +781,18 @@ impl OpLog {
         self.change_store.export_blocks_in_range(spans, w)
     }
 
-    pub(crate) fn fork_changes_up_to(&self, frontiers: &Frontiers) -> Option<Bytes> {
-        let vv = self.dag.frontiers_to_vv(frontiers)?;
-        Some(
-            self.change_store
-                .fork_changes_up_to(self.dag.shallow_since_vv(), frontiers, &vv),
-        )
+    pub(crate) fn fork_changes_up_to(
+        &self,
+        frontiers: &Frontiers,
+    ) -> Result<Option<Bytes>, LoroError> {
+        let Some(vv) = self.dag.try_frontiers_to_vv(frontiers)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.change_store.fork_changes_up_to(
+            self.dag.shallow_since_vv(),
+            frontiers,
+            &vv,
+        )?))
     }
 
     #[inline(always)]
@@ -769,16 +804,16 @@ impl OpLog {
     ///
     /// Only `op.container` is needed, so this scans the borrowed changes
     /// directly instead of materializing a cloned RichOp per op.
-    pub(crate) fn containers_in_spans(
+    pub(crate) fn try_containers_in_spans(
         &self,
         spans: impl Iterator<Item = IdSpan>,
-    ) -> FxHashSet<ContainerIdx> {
+    ) -> Result<FxHashSet<ContainerIdx>, LoroError> {
         let mut containers = FxHashSet::default();
         // Consecutive ops overwhelmingly share a container; skip the hash
         // probe when it hasn't changed.
         let mut last_container = None;
         for span in spans {
-            for change in self.change_store.iter_changes(span) {
+            for change in self.change_store.try_iter_changes(span)? {
                 let start_counter = span.counter.min().max(change.id.counter);
                 let end_counter = span.counter.norm_end();
                 let start = change
@@ -798,7 +833,7 @@ impl OpLog {
             }
         }
 
-        containers
+        Ok(containers)
     }
 
     /// For `to ⊇ from`: the old-parent frontiers of every entry change of the
@@ -823,11 +858,11 @@ impl OpLog {
         from: &VersionVector,
         from_frontiers: &Frontiers,
         to: &VersionVector,
-    ) -> Option<Vec<Frontiers>> {
+    ) -> Result<Option<Vec<Frontiers>>, LoroError> {
         let mut uncovered = Vec::new();
         for (peer, span) in from.diff(to).forward.iter() {
             let id_span = IdSpan::new(*peer, span.start, span.end);
-            for change in self.change_store.iter_changes(id_span) {
+            for change in self.change_store.try_iter_changes(id_span)? {
                 let start = change.id.counter.max(span.start);
                 let parents = if start > change.id.counter {
                     // The change straddles `from`; the new suffix only has
@@ -856,14 +891,16 @@ impl OpLog {
                     continue;
                 }
 
-                let parents_vv = self.dag.frontiers_to_vv(&parents)?;
+                let Some(parents_vv) = self.dag.try_frontiers_to_vv(&parents)? else {
+                    return Ok(None);
+                };
                 if !parents_vv.includes_vv(from) {
                     uncovered.push(parents);
                 }
             }
         }
 
-        Some(uncovered)
+        Ok(Some(uncovered))
     }
 
     /// Decide whether an import whose new region `to − from` is concurrent
@@ -891,11 +928,13 @@ impl OpLog {
         from: &VersionVector,
         to: &VersionVector,
         entry_parents: &[Frontiers],
-    ) -> Option<FxHashSet<ContainerIdx>> {
+    ) -> Result<Option<FxHashSet<ContainerIdx>>, LoroError> {
         // ⋂ Events(parents) as a version vector: per-peer minimum.
         let mut causal_past = from.clone();
         for parents in entry_parents {
-            let parents_vv = self.dag.frontiers_to_vv(parents)?;
+            let Some(parents_vv) = self.dag.try_frontiers_to_vv(parents)? else {
+                return Ok(None);
+            };
             causal_past.retain(|peer, end| {
                 let bound = parents_vv.get(peer).copied().unwrap_or(0);
                 *end = (*end).min(bound);
@@ -909,25 +948,25 @@ impl OpLog {
         // that trimmed history we cannot see which containers it touched, so
         // the decision has to stay with the DAG.
         if !causal_past.includes_vv(&self.dag.shallow_since_vv().to_vv()) {
-            return None;
+            return Ok(None);
         }
 
         let concurrent_old = causal_past.diff(from).forward;
-        let old_containers = self.containers_in_spans(
+        let old_containers = self.try_containers_in_spans(
             concurrent_old
                 .iter()
                 .map(|(peer, span)| IdSpan::new(*peer, span.start, span.end)),
-        );
+        )?;
         if old_containers.is_empty() {
-            return Some(old_containers);
+            return Ok(Some(old_containers));
         }
 
         let new_region = from.diff(to).forward;
-        let new_containers = self.containers_in_spans(
+        let new_containers = self.try_containers_in_spans(
             new_region
                 .iter()
                 .map(|(peer, span)| IdSpan::new(*peer, span.start, span.end)),
-        );
+        )?;
         let harmless = old_containers
             .iter()
             .filter(|idx| new_containers.contains(idx))
@@ -937,7 +976,7 @@ impl OpLog {
                 ContainerType::Counter => true,
                 _ => false,
             });
-        harmless.then_some(old_containers)
+        Ok(harmless.then_some(old_containers))
     }
 
     /// The latest critical version below `from ∩ to`: the greatest causally
@@ -965,31 +1004,42 @@ impl OpLog {
     /// that moves its peer's cut into it. The scan is thus bounded by the
     /// replay it enables, which walks the same region and computes the same
     /// contexts, so it needs no budget of its own.
+    #[cfg(test)]
     pub(crate) fn latest_critical_version_below_meet(
         &self,
         from: &VersionVector,
         to: &VersionVector,
         merged: &VersionVector,
     ) -> CriticalVersionSearch {
+        self.try_latest_critical_version_below_meet(from, to, merged)
+            .unwrap()
+    }
+
+    pub(crate) fn try_latest_critical_version_below_meet(
+        &self,
+        from: &VersionVector,
+        to: &VersionVector,
+        merged: &VersionVector,
+    ) -> Result<CriticalVersionSearch, LoroError> {
         use CriticalVersionSearch::*;
 
         // An intersection of two causally closed sets is causally closed, so
         // `min(from, to)` is a version, and it is the meet of the two.
         let mut v = from.intersection(to);
         if v.is_empty() {
-            return NoneBelowMeet;
+            return Ok(NoneBelowMeet);
         }
 
         let mut pending: Vec<IdSpan> = v.diff_iter(merged).1.collect();
         while let Some(span) = pending.pop() {
-            for change in self.change_store.iter_changes(span) {
+            for change in self.change_store.try_iter_changes(span)? {
                 // The context of the change's first op above `v`, as
                 // `iter_from_replay_base_causally` computes it for the
                 // replay: the recorded deps plus the same-peer prefix.
-                let Some(mut ctx) = self.dag.frontiers_to_vv(&change.deps) else {
+                let Some(mut ctx) = self.dag.try_frontiers_to_vv(&change.deps)? else {
                     // The deps reach below trimmed history; nothing can be
                     // proved from here.
-                    return Unknown;
+                    return Ok(Unknown);
                 };
                 let cut = v.get(&change.id.peer).copied().unwrap_or(0);
                 let first_above = change.id.counter.max(cut);
@@ -999,14 +1049,14 @@ impl OpLog {
                     let above = v.clone();
                     v.intersect_with(&ctx);
                     if v.is_empty() {
-                        return NoneBelowMeet;
+                        return Ok(NoneBelowMeet);
                     }
                     pending.extend(v.diff_iter(&above).1);
                 }
             }
         }
 
-        Found(v)
+        Ok(Found(v))
     }
 
     /// Iterates causally over all changes between the replay base (the meet
@@ -1047,6 +1097,35 @@ impl OpLog {
                 ),
             > + '_,
     ) {
+        let (base, iter) = self
+            .try_iter_from_replay_base_causally(from, from_frontiers, to, to_frontiers)
+            .unwrap();
+        (base, iter.map(Result::unwrap))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn try_iter_from_replay_base_causally(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+        to_frontiers: &Frontiers,
+    ) -> Result<
+        (
+            ReplayBase,
+            impl Iterator<
+                    Item = Result<
+                        (
+                            BlockChangeRef,
+                            (Counter, Counter),
+                            Rc<RefCell<VersionVector>>,
+                        ),
+                        LoroError,
+                    >,
+                > + '_,
+        ),
+        LoroError,
+    > {
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
@@ -1058,10 +1137,10 @@ impl OpLog {
             // to a critical version; with container knowledge we can often
             // prove the concurrency harmless and replay from `from`
             // without touching the DAG at all.
-            if let Some(entry_parents) = self.uncovered_entry_parents(from, from_frontiers, to) {
+            if let Some(entry_parents) = self.uncovered_entry_parents(from, from_frontiers, to)? {
                 if !entry_parents.is_empty() {
                     if let Some(containers) =
-                        self.register_only_concurrency(from, to, &entry_parents)
+                        self.register_only_concurrency(from, to, &entry_parents)?
                     {
                         concurrent_containers = Some(containers);
                         register_only_base = Some(from_frontiers.clone());
@@ -1073,7 +1152,8 @@ impl OpLog {
         let (meet, mut diff_mode) = if let Some(base) = register_only_base {
             (MeetAsBase::Valid(base), DiffMode::ImportGreaterUpdates)
         } else {
-            self.dag.find_meet_and_mode(from_frontiers, to_frontiers)
+            self.dag
+                .try_find_meet_and_mode(from_frontiers, to_frontiers)?
         };
         if diff_mode == DiffMode::Checkout && to > from {
             diff_mode = DiffMode::Import;
@@ -1093,9 +1173,9 @@ impl OpLog {
                     #[cfg(test)]
                     CRITICAL_BASE_FALLBACK_COUNT.with(|c| c.set(c.get() + 1));
                     self.dag
-                        .latest_single_head_critical_version(from_frontiers, to_frontiers)
+                        .try_latest_single_head_critical_version(from_frontiers, to_frontiers)
                 };
-                match self.latest_critical_version_below_meet(from, to, &merged_vv) {
+                match self.try_latest_critical_version_below_meet(from, to, &merged_vv)? {
                     CriticalVersionSearch::Found(v) => {
                         // Only replay from the version whose criticality was
                         // proved. A shallow doc cannot replay from below its
@@ -1106,17 +1186,18 @@ impl OpLog {
                         // against) — a version that fails to round-trip
                         // through frontiers is not one. Both are left to the
                         // descent, as before.
-                        let f = self.dag.vv_to_frontiers(&v);
+                        let f = self.dag.try_vv_to_frontiers(&v)?;
                         let seed = self
                             .dag
-                            .frontiers_to_vv(self.dag.shallow_since_frontiers())
+                            .try_frontiers_to_vv(self.dag.shallow_since_frontiers())?
                             .unwrap();
-                        if v.includes_vv(&seed) && self.dag.frontiers_to_vv(&f).as_ref() == Some(&v)
+                        if v.includes_vv(&seed)
+                            && self.dag.try_frontiers_to_vv(&f)?.as_ref() == Some(&v)
                         {
                             replay_base_is_critical = true;
                             f
                         } else {
-                            descend()
+                            descend()?
                         }
                     }
                     CriticalVersionSearch::NoneBelowMeet => {
@@ -1127,12 +1208,15 @@ impl OpLog {
                         // walk.
                         Frontiers::default()
                     }
-                    CriticalVersionSearch::Unknown => descend(),
+                    CriticalVersionSearch::Unknown => descend()?,
                 }
             }
         };
 
-        let mut replay_base_vv = self.dag.frontiers_to_vv(&replay_base_frontiers).unwrap();
+        let mut replay_base_vv = self
+            .dag
+            .try_frontiers_to_vv(&replay_base_frontiers)?
+            .unwrap();
         replay_base_is_critical |= replay_base_vv.is_empty();
         if !replay_base_vv.includes_vv(&shallow_since_vv) {
             // The replay base cannot point before shallow history because those
@@ -1140,18 +1224,18 @@ impl OpLog {
             replay_base_frontiers = self.dag.shallow_since_frontiers().clone();
             replay_base_vv = self
                 .dag
-                .frontiers_to_vv(&replay_base_frontiers)
+                .try_frontiers_to_vv(&replay_base_frontiers)?
                 .unwrap_or(shallow_since_vv);
             replay_base_is_critical = false;
         }
 
         // go from the replay base to merged_vv
         let diff = replay_base_vv.diff(&merged_vv).forward;
-        let mut iter = self.dag.iter_causal(replay_base_frontiers, diff);
+        let mut iter = crate::dag::DagCausalIter::try_new(&self.dag, replay_base_frontiers, diff)?;
         let mut node = iter.next();
         let mut cur_cnt = 0;
         let vv = Rc::new(RefCell::new(VersionVector::default()));
-        (
+        Ok((
             ReplayBase {
                 vv: replay_base_vv.clone(),
                 diff_mode,
@@ -1159,37 +1243,52 @@ impl OpLog {
                 concurrent_containers,
             },
             std::iter::from_fn(move || {
-                if let Some(inner) = &node {
-                    let mut inner_vv = vv.borrow_mut();
-                    // FIXME: PERF: it looks slow for large vv, like 10000+ entries
-                    inner_vv.clear();
-                    self.dag.ensure_vv_for(&inner.data);
-                    inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
-                    let peer = inner.data.peer;
-                    let cnt = inner
-                        .data
-                        .cnt
-                        .max(cur_cnt)
-                        .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
-                    let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
-                        .min(merged_vv.get(&peer).copied().unwrap_or(0));
-                    let change = self.change_store.get_change(ID::new(peer, cnt)).unwrap();
+                let result = (|| -> Result<_, LoroError> {
+                    if let Some(inner) = &node {
+                        let mut inner_vv = vv.borrow_mut();
+                        // FIXME: PERF: it looks slow for large vv, like 10000+ entries
+                        inner_vv.clear();
+                        self.dag.try_ensure_vv_for(&inner.data)?;
+                        inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
+                        let peer = inner.data.peer;
+                        let cnt = inner
+                            .data
+                            .cnt
+                            .max(cur_cnt)
+                            .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
+                        let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
+                            .min(merged_vv.get(&peer).copied().unwrap_or(0));
+                        let change = match self.change_store.get_change(ID::new(peer, cnt)) {
+                            Some(change) => change,
+                            None => {
+                                self.check_history_parsable()?;
+                                panic!("DAG node must have a change");
+                            }
+                        };
 
-                    if change.ctr_end() < dag_node_end {
-                        cur_cnt = change.ctr_end();
+                        if change.ctr_end() < dag_node_end {
+                            cur_cnt = change.ctr_end();
+                        } else {
+                            node = iter.next();
+                            cur_cnt = 0;
+                        }
+
+                        inner_vv.extend_to_include_end_id(change.id);
+
+                        Ok(Some((change, (cnt, dag_node_end), vv.clone())))
                     } else {
-                        node = iter.next();
-                        cur_cnt = 0;
+                        Ok(None)
                     }
-
-                    inner_vv.extend_to_include_end_id(change.id);
-
-                    Some((change, (cnt, dag_node_end), vv.clone()))
-                } else {
-                    None
+                })();
+                match result {
+                    Ok(item) => item.map(Ok),
+                    Err(err) => {
+                        node = None;
+                        Some(Err(err))
+                    }
                 }
             }),
-        )
+        ))
     }
 
     pub fn len_changes(&self) -> usize {
@@ -1284,7 +1383,10 @@ impl OpLog {
             let elem = *elems
                 .entry(r.elem_id)
                 .or_insert_with(|| self.resolve_movable_list_elem(r.elem_id));
-            if !self.is_visible_movable_list_elem(&r, elem) {
+            if elem.is_none() {
+                self.check_history_parsable()?;
+            }
+            if !self.is_visible_movable_list_elem(&r, elem)? {
                 return Err(LoroError::DecodeError(
                     format!(
                         "Movable list op {} targets element {}, which is not in the list's \
@@ -1326,31 +1428,33 @@ impl OpLog {
         &self,
         r: &MovableListElemRef,
         elem: Option<ResolvedElem>,
-    ) -> bool {
+    ) -> Result<bool, LoroError> {
         if r.elem_id.lamport >= r.op_lamport {
-            return false;
+            return Ok(false);
         }
 
         let Some(elem) = elem else {
             // History before a shallow root is trimmed. An op after the root can
             // only see pre-root elements that are still alive at the root.
-            return !self.dag.shallow_since_vv().is_empty()
+            return Ok(!self.dag.shallow_since_vv().is_empty()
                 && self.with_history_cache(|h| {
                     h.shallow_root_has_movable_list_elem(r.container, r.elem_id)
-                });
+                }));
         };
         if !elem.is_insert || elem.container != r.container {
-            return false;
+            return Ok(false);
         }
 
         // Earlier ops of the op's own DAG node are by the same peer, so the node's
         // start version covers every other peer's part of its causal history.
         let target = elem.target;
-        (target.peer == r.op_id.peer && target.counter < r.op_id.counter)
-            || self
-                .dag
-                .get(r.op_id)
-                .is_some_and(|node| self.dag.ensure_vv_for(&node).includes_id(target))
+        if target.peer == r.op_id.peer && target.counter < r.op_id.counter {
+            return Ok(true);
+        }
+        let Some(node) = self.dag.try_get(r.op_id)? else {
+            return Ok(false);
+        };
+        Ok(self.dag.try_ensure_vv_for(&node)?.includes_id(target))
     }
 
     #[allow(unused)]

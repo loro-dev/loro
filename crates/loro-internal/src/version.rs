@@ -994,6 +994,16 @@ impl VersionVector {
 /// Use minimal set of ids to represent the frontiers
 #[tracing::instrument(skip(dag))]
 pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
+    try_shrink_frontiers(last_ids, dag).map_err(|err| match err {
+        loro_common::LoroError::FrontiersNotFound(id) => id,
+        err => panic!("{err}"),
+    })
+}
+
+pub(crate) fn try_shrink_frontiers(
+    last_ids: &Frontiers,
+    dag: &AppDag,
+) -> loro_common::LoroResult<Frontiers> {
     // it only keep the ids of ops that are concurrent to each other
 
     if last_ids.len() <= 1 {
@@ -1010,8 +1020,8 @@ pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers,
 
         let mut last_ids = Vec::with_capacity(ids.len());
         for id in ids {
-            let Some(lamport) = dag.get_lamport(&id) else {
-                return Err(id);
+            let Some(lamport) = dag.try_get_lamport(&id)? else {
+                return Err(loro_common::LoroError::FrontiersNotFound(id));
             };
             last_ids.push(IdFull::new(id.peer, id.counter, lamport))
         }
@@ -1027,7 +1037,7 @@ pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers,
         let mut len = 0;
         // travel backward because they have more similar lamport
         for f_id in frontiers.iter().rev() {
-            dag.travel_ancestors(*f_id, &mut |x| {
+            dag.try_travel_ancestors(*f_id, &mut |x| {
                 len += 1;
                 if x.contains_id(id.id()) {
                     should_insert = false;
@@ -1038,7 +1048,7 @@ pub fn shrink_frontiers(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers,
                 } else {
                     ControlFlow::Continue(())
                 }
-            });
+            })?;
         }
 
         if should_insert {
