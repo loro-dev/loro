@@ -142,20 +142,25 @@ doc in two steps:
    A container counts as reached in step 1 only through its header parent, so
    a forged header makes it a candidate; the full walk then rejects the
    inconsistency with `Err` instead of dropping a container that is still
-   referenced. Only keys that both steps leave unreached are removed. The
+   referenced. `export_shallow_snapshot_inner` logs that `Err` and exports the
+   root verbatim, as exporters before #1123 did: a root that cannot be judged
+   (documents hit by the #1161 family can hold one) must still be exportable,
+   and keeping everything drops nothing that is referenced. Only keys that
+   both steps leave unreached are removed. The
    filter protects placeholders and unknown subtrees that the walk cannot see,
    and the walk vetoes anything it still reaches. Never drop keys on either
    step's word alone.
 
 The overlay (>256 ops) branch still rejects unknown root keys, as before.
 
-The result (`None`, or the pruned bytes plus the removed keys) is memoized in
+The result (`None` for "reuse as-is", including the verbatim fallback, or the
+pruned bytes plus the removed keys) is memoized in
 `GcStore::pruned_root` because the cached root never changes. Only the first
 re-export of a root pays for the check. Repeated re-exports cost the same as
 before the fix, legacy roots are not re-encoded every time, and import is
 unaffected. `LoroDoc::fork` uses `encode_snapshot_inner_for_fork`
 (`CachedShallowRoot::Verbatim`): a fork copies the cached root verbatim, so it
-never fails the check or panics on an inconsistent root. Do not replace the
+never runs the check or panics on an inconsistent root. Do not replace the
 check with the latest state's alive set: tree metas that are dead at the latest
 version but alive inside the retained range would be lost.
 `legacy_*.bin` fixtures in the same test file pin both the dead-map drop and
