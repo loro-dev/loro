@@ -660,11 +660,18 @@ impl SharedArena {
         (self.inner.values.lock()[range]).to_vec()
     }
 
-    /// Whether the values in two ranges are equal, without cloning them.
-    pub(crate) fn value_slices_eq(&self, a: Range<usize>, b: Range<usize>) -> bool {
+    /// Compare values in two ranges without cloning them or taking the lock twice.
+    pub(crate) fn value_slices_eq(
+        &self,
+        a: Range<usize>,
+        b: Range<usize>,
+        eq: impl Fn(&LoroValue, &LoroValue) -> bool,
+    ) -> bool {
         let values = self.inner.values.lock();
         match (values.get(a), values.get(b)) {
-            (Some(a), Some(b)) => a == b,
+            (Some(a), Some(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| eq(a, b))
+            }
             _ => false,
         }
     }
