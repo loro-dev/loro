@@ -770,6 +770,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
         let changes = match decode_changes(&mut oplog)
             .and_then(|changes| oplog.check_and_trim_known_part_of_changes(changes, values))
@@ -2510,6 +2511,7 @@ impl LoroDoc {
                     .into_boxed_str(),
             ));
         }
+        self.oplog.lock().check_history_parsable()?;
         let from_frontiers = self.state_frontiers();
         loro_common::info!(
             "checkout from={:?} to={:?} cur_vv={:?}",
@@ -2943,6 +2945,7 @@ impl LoroDoc {
     #[instrument(skip(self))]
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.with_barrier(|| {
+            self.oplog.lock().check_history_parsable()?;
             let ans = match mode {
                 ExportMode::Snapshot => export_fast_snapshot(self)?,
                 ExportMode::Updates { from } => export_fast_updates(self, &from),

@@ -233,6 +233,13 @@ impl OpLog {
         &self.change_store
     }
 
+    /// `Err` once a lazily loaded change block turned out to be unparsable (see
+    /// `ChangeStore::corrupt_block_error`). Checked by the doc's import, export and
+    /// checkout entry points, which must not work from a partial history.
+    pub(crate) fn check_history_parsable(&self) -> Result<(), LoroError> {
+        self.change_store.corrupt_block_error()
+    }
+
     /// Get the change with the given peer and lamport.
     ///
     /// If not found, return the change with the greatest lamport that is smaller than the given lamport.

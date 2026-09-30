@@ -77,8 +77,9 @@ op log).
 ## When there is no parent
 
 The resolver answers `CreatorOp::Loaded` when a change block holds the op (it
-is parsed now, so the parent of every container the op creates is registered)
-and `CreatorOp::Absent` when none does. `get_parent` returns `None` for a
+is parsed now, so the parent of every container the op creates is registered),
+`CreatorOp::Absent` when none does, and `CreatorOp::Corrupt` when a block holds
+the op but cannot be parsed (see "A block that cannot be parsed"). `get_parent` returns `None` for a
 normal container that no source knows:
 
 - no op in the history creates it: an ID from the user that is not a
@@ -91,8 +92,8 @@ No path leads to it, so callers treat it like a deleted container:
 `is_deleted` answers `true` (and does not cache it), and `get_path` and
 `get_depth` answer `None`. Broken invariants still fail fast:
 
-- The resolver panics when a block holds the op but cannot be decoded or
-  parsed, instead of answering `Absent`.
+- A block that holds the op but cannot be decoded or parsed is reported, not
+  ignored; see the next section.
 - An arena without a creator resolver (not owned by an op log) panics.
 - `ContainerWrapper::new` panics for a container without a parent, so a
   container never gets state without one.
@@ -101,6 +102,30 @@ No path leads to it, so callers treat it like a deleted container:
   the resolver cannot supply a link that a local op path forgot. Debug builds
   check the links when a local change is committed
   (`parent::assert_local_parent_links_registered`).
+
+## A block that cannot be parsed
+
+Snapshot import validates the KV checksums (`ChangeStore::import_all`), so a
+lazily loaded block that fails to parse is forged or truncated external input,
+not an internal invariant. The resolver runs under the state lock from queries
+that return `bool` or `Option` (`is_deleted`, `has_container`, `get_path`), so
+it has no `Err` to return, and a panic there poisons the locks and traps the
+WASM instance. Until 2026-09-30 it panicked.
+
+Now `ChangeStore::creator_resolver` logs the error, records the first such
+block in `ChangeStoreInner::corrupt_block`, and answers `CreatorOp::Corrupt`.
+The arena treats it like `Absent` for that one lookup (the container reads as
+deleted, the ID as not a container). That answer may be wrong, so the document
+stops reading its history: `OpLog::check_history_parsable` makes `import` (every
+path, through `import_changes_and_apply_delta_to_state_if_needed`), `export`,
+and `checkout` return `DecodeError("cannot parse change block ...")`. The
+current state stays readable so the user can salvage it. Tests:
+`the_creator_resolver_reports_an_unparsable_block_instead_of_panicking` and
+`a_doc_with_an_unparsable_block_answers_queries_and_rejects_history_reads` in
+`change_store.rs`.
+
+The other lazy readers of the change store (`get_change`, lamport lookups,
+`visit_all_changes`) still `warn!` and answer `None` for such a block, as before.
 
 ## Cost of looking up an ID
 

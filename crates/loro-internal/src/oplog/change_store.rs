@@ -140,6 +140,9 @@ struct ChangeStoreInner {
     /// Set by [`ChangeStore::retire`]: the op log replaced this store, so loading from it
     /// must not register anything in the arena any more.
     retired: bool,
+    /// The first block the creator resolver could not decode or parse, with the error. See
+    /// [`ChangeStore::corrupt_block_error`].
+    corrupt_block: Option<(ID, Box<str>)>,
 }
 
 #[derive(Debug)]
@@ -247,6 +250,7 @@ impl ChangeStore {
                 start_frontiers: Frontiers::default(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                corrupt_block: None,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -874,6 +878,7 @@ impl ChangeStore {
                 start_frontiers: inner.start_frontiers.clone(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                corrupt_block: None,
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1553,12 +1558,36 @@ mod mut_inner_kv {
                 match Self::load_parsed_block(&inner, &external_kv, arena, id) {
                     Ok(Some(_)) => CreatorOp::Loaded,
                     Ok(None) => CreatorOp::Absent,
-                    // Answering "no such op" would report the container as deleted.
-                    Err((block_id, err)) => panic!(
-                        "InternalError: cannot parse change block {block_id}, which holds {id}: \
-                         {err}"
-                    ),
+                    // The block passed the KV checksums at import, so this is a forged or
+                    // truncated block. Answering "no such op" alone would report the
+                    // container as deleted, and a panic here would poison the state lock
+                    // (and trap the WASM instance). Record the block instead: the next
+                    // import, export, or checkout reports it.
+                    Err((block_id, err)) => {
+                        tracing::error!(
+                            %block_id, %id, ?err,
+                            "cannot parse change block; the document's history is corrupt"
+                        );
+                        let mut inner = inner.lock();
+                        if inner.corrupt_block.is_none() {
+                            inner.corrupt_block =
+                                Some((block_id, err.to_string().into_boxed_str()));
+                        }
+                        CreatorOp::Corrupt
+                    }
                 }
+            }
+        }
+
+        /// `Err` once the creator resolver has hit a block it cannot parse. The history is
+        /// corrupt from then on, so the entry points that read it (import, export, checkout)
+        /// return this instead of working from a partial history.
+        pub(crate) fn corrupt_block_error(&self) -> LoroResult<()> {
+            match &self.inner.lock().corrupt_block {
+                None => Ok(()),
+                Some((block_id, err)) => Err(LoroError::DecodeError(
+                    format!("cannot parse change block {block_id}: {err}").into_boxed_str(),
+                )),
             }
         }
 
@@ -2342,6 +2371,69 @@ mod test {
         store.retire(checkpoint);
         assert_eq!(resolve(&store.arena, ID::new(1, 0)), CreatorOp::Absent);
         assert!(store.inner.lock().mem_parsed_kv.is_empty());
+    }
+
+    /// Truncates the stored bytes of the peer's first block: its header still names the
+    /// counter range, but the body no longer parses.
+    fn truncate_first_block(store: &ChangeStore) {
+        let mut kv = store.external_kv.lock();
+        let (key, bytes) = kv
+            .scan(Bound::Unbounded, Bound::Unbounded)
+            .find(|(key, _)| key.len() == 12)
+            .unwrap();
+        kv.set(&key, bytes.slice(..bytes.len() / 2));
+        drop(kv);
+        store.inner.lock().mem_parsed_kv.clear();
+    }
+
+    #[test]
+    fn the_creator_resolver_reports_an_unparsable_block_instead_of_panicking() {
+        let (store, _, _) = kv_only_store_and_next_change();
+        truncate_first_block(&store);
+        let resolve = store.creator_resolver();
+        assert!(store.corrupt_block_error().is_ok());
+        assert_eq!(resolve(&store.arena, ID::new(1, 0)), CreatorOp::Corrupt);
+        let err = store.corrupt_block_error().unwrap_err();
+        assert!(
+            matches!(&err, LoroError::DecodeError(msg) if msg.contains("cannot parse change block")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_doc_with_an_unparsable_block_answers_queries_and_rejects_history_reads() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        for i in 0..100 {
+            let text = source.get_text(format!("t{i}").as_str());
+            text.insert(0, &"x".repeat(30), PosType::Unicode).unwrap();
+            source.commit_then_renew();
+        }
+        let snapshot = source.export(ExportMode::Snapshot).unwrap();
+        source
+            .get_text("t0")
+            .insert(0, "y", PosType::Unicode)
+            .unwrap();
+        source.commit_then_renew();
+        let update = source.export(ExportMode::all_updates()).unwrap();
+
+        let doc = LoroDoc::new();
+        doc.import(&snapshot).unwrap();
+        truncate_first_block(&doc.oplog().lock().change_store);
+        // A normal container id inside the broken block: only the history can tell whether
+        // an op created it, so this lookup reaches the creator resolver. It used to panic
+        // there, under the state lock.
+        let id = ContainerID::new_normal(ID::new(1, 3), loro_common::ContainerType::Map);
+        assert!(!doc.has_container(&id));
+        // The state is still readable; the history is not.
+        assert_eq!(doc.get_text("t5").to_string(), "x".repeat(30));
+        assert!(doc.export(ExportMode::Snapshot).is_err());
+        assert!(doc.checkout(&Frontiers::from(ID::new(1, 40))).is_err());
+        let err = doc.import(&update).unwrap_err();
+        assert!(
+            matches!(&err, LoroError::DecodeError(msg) if msg.contains("cannot parse change block")),
+            "{err}"
+        );
     }
 
     #[test]
