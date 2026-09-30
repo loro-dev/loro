@@ -1,5 +1,5 @@
 ---
-"loro.js": major
+"loro.js": minor
 ---
 
 Text now follows Rust (`loro-crdt`) everywhere, including when reading documents written by earlier loro.js versions. This breaks documents edited only with loro.js that have concurrent text edits or stored cursors: read "Upgrading from 0.2" in the README before upgrading.
@@ -10,4 +10,4 @@ Text now follows Rust (`loro-crdt`) everywhere, including when reading documents
 - `checkout`, `diff`, and `revertTo` no longer restore a character twice when two concurrent deletes removed it.
 - Consecutive inserts in one transaction are merged into one op, and a delete that spans several ID runs writes the last run first, as Rust does.
 
-Upgrading: updates and JSON updates written by an earlier version are read like Rust. A snapshot written by an earlier version keeps its current text, but its history reads like Rust, so a document loaded from it must not stay in use (exported updates, replicas loaded from updates, and checkouts can show other content). Exporting a shallow snapshot from such a document switches the document itself to Rust's reading. Migrate every replica the same way: read the final state with the old version and build a new document from it (reading it with 1.0 right after importing an old snapshot only works when that snapshot is the final version, with no updates stored after it), or import the old updates everywhere and accept Rust's reading. See "Upgrading from 0.2" in the README.
+Upgrading: updates and JSON updates written by an earlier version are read like Rust. A snapshot written by an earlier version keeps its current text, but its history reads like Rust, so a document loaded from it must not stay in use (exported updates, replicas loaded from updates, and checkouts can show other content). Exporting a shallow snapshot from such a document switches the document itself to Rust's reading. Migrate every replica the same way: read the final state with the old version and build a new document from it (reading it with 0.3 right after importing an old snapshot only works when that snapshot is the final version, with no updates stored after it), or import the old updates everywhere and accept Rust's reading. See "Upgrading from 0.2" in the README.

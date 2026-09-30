@@ -125,30 +125,30 @@ application depends on.
 
 ## Upgrading from 0.2
 
-1.0 reads every document the way Rust (`loro-crdt`) does, including documents
+0.3 reads every document the way Rust (`loro-crdt`) does, including documents
 written by 0.2. The data has no version marker, so a document edited only with 0.2
 can read differently after the upgrade:
 
 - **Concurrent text inserts.** 0.2 could order an insert after a sibling's subtree
-  differently from Rust. 1.0 orders it like Rust, so such a history can give other
-  text (`bé9a` in 0.2, `béa9` in 1.0 and Rust).
+  differently from Rust. 0.3 orders it like Rust, so such a history can give other
+  text (`bé9a` in 0.2, `béa9` in 0.3 and Rust).
 - **Rich text.** 0.2 counted text positions without a mark's start and end anchors;
-  Rust and 1.0 count them. Every insert, delete, and mark op that 0.2 wrote after a
+  Rust and 0.3 count them. Every insert, delete, and mark op that 0.2 wrote after a
   mark can therefore apply elsewhere (with bold on `ab` in `abcd`, inserting `X` at
-  3 and deleting 1 gave `acXd` in 0.2; its ops read as `bXcd` in 1.0 and Rust), and
+  3 and deleting 1 gave `acXd` in 0.2; its ops read as `bXcd` in 0.3 and Rust), and
   styles can cover other text.
-- **Cursors.** 1.0 resolves cursors like Rust: a cursor reports its target's own
+- **Cursors.** 0.3 resolves cursors like Rust: a cursor reports its target's own
   offset. A cursor encoded by 0.2 with side 1, or at the end of the text, therefore
   resolves one character earlier, whatever the characters are (on `abc`, the end
-  cursor is at 3 in 0.2 and 2 in 1.0; a side-1 cursor on `b` at 2 and 1). Other
+  cursor is at 3 in 0.2 and 2 in 0.3; a side-1 cursor on `b` at 2 and 1). Other
   cursors resolve as before. Get new cursors from the upgraded document.
 
 Documents also edited by `loro-crdt` peers already disagreed with Rust in these cases;
-1.0 makes them agree.
+0.3 makes them agree.
 
-How 1.0 reads data written by 0.2 (measured on the examples above):
+How 0.3 reads data written by 0.2 (measured on the examples above):
 
-| 0.2 data              | 1.0 reads                                                                       |
+| 0.2 data              | 0.3 reads                                                                       |
 | --------------------- | ------------------------------------------------------------------------------- |
 | Updates, JSON updates | Rust's reading: `béa9`, `bXcd`                                                  |
 | Full/shallow snapshot | The 0.2 text (`bé9a`, `acXd`) as current state, but the history reads like Rust |
@@ -168,13 +168,13 @@ checkout there and back.
 
 1. **Keep the content, drop the history (safest).** Read the final state with 0.2,
    after checking out the latest version: `doc.toJSON()`, or `text.toDelta()` for
-   rich text. Build one new document from it in 1.0 and share that document with
+   rich text. Build one new document from it in 0.3 and share that document with
    every replica. Do not import old updates or snapshots into it. Reading the state
-   with 1.0 right after importing a 0.2 snapshot gives the same result only when
-   that snapshot is the final version: if updates were stored after it, 1.0 (like
+   with 0.3 right after importing a 0.2 snapshot gives the same result only when
+   that snapshot is the final version: if updates were stored after it, 0.3 (like
    Rust) reads those updates the Rust way. For a 0.2 snapshot of bold `ab` in
    `abcd` followed by the update that inserted `X` at 3 and deleted 1, 0.2 shows
-   `[a]cXd` and 1.0 and Rust show `[bX]cd`; read such data with 0.2.
+   `[a]cXd` and 0.3 and Rust show `[bX]cd`; read such data with 0.2.
 2. **Keep the history, accept Rust's reading.** Import the 0.2 updates (not
    snapshots) on every replica, and check the content, because it can differ from
    what 0.2 showed.
