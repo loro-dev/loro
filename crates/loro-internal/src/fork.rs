@@ -36,10 +36,22 @@ use loro_common::{LoroError, LoroResult};
 impl LoroDoc {
     /// Creates a new LoroDoc at a specified version (Frontiers)
     pub fn fork_at(&self, frontiers: &Frontiers) -> LoroResult<Self> {
+        self.fork_at_inner(frontiers, true)
+    }
+
+    /// See [`LoroDoc::export_inner`] for `reject_partial_history`.
+    pub(crate) fn fork_at_inner(
+        &self,
+        frontiers: &Frontiers,
+        reject_partial_history: bool,
+    ) -> LoroResult<Self> {
         let bytes = self
-            .export(crate::loro::ExportMode::SnapshotAt {
-                version: Cow::Borrowed(frontiers),
-            })
+            .export_inner(
+                crate::loro::ExportMode::SnapshotAt {
+                    version: Cow::Borrowed(frontiers),
+                },
+                reject_partial_history,
+            )
             .map_err(LoroError::from)?;
         let doc = LoroDoc::new();
         doc.set_config(&self.config);

@@ -109,23 +109,54 @@ Snapshot import validates the KV checksums (`ChangeStore::import_all`), so a
 lazily loaded block that fails to parse is forged or truncated external input,
 not an internal invariant. The resolver runs under the state lock from queries
 that return `bool` or `Option` (`is_deleted`, `has_container`, `get_path`), so
-it has no `Err` to return, and a panic there poisons the locks and traps the
-WASM instance. Until 2026-09-30 it panicked.
+it has no `Err` to return, and a panic there unwinds under the locks and traps
+the WASM instance. Until 2026-09-30 it panicked.
 
-Now `ChangeStore::creator_resolver` logs the error, records the first such
-block in `ChangeStoreInner::corrupt_block`, and answers `CreatorOp::Corrupt`.
-The arena treats it like `Absent` for that one lookup (the container reads as
-deleted, the ID as not a container). That answer may be wrong, so the document
-stops reading its history: `OpLog::check_history_parsable` makes `import` (every
-path, through `import_changes_and_apply_delta_to_state_if_needed`), `export`,
-and `checkout` return `DecodeError("cannot parse change block ...")`. The
-current state stays readable so the user can salvage it. Tests:
-`the_creator_resolver_reports_an_unparsable_block_instead_of_panicking` and
-`a_doc_with_an_unparsable_block_answers_queries_and_rejects_history_reads` in
-`change_store.rs`.
+Every reader of the change store that fails to decode or parse a block records
+it in `ChangeStore::parse_failures` (a leaf lock; the first failure is kept) and
+answers "no such change", as the readers other than the resolver always did.
+The resolver answers `CreatorOp::Corrupt`, which the arena treats like `Absent`
+for that one lookup: the container reads as deleted, the ID as not a container.
 
-The other lazy readers of the change store (`get_change`, lamport lookups,
-`visit_all_changes`) still `warn!` and answer `None` for such a block, as before.
+That answer may be wrong, so `OpLog::check_history_parsable` turns the record
+into `DecodeError("cannot parse change block ...")`. **Only public entry points
+that return a `Result` call it:**
+
+- `LoroDoc::checkout`, `diff` and `revert_to` (through `diff_events`), and
+  `import` (every path, through
+  `import_changes_and_apply_delta_to_state_if_needed`), before they start.
+- `LoroDoc::export` (and so `fork_at` and `merge`), before it starts and again
+  when it is done, so an export that is the first to read the block fails
+  instead of returning bytes without the block's changes.
+
+Do not move the check into `_checkout_without_emitting` or the exporters.
+`undo` (`calc_diff`), `checkout_to_latest`, and `fork` on a detached doc call
+them and `unwrap` the result, so a check there turns the record into a panic
+on those paths (the first version of this fix did). `fork` uses
+`export_inner(.., false)` / `fork_at_inner(.., false)` for the same reason.
+
+Limits:
+
+- The paths without the check behave as before the record existed. They can
+  still panic when they need the broken block itself: `AppDag` loads its nodes
+  from the change store and panics with "unparsed vv don't match with change
+  store" (`loro_dag.rs`, `ensure_lazy_load_node`).
+- A read that returns before any failure was recorded is not undone: an
+  `import` or `checkout` that is the first to read the block finishes on the
+  partial history. Only `export` checks again at the end.
+- Local edits still succeed after a failure was recorded, but they cannot be
+  exported from this document any more. What can be salvaged is the current
+  state (`get_deep_value`).
+
+Tests, in `change_store.rs`:
+`the_creator_resolver_reports_an_unparsable_block_instead_of_panicking`,
+`every_reader_records_an_unparsable_block`,
+`a_doc_with_an_unparsable_block_neither_panics_nor_exports_partial_history`
+(a truncated block; the container is one that a healthy history finds),
+`an_export_that_finds_an_unparsable_block_fails_instead_of_skipping_it`, and
+`a_recorded_parse_failure_does_not_panic_where_no_error_can_be_returned` (the
+record is set by hand on a healthy doc, to separate the check from the DAG
+panic above).
 
 ## Cost of looking up an ID
 

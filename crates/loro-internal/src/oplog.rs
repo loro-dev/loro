@@ -233,9 +233,9 @@ impl OpLog {
         &self.change_store
     }
 
-    /// `Err` once a lazily loaded change block turned out to be unparsable (see
-    /// `ChangeStore::corrupt_block_error`). Checked by the doc's import, export and
-    /// checkout entry points, which must not work from a partial history.
+    /// `Err` once a read of the history has hit a change block that cannot be parsed (see
+    /// `ChangeStore::corrupt_block_error`). Only public entry points that return a `Result`
+    /// check it: internal callers of the same code `unwrap` their results.
     pub(crate) fn check_history_parsable(&self) -> Result<(), LoroError> {
         self.change_store.corrupt_block_error()
     }
