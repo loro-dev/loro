@@ -855,7 +855,7 @@ impl LoroDoc {
                     return Err(e);
                 }
             }
-            let mut diff = DiffCalculator::new(false);
+            let mut calc = DiffCalculator::new(false);
             // Applying may have unlocked pending changes; the isolated fast path is only valid
             // when exactly the candidate batch was appended on top of the old version.
             let isolated_batch = isolated_batch.filter(|(component_vv, _)| {
@@ -872,7 +872,7 @@ impl LoroDoc {
                 #[cfg(test)]
                 ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
                 let component_frontiers = oplog.dag.vv_to_frontiers(&component_vv);
-                let (diff, _) = diff.calc_diff_internal(
+                let (diff, _) = calc.calc_diff_internal(
                     &oplog,
                     &VersionVector::default(),
                     &Frontiers::default(),
@@ -882,7 +882,7 @@ impl LoroDoc {
                 );
                 (diff, DiffMode::Import)
             } else {
-                diff.calc_diff_internal(
+                calc.calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -915,6 +915,7 @@ impl LoroDoc {
 
                 panic!("state apply returned Err for import without rollback guard: {e}");
             }
+            materialize_touched_roots(&mut state, &calc, &oplog.arena);
         }
 
         if result.has_deps_before_shallow_root {
@@ -2388,6 +2389,12 @@ impl LoroDoc {
             },
             diff_mode,
         )?;
+        // Only at the latest version: every root the calculator has seen is then in
+        // the history of the target version. Checking out an older version keeps
+        // whatever roots the state already had.
+        if after == oplog.vv() {
+            materialize_touched_roots(&mut state, &calc, &oplog.arena);
+        }
 
         Ok(())
     }
@@ -2829,6 +2836,23 @@ impl LoroDoc {
         let (s, enable) = self.pre_commit_subs.inner().insert((), callback);
         enable();
         s
+    }
+}
+
+/// A root container touched by any op in a doc's history is part of its value, even
+/// when the ops add up to an empty value: the peer that wrote them created the root's
+/// state with its first local op. A replay whose net diff for the root is empty never
+/// creates that state, so create it here (loro-dev/loro#1156).
+///
+/// `calc` must have computed diffs whose ranges all lie in the history of the state's
+/// new version.
+fn materialize_touched_roots(state: &mut DocState, calc: &DiffCalculator, arena: &SharedArena) {
+    for idx in calc.touched_containers() {
+        if let Some(id) = arena.idx_to_id(idx) {
+            if id.is_root() && !id.is_mergeable() && !state.store.contains_id(&id) {
+                state.ensure_container(&id);
+            }
+        }
     }
 }
 
