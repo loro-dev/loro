@@ -60,7 +60,23 @@ is per atom range, not per change:
   JS numbers erase the distinction between an integral Double and I64; JSON text
   written by JS also drops the `.0` (`crates/loro-wasm/src/convert.rs`,
   `js_json_schema_to_loro_json_schema`; `LoroValueVisitor` in `loro-common/src/value.rs`).
+  Two I64s also match when they convert to the same f64 and at least one has
+  `|i| > 2^53`: a JS-number relay can round `2^60 + 1` to `2^60`. The same f64
+  comparison permits an I64 versus its rounded Double. Inside `[-2^53, 2^53]`,
+  distinct integers still differ and Double/I64 equality is exact numerically.
   The test-only `ImportedValues::Exact` provides the strict baseline for unit tests.
+- **Large-integer JSON paths.** Native JSON text preserves an I64, but parsing it
+  into JS numbers can lose precision. The WASM object importer uses
+  `serde_wasm_bindgen::Deserializer::deserialize_any`, which reads numbers outside
+  JS's safe integer range (`|n| > 2^53 - 1`) as Double. The generic
+  `js_value_to_loro_value` also returns Double for `|n| > 2^53`, but returns I64
+  at the boundary; a JS-written JSON string can decode a rounded I64 instead.
+  Both representations are tolerated, including JS's shortest decimal spelling
+  (for example `JSON.stringify(2 ** 60)` writes `1152921504606847000`, which converts
+  to the same f64). The direct WASM schema exporter currently uses
+  `serde_wasm_bindgen::Serializer::serialize_i64`, which rejects unsafe I64s
+  rather than rounding them. The tolerance covers history relayed through JS
+  parsing native JSON; it does not change that exporter's existing limitation.
 - **Ambiguous payload kinds.** A valid `🦜:cid:` string becomes a Container in
   JSON (`LoroValueVisitor::visit_str`). JSON peer compression can then reinterpret
   the string's peer as an index, so a marker-string versus Container pair is
@@ -75,9 +91,7 @@ is per atom range, not per change:
   Finite increments therefore remain comparable numerically, including integral
   increments. NaN equals NaN for binary reimports. A non-finite counter increment
   serialized as JSON text is already invalid at decode because its tagged f64
-  becomes null; this is not a new known-history rejection. WASM's configured
-  `serde_wasm_bindgen` serializer rejects I64 values outside JS's safe integer
-  range instead of rounding them, so no I64-to-I64 rounding equivalence is added.
+  becomes null; this is not a new known-history rejection.
 - **Other values** are compared exactly. Unlike main's blanket JSON value bypass,
   JSON imports now reject genuinely different representable payloads. Text,
   op container ids, positions, keys, element ids, style metadata and deps still
@@ -86,8 +100,9 @@ is per atom range, not per change:
   This fixes the 1.16.4 rejection of JSON-relayed history without changing the JSON
   format: a JSON importer still gets a list instead of `Binary` (including mergeable
   container markers), `Null` instead of a non-finite double, an I64 instead of an
-  integral Double, or a Container instead of a marker-looking string. It does not
-  repair that importer's lost values or make its state identical to the binary receiver's.
+  integral Double, a rounded large integer, or a Container instead of a
+  marker-looking string. It does not repair that importer's lost values or make
+  its state identical to the binary receiver's.
 - History below the shallow root, or any local change `get_change` cannot find,
   is not compared. The import then behaves as it did before this check.
 
@@ -96,6 +111,10 @@ is per atom range, not per change:
 - **Conflicts indistinguishable from JSON loss.** Two actual writers using the
   same op id can store Binary versus a list of the same bytes, NaN/positive or
   negative infinity versus null, or an integral Double versus the matching I64.
+  Different large integers (or a large integer versus a Double) also pass when
+  they convert to the same f64 and at least one is outside `[-2^53, 2^53]`, such
+  as `2^60 + 1` versus `2^60`; distinct integers inside that range remain checked
+  exactly. This ambiguity exists even when both writers stored I64s directly.
   Such a conflict passes the overlap check even without a JSON relay. A valid
   marker-string versus Container pair and differing unknown-op payloads also
   pass under the bypasses above. The receiver keeps its own prefix; the conflicting
@@ -131,9 +150,11 @@ for both "all updates + 1 change" and "snapshot + 1 change". Probe:
 - `crates/loro-wasm/tests/import_reused_peer_id.test.ts`.
 - `crates/loro/tests/import_json_relay.rs`: JSON-to-binary relays through full
   updates, snapshots and batch import; binary values, mergeable text/counter,
-  non-finite/integral doubles, marker strings with peer compression, tagged counter
-  values and unknown payloads, nested/sequence/style values, both comparison
-  directions and JSON re-imports, later relay edits, retained prefix history, and
+  non-finite/integral doubles, rounded large integers as I64 and Double (including
+  the `2^53` boundary, both signs and i64 extrema), marker strings with peer
+  compression, tagged counter values and unknown payloads, nested/sequence/style
+  values, both comparison directions and JSON re-imports, later relay edits,
+  retained prefix history, and
   genuine text/value conflicts that must still be rejected.
 - `known_history.rs` unit tests: the precise value equivalences and rejection
   boundaries, including nested values, byte-list contents, numeric representations,

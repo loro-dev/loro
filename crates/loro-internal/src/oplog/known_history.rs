@@ -44,8 +44,21 @@ impl ImportedValues {
         }
 
         match (a, b) {
+            (LoroValue::I64(a), LoroValue::I64(b)) => {
+                // JS numbers can round distinct large integers to the same f64.
+                // Keep exact comparison in the range where every integer fits.
+                const MAX_EXACT_INTEGER: i64 = 1 << 53;
+                a == b
+                    || ((a.unsigned_abs() > MAX_EXACT_INTEGER as u64
+                        || b.unsigned_abs() > MAX_EXACT_INTEGER as u64)
+                        && *a as f64 == *b as f64)
+            }
             (LoroValue::Double(d), LoroValue::I64(i))
-            | (LoroValue::I64(i), LoroValue::Double(d)) => *d == *i as f64,
+            | (LoroValue::I64(i), LoroValue::Double(d)) => {
+                // Inside +/-2^53 this is exact numeric equality; outside it also
+                // accepts the rounded Double produced by a JS-number relay.
+                *d == *i as f64
+            }
             (LoroValue::String(string), LoroValue::Container(_))
             | (LoroValue::Container(_), LoroValue::String(string)) => {
                 // A marker-looking string also becomes a container reference.
@@ -571,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn integral_doubles_match_only_the_same_integer() {
+    fn doubles_match_the_integer_as_f64() {
         for integer in [0, 2, -2, 9_007_199_254_740_991, i64::MIN, i64::MAX] {
             let double = LoroValue::Double(integer as f64);
             let integer = LoroValue::I64(integer);
@@ -581,6 +594,41 @@ mod tests {
         assert_lossy_pair(&LoroValue::Double(-0.0), &LoroValue::I64(0), true);
         for number in [2.5, 3.0, f64::NAN, f64::INFINITY] {
             assert_lossy_pair(&LoroValue::Double(number), &LoroValue::I64(2), false);
+        }
+    }
+
+    #[test]
+    fn large_integers_match_only_the_same_js_number() {
+        const BOUND: i64 = 1 << 53;
+        const LARGE: i64 = 1 << 60;
+        for (original, rounded) in [
+            (BOUND + 1, BOUND),
+            (-BOUND - 1, -BOUND),
+            (LARGE + 1, LARGE),
+            (LARGE + 1, LARGE + 24), // JSON.stringify spells 2^60 as ...7000.
+            (-LARGE - 1, -LARGE),
+            (-LARGE - 1, -LARGE - 24),
+            (i64::MAX, i64::MAX - 1),
+            (i64::MIN + 1, i64::MIN),
+        ] {
+            let original = LoroValue::I64(original);
+            for rounded in [LoroValue::I64(rounded), LoroValue::Double(rounded as f64)] {
+                assert_lossy_pair(&original, &rounded, true);
+                assert!(!ImportedValues::Exact.eq(&original, &rounded));
+            }
+        }
+        for (a, b) in [
+            (BOUND - 1, BOUND),
+            (-BOUND + 1, -BOUND),
+            (BOUND, BOUND + 2),
+            (-BOUND, -BOUND - 2),
+            (LARGE, LARGE + 256),
+            (-LARGE, -LARGE - 256),
+            (i64::MAX, i64::MAX - 1024),
+            (i64::MIN, i64::MIN + 1024),
+        ] {
+            assert_lossy_pair(&LoroValue::I64(a), &LoroValue::I64(b), false);
+            assert_lossy_pair(&LoroValue::I64(a), &LoroValue::Double(b as f64), false);
         }
     }
 
