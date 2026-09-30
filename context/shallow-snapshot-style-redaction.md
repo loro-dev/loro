@@ -1,6 +1,6 @@
 # Shallow Snapshot Dead-Style Redaction
 
-Verified against code 2026-08-11
+Verified against code 2026-09-30
 
 Shallow snapshot export nulls out the values of rich-text style pairs that are
 "dead" at the shallow root — pairs whose anchors no longer enclose any text.
@@ -64,6 +64,16 @@ a content-redaction mechanism).
    byte-identical to the root entry dedups away and resolves to the root's
    redacted version on import, which matches what whitelist redaction would
    have produced.
+
+## Unclosed pairs
+
+A version can hold a mark's `StyleStart` (counter `c`) without its `StyleEnd`
+(`c + 1`) when it is addressed with op-level frontiers (loro-dev/loro#1165). The
+state keeps such a start anchor with no style range, as `checkout` already did,
+and the style applies to nothing until the end arrives. The fast state decoder
+accepts it, redaction leaves its value alone, and `calc_shallow_doc_start`
+advances a root on a `StyleStart` to `c + 1` only when that op exists in the op
+log. Tests: `crates/loro/tests/snapshot_unclosed_style_mark.rs`.
 
 ## What still ships
 
