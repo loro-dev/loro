@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-09-28.
+Verified against code 2026-10-01.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -83,6 +83,11 @@ still contains current helpers including `import_changes_to_oplog`, `encode_op`,
 document. If a snapshot is imported into a non-empty document,
 `LoroDoc::_import_with` routes through decoded oplog changes instead. Failed
 direct snapshot import must reset both state and oplog.
+The non-empty path compares byte-identical known blocks without parsing them;
+unmatched incoming blocks use a temporary arena, and only checked new suffixes
+are moved into the document arena. This changes no on-wire format. See
+[import-peer-id-reuse.md](import-peer-id-reuse.md) for the semantic fallback and
+[arena-parent-links.md](arena-parent-links.md) for converted-op parent links.
 
 Default snapshot export does not walk the alive-container graph. It relies on a
 write-time invariant: every container brought alive by an applied op or diff

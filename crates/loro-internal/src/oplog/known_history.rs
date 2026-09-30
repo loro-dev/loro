@@ -49,15 +49,31 @@ impl OpLog {
     /// known changes is a no-op either way and stays as cheap as before.
     pub(crate) fn check_and_trim_known_part_of_changes(
         &self,
+        changes: Vec<Change>,
+        values: ImportedValues,
+    ) -> LoroResult<Vec<Change>> {
+        self.check_and_trim_known_part_in_arena(changes, values, &self.arena)
+    }
+
+    /// Snapshot overlap is decoded into a temporary arena. Compare before moving
+    /// only the retained suffix into the document's arena.
+    pub(crate) fn check_and_trim_known_part_in_arena(
+        &self,
         mut changes: Vec<Change>,
         values: ImportedValues,
+        imported_arena: &SharedArena,
     ) -> LoroResult<Vec<Change>> {
         let vv = self.vv();
         let known_end = |c: &Change| vv.get(&c.id.peer).copied().unwrap_or(0);
         if changes.iter().any(|c| c.ctr_end() > known_end(c)) {
             for change in changes.iter() {
                 if change.id.counter < known_end(change) {
-                    self.check_known_part_of_change(change, known_end(change), values)?;
+                    self.check_known_part_of_change(
+                        change,
+                        known_end(change),
+                        values,
+                        imported_arena,
+                    )?;
                 }
             }
         }
@@ -134,6 +150,7 @@ impl OpLog {
         change: &Change,
         known_end: Counter,
         values: ImportedValues,
+        imported_arena: &SharedArena,
     ) -> LoroResult<()> {
         let peer = change.id.peer;
         // History before the shallow root is not stored, so it cannot be compared.
@@ -141,6 +158,12 @@ impl OpLog {
         let end = change.ctr_end().min(known_end);
         let mut ctr = change.id.counter.max(shallow_start);
         while ctr < end {
+            if let Some(checked_end) =
+                self.check_known_text_in_cold_block(change, imported_arena, ctr, end)?
+            {
+                ctr = checked_end;
+                continue;
+            }
             // Missing local history cannot be compared; keep the old behavior for it.
             let Some(local) = self.change_store.get_change(ID::new(peer, ctr)) else {
                 break;
@@ -156,7 +179,15 @@ impl OpLog {
                 });
             }
 
-            if let Some(bad) = first_mismatch(&self.arena, values, change, &local, ctr, seg_end) {
+            if let Some(bad) = first_mismatch(
+                imported_arena,
+                &self.arena,
+                values,
+                change,
+                &local,
+                ctr,
+                seg_end,
+            ) {
                 return Err(LoroError::UsedOpID {
                     id: ID::new(peer, bad),
                 });
@@ -166,6 +197,104 @@ impl OpLog {
         }
 
         Ok(())
+    }
+    /// Compare cold Text insert history directly from its encoded block. This
+    /// preserves every dependency boundary and op atom without retaining the
+    /// block's parsed changes or strings. Unsupported blocks use the full check.
+    fn check_known_text_in_cold_block(
+        &self,
+        change: &Change,
+        arena: &SharedArena,
+        start: Counter,
+        end: Counter,
+    ) -> LoroResult<Option<Counter>> {
+        let Some(bytes) = self
+            .change_store
+            .unparsed_block_bytes(ID::new(change.id.peer, start))
+        else {
+            return Ok(None);
+        };
+        let Ok(range) = crate::oplog::ChangeStore::encoded_block_counter_range(&bytes) else {
+            return Ok(None);
+        };
+        // A short imported change must not rescan a large local block for each
+        // atom/change. Parse it once and reuse the general comparison instead.
+        if end < range.1 {
+            return Ok(None);
+        }
+        let block_end = end.min(range.1);
+        let mut cursor = OpCursor::new(change, start);
+        let checked = self.change_store.check_text_insert_block(
+            &bytes,
+            |counter, cid, pos, text, len, deps| {
+                let local_end = counter + len as Counter;
+                let mut ctr = counter.max(start);
+                let limit = local_end.min(end);
+                while ctr < limit {
+                    let bad = || LoroError::UsedOpID {
+                        id: ID::new(change.id.peer, ctr),
+                    };
+                    let local_deps = if ctr == counter {
+                        deps.clone()
+                    } else {
+                        Frontiers::from_id(ID::new(change.id.peer, ctr - 1))
+                    };
+                    if deps_at(change, ctr) != local_deps {
+                        return Err(bad());
+                    }
+                    let Some(op) = cursor.op_at(ctr) else {
+                        return Err(bad());
+                    };
+                    let n = (limit - ctr).min(op.ctr_end() - ctr);
+                    let slice = slice_op(op, ctr, n);
+                    let InnerContent::List(InnerListOp::InsertText {
+                        slice: imported,
+                        pos: imported_pos,
+                        unicode_len,
+                        ..
+                    }) = &slice.content
+                    else {
+                        return Err(bad());
+                    };
+                    if arena.idx_to_id(op.container).as_ref() != Some(cid)
+                        || pos
+                            .checked_add((ctr - counter) as u32)
+                            .is_none_or(|p| *imported_pos != p)
+                        || *unicode_len != n as u32
+                    {
+                        return Err(bad());
+                    }
+                    let imported = std::str::from_utf8(imported).unwrap();
+                    let offset = (ctr - counter) as usize;
+                    let local = if offset == 0 && n as u32 == len {
+                        text
+                    } else {
+                        let byte_start = text
+                            .char_indices()
+                            .nth(offset)
+                            .map_or(text.len(), |(i, _)| i);
+                        let byte_end = text[byte_start..]
+                            .char_indices()
+                            .nth(n as usize)
+                            .map_or(text.len(), |(i, _)| byte_start + i);
+                        &text[byte_start..byte_end]
+                    };
+                    if local != imported {
+                        let offset = local
+                            .chars()
+                            .zip(imported.chars())
+                            .position(|(a, b)| a != b)
+                            .unwrap_or(0);
+                        return Err(LoroError::UsedOpID {
+                            id: ID::new(change.id.peer, ctr + offset as Counter),
+                        });
+                    }
+                    ctr += n;
+                }
+                Ok(())
+            },
+        )?;
+        Ok(checked.then_some(block_end))
     }
 }
 
@@ -184,7 +313,8 @@ fn deps_at(change: &Change, ctr: Counter) -> Frontiers {
 /// which they differ. Each side may split or merge the ops differently, so both
 /// are cut at every boundary of either side before comparing.
 fn first_mismatch(
-    arena: &SharedArena,
+    a_arena: &SharedArena,
+    b_arena: &SharedArena,
     values: ImportedValues,
     a: &Change,
     b: &Change,
@@ -203,12 +333,13 @@ fn first_mismatch(
             .min(b_op.ctr_end() - ctr);
         let a_slice = slice_op(a_op, ctr, len);
         let b_slice = slice_op(b_op, ctr, len);
-        if !op_eq(arena, values, &a_slice, &b_slice) {
+        if !op_eq(a_arena, b_arena, values, &a_slice, &b_slice) {
             // Error path only: find the exact atom.
             let offset = (0..len)
                 .find(|&i| {
                     !op_eq(
-                        arena,
+                        a_arena,
+                        b_arena,
                         values,
                         &slice_op(a_op, ctr + i, 1),
                         &slice_op(b_op, ctr + i, 1),
@@ -260,15 +391,26 @@ fn slice_op(op: &Op, ctr: Counter, len: Counter) -> std::borrow::Cow<'_, Op> {
 /// Whether two ops with the same id range are the same op. Compares what the op
 /// means, not how it is stored: arena offsets and the direction of a one-atom
 /// delete are representation details.
-fn op_eq(arena: &SharedArena, values: ImportedValues, a: &Op, b: &Op) -> bool {
-    if a.container != b.container || a.atom_len() != b.atom_len() {
+fn op_eq(
+    a_arena: &SharedArena,
+    b_arena: &SharedArena,
+    values: ImportedValues,
+    a: &Op,
+    b: &Op,
+) -> bool {
+    let same_container = if std::ptr::eq(a_arena, b_arena) {
+        a.container == b.container
+    } else {
+        a_arena.idx_to_id(a.container) == b_arena.idx_to_id(b.container)
+    };
+    if !same_container || a.atom_len() != b.atom_len() {
         return false;
     }
 
     let exact = values == ImportedValues::Exact;
 
     match (&a.content, &b.content) {
-        (InnerContent::List(a), InnerContent::List(b)) => list_op_eq(arena, exact, a, b),
+        (InnerContent::List(a), InnerContent::List(b)) => list_op_eq(a_arena, b_arena, exact, a, b),
         (InnerContent::Map(a), InnerContent::Map(b)) => {
             a.key == b.key
                 && a.value.is_some() == b.value.is_some()
@@ -297,7 +439,13 @@ fn op_eq(arena: &SharedArena, values: ImportedValues, a: &Op, b: &Op) -> bool {
     }
 }
 
-fn list_op_eq(arena: &SharedArena, exact: bool, a: &InnerListOp, b: &InnerListOp) -> bool {
+fn list_op_eq(
+    a_arena: &SharedArena,
+    b_arena: &SharedArena,
+    exact: bool,
+    a: &InnerListOp,
+    b: &InnerListOp,
+) -> bool {
     match (a, b) {
         (
             InnerListOp::Insert {
@@ -310,7 +458,14 @@ fn list_op_eq(arena: &SharedArena, exact: bool, a: &InnerListOp, b: &InnerListOp
             },
         ) => {
             a_pos == b_pos
-                && (!exact || arena.value_slices_eq(a_slice.to_range(), b_slice.to_range()))
+                && (!exact
+                    || if std::ptr::eq(a_arena, b_arena) {
+                        a_arena.value_slices_eq(a_slice.to_range(), b_slice.to_range())
+                    } else {
+                        a_arena.with_values(a_slice.to_range(), |a| {
+                            b_arena.with_values(b_slice.to_range(), |b| a == b)
+                        })
+                    })
         }
         (
             InnerListOp::InsertText {
@@ -380,5 +535,94 @@ fn list_op_eq(arena: &SharedArena, exact: bool, a: &InnerListOp, b: &InnerListOp
         }
         (InnerListOp::StyleEnd, InnerListOp::StyleEnd) => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        container::list::list_op::ListOp,
+        op::{ListSlice, RawOpContent},
+    };
+    use loro_common::{ContainerID, ContainerType};
+
+    fn text_change(arena: &SharedArena, text: &str) -> Change {
+        let op = arena.convert_single_op(
+            &ContainerID::new_root("t", ContainerType::Text),
+            1,
+            0,
+            0,
+            RawOpContent::List(ListOp::Insert {
+                slice: ListSlice::RawStr {
+                    str: text.into(),
+                    unicode_len: text.chars().count(),
+                },
+                pos: 0,
+            }),
+        );
+        let mut ops = rle::RleVec::new();
+        ops.push(op);
+        Change {
+            id: ID::new(1, 0),
+            lamport: 0,
+            timestamp: 0,
+            commit_msg: None,
+            deps: Frontiers::default(),
+            ops,
+        }
+    }
+
+    #[test]
+    fn different_arenas_compare_container_ids_and_unicode_atoms() {
+        let a = SharedArena::new();
+        let b = SharedArena::new();
+        b.register_container(&ContainerID::new_root("other", ContainerType::Map));
+        b.alloc_str("unrelated");
+        let left = text_change(&a, "a😀bc");
+        let same = text_change(&b, "a😀bc");
+        let different = text_change(&b, "a😀Bc");
+        assert_eq!(
+            first_mismatch(&a, &b, ImportedValues::Exact, &left, &same, 0, 4),
+            None
+        );
+        assert_eq!(
+            first_mismatch(&a, &b, ImportedValues::Exact, &left, &different, 1, 4),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn cold_text_check_compares_dependencies_inside_a_merged_import() {
+        use crate::{cursor::PosType, LoroDoc};
+        use std::sync::{atomic::AtomicI64, Arc};
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.set_change_merge_interval(-1);
+        for i in 0..40 {
+            source
+                .get_text("t")
+                .insert(i, "a", PosType::Unicode)
+                .unwrap();
+            source.commit_then_renew();
+        }
+        let oplog = source.oplog().lock();
+        let forged = crate::oplog::ChangeStore::new_mem(&oplog.arena, Arc::new(AtomicI64::new(-1)));
+        for i in 0..40 {
+            let mut c = (*oplog.get_change_at(ID::new(1, i)).unwrap()).clone();
+            if i == 1 {
+                c.deps = Frontiers::default();
+            }
+            forged.insert_change(c, false, true);
+        }
+        let bytes = forged.encode_all(oplog.vv(), oplog.frontiers());
+        let local = crate::OpLog::new(Default::default());
+        local.change_store.import_all(bytes).unwrap();
+        let arena = SharedArena::new();
+        let incoming = text_change(&arena, &"a".repeat(40));
+        let err = local
+            .check_known_text_in_cold_block(&incoming, &arena, 0, 40)
+            .unwrap_err();
+        assert!(matches!(err, LoroError::UsedOpID { id } if id == ID::new(1, 1)));
     }
 }
