@@ -118,9 +118,18 @@ the rejected steps.
 ## Events and `diff()` (loro-crdt)
 
 `diff_event_to_js_value` (`crates/loro-wasm/src/lib.rs`) leaves out the event of
-an unknown container, and of a container whose diff holds an unknown child that
-can't be turned into a JS value (logged with `console.error`, #1151). The other
-events of the batch are still delivered.
+an unknown container. A map event that sets a key to an unknown child leaves out
+only that entry (`map_delta_to_js` in `convert.rs`) and keeps the other keys; in
+JSON form (`for_json`) the child is written as its container id like any other.
+A list or movable-list event that inserts an unknown child is still left out
+whole (logged with `console.error`), because dropping one item would shift the
+indices of the rest. The other events of the batch are always delivered
+(#1142, #1151).
+
+There is no JS value for an unknown container: handlers throw, and `toJSON` shows
+it as `null`. Delivering the unknown child itself (the left-out map entry or list
+item) needs a public representation, e.g. `null` as in `toJSON`, its
+`🦜:cid:...` string, or a wrapper class. That is an API decision left open.
 
 `LoroDoc.diff()` leaves out the entries of unknown containers. Applying one is a
 no-op in this version, also in a full-state batch (the final clear of an

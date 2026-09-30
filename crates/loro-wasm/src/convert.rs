@@ -434,6 +434,11 @@ fn map_delta_to_js(value: &ResolvedMapDelta, for_json: bool) -> JsResult<JsValue
         let value = if let Some(value) = value.value.clone() {
             match value {
                 ValueOrHandler::Value(v) => convert(v)?,
+                // A container of a type unknown to this version (created by a newer
+                // loro-crdt) has no JS handler. Leave its entry out and keep the other
+                // keys of the event, which used to be dropped with it (#1151). In JSON
+                // form it is written as its container id, like any other child.
+                ValueOrHandler::Handler(Handler::Unknown(_)) if !for_json => continue,
                 ValueOrHandler::Handler(h) => handler_to_js_value(h, for_json)?,
             }
         } else {
