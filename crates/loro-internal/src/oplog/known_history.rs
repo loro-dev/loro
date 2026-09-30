@@ -26,20 +26,33 @@ use crate::op::FutureInnerContent;
 /// How to compare imported op values with known history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ImportedValues {
-    /// Compare every value exactly.
+    /// Test-only baseline for checking which equivalences Lossy adds. Production
+    /// imports all use Lossy because binary history can also have a JSON ancestor.
+    #[cfg(test)]
     Exact,
-    /// Allow only JSON's lossy value representations, recursively. Binary imports
-    /// need this too: their history may have been relayed through JSON earlier.
+    /// Compare values modulo JSON conversions, recursively, and bypass ambiguous
+    /// payload kinds. Binary imports need this too: their history may have been
+    /// relayed through JSON earlier.
     Lossy,
 }
 
 impl ImportedValues {
     fn eq(self, a: &LoroValue, b: &LoroValue) -> bool {
+        #[cfg(test)]
         if self == Self::Exact {
             return a == b;
         }
 
         match (a, b) {
+            (LoroValue::Double(d), LoroValue::I64(i))
+            | (LoroValue::I64(i), LoroValue::Double(d)) => *d == *i as f64,
+            (LoroValue::String(string), LoroValue::Container(_))
+            | (LoroValue::Container(_), LoroValue::String(string)) => {
+                // A marker-looking string also becomes a container reference.
+                // JSON peer compression can reinterpret its peer as an index,
+                // so the decoded id cannot safely be compared with that string.
+                loro_common::ContainerID::try_from_loro_value_string(string).is_some()
+            }
             (LoroValue::Binary(bytes), LoroValue::List(list))
             | (LoroValue::List(list), LoroValue::Binary(bytes)) => {
                 bytes.len() == list.len()
@@ -62,7 +75,7 @@ impl ImportedValues {
                     && a.iter()
                         .all(|(key, a)| b.get(key).is_some_and(|b| self.eq(a, b)))
             }
-            _ => Self::Exact.eq(a, b),
+            _ => a == b,
         }
     }
 }
@@ -317,13 +330,23 @@ fn op_eq(arena: &SharedArena, values: ImportedValues, a: &Op, b: &Op) -> bool {
             (
                 crate::op::FutureInnerContent::Unknown {
                     prop: a_prop,
-                    value: a_value,
+                    value: _a_value,
                 },
                 crate::op::FutureInnerContent::Unknown {
                     prop: b_prop,
-                    value: b_value,
+                    value: _b_value,
                 },
-            ) => a_prop == b_prop && a_value == b_value,
+            ) => {
+                // A newer container's payload may contain LoroValues or arena
+                // indices whose meaning this version cannot interpret. Keep the
+                // old JSON value bypass for this kind, including binary relays.
+                a_prop == b_prop
+                    && match values {
+                        ImportedValues::Lossy => true,
+                        #[cfg(test)]
+                        ImportedValues::Exact => _a_value == _b_value,
+                    }
+            }
             #[allow(unreachable_patterns)]
             _ => false,
         },
@@ -528,7 +551,6 @@ mod tests {
             LoroValue::Bool(true),
             LoroValue::I64(1),
             LoroValue::I64(2),
-            LoroValue::Double(1.0),
             LoroValue::Double(1.5),
             LoroValue::from("one"),
             LoroValue::from("two"),
@@ -544,6 +566,121 @@ mod tests {
         for a in &values {
             for b in &values {
                 assert_lossy_pair(a, b, a == b);
+            }
+        }
+    }
+
+    #[test]
+    fn integral_doubles_match_only_the_same_integer() {
+        for integer in [0, 2, -2, 9_007_199_254_740_991, i64::MIN, i64::MAX] {
+            let double = LoroValue::Double(integer as f64);
+            let integer = LoroValue::I64(integer);
+            assert_lossy_pair(&double, &integer, true);
+            assert!(!ImportedValues::Exact.eq(&double, &integer));
+        }
+        assert_lossy_pair(&LoroValue::Double(-0.0), &LoroValue::I64(0), true);
+        for number in [2.5, 3.0, f64::NAN, f64::INFINITY] {
+            assert_lossy_pair(&LoroValue::Double(number), &LoroValue::I64(2), false);
+        }
+    }
+
+    #[test]
+    fn container_marker_strings_are_ambiguous_after_peer_compression() {
+        use loro_common::{ContainerID, ContainerType};
+        let id = ContainerID::new_root("target", ContainerType::Text);
+        let marker = LoroValue::from(id.to_loro_value_string());
+        let container = LoroValue::Container(id.clone());
+        assert_lossy_pair(&marker, &container, true);
+        assert!(!ImportedValues::Exact.eq(&marker, &container));
+        for string in ["plain text", "🦜:invalid"] {
+            assert_lossy_pair(&LoroValue::from(string), &container, false);
+        }
+        assert_lossy_pair(
+            &LoroValue::from("🦜:cid:0@0:Text"),
+            &LoroValue::Container(ContainerID::new_normal(
+                loro_common::ID::new(1, 0),
+                ContainerType::Text,
+            )),
+            true,
+        );
+        assert_lossy_pair(&marker, &LoroValue::from("🦜:cid:root-other:Text"), false);
+        assert_lossy_pair(
+            &container,
+            &LoroValue::Container(ContainerID::new_root("other", ContainerType::Text)),
+            false,
+        );
+    }
+
+    #[test]
+    fn unknown_payload_bypass_still_compares_props_and_containers() {
+        use crate::{
+            arena::SharedArena,
+            encoding::OwnedValue,
+            op::{FutureInnerContent, InnerContent, Op},
+        };
+        use loro_common::{ContainerID, ContainerType};
+        let arena = SharedArena::new();
+        let container =
+            arena.register_container(&ContainerID::new_root("future", ContainerType::Unknown(9)));
+        let make_op = |prop, value| Op {
+            counter: 0,
+            container,
+            content: InnerContent::Future(FutureInnerContent::Unknown {
+                prop,
+                value: Box::new(value),
+            }),
+        };
+        let a = make_op(1, OwnedValue::LoroValue(LoroValue::Double(2.0)));
+        let b = make_op(1, OwnedValue::LoroValue(LoroValue::I64(2)));
+        assert!(super::op_eq(&arena, ImportedValues::Lossy, &a, &b));
+        assert!(!super::op_eq(&arena, ImportedValues::Exact, &a, &b));
+        let different_prop = make_op(2, OwnedValue::LoroValue(LoroValue::I64(2)));
+        assert!(!super::op_eq(
+            &arena,
+            ImportedValues::Lossy,
+            &a,
+            &different_prop
+        ));
+        let mut different_container = b;
+        different_container.container =
+            arena.register_container(&ContainerID::new_root("other", ContainerType::Unknown(9)));
+        assert!(!super::op_eq(
+            &arena,
+            ImportedValues::Lossy,
+            &a,
+            &different_container
+        ));
+    }
+
+    #[cfg(feature = "counter")]
+    #[test]
+    fn counter_values_keep_numeric_equality_in_lossy_mode() {
+        use crate::{
+            arena::SharedArena,
+            op::{FutureInnerContent, InnerContent, Op},
+        };
+        use loro_common::{ContainerID, ContainerType};
+        let arena = SharedArena::new();
+        let container =
+            arena.register_container(&ContainerID::new_root("counter", ContainerType::Counter));
+        let make_op = |value| Op {
+            counter: 0,
+            container,
+            content: InnerContent::Future(FutureInnerContent::Counter(value)),
+        };
+        for (a, b, equal) in [
+            (2.0, 2.0, true),
+            (2.0, 3.0, false),
+            (-0.0, 0.0, true),
+            (f64::NAN, f64::NAN, true),
+            (f64::INFINITY, f64::INFINITY, true),
+            (f64::NAN, f64::INFINITY, false),
+        ] {
+            for values in [ImportedValues::Lossy, ImportedValues::Exact] {
+                assert_eq!(
+                    super::op_eq(&arena, values, &make_op(a), &make_op(b)),
+                    equal
+                );
             }
         }
     }
