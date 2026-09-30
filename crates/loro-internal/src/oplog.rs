@@ -1,4 +1,6 @@
 mod change_store;
+mod known_history;
+pub(crate) use known_history::ImportedValues;
 pub(crate) mod loro_dag;
 mod pending_changes;
 
@@ -358,7 +360,7 @@ impl OpLog {
     /// Roll back an import rollback scope this caller owns (see [`Self::rollback_import`]).
     /// No-op when `owns` is false — the scope then belongs to an outer owner such as
     /// `import_batch`.
-    pub(crate) fn rollback_owned_import(&mut self, owns: bool, state: &DocState) {
+    pub(crate) fn rollback_owned_import(&mut self, owns: bool, state: &mut DocState) {
         if owns {
             self.rollback_import(state);
         }
@@ -424,14 +426,17 @@ impl OpLog {
 
     /// Undo the open import rollback scope, including the arena.
     ///
-    /// `_state` shows that the caller holds the state lock. A reader under that lock can
+    /// `state` shows that the caller holds the state lock. A reader under that lock can
     /// register containers through the creator resolver, which runs without the op log lock,
-    /// and use their indices before it returns; the arena rollback must not free them in
-    /// between. See `context/arena-parent-links.md`.
-    pub(crate) fn rollback_import(&mut self, _state: &DocState) {
+    /// and resolve their parent links before it returns; the arena rollback must not drop
+    /// those links in between. See `context/arena-parent-links.md`. The state's caches that
+    /// depend on parent links are cleared as well
+    /// (`context/failed-import-arena-indices.md`).
+    pub(crate) fn rollback_import(&mut self, state: &mut DocState) {
         let Some(rollback) = self.import_rollback.take() else {
             return;
         };
+        state.forget_parent_link_caches_after_failed_import();
 
         // Also rolls back the arena; see `ChangeStore::rollback_import`.
         self.change_store
@@ -442,19 +447,42 @@ impl OpLog {
         self.refresh_visible_op_count();
     }
 
+    /// [`Self::rollback_import`] without the arena rollback, for a scope that only inserted a
+    /// discarded local transaction (`LoroDoc::rollback_apply_diff_scope`): its containers were
+    /// registered by the transaction, and undoing it from the state may register old
+    /// containers and create state for them. See `context/apply-diff-atomicity.md`.
+    pub(crate) fn rollback_import_keeping_arena(&mut self, _state: &DocState) {
+        let Some(rollback) = self.import_rollback.take() else {
+            return;
+        };
+
+        self.change_store
+            .rollback_import_keeping_arena(rollback.change_store);
+        self.dag.rollback_import();
+        rollback.pending.rollback(&mut self.pending_changes);
+        self.history_cache.lock().free_all();
+        self.refresh_visible_op_count();
+    }
+
     /// Rolls the arena back to a checkpoint taken before an import that failed before its
     /// import rollback scope began. See [`ChangeStore::rollback_arena`], and
-    /// [`Self::rollback_import`] for `_state`.
-    pub(crate) fn rollback_arena(&self, arena_checkpoint: SharedArenaRollback, _state: &DocState) {
+    /// [`Self::rollback_import`] for `state`.
+    pub(crate) fn rollback_arena(
+        &self,
+        arena_checkpoint: SharedArenaRollback,
+        state: &mut DocState,
+    ) {
+        state.forget_parent_link_caches_after_failed_import();
         self.change_store.rollback_arena(arena_checkpoint);
     }
 
-    /// See [`Self::rollback_import`] for `_state`.
+    /// See [`Self::rollback_import`] for `state`.
     pub(crate) fn reset_to_empty_for_failed_snapshot_import(
         &mut self,
         arena_checkpoint: SharedArenaRollback,
-        _state: &DocState,
+        state: &mut DocState,
     ) {
+        state.forget_parent_link_caches_after_failed_import();
         let arena = self.arena.clone();
         let configure = self.configure.clone();
         // Also rolls back the arena; see `ChangeStore::retire`.

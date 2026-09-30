@@ -316,6 +316,18 @@ impl ContainerStore {
         LoadAllFlag
     }
 
+    pub(super) fn begin_created_journal(&mut self) {
+        self.store.begin_created_journal();
+    }
+
+    pub(super) fn take_created_journal(&mut self) -> Vec<ContainerIdx> {
+        self.store.take_created_journal()
+    }
+
+    pub(super) fn remove_created(&mut self, created: &[ContainerIdx]) {
+        self.store.remove_created(created);
+    }
+
     pub(super) fn get_or_create_mut(&mut self, idx: ContainerIdx) -> &mut State {
         self.store
             .get_or_insert_with(idx, || {

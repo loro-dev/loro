@@ -144,6 +144,11 @@ impl DiffCalculator {
         }
     }
 
+    /// The containers touched by the ranges this calculator has computed diffs for.
+    pub(crate) fn touched_containers(&self) -> impl Iterator<Item = ContainerIdx> + '_ {
+        self.calculators.keys().copied()
+    }
+
     #[allow(unused)]
     pub(crate) fn get_calc(&self, container: ContainerIdx) -> Option<&ContainerDiffCalculator> {
         self.calculators.get(&container).map(|(_, c)| c)

@@ -36,6 +36,14 @@ impl DeadContainersCache {
 }
 
 impl DocState {
+    /// Called when a failed import is rolled back. The import may have registered parent links
+    /// that the arena rollback drops, and a deletion found through one of them while it ran
+    /// (e.g. by a query on another thread) is not true of the kept history.
+    /// See `context/failed-import-arena-indices.md`.
+    pub(crate) fn forget_parent_link_caches_after_failed_import(&mut self) {
+        self.dead_containers_cache.clear();
+    }
+
     pub(crate) fn is_deleted(&mut self, idx: ContainerIdx) -> bool {
         #[cfg(not(debug_assertions))]
         {

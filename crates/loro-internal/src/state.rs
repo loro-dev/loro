@@ -178,6 +178,20 @@ pub struct DocState {
     /// ([`crate::undo::DiffBatch::from_changes`]: revert, undo). Containers that keep their
     /// state are then not revived at all, which skips building full states nobody reads.
     record_changes_only: bool,
+    /// Set while a local transaction that may be rolled back runs (`apply_diff`,
+    /// `revert_to`). See [`Self::begin_local_rollback`].
+    local_rollback: Option<LocalRollbackJournal>,
+}
+
+/// What undoing a local transaction's ops by checkout cannot restore exactly,
+/// recorded as the ops are applied. See `context/apply-diff-atomicity.md`.
+struct LocalRollbackJournal {
+    /// The `apply_diff` scope that began it.
+    scope: u64,
+    /// The value of each counter before the transaction's first op on it:
+    /// subtracting the increments again may not give back the same float.
+    #[cfg(feature = "counter")]
+    counters: FxHashMap<ContainerIdx, f64>,
 }
 
 struct AliveContainersCache {
@@ -504,6 +518,7 @@ impl DocState {
                 dead_containers_cache: Default::default(),
                 alive_containers_cache: None,
                 record_changes_only: false,
+                local_rollback: None,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -530,6 +545,7 @@ impl DocState {
             dead_containers_cache: Default::default(),
             alive_containers_cache: None,
             record_changes_only: false,
+            local_rollback: None,
         }))
     }
 
@@ -1022,6 +1038,13 @@ impl DocState {
         if self.in_txn {
             self.changed_idx_in_txn.insert(op.container);
         }
+        #[cfg(feature = "counter")]
+        if let (Some(journal), State::CounterState(counter)) = (&mut self.local_rollback, &*state) {
+            journal
+                .counters
+                .entry(op.container)
+                .or_insert_with(|| counter.value());
+        }
         // A local move can take a node out of a deleted subtree. Movable-list
         // elements cannot be revived locally: a deleted one has no index.
         if let RawOpContent::Tree(tree_op) = &raw_op.content {
@@ -1033,6 +1056,84 @@ impl DocState {
         Ok(())
     }
 
+    /// Start recording what [`Self::finish_local_rollback`] needs to undo the
+    /// local ops applied from now on: the containers that get new state and the
+    /// counters' values.
+    ///
+    /// `scope` identifies the caller. A journal of another scope is replaced: two
+    /// scopes never share a transaction, so that scope's transaction was
+    /// committed by another thread and cannot be rolled back anyway.
+    pub(crate) fn begin_local_rollback(&mut self, scope: u64) {
+        self.store.begin_created_journal();
+        self.local_rollback = Some(LocalRollbackJournal {
+            scope,
+            #[cfg(feature = "counter")]
+            counters: Default::default(),
+        });
+    }
+
+    /// Stop recording for `scope`, keeping the ops.
+    pub(crate) fn end_local_rollback(&mut self, scope: u64) {
+        if self
+            .local_rollback
+            .as_ref()
+            .is_some_and(|j| j.scope == scope)
+        {
+            self.store.take_created_journal();
+            self.local_rollback = None;
+        }
+    }
+
+    /// Takes the event recorder out, so that a state change the caller discards
+    /// is not recorded; put it back with [`Self::restore_event_recorder`].
+    pub(crate) fn take_event_recorder(&mut self) -> EventRecorder {
+        std::mem::take(&mut self.event_recorder)
+    }
+
+    pub(crate) fn restore_event_recorder(&mut self, recorder: EventRecorder) {
+        self.event_recorder = recorder;
+    }
+
+    /// Finish rolling back the local ops applied since
+    /// [`Self::begin_local_rollback`], after the caller undid them by checking
+    /// the state out at the version before them. `peer` and `start_counter` are
+    /// the id of the first op. Restores what the checkout cannot:
+    ///
+    /// - containers that got state since (new or never loaded before) lose it,
+    ///   so the store is the same as before, including which roots show up;
+    /// - counters get their exact old values;
+    /// - containers the ops created lose their parent link, since the next ops
+    ///   reuse their ids (`SharedArena::forget_parents_of_discarded_ops`);
+    /// - the liveness caches, which may hold answers for the state in between.
+    pub(crate) fn finish_local_rollback(
+        &mut self,
+        scope: u64,
+        peer: PeerID,
+        start_counter: crate::id::Counter,
+    ) {
+        let created = self.store.take_created_journal();
+        let journal = self.local_rollback.take();
+        assert!(
+            journal.as_ref().is_some_and(|j| j.scope == scope),
+            "the journal of a rolled back apply_diff was replaced"
+        );
+        #[cfg(feature = "counter")]
+        if let Some(journal) = journal {
+            for (idx, value) in journal.counters {
+                if let Some(State::CounterState(counter)) = self.store.get_container_mut(idx) {
+                    counter.set_value(value);
+                }
+            }
+        }
+        #[cfg(not(feature = "counter"))]
+        let _ = journal;
+        self.store.remove_created(&created);
+        self.arena
+            .forget_parents_of_discarded_ops(peer, start_counter);
+        self.dead_containers_cache.clear();
+        self.alive_containers_cache = None;
+    }
+
     pub(crate) fn start_txn(&mut self, origin: InternalString, trigger: EventTriggerKind) {
         self.pre_txn(origin, trigger);
         self.in_txn = true;
@@ -1040,6 +1141,12 @@ impl DocState {
 
     pub(crate) fn abort_txn(&mut self) {
         self.in_txn = false;
+    }
+
+    /// Undo [`Self::abort_txn`] for a transaction that goes on
+    /// (`LoroDoc::rollback_apply_diff_scope`).
+    pub(crate) fn resume_txn(&mut self) {
+        self.in_txn = true;
     }
 
     pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
@@ -2736,7 +2843,7 @@ fn trigger_on_new_container(
 }
 
 #[derive(Default, Clone)]
-struct EventRecorder {
+pub(crate) struct EventRecorder {
     recording_diff: bool,
     // A batch of diffs will be converted to a event when
     // they cannot be merged with the next diff.

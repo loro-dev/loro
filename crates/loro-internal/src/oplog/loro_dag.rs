@@ -922,6 +922,22 @@ impl AppDag {
         }
     }
 
+    /// Undo [`Self::update_version_on_new_local_op`] for every op of a
+    /// transaction that is discarded instead of committed: `frontiers` and
+    /// `start_counter` are the DAG's frontiers and `peer`'s end before its
+    /// first op.
+    pub(crate) fn discard_pending_txn(
+        &mut self,
+        frontiers: Frontiers,
+        peer: PeerID,
+        start_counter: Counter,
+    ) {
+        self.pending_txn_node = None;
+        self.frontiers = frontiers;
+        // An end of 0 removes the peer.
+        self.vv.set_last(ID::new(peer, start_counter - 1));
+    }
+
     pub(crate) fn latest_vv_contains_peer(&self, peer: PeerID) -> bool {
         self.vv.contains_key(&peer) && *self.vv.get(&peer).unwrap() > 0
     }

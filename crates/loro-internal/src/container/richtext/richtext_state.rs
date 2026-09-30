@@ -2706,12 +2706,27 @@ impl RichtextState {
             return;
         }
 
+        // A start anchor whose end is not in the state (a version that holds a
+        // mark's `StyleStart` but not its `StyleEnd`, loro-dev/loro#1165) styles
+        // nothing, so it has no style range.
+        let closed: FxHashSet<&Arc<StyleOp>> = self
+            .iter_chunk()
+            .filter_map(|c| match c {
+                RichtextStateChunk::Style {
+                    style,
+                    anchor_type: AnchorType::End,
+                } => Some(style),
+                _ => None,
+            })
+            .collect();
         let mut entity_index_to_style_anchor: FxHashMap<usize, &RichtextStateChunk> =
             FxHashMap::default();
         let mut index = 0;
         for c in self.iter_chunk() {
-            if matches!(c, RichtextStateChunk::Style { .. }) {
-                entity_index_to_style_anchor.insert(index, c);
+            if let RichtextStateChunk::Style { style, .. } = c {
+                if closed.contains(style) {
+                    entity_index_to_style_anchor.insert(index, c);
+                }
             }
 
             index += c.length()
@@ -2752,7 +2767,7 @@ impl RichtextState {
         );
     }
 
-    /// Allow StyleAnchors to appear in pairs, so that there won't be unmatched single StyleAnchors.
+    /// Every end anchor must follow its start anchor. A start anchor may lack its end.
     pub(crate) fn check_style_anchors_appear_in_pairs(&self) {
         if !cfg!(any(debug_assertions, test)) {
             return;
@@ -2772,11 +2787,9 @@ impl RichtextState {
                 },
             }
         }
-        assert!(
-            start_ops.is_empty(),
-            "Only has start anchors {:#?}",
-            &start_ops
-        );
+        // A start anchor without its end is allowed: a version can hold a mark's
+        // `StyleStart` op but not its `StyleEnd` op (loro-dev/loro#1165).
+        let _ = start_ops;
     }
 
     /// Iter style ranges in the given range in entity index

@@ -9,6 +9,8 @@ over graceful degradation.
 
 - `src/loro.rs`: document-level orchestration for commit, import/export,
   checkout, barriers, state/oplog coordination, and event emission.
+  `apply_diff`/`revert_to` roll a failed batch back:
+  [../../context/apply-diff-atomicity.md](../../context/apply-diff-atomicity.md).
 - `src/encoding.rs`: public/internal `ExportMode`, binary header parsing,
   checksum verification, `EncodeMode` dispatch, import metadata, and the bridge
   from decoded changes into `OpLog`.
@@ -37,6 +39,8 @@ over graceful degradation.
 - `src/diff_calc/`: diff calculation when moving between versions. The tree
   calculator's cache transitions:
   [../../context/tree-checkout-window.md](../../context/tree-checkout-window.md).
+  Which tree diff modes carry raw ops, and how tree events are built for each:
+  [../../context/tree-events.md](../../context/tree-events.md).
 - `src/container/richtext/`: text state with style anchors. Where local inserts
   go next to anchors, the insert cursor cache, and delete `start_id`s:
   [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).
@@ -48,10 +52,17 @@ over graceful degradation.
 - `tests/mergeable_container/` and `tests/mergeable_cid_encoding.rs`: focused
   mergeable container regression tests.
 - `src/tests/import_atomicity.rs`: import rollback and malformed-input
-  regressions.
+  regressions. A failed import keeps its arena indices and drops only parent
+  links, values, and the dead-container cache:
+  [../../context/failed-import-arena-indices.md](../../context/failed-import-arena-indices.md).
 - Movable-list `Move`/`Set` element validation on import, plus change-store
   rollback records and KV block-range decoding:
   [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).
+- Root container visibility after import/checkout (`materialize_touched_roots`):
+  [../../context/root-container-visibility.md](../../context/root-container-visibility.md).
+- Imported changes that reuse local op ids are checked against local history
+  before anything is applied (`src/oplog/known_history.rs`):
+  [../../context/import-peer-id-reuse.md](../../context/import-peer-id-reuse.md).
 - `import_batch` force-detach, its batch-wide rollback scope, and the
   never-exit-detached invariant:
   [../../context/import-batch-atomicity.md](../../context/import-batch-atomicity.md).

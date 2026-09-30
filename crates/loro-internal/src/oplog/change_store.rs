@@ -23,7 +23,7 @@ use loro_common::{
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::AtomicI64;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
@@ -308,35 +308,59 @@ impl ChangeStore {
     }
 
     pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        // A change store needs each peer's counters to be contiguous, so merge the
+        // ranges of each peer and put the k-th range of every peer into the k-th
+        // store. The blocks of all stores are written one after another, which the
+        // update decoder reads the same way (loro-dev/loro#1155).
+        let mut ranges: FxHashMap<PeerID, Vec<(Counter, Counter)>> = FxHashMap::default();
         for span in spans {
             let mut span = *span;
             span.normalize_();
-            if span.counter.end <= 0 {
-                continue;
-            }
-
-            span.counter.start = span.counter.start.max(0);
-            span.counter.end = span.counter.end.max(0);
-            if span.counter.start >= span.counter.end {
-                continue;
-            }
-
-            // PERF: this can be optimized by reusing the current encoded blocks
-            // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
-                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
-                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
-                if start == end {
-                    continue;
-                }
-
-                let ch = c.slice(start, end);
-                new_store.insert_change(ch, false, false);
+            let start = span.counter.start.max(0);
+            let end = span.counter.end.max(0);
+            if start < end {
+                ranges.entry(span.peer).or_default().push((start, end));
             }
         }
 
-        encode_blocks_in_store(new_store, &self.arena, w);
+        let mut layers: Vec<Vec<IdSpan>> = Vec::new();
+        for (peer, mut peer_ranges) in ranges {
+            peer_ranges.sort_unstable();
+            let mut merged: Vec<(Counter, Counter)> = Vec::with_capacity(peer_ranges.len());
+            for (start, end) in peer_ranges {
+                match merged.last_mut() {
+                    Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                    _ => merged.push((start, end)),
+                }
+            }
+            for (i, (start, end)) in merged.into_iter().enumerate() {
+                if layers.len() <= i {
+                    layers.push(Vec::new());
+                }
+                layers[i].push(IdSpan::new(peer, start, end));
+            }
+        }
+
+        for layer in layers {
+            let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+            for span in layer {
+                // PERF: this can be optimized by reusing the current encoded blocks
+                // In the current method, it needs to parse and re-encode the blocks
+                for c in self.iter_changes(span) {
+                    let start =
+                        ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                    let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+                    if start == end {
+                        continue;
+                    }
+
+                    let ch = c.slice(start, end);
+                    new_store.insert_change(ch, false, false);
+                }
+            }
+
+            encode_blocks_in_store(new_store, &self.arena, w);
+        }
     }
 
     fn encode_from(
@@ -358,6 +382,12 @@ impl ChangeStore {
         self.external_kv.lock().export_all()
     }
 
+    /// Decode the changes of a snapshot imported into a non-empty doc.
+    ///
+    /// Changes this doc already has are kept, because
+    /// `OpLog::check_and_trim_known_part_of_changes` compares them with the local
+    /// history before trimming them. When nothing is new, return no changes and
+    /// skip the clones.
     pub(crate) fn decode_snapshot_for_updates(
         bytes: Bytes,
         arena: &SharedArena,
@@ -365,46 +395,22 @@ impl ChangeStore {
     ) -> Result<Vec<Change>, LoroError> {
         let change_store = ChangeStore::new_mem(arena, Arc::new(AtomicI64::new(0)));
         let _ = change_store.import_all(bytes)?;
-        let mut changes = Vec::new();
+        let mut has_new = false;
         change_store.visit_all_changes(&mut |c| {
-            let cnt_threshold = self_vv.get(&c.id.peer).copied().unwrap_or(0);
-            if c.id.counter >= cnt_threshold {
-                changes.push(c.clone());
-                return;
-            }
-
-            let change_end = c.ctr_end();
-            if change_end > cnt_threshold {
-                changes.push(c.slice((cnt_threshold - c.id.counter) as usize, c.atom_len()));
-            }
+            has_new |= c.ctr_end() > self_vv.get(&c.id.peer).copied().unwrap_or(0);
         });
+        let mut changes = Vec::new();
+        if has_new {
+            change_store.visit_all_changes(&mut |c| changes.push(c.clone()));
+        }
 
         Ok(changes)
     }
 
-    pub(crate) fn decode_block_bytes(
-        bytes: Bytes,
-        arena: &SharedArena,
-        self_vv: &VersionVector,
-    ) -> LoroResult<Vec<Change>> {
-        let mut ans = ChangesBlockBytes::new(bytes).parse(arena)?;
-        if ans.is_empty() {
-            return Ok(ans);
-        }
-
-        let start = self_vv.get(&ans[0].peer()).copied().unwrap_or(0);
-        ans.retain_mut(|c| {
-            if c.id.counter >= start {
-                true
-            } else if c.ctr_end() > start {
-                *c = c.slice((start - c.id.counter) as usize, c.atom_len());
-                true
-            } else {
-                false
-            }
-        });
-
-        Ok(ans)
+    /// Decode an update block. Changes the doc already has are kept; see
+    /// [`Self::decode_snapshot_for_updates`].
+    pub(crate) fn decode_block_bytes(bytes: Bytes, arena: &SharedArena) -> LoroResult<Vec<Change>> {
+        ChangesBlockBytes::new(bytes).parse(arena)
     }
 
     /// Rolls back the store and the arena (to `arena`, the checkpoint taken when the import
@@ -414,9 +420,28 @@ impl ChangeStore {
         rollback: ChangeStoreRollback,
         arena: SharedArenaRollback,
     ) {
+        let mut inner = self.inner.lock();
+        Self::rollback_changes_in(&self.arena, &mut inner, rollback);
+        self.rollback_arena_in(&mut inner, arena);
+    }
+
+    /// [`Self::rollback_import`] without rolling the arena back: everything registered in it
+    /// since the scope began stays registered. For a scope that only held changes whose
+    /// containers were registered before it (a rolled back local transaction), where freeing
+    /// the registrations made while undoing it from the state would leave state entries at
+    /// freed indices.
+    pub(crate) fn rollback_import_keeping_arena(&self, rollback: ChangeStoreRollback) {
+        let mut inner = self.inner.lock();
+        Self::rollback_changes_in(&self.arena, &mut inner, rollback);
+    }
+
+    fn rollback_changes_in(
+        arena: &SharedArena,
+        inner: &mut ChangeStoreInner,
+        rollback: ChangeStoreRollback,
+    ) {
         // The name set may already include names from changes this rollback removes. That is
         // fine: stale names only make `old_history_may_touch_root_names` conservatively true.
-        let mut inner = self.inner.lock();
         let mut touched_peers = FxHashSet::default();
         inner.mem_parsed_kv.retain(|id, _| {
             let old_end = rollback.old_vv.get(&id.peer).copied().unwrap_or(0);
@@ -442,7 +467,7 @@ impl ChangeStore {
             let changes = Arc::make_mut(
                 block
                     .content
-                    .changes_mut(&self.arena)
+                    .changes_mut(arena)
                     .expect("an unflushed block always holds parsed changes"),
             );
             changes.truncate(shape.n_changes);
@@ -469,19 +494,18 @@ impl ChangeStore {
                 .mem_parsed_kv
                 .retain(|id, block| !block.flushed || !touched_peers.contains(&id.peer));
         }
-
-        self.rollback_arena_in(&mut inner, arena);
     }
 
     /// Rolls the arena back to `arena`, a checkpoint taken before a failed import, and drops
     /// the parsed changes of the cached blocks that were parsed since. Every arena rollback must
     /// go through here (or [`Self::rollback_import`] / [`Self::retire`]).
     ///
-    /// Parsing a block registers the containers its ops use and allocates their values, and
-    /// the arena rollback drops what was registered or allocated after the checkpoint, so a
-    /// block parsed in between may hold indices and value slices that no longer exist or that
-    /// new registrations reuse. Such a block keeps only its bytes, so the next access parses and
-    /// registers again. A block parsed before the checkpoint can only refer to what was there
+    /// Parsing a block registers the containers its ops use with their parent links and
+    /// allocates their values. The arena rollback truncates the values and text allocated after
+    /// the checkpoint and drops the parent links of containers registered after it (their
+    /// indices stay; see `SharedArena::rollback`), so a block parsed in between may hold value
+    /// slices that no longer exist, and parsing it again is what registers those links again.
+    /// Such a block keeps only its bytes, so the next access parses and registers again. A block parsed before the checkpoint can only refer to what was there
     /// then (its `parsed_extent`), and keeps its parsed changes. A block without bytes was built
     /// in memory from changes inserted before the import, whose containers were registered
     /// then.

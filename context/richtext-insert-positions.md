@@ -1,6 +1,6 @@
 # Rich-Text Insert Positions and Delete IDs
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-30.
 
 ## Where local text goes next to style anchors
 
@@ -65,3 +65,23 @@ real IDs from it (`CrdtRope::delete`), so a shallow import can end with other
 text than a full import, and a cursor on a deleted character that no delete op
 names does not resolve. Histories that already contain such deletes are tracked
 in loro-dev/loro#1149.
+
+### Existing histories (loro-dev/loro#1149)
+
+Not repaired in code: the op bytes are immutable history, and the readers that go
+wrong have nothing but `start_id` to go on. A shallow import's placeholders stand
+for trimmed history whose IDs are unknown, and a cursor on a character that no
+delete names has no op to follow. Deriving IDs from positions there would mean
+seeding the shallow tracker from the root state's per-character IDs, a large
+change to diff calculation for a narrow legacy case. Advice for affected
+documents (edited with WASM `loro-crdt` ≤ 1.16.3, astral characters, deletes
+spanning several insert runs):
+
+- Full imports, full snapshots, and checkouts replay deletes by position and are
+  correct.
+- Take shallow snapshots at the latest frontiers, or at any version after the
+  last delete written by an affected build. The root state then comes from a
+  positional replay, and the bad `start_id`s lie before the root.
+- Re-create cursors on text that such a delete removed (`getCursor` after
+  loading) instead of resolving stored ones, or store positions for these
+  documents.

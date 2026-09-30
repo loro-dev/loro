@@ -944,14 +944,17 @@ fn calc_shallow_doc_start(
         let mut processed = false;
         if let Some(op) = oplog.get_op_that_includes(id) {
             if let crate::op::InnerContent::List(InnerListOp::StyleStart { .. }) = &op.content {
-                // StyleStart and StyleEnd operations must be kept together in the GC snapshot.
-                // Splitting them could lead to an weird document state that cannot be
-                // properly encoded. To ensure they stay together, we advance the frontier by
-                // one step to include both operations.
-
-                // > Id.counter + 1 is guaranteed to be the StyleEnd Op
-                ans.push(id.inc(1));
-                processed = true;
+                // StyleStart and StyleEnd operations are kept together in the GC snapshot
+                // when both exist, so we advance the frontier by one step to include both
+                // operations. (Id.counter + 1 is guaranteed to be the StyleEnd Op.)
+                //
+                // When this doc's history ends at the StyleStart, the end op does not
+                // exist here; the root keeps the lone start anchor, which the state
+                // encoding supports (loro-dev/loro#1165).
+                if oplog.vv().includes_id(id.inc(1)) {
+                    ans.push(id.inc(1));
+                    processed = true;
+                }
             }
         }
 

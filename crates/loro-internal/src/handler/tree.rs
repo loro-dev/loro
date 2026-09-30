@@ -480,9 +480,12 @@ impl TreeHandler {
             }
         }
 
-        let with_event = !parent
-            .tree_id()
-            .is_some_and(|p| self.is_node_deleted(&p).unwrap());
+        // A diff made for another version of the doc can name a parent this doc
+        // doesn't have: an error, which `apply_diff` rolls back.
+        let with_event = match parent.tree_id() {
+            Some(p) => !self.is_node_deleted(&p)?,
+            None => true,
+        };
         if !with_event {
             return Ok(false);
         }

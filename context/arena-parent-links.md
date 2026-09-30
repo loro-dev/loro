@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-09-29.
+Verified against code 2026-09-30.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -130,9 +130,13 @@ that writes the KV store, or a live container would read as deleted. Measured
 
 A failed import can parse old change blocks while it computes its diff
 (including through the creator resolver) or validates movable-list ops
-(`OpLog::resolve_movable_list_elem`), which registers containers and allocates
-their values. The arena rollback (`SharedArena::rollback`) drops registrations
-and values made during the import, so `ChangeStore::rollback_import`, after
+(`OpLog::resolve_movable_list_elem`), which registers containers with their
+parent links and allocates their values. The arena rollback
+(`SharedArena::rollback`) keeps every container index, but drops the parent
+links of normal containers registered during the import and truncates the
+values and text allocated during it (see
+[failed-import-arena-indices.md](failed-import-arena-indices.md) for why indices
+are kept). So `ChangeStore::rollback_import`, after
 truncating and evicting blocks (see
 [movable-list-op-validation.md](movable-list-op-validation.md)), drops the
 parsed changes of the kept blocks that were parsed since the import began; the
@@ -142,7 +146,7 @@ block. A block parsed before the checkpoint can only refer to what was there
 then, so it keeps its parsed changes (`SharedArenaRollback::keeps`). Dropping
 them all made every failed import an O(blocks) pass and the next history read a
 full reparse. Blocks without bytes were built from changes inserted before the
-import, so their containers were registered then. Before 2026-09-28 the parsed
+import, so their containers were registered and linked then. Before 2026-09-28 the parsed
 ops kept indices and value slices past the truncated arena: exporting the
 history hit `unreachable!` in the JSON encoder, and a later checkout panicked on
 a missing value (loro-dev/loro#1161).
@@ -164,18 +168,18 @@ and runs under the state lock:
   `Absent`, so a resolver that reached it before the swap does not register the
   discarded history.
 - Under the state lock: `OpLog::rollback_import`, `rollback_arena`, and
-  `reset_to_empty_for_failed_snapshot_import` take `&DocState` as proof. A
-  state-locked query (`has_container`, `is_deleted`, `get_path_to_container`)
-  can register containers through the resolver and then use their indices
-  before it returns; the rollback must not free them in between. Without the
-  state lock, a loom model hit `get_depth` on a freed index.
+  `reset_to_empty_for_failed_snapshot_import` take `&mut DocState`, as proof
+  and to clear the dead-container cache. A state-locked query (`has_container`,
+  `is_deleted`, `get_path_to_container`) can register containers through the
+  resolver and then walk their links before it returns; the rollback must not
+  drop them in between. Without the state lock, a loom model hit `get_depth` on
+  an index the rollback freed (it freed indices before loro-dev/loro#1164).
 
-Only the state-locked queries are covered. A handler created on another thread
-during the import keeps its index, and `DocState` is not rolled back: its store
-and dead-container cache keep entries at the freed indices, and the next
-container registered at one inherits them. `get_path_to_container` answers
-`None` if its registration is already gone. See loro-dev/loro#1164
-(pre-existing).
+A handler created on another thread during the import keeps its index and its
+container, and so do `DocState`'s store entries and caches. If the rollback
+dropped the link of a container that a thread is using without the state lock,
+the next lookup resolves it again; `get_path_to_container` answers `None` if
+the link is gone at that moment.
 
 ## Testing pitfall
 
@@ -192,6 +196,8 @@ the real path.
   thread stress of queries against history readers
   (`UNREGISTERED_PARENT_THREAD_TRIALS`), and a random comparison of every tree
   meta against a full-history import (`UNREGISTERED_PARENT_SEEDS=0..300`).
+- `crates/loro/tests/failed_import_state_rollback.rs`: state, handlers, and
+  retries after a failed import (loro-dev/loro#1164).
 - `crates/loro/tests/unregistered_container_parent.rs`
   `queries_race_with_failing_imports`: queries against imports that fail at
   decode or depend on history before a shallow root, swept across the import's

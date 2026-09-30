@@ -251,7 +251,7 @@ pub(crate) fn decode_snapshot_inner(
 
     if let Err(e) = decode_result {
         state.reset_to_empty_for_failed_snapshot_import();
-        oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &state);
+        oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &mut state);
         return Err(e);
     }
     drop(state);
@@ -263,7 +263,7 @@ pub(crate) fn decode_snapshot_inner(
             let mut oplog = doc.oplog().lock();
             let mut state = doc.app_state().lock();
             state.reset_to_empty_for_failed_snapshot_import();
-            oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &state);
+            oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &mut state);
             return Err(e);
         }
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
@@ -383,7 +383,6 @@ pub(crate) fn encode_updates_in_range<W: std::io::Write>(
 pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Change>, LoroError> {
     let mut reader: &[u8] = body.as_ref();
     let mut index = 0;
-    let self_vv = oplog.vv();
     let mut changes = Vec::new();
     while !reader.is_empty() {
         let old_reader_len = reader.len();
@@ -400,7 +399,7 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
             ));
         }
         let block_bytes = body.slice(index..end);
-        let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena, self_vv)?;
+        let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena)?;
         changes.extend(new_changes);
         index = end;
         reader = &reader[len..];
