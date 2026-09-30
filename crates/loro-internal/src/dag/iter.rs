@@ -319,6 +319,7 @@ impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
                 }
 
                 // node_id may point into the middle of the node, we need to slice
+                // try_new has loaded every target node before iteration starts.
                 let node = self.dag.get(node_id).unwrap();
                 // node start_id may be smaller than node_id
                 let counter = node.id_span().counter;

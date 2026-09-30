@@ -844,7 +844,7 @@ impl LoroDoc {
             return Ok(result.status);
         }
 
-        let old_vv = oplog.vv().clone();
+        let old_vv = Arc::new(oplog.vv().clone());
         let old_frontiers = oplog.frontiers().clone();
         // Checked before the changes are applied, while the store still holds only old history.
         let isolated_batch = isolated_scalar_root_batch(&oplog, &changes).filter(|(_, names)| {
@@ -855,13 +855,13 @@ impl LoroDoc {
             })
         });
         let rollback_enabled =
-            preflight.needs_state_apply_rollback || oplog.dag.has_unparsed_history();
+            preflight.needs_state_apply_rollback || oplog.change_store().may_have_unparsed_bodies();
         if rollback_enabled {
-            oplog.begin_import_rollback_with_arena(arena_checkpoint);
+            oplog.begin_import_rollback_with_version(arena_checkpoint, old_vv.clone());
         }
 
         let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
-        if &old_vv != oplog.vv() {
+        if old_vv.as_ref() != oplog.vv() {
             // The preflight enables rollback whenever the imported or unlocked
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
@@ -3268,6 +3268,7 @@ fn isolated_scalar_root_batch(
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChangeTravelError {
     #[error(transparent)]
     HistoryUnreadable(#[from] LoroError),

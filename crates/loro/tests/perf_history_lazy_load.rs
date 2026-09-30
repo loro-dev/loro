@@ -66,3 +66,49 @@ fn perf_history_lazy_load() {
         );
     }
 }
+
+/// A one-op, causal map import with a large version vector. Header warming drains
+/// the DAG's unparsed_vv without parsing old block bodies. Setup is not timed.
+#[test]
+#[ignore]
+fn perf_map_import_many_peers() {
+    for peers in [1_000u64, 10_000] {
+        let source = LoroDoc::new();
+        let map = source.get_map("map");
+        for peer in 1..=peers {
+            source.set_peer_id(peer).unwrap();
+            map.insert("key", peer as i64).unwrap();
+            source.commit();
+        }
+        let old_vv = source.oplog_vv();
+        let snapshot = source.export(ExportMode::Snapshot).unwrap();
+        source.set_peer_id(peers + 1).unwrap();
+        map.insert("key", -1).unwrap();
+        let update = source.export(ExportMode::updates(&old_vv)).unwrap();
+        for warm_headers in [false, true] {
+            for repeat in 1..=3 {
+                let mut elapsed = std::time::Duration::ZERO;
+                for _ in 0..30 {
+                    let doc = LoroDoc::new();
+                    doc.import(&snapshot).unwrap();
+                    if warm_headers {
+                        doc.with_oplog(|oplog| {
+                            for peer in 1..=peers {
+                                black_box(oplog.dag().get_lamport(&ID::new(peer, 0)));
+                            }
+                        });
+                    }
+                    let start = Instant::now();
+                    doc.import(black_box(&update)).unwrap();
+                    elapsed += start.elapsed();
+                    assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+                    black_box(doc.get_deep_value());
+                }
+                println!(
+                    "peers={peers} warm_headers={warm_headers} repeat={repeat} map_import_us={}",
+                    elapsed.as_micros()
+                );
+            }
+        }
+    }
+}

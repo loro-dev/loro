@@ -133,13 +133,25 @@ already recorded failures, and their history reads also propagate failures
   calculation use fallible reads. `checkout`, `diff`, `revert_to`, `fork_at`,
   binary/JSON/batch imports, and shallow/state-only/snapshot-at exports propagate
   the error before applying state. Attached imports enable their existing
-  rollback journal when old history is still unparsed, including register-only
-  imports that otherwise need no journal. Initial shallow-snapshot import also
+  rollback journal when the change store may still hold unparsed **bodies**,
+  including register-only imports that otherwise need no journal. DAG loading
+  reads headers only: draining `AppDag::unparsed_vv` does not validate bodies.
+  `ChangeStoreInner::may_have_unparsed_bodies` is a conservative flag set on
+  snapshot import/fork, cleared by a successful `visit_all_changes`, and set
+  again when arena rollback discards parsed bodies. Individual body reads do
+  not clear it; imports can therefore keep using a journal after all bodies
+  have been read individually, until a full walk confirms that fact.
+  The attached import, DAG journal, and change-store journal share one
+  `Arc<VersionVector>` snapshot instead of copying that vector three times.
+  The DAG's separate `unparsed_vv` checkpoint is still copied; after header
+  warming it is empty. Initial shallow-snapshot import also
   returns the error if reading its root fails, then resets state and op log.
 - `ChangeStore::try_iter_changes` validates the requested range before handing
   changes to a consumer. Export stops at an unreadable block rather than
   feeding a gap into a scratch history or returning partial bytes; the public
-  export's final history check returns the recorded error.
+  export's final history check returns the recorded error. Legacy `iter_blocks`
+  and `iter_changes` instead record and skip only the bad block, preserving
+  the healthy portions of the requested range at their infallible boundaries.
 - Query signatures that previously returned `Option` or plain values remain
   available. Use `try_frontiers_to_vv`, `try_vv_to_frontiers`,
   `try_minimize_frontiers`, `try_find_id_spans_between`, `try_get_change`
@@ -147,6 +159,10 @@ already recorded failures, and their history reads also propagate failures
   decode errors. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
   which can now carry the decode-error message; `travel_change_ancestors`
   returns `ChangeTravelError::HistoryUnreadable(LoroError::DecodeError(..))`.
+  `ChangeTravelError` is now non-exhaustive, so downstream matches need a
+  wildcard arm. `FrontiersNotIncluded` now has a private message field and a
+  same-named constant: old construction/pattern syntax still works, but an
+  unreadable-history error is not equal to that missing-frontiers constant.
   WASM queries that already return `JsResult` use these fallible readers too,
   including `findIdSpansBetween`, `frontiersToVV`, `vvToFrontiers`,
   `getChangeAt`, `getChangeAtLamport`, `getOpsInChange`, and
@@ -158,6 +174,15 @@ caches. The successful DAG lazy-load path does no additional block reads or
 parse-failure checks: the error-record lookup is inside the missing-node branch.
 The release benchmark `crates/loro/tests/perf_history_lazy_load.rs` measures
 fresh snapshot import, cold historical checkout, and concurrent update import.
+Its `perf_map_import_many_peers` case measures a one-op causal map import with
+1k/10k peers, both cold and after warming every DAG header without parsing old
+bodies. Setup is outside the timer. Against pre-review commit `be17aed3`,
+three alternating before/after pairs, each with three repeats of 30 imports,
+gave median after/before ratios of 1.001/1.011 (cold) and 0.997/0.996 (headers
+warmed), on macOS arm64 in release. Sharing the version snapshot removes two
+extra full-vector clones from journal creation; opening the journal no longer
+adds those O(peers) copies. These timings show no material increase in this
+workload, rather than a bound on every import workload.
 
 Limits and compatibility:
 
@@ -186,12 +211,19 @@ rewrites snapshot bytes through the public KV API and repairs both checksum
 layers. Each fallible entry point gets its own fresh document, with the first,
 middle, and last peer-1 block truncated; it must return "cannot parse change
 block" without a panic, preserve the value/version/status, and leave locks
-usable. It also tests initial shallow-import rollback. The healthy-doc test
+usable. It also tests initial shallow-import rollback. The regression
+`register_only_import_rolls_back_when_only_old_block_headers_were_read` flips
+the third byte from the end of the first/middle/last peer-1 block and repairs
+the checksums. Both peers' DAG version queries succeed before a concurrent
+map import first parses the bad body. The import must return the decode error,
+with op log and state frontiers still equal to their original frontiers,
+unchanged values/version vector, and an attached document. The healthy-doc test
 `a_recorded_parse_failure_does_not_panic_where_no_error_can_be_returned` keeps
 manual error records separate from actual unreadable blocks.
 `crates/loro-wasm/tests/unparsable_history.test.ts` uses the same corrupted
 snapshot as a fixture and checks JS exceptions, unchanged values/versions,
-and a usable WASM instance after each first read.
+and a usable WASM instance after each first read. Its body-corruption fixture
+also verifies a map import's rollback after both peers' header queries succeed.
 
 ## Cost of looking up an ID
 

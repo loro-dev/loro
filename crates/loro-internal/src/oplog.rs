@@ -342,11 +342,21 @@ impl OpLog {
     }
 
     pub(crate) fn begin_import_rollback_with_arena(&mut self, arena: SharedArenaRollback) {
+        let old_vv = Arc::new(self.vv().clone());
+        self.begin_import_rollback_with_version(arena, old_vv);
+    }
+
+    /// Share the attached import's existing version snapshot with both journals.
+    pub(crate) fn begin_import_rollback_with_version(
+        &mut self,
+        arena: SharedArenaRollback,
+        old_vv: Arc<VersionVector>,
+    ) {
         debug_assert!(self.import_rollback.is_none());
-        self.dag.begin_import_rollback();
+        self.dag.begin_import_rollback(old_vv.clone());
         self.import_rollback = Some(ImportRollback {
             arena,
-            change_store: ChangeStoreRollback::new(self.vv().clone()),
+            change_store: ChangeStoreRollback::new(old_vv),
             pending: Default::default(),
             movable_list_refs: Vec::new(),
         });

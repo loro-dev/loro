@@ -954,6 +954,14 @@ mod random {
 /// Rewrite a change-block value and both checksum layers, as in the independent
 /// #1172 verifier. Import must remain lazy: no earlier query records the failure.
 fn snapshot_with_truncated_history(snapshot: &[u8], block_index: usize) -> (Vec<u8>, ID) {
+    snapshot_with_broken_history(snapshot, block_index, true)
+}
+
+fn snapshot_with_broken_history(
+    snapshot: &[u8],
+    block_index: usize,
+    truncate: bool,
+) -> (Vec<u8>, ID) {
     use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
     use std::ops::Bound;
     let mut at = 22;
@@ -978,7 +986,15 @@ fn snapshot_with_truncated_history(snapshot: &[u8], block_index: usize) -> (Vec<
     };
     let (key, bytes) = &blocks[index];
     let id = ID::from_bytes(key).inc(1);
-    kv.set(key, bytes.slice(..bytes.len() / 2));
+    if truncate {
+        kv.set(key, bytes.slice(..bytes.len() / 2));
+    } else {
+        // Keep the header intact; the compressed body fails only when parsed.
+        let mut body = bytes.to_vec();
+        let at = body.len() - 3;
+        body[at] ^= 0xff;
+        kv.set(key, body.into());
+    }
     sections[0] = kv.export_all().to_vec();
     let mut forged = snapshot[..22].to_vec();
     for section in sections {
@@ -988,6 +1004,68 @@ fn snapshot_with_truncated_history(snapshot: &[u8], block_index: usize) -> (Vec<
     let checksum = xxhash_rust::xxh32::xxh32(&forged[20..], u32::from_le_bytes(*b"LORO"));
     forged[16..20].copy_from_slice(&checksum.to_le_bytes());
     (forged, id)
+}
+
+#[test]
+fn register_only_import_rolls_back_when_only_old_block_headers_were_read() {
+    use loro::Frontiers;
+    let source = LoroDoc::new();
+    source.set_peer_id(1).unwrap();
+    source.set_change_merge_interval(-1);
+    for i in 0..600 {
+        source
+            .get_text("text")
+            .insert(0, &format!("line-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx"))
+            .unwrap();
+        source.get_map("map").insert("key", i).unwrap();
+        source.commit();
+    }
+    source.set_peer_id(2).unwrap();
+    for _ in 0..300 {
+        source.get_text("text").insert(0, &"y".repeat(30)).unwrap();
+        source.commit();
+    }
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let remote = LoroDoc::new();
+    remote.set_peer_id(10).unwrap();
+    remote.get_map("map").insert("key", -1).unwrap();
+    let updates = remote.export(ExportMode::all_updates()).unwrap();
+    for block in 0..3 {
+        let (forged, _) = snapshot_with_broken_history(&snapshot, block, false);
+        if block == 0 {
+            if let Some(path) = std::env::var_os("LORO_BODY_FIXTURE") {
+                std::fs::write(path, &forged).unwrap();
+            }
+        }
+        let doc = LoroDoc::new();
+        doc.import(&forged).unwrap();
+        // These load every DAG header, draining unparsed_vv, but not block bodies.
+        for peer in [1, 2] {
+            assert!(doc
+                .try_frontiers_to_vv(&Frontiers::from(ID::new(peer, 0)))
+                .unwrap()
+                .is_some());
+        }
+        let value = doc.get_deep_value();
+        let frontiers = doc.state_frontiers();
+        let vv = doc.oplog_vv();
+        assert_eq!(doc.oplog_frontiers(), frontiers);
+        let error = doc.import(&updates).unwrap_err();
+        assert!(
+            error.to_string().contains("cannot parse change block"),
+            "block={block}: {error}"
+        );
+        assert_eq!(doc.get_deep_value(), value, "block={block}");
+        assert_eq!(doc.state_frontiers(), frontiers, "block={block}");
+        assert_eq!(doc.oplog_frontiers(), frontiers, "block={block}");
+        assert_eq!(doc.oplog_vv(), vv, "block={block}");
+        assert!(!doc.is_detached(), "block={block}");
+        assert!(doc
+            .checkout(&frontiers)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot parse change block"));
+    }
 }
 
 #[test]

@@ -60,7 +60,7 @@ pub struct AppDag {
 #[derive(Debug)]
 pub(crate) struct AppDagRollback {
     frontiers: Frontiers,
-    vv: VersionVector,
+    vv: Arc<VersionVector>,
     unparsed_vv: VersionVector,
     shallow_since_frontiers: Frontiers,
     shallow_root_frontiers_deps: Frontiers,
@@ -153,13 +153,13 @@ impl AppDag {
         &self.shallow_since_frontiers
     }
 
-    pub(crate) fn begin_import_rollback(&mut self) {
+    pub(crate) fn begin_import_rollback(&mut self, old_vv: Arc<VersionVector>) {
         let old_vv_is_empty = self.vv.is_empty();
         let mut rollback = self.import_rollback.lock();
         debug_assert!(rollback.is_none());
         *rollback = Some(AppDagRollback {
             frontiers: self.frontiers.clone(),
-            vv: self.vv.clone(),
+            vv: old_vv,
             unparsed_vv: self.unparsed_vv.lock().clone(),
             shallow_since_frontiers: self.shallow_since_frontiers.clone(),
             shallow_root_frontiers_deps: self.shallow_root_frontiers_deps.clone(),
@@ -206,7 +206,7 @@ impl AppDag {
         drop(map);
 
         self.frontiers = checkpoint.frontiers;
-        self.vv = checkpoint.vv.clone();
+        self.vv = (*checkpoint.vv).clone();
         self.shallow_since_frontiers = checkpoint.shallow_since_frontiers;
         self.shallow_root_frontiers_deps = checkpoint.shallow_root_frontiers_deps;
         self.shallow_since_vv = checkpoint.shallow_since_vv;
@@ -628,10 +628,6 @@ impl AppDag {
 
             self.lazy_load_nodes_internal(nodes, id.peer, None);
         }
-    }
-
-    pub(crate) fn has_unparsed_history(&self) -> bool {
-        !self.unparsed_vv.lock().is_empty()
     }
 
     pub fn total_parsed_dag_node(&self) -> usize {

@@ -162,11 +162,13 @@ struct ChangeStoreInner {
     /// Set by [`ChangeStore::retire`]: the op log replaced this store, so loading from it
     /// must not register anything in the arena any more.
     retired: bool,
+    /// Conservative until a full history walk: headers do not validate block bodies.
+    may_have_unparsed_bodies: bool,
 }
 
 #[derive(Debug)]
 pub(crate) struct ChangeStoreRollback {
-    old_vv: VersionVector,
+    old_vv: Arc<VersionVector>,
     /// Pre-scope blocks that an import appended to, keyed by block id. `None` means the
     /// block was flushed, so its KV copy is the pre-scope version.
     blocks_before_mutation: BTreeMap<ID, Option<BlockShape>>,
@@ -191,7 +193,7 @@ struct BlockShape {
 }
 
 impl ChangeStoreRollback {
-    pub(crate) fn new(old_vv: VersionVector) -> Self {
+    pub(crate) fn new(old_vv: Arc<VersionVector>) -> Self {
         Self {
             old_vv,
             blocks_before_mutation: BTreeMap::new(),
@@ -269,6 +271,7 @@ impl ChangeStore {
                 start_frontiers: Frontiers::default(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                may_have_unparsed_bodies: false,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -545,14 +548,17 @@ impl ChangeStore {
     }
 
     fn rollback_arena_in(&self, inner: &mut ChangeStoreInner, arena: SharedArenaRollback) {
+        let mut dropped_body = false;
         for block in inner.mem_parsed_kv.values_mut() {
             if let ChangesBlockContent::Both(_, bytes) = &block.content {
                 if !arena.keeps(block.parsed_extent) {
                     let bytes = bytes.clone();
                     Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+                    dropped_body = true;
                 }
             }
         }
+        inner.may_have_unparsed_bodies |= dropped_body;
         self.arena.rollback(arena);
     }
 
@@ -577,6 +583,12 @@ impl ChangeStore {
         Some(block.content.iter_dag_nodes())
     }
 
+    /// Whether diff calculation may still encounter an unvalidated snapshot body.
+    /// Loading all DAG headers cannot clear this; only a successful full body walk can.
+    pub(crate) fn may_have_unparsed_bodies(&self) -> bool {
+        self.inner.lock().may_have_unparsed_bodies
+    }
+
     pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
         self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
         let mut inner = self.inner.lock();
@@ -589,6 +601,9 @@ impl ChangeStore {
             for c in block.content.try_changes().unwrap() {
                 f(c);
             }
+        }
+        if self.corrupt_block_error().is_ok() {
+            inner.may_have_unparsed_bodies = false;
         }
     }
 
@@ -712,30 +727,43 @@ impl ChangeStore {
     }
 
     pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
-        self.try_iter_blocks(id_span).unwrap_or_default()
+        self.iter_blocks_inner(id_span, false).unwrap()
     }
 
     fn try_iter_blocks(
         &self,
         id_span: IdSpan,
     ) -> LoroResult<Vec<(Arc<ChangesBlock>, usize, usize)>> {
+        self.iter_blocks_inner(id_span, true)
+    }
+
+    fn iter_blocks_inner(
+        &self,
+        id_span: IdSpan,
+        fail_on_corrupt: bool,
+    ) -> LoroResult<Vec<(Arc<ChangesBlock>, usize, usize)>> {
         if id_span.counter.start == id_span.counter.end {
             return Ok(vec![]);
         }
         assert!(id_span.counter.start < id_span.counter.end);
-        self.try_ensure_block_loaded_in_range(
-            Bound::Included(id_span.id_start()),
-            Bound::Excluded(id_span.id_end()),
-        )?;
-        let mut inner = self.inner.lock();
-        let Some((start_id, _)) = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back()
-        else {
-            return Ok(vec![]);
-        };
-        if start_id.peer != id_span.peer {
-            return Ok(vec![]);
+        if fail_on_corrupt {
+            self.try_ensure_block_loaded_in_range(
+                Bound::Included(id_span.id_start()),
+                Bound::Excluded(id_span.id_end()),
+            )?;
+        } else {
+            self.ensure_block_loaded_in_range(
+                Bound::Included(id_span.id_start()),
+                Bound::Excluded(id_span.id_end()),
+            );
         }
-        let start_counter = start_id.counter;
+        let mut inner = self.inner.lock();
+        let start_counter = inner
+            .mem_parsed_kv
+            .range(..=id_span.id_start())
+            .next_back()
+            .filter(|(id, _)| id.peer == id_span.peer)
+            .map_or(id_span.counter.start, |(id, _)| id.counter);
         let mut blocks = Vec::new();
         for (block_id, block) in inner.mem_parsed_kv.range_mut(
             ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
@@ -746,7 +774,10 @@ impl ChangeStore {
             if let Err(err) = block.ensure_changes(&self.arena) {
                 warn!(?block_id, ?err, "failed to parse change block");
                 self.parse_failures.record(*block_id, &err);
-                return Err(self.corrupt_block_error().unwrap_err());
+                if fail_on_corrupt {
+                    return Err(self.corrupt_block_error().unwrap_err());
+                }
+                continue;
             }
             let changes = block.content.try_changes().unwrap();
             let (start, end) = if id_span.counter.start <= block.counter_range.0
@@ -775,7 +806,7 @@ impl ChangeStore {
         let v = self.iter_blocks(id_span);
         #[cfg(debug_assertions)]
         {
-            if !v.is_empty() {
+            if !v.is_empty() && self.corrupt_block_error().is_ok() {
                 assert_eq!(v[0].0.peer, id_span.peer);
                 assert_eq!(v.last().unwrap().0.peer, id_span.peer);
                 {
@@ -905,6 +936,7 @@ impl ChangeStore {
                 start_frontiers: inner.start_frontiers.clone(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                may_have_unparsed_bodies: !vv.is_empty(),
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1058,6 +1090,7 @@ mod mut_external_kv {
                 }
             }
 
+            self.inner.lock().may_have_unparsed_bodies = !vv.is_empty();
             *self.external_vv.lock() = vv.clone();
             let frontiers_bytes = self
                 .external_kv
@@ -2450,6 +2483,61 @@ mod test {
     }
 
     #[test]
+    fn legacy_block_iteration_skips_only_the_broken_block() {
+        for position in 0..3 {
+            let (store, end, _) = kv_only_store_and_next_change();
+            let ids: Vec<_> = store
+                .external_kv
+                .lock()
+                .scan(Bound::Unbounded, Bound::Unbounded)
+                .filter(|(key, _)| key.len() == 12)
+                .map(|(key, _)| ID::from_bytes(&key))
+                .collect();
+            assert!(ids.len() >= 3);
+            let broken = ids[match position {
+                0 => 0,
+                1 => ids.len() / 2,
+                _ => ids.len() - 1,
+            }];
+            truncate_block(&store, broken);
+            let span = IdSpan::new(1, 0, end);
+            let blocks = store.iter_blocks(span);
+            assert_eq!(blocks.len(), ids.len() - 1, "position={position}");
+            assert!(blocks
+                .iter()
+                .all(|(block, _, _)| block.counter_range.0 != broken.counter));
+            assert!(store
+                .corrupt_block_error()
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse change block"));
+            // The legacy iterator also yields the healthy portions, without bounds asserts.
+            assert!(store.iter_changes(span).count() > 0);
+            assert!(store
+                .try_iter_blocks(span)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse change block"));
+        }
+    }
+
+    #[test]
+    fn body_validation_stays_lazy_after_header_reads_and_can_be_reset_by_rollback() {
+        let (store, end, _) = kv_only_store_and_next_change();
+        assert!(store.may_have_unparsed_bodies());
+        assert!(store.get_dag_nodes_that_contains(ID::new(1, 0)).is_some());
+        assert!(store.may_have_unparsed_bodies());
+        let arena = store.arena.checkpoint_for_rollback();
+        store.visit_all_changes(&mut |_| {});
+        assert!(!store.may_have_unparsed_bodies());
+        store.rollback_arena(arena);
+        assert!(store.may_have_unparsed_bodies());
+        assert!(store.get_change(ID::new(1, end - 1)).is_some());
+        store.visit_all_changes(&mut |_| {});
+        assert!(!store.may_have_unparsed_bodies());
+    }
+
+    #[test]
     fn the_creator_resolver_reports_an_unparsable_block_instead_of_panicking() {
         let (store, _, _) = kv_only_store_and_next_change();
         truncate_block(&store, ID::new(1, 0));
@@ -2687,7 +2775,7 @@ mod test {
         let (store, end, next) = kv_only_store_and_next_change();
         let mut old_vv = VersionVector::new();
         old_vv.insert(1, end);
-        let mut rollback = ChangeStoreRollback::new(old_vv);
+        let mut rollback = ChangeStoreRollback::new(Arc::new(old_vv));
         let arena = store.arena.checkpoint_for_rollback();
         store.insert_change_with_rollback(next.clone(), true, false, &mut rollback);
         assert!(store.get_change(ID::new(1, 0)).is_some());
@@ -2737,7 +2825,7 @@ mod test {
         for c in first {
             rolled_back.insert_change(c.clone(), true, false);
         }
-        let mut rollback = ChangeStoreRollback::new(vv_of(first));
+        let mut rollback = ChangeStoreRollback::new(Arc::new(vv_of(first)));
         let arena_checkpoint = arena.checkpoint_for_rollback();
         for c in &rest[..rest.len() / 2] {
             rolled_back.insert_change_with_rollback(c.clone(), true, false, &mut rollback);
