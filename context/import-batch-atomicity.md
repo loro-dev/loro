@@ -104,6 +104,15 @@ MovableList pending change, so preflight includes pending `Move`/`Set` ops when
 replaced or nested by this optimization. Regression:
 `detached_text_import_that_unlocks_invalid_movable_list_ops_rolls_back`.
 
+`import_changes_and_apply_delta_to_state_if_needed` reads the detached flag once
+and uses that value for both preflight and the execution branches. Attach/detach
+can change the flag without holding the op log lock; reading it again could
+choose attached state application after preflight skipped its rollback scope.
+The batch keeps the txn mutex across force-detach, blob imports and reattach,
+and keeps its outer rollback scope; the per-blob decision does not replace it.
+Under `cfg(test)`, preflight forces rollback only for
+`applies_to_dag && !detached`, so detached tests still exercise this distinction.
+
 `crates/examples/examples/import_batch_perf.rs` is the ad-hoc probe for these shapes
 (not part of CI; run it on two revisions and compare).
 

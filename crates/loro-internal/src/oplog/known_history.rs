@@ -214,7 +214,9 @@ impl OpLog {
         else {
             return Ok(None);
         };
-        let range = crate::oplog::ChangeStore::encoded_block_counter_range(&bytes)?;
+        let Ok(range) = crate::oplog::ChangeStore::encoded_block_counter_range(&bytes) else {
+            return Ok(None);
+        };
         // A short imported change must not rescan a large local block for each
         // atom/change. Parse it once and reuse the general comparison instead.
         if end < range.1 {
@@ -223,7 +225,6 @@ impl OpLog {
         let block_end = end.min(range.1);
         let mut cursor = OpCursor::new(change, start);
         let checked = self.change_store.check_text_insert_block(
-            ID::new(change.id.peer, range.0),
             &bytes,
             |counter, cid, pos, text, len, deps| {
                 let local_end = counter + len as Counter;

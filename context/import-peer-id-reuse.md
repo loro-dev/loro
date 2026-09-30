@@ -93,9 +93,16 @@ encoded container IDs, positions, UTF-8 strings and dependency boundaries
 (`OpLog::check_known_text_in_cold_block`, `block_encode::visit_text_insert_block`).
 This does not parse changes or allocate strings in the local arena. Both change
 and op boundaries remain significant to the comparison. Unsupported op kinds
-fall back to the general check; already parsed blocks keep the existing path.
+or any reader error fall back to the general check; already parsed blocks keep
+the existing path. A mismatch from this shortcut is returned only after the
+whole block passes its eligibility checks. The shortcut never records a
+`parse_failures` entry: its length/boundary requirements are stricter than
+`decode_block`, so only the ordinary parser can declare history unparsable.
 A short imported change that ends inside a cold block uses the general path so
-many short changes cannot repeatedly scan the same large block.
+many short changes cannot repeatedly scan the same large block. The cold path
+runs only when the imported overlap reaches the local block's end. Short
+changes with different encoded bytes still parse their cold block, which
+explains the remaining roughly 2.2x `overlap_snap` cost at `FAT=1`.
 
 The comparison still costs O(overlap); it is not a content-hashed version vector.
 The release probe is `crates/examples/examples/import_scaling_stress.rs`.
@@ -117,10 +124,18 @@ universal ratio.
 - `oplog::known_history::tests`: cross-arena container identity and Unicode atom
   comparisons, and a dependency mismatch inside a merged import's cold prefix.
 - `oplog::change_store::test`: identical blocks stay lazy, dirty caches shadow
-  old KV bytes, and repeated snapshots allocate only new text/list values.
+  old KV bytes, repeated snapshots allocate only new text/list values, and
+  `merged_cold_text_overlap_is_accepted_without_parsing_the_known_block` proves
+  that an equal merged overlap stays cold before a successful import.
+- `block_encode::test::cold_text_reader_errors_fall_back_without_recording_parse_failures`:
+  strings whose lengths differ from encoded op lengths and ops crossing change
+  boundaries remain readable through `get_change`, as with `decode_block`.
 - `cold_history_conflict_inside_a_large_known_prefix_is_rejected` in the public
   reused-peer tests: exact mismatch ID across multiple cold blocks, through
   updates, snapshots, and batches, with subsequent usability checks.
+- `cold_text_overlap_with_merged_updates_is_accepted` in the same public tests:
+  merged updates with different block bytes accept a cold snapshot prefix and
+  leave both documents at equal state and version.
 
 ## Measurements
 

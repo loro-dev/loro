@@ -439,17 +439,24 @@ impl ChangeStore {
 
     pub(crate) fn check_text_insert_block(
         &self,
-        id: ID,
         bytes: &[u8],
-        on_insert: impl FnMut(Counter, &ContainerID, u32, &str, u32, &Frontiers) -> LoroResult<()>,
+        mut on_insert: impl FnMut(Counter, &ContainerID, u32, &str, u32, &Frontiers) -> LoroResult<()>,
     ) -> LoroResult<bool> {
-        let result = block_encode::visit_text_insert_block(bytes, on_insert);
-        if let Err(err) = &result {
-            if !matches!(err, LoroError::UsedOpID { .. }) {
-                self.parse_failures.record(id, err);
-            }
+        // This reader has stricter eligibility checks than decode_block. Only
+        // the normal parser may declare local history unparsable. Delay a content
+        // mismatch until the entire block is eligible, otherwise fall back too.
+        let mut comparison = Ok(());
+        let result =
+            block_encode::visit_text_insert_block(bytes, |counter, cid, pos, text, len, deps| {
+                if comparison.is_ok() {
+                    comparison = on_insert(counter, cid, pos, text, len, deps);
+                }
+                Ok(())
+            });
+        match result {
+            Ok(true) => comparison.map(|()| true),
+            Ok(false) | Err(_) => Ok(false),
         }
-        result
     }
 
     /// Byte-identical, fully known blocks need neither decoding nor comparison.
@@ -2421,6 +2428,59 @@ mod test {
             .decode_update_block(block_bytes, &source.oplog_vv())
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn merged_cold_text_overlap_is_accepted_without_parsing_the_known_block() {
+        let history = LoroDoc::new_auto_commit();
+        history.set_peer_id(1).unwrap();
+        history.set_change_merge_interval(-1);
+        for i in 0..40 {
+            history.get_text("t").insert_unicode(i * 2, "a😀").unwrap();
+            history.commit_then_renew();
+        }
+        let target = LoroDoc::new_auto_commit();
+        target
+            .import(&history.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+
+        let merged = LoroDoc::new_auto_commit();
+        merged.set_peer_id(1).unwrap();
+        merged
+            .get_text("t")
+            .insert_unicode(0, &("a😀".repeat(40) + "Z"))
+            .unwrap();
+        merged.commit_then_renew();
+        {
+            let incoming = merged.oplog().lock();
+            let change = (*incoming.get_change_at(ID::new(1, 0)).unwrap()).clone();
+            let local = target.oplog().lock();
+            // cfg(test) loads the frontier block at snapshot import; explicitly
+            // clear that cache to exercise the real cold-block comparison.
+            local.change_store.inner.lock().mem_parsed_kv.clear();
+            let id = ID::new(1, 0);
+            let bytes = local.change_store.unparsed_block_bytes(id).unwrap();
+            assert_ne!(
+                bytes.as_ref(),
+                block_encode::encode_block(&[change.clone()], &incoming.arena)
+            );
+            let suffix = local
+                .check_and_trim_known_part_in_arena(
+                    vec![change],
+                    crate::oplog::known_history::ImportedValues::Exact,
+                    &incoming.arena,
+                )
+                .unwrap();
+            assert_eq!(suffix.len(), 1);
+            assert_eq!(suffix[0].id, ID::new(1, 80));
+            // A general comparison would have populated the parsed cache.
+            assert!(local.change_store.unparsed_block_bytes(id).is_some());
+        }
+        target
+            .import(&merged.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        assert_eq!(target.get_deep_value(), merged.get_deep_value());
+        assert_eq!(target.oplog_vv(), merged.oplog_vv());
     }
 
     #[test]

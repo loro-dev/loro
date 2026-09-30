@@ -833,6 +833,68 @@ mod test {
     }
 
     #[test]
+    fn cold_text_reader_errors_fall_back_without_recording_parse_failures() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.set_change_merge_interval(-1);
+        doc.get_text("t").insert_unicode(0, "ab").unwrap();
+        doc.commit_then_renew();
+        doc.get_text("t").insert_unicode(2, "c").unwrap();
+        doc.commit_then_renew();
+        let oplog = doc.oplog.lock();
+        let mut changes = Vec::new();
+        oplog
+            .change_store()
+            .visit_all_changes(&mut |change| changes.push(change.clone()));
+        assert_eq!(changes.len(), 2);
+        let block_bytes = encode_block(&changes, &oplog.arena);
+
+        for crosses_change_boundary in [false, true] {
+            let mut encoded: EncodedBlock = postcard::from_bytes(&block_bytes).unwrap();
+            if crosses_change_boundary {
+                // The header starts with a peer count, peer IDs, then the first
+                // change's atom length. Move its end from counter 2 to counter 1
+                // while keeping the two-character insert and total range intact.
+                let mut header = encoded.header.as_ref();
+                let peers = leb128::read::unsigned(&mut header).unwrap() as usize;
+                let length_offset = encoded.header.len() - header.len() + peers * 8;
+                assert_eq!(encoded.header[length_offset], 2);
+                encoded.header.to_mut()[length_offset] = 1;
+            } else {
+                // decode_block uses the actual string length for the text op,
+                // while the cold reader requires it to equal the encoded length.
+                let mut ops: EncodedOps = serde_columnar::from_bytes(&encoded.ops).unwrap();
+                ops.ops[0].len = 1;
+                encoded.ops = Cow::Owned(serde_columnar::to_vec(&ops).unwrap());
+            }
+            let bytes = postcard::to_allocvec(&encoded).unwrap();
+            assert!(visit_text_insert_block(&bytes, |_, _, _, _, _, _| Ok(())).is_err());
+            assert!(decode_block(&bytes, &SharedArena::new(), None).is_ok());
+
+            let store = crate::oplog::ChangeStore::new_for_test();
+            let id = ID::new(1, 0);
+            store
+                .external_kv
+                .lock()
+                .set(&id.to_bytes(), bytes.clone().into());
+            let mut visits = 0;
+            assert!(!store
+                .check_text_insert_block(&bytes, |_, _, _, _, _, _| {
+                    visits += 1;
+                    // Even a mismatch before a later reader error must fall back.
+                    Err(LoroError::UsedOpID { id })
+                })
+                .unwrap());
+            if crosses_change_boundary {
+                assert_eq!(visits, 1);
+            }
+            assert!(store.corrupt_block_error().is_ok());
+            assert!(store.get_change(id).is_some());
+            assert!(store.corrupt_block_error().is_ok());
+        }
+    }
+
+    #[test]
     fn tree_move_payload_is_rejected_without_panic() {
         let arena = SharedArena::new();
         let value_arena = ValueDecodeArena {

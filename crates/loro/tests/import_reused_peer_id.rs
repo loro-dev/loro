@@ -503,3 +503,32 @@ fn cold_history_conflict_inside_a_large_known_prefix_is_rejected() -> LoroResult
     }
     Ok(())
 }
+
+/// The same history can arrive as one merged Text insert instead of thousands
+/// of small changes. Its blocks differ from the snapshot's cold history, but
+/// the overlap is equal and its new suffix must be accepted.
+#[test]
+fn cold_text_overlap_with_merged_updates_is_accepted() -> LoroResult<()> {
+    let history = LoroDoc::new();
+    history.set_peer_id(7)?;
+    history.set_change_merge_interval(-1);
+    for i in 0..3000 {
+        history.get_text("t").insert(i * 2, "a😀")?;
+        history.commit();
+    }
+
+    let merged = LoroDoc::new();
+    merged.set_peer_id(7)?;
+    merged
+        .get_text("t")
+        .insert(0, &("a😀".repeat(3000) + "Z"))?;
+    merged.commit();
+
+    let target = LoroDoc::new();
+    target.import(&history.export(ExportMode::Snapshot)?)?;
+    target.import(&merged.export(ExportMode::all_updates())?)?;
+    assert_eq!(target.get_deep_value(), merged.get_deep_value());
+    assert_eq!(target.oplog_vv(), merged.oplog_vv());
+    assert_eq!(target.state_frontiers(), merged.state_frontiers());
+    Ok(())
+}

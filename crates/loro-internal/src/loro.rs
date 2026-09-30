@@ -782,15 +782,16 @@ impl LoroDoc {
             }
         };
 
-        let preflight = oplog.preflight_import_changes(&changes, self.is_detached());
-        if preflight.has_deps_before_shallow_root
-            && (self.is_detached() || !preflight.applies_to_dag)
-        {
+        // Read once: attach/detach can change the flag without the oplog lock.
+        // The apply branch must use the same mode as preflight's rollback decision.
+        let detached = self.is_detached();
+        let preflight = oplog.preflight_import_changes(&changes, detached);
+        if preflight.has_deps_before_shallow_root && (detached || !preflight.applies_to_dag) {
             oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
         }
 
-        if self.is_detached() {
+        if detached {
             // An enclosing `import_batch` scope validates the whole batch before it
             // reattaches (`BatchImportGuard::finish`).
             let owns_rollback =

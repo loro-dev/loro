@@ -112,7 +112,7 @@ that return `bool` or `Option` (`is_deleted`, `has_container`, `get_path`), so
 it has no `Err` to return, and a panic there unwinds under the locks and traps
 the WASM instance. Until 2026-09-30 it panicked.
 
-Every reader of the change store that fails to decode or parse a block records
+Every ordinary history reader that fails to decode or parse a block records
 it in `ChangeStore::parse_failures` (a leaf lock; the first failure is kept) and
 answers "no such change", as the readers other than the resolver always did.
 The resolver answers `CreatorOp::Corrupt`, which the arena treats like `Absent`
@@ -144,8 +144,10 @@ Limits:
 - A read that returns before any failure was recorded is not undone: an
   `import` or `checkout` using a general history reader can finish on partial
   history when it is the first to read the block. Only `export` checks again at
-  the end. The direct cold Text comparison in `known_history.rs` returns its
-  decode error immediately and also records it in `parse_failures`.
+  the end. The direct cold Text comparison in `known_history.rs` falls back to
+  the ordinary reader on a decoding/eligibility error. Its stricter op-length
+  and change-boundary checks never record a `parse_failures` entry themselves;
+  only a failure of the ordinary parser declares local history unparsable.
 - Local edits still succeed after a failure was recorded, but they cannot be
   exported from this document any more. What can be salvaged is the current
   state (`get_deep_value`).
