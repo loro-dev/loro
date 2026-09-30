@@ -8,9 +8,7 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use loro_common::{
-    ContainerType, Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, PeerID, ID,
-};
+use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, PeerID, ID};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
@@ -43,12 +41,10 @@ impl PendingChanges {
         self.changes.values().any(|tree| {
             tree.values().any(|changes| {
                 changes.iter().any(|change| {
-                    change.ops.iter().any(|op| {
-                        matches!(
-                            op.container.get_type(),
-                            ContainerType::List | ContainerType::MovableList | ContainerType::Tree
-                        )
-                    })
+                    change
+                        .ops
+                        .iter()
+                        .any(|op| super::state_apply_can_reject(op.container.get_type()))
                 })
             })
         })

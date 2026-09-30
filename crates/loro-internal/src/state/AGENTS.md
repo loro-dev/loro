@@ -22,7 +22,7 @@ before changing mergeable child behavior.
   [../../../../context/shallow-snapshot-style-redaction.md](../../../../context/shallow-snapshot-style-redaction.md)
   before changing the richtext snapshot codec or that pass.
   `movable_list_state.rs` import validation and the Checkout-mode fallback for
-  moves of deleted elements:
+  moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
 - `dead_containers_cache.rs`: dead/alive tracking. Map/list deletions are

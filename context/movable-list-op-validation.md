@@ -1,6 +1,6 @@
 # Movable List `Move`/`Set` Validation on Import
 
-Verified against code 2026-09-28 (merged with main `6e294c87`).
+Verified against code 2026-09-28 (merged with main `6e294c87`). Text bounds and the rollback-scope list verified 2026-09-30.
 
 Imported movable-list `Move { from, to, elem_id }` and `Set { elem_id, value }` ops
 come from other peers, so they are external input. Several shapes of them used
@@ -75,12 +75,21 @@ Tests:
    - It checks the composed delta, so an out-of-bounds move that a later op in the
      same import cancels (e.g. `move to: 9` followed by `delete pos: 9`) is accepted.
      Every path gives the same result for it.
+   - Text has the same check: `RichtextState::validate_diff` bounds-checks the text
+     delta in entity-index space (style anchors count). An insert, delete or mark
+     past the end of the text used to panic in `insert_elem_at_entity_index` with
+     the locks held (loro-dev/loro#1160).
 
 ### Why every such import gets a rollback scope
 
 `ImportChangesPreflight` (`OpLog::preflight_import_changes`) and
 `PendingChanges::has_state_apply_rollback_ops` set `needs_state_apply_rollback`
-for List, MovableList and Tree ops.
+for List, MovableList, Text and Tree ops (`oplog::state_apply_can_reject`). An
+import without that scope panics if `validate_diff` rejects its diff, so a
+container type whose `validate_diff` can fail must be listed there.
+- The scope costs a few small clones and journal entries per import: about
+  +0.3 µs per single-op Text import (loro-dev/loro#1160 measured 20k imports at
+  ~44 → ~50 ms). Large imports are not measurably slower.
 - The preflight inspects the ops of **every** new change, including ones whose
   deps are not in the DAG yet. Those deps may be earlier changes of the same import,
   which then unlock them during the import.

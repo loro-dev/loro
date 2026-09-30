@@ -572,6 +572,46 @@ impl ContainerState for RichtextState {
         Diff::Text(ans)
     }
 
+    fn validate_diff(&self, diff: &InternalDiff) -> LoroResult<()> {
+        let InternalDiff::RichtextRaw(delta) = diff else {
+            unreachable!()
+        };
+
+        // Text items are addressed by entity index (style anchors included).
+        let mut cursor = 0usize;
+        let mut projected = match &self.state {
+            LazyLoad::Src(s) => s.entity_index,
+            LazyLoad::Dst(s) => s.len_entity(),
+        };
+        for span in delta.iter() {
+            match span {
+                loro_delta::DeltaItem::Retain { len, .. } => {
+                    cursor += len;
+                    if cursor > projected {
+                        return Err(LoroError::DecodeError(
+                            format!(
+                                "text diff retains {cursor} items but state only has {projected}"
+                            )
+                            .into_boxed_str(),
+                        ));
+                    }
+                }
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if cursor + delete > projected {
+                        return Err(LoroError::DecodeError(
+                            format!("text diff deletes {delete} at {cursor} but state only has {projected}")
+                                .into_boxed_str(),
+                        ));
+                    }
+                    projected = projected - delete + value.rle_len();
+                    cursor += value.rle_len();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
         self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {

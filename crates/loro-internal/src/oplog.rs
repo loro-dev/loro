@@ -146,6 +146,19 @@ pub(crate) struct ReplayBase {
     pub concurrent_containers: Option<FxHashSet<ContainerIdx>>,
 }
 
+/// Whether an imported op on a container of type `ty` can be rejected by
+/// `ContainerState::validate_diff` (e.g. a sequence position past the end), so
+/// the import needs a rollback scope to undo the op log on that error.
+pub(crate) fn state_apply_can_reject(ty: ContainerType) -> bool {
+    matches!(
+        ty,
+        ContainerType::List
+            | ContainerType::MovableList
+            | ContainerType::Text
+            | ContainerType::Tree
+    )
+}
+
 impl OpLog {
     #[inline]
     pub(crate) fn new(visible_op_count: Arc<AtomicUsize>) -> Self {
@@ -365,12 +378,11 @@ impl OpLog {
 
             // Inspect the ops even when the deps are not in the DAG yet: they may be
             // earlier changes of this same import, which then unlock this one.
-            if change.ops.iter().any(|op| {
-                matches!(
-                    op.container.get_type(),
-                    ContainerType::List | ContainerType::MovableList | ContainerType::Tree
-                )
-            }) {
+            if change
+                .ops
+                .iter()
+                .any(|op| state_apply_can_reject(op.container.get_type()))
+            {
                 ans.needs_state_apply_rollback = true;
             }
 
@@ -385,7 +397,7 @@ impl OpLog {
 
         // Any newly applied change can unlock pending changes whose ops are not
         // visible in `changes`, so include pending in the rollback decision.
-        // Keep this narrow: text/map-only pending changes cannot return a
+        // Keep this narrow: map-only pending changes cannot return a
         // state-apply error, and forcing rollback there adds lock traffic to
         // small sync/import workloads.
         //
