@@ -1,6 +1,6 @@
 # Dead Container Cache
 
-Verified against code 2026-09-28.
+Verified against code 2026-09-30.
 
 `DocState::is_deleted` (`crates/loro-internal/src/state/dead_containers_cache.rs`)
 answers whether a container is unreachable from a root: it walks the arena
@@ -49,6 +49,11 @@ walk and assert that no cached entry on the chain contradicts the result.
 - `DocState::apply_local_op` clears `revivable` before a tree `Move`. A local
   op cannot address a deleted movable-list element.
 - Resets replace the cache.
+- A failed import's rollback clears both sets
+  (`DocState::forget_parent_link_caches_after_failed_import`, called by the
+  `OpLog` rollback methods): an answer found through a parent link the
+  rollback drops is not true of the kept history. See
+  [failed-import-arena-indices.md](failed-import-arena-indices.md).
 
 `clear_revivable` is O(1) when the set is empty, so documents that never query
 deleted containers pay nothing.

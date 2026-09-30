@@ -48,7 +48,9 @@ over graceful degradation.
 - `tests/mergeable_container/` and `tests/mergeable_cid_encoding.rs`: focused
   mergeable container regression tests.
 - `src/tests/import_atomicity.rs`: import rollback and malformed-input
-  regressions.
+  regressions. A failed import keeps its arena indices and drops only parent
+  links, values, and the dead-container cache:
+  [../../context/failed-import-arena-indices.md](../../context/failed-import-arena-indices.md).
 - Movable-list `Move`/`Set` element validation on import, plus change-store
   rollback records and KV block-range decoding:
   [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).

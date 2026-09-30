@@ -29,6 +29,9 @@ before changing mergeable child behavior.
   final; tree and movable-list ones are dropped whenever a move could revive
   them; mergeable ones are never cached:
   [../../../../context/dead-container-cache.md](../../../../context/dead-container-cache.md).
+  A failed import keeps its arena indices, so store entries and caches keyed
+  by `ContainerIdx` stay valid; it clears this cache:
+  [../../../../context/failed-import-arena-indices.md](../../../../context/failed-import-arena-indices.md).
 - `unknown_state.rs` and `../diff_calc/unknown.rs`: forward compatibility for
   unknown container types. They are never created locally; the `apply_diff`
   pre-check and undo rules are in

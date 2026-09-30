@@ -725,7 +725,7 @@ impl LoroDoc {
                     },
                     diff_mode,
                 ) {
-                    oplog.rollback_owned_import(owns_rollback, &state);
+                    oplog.rollback_owned_import(owns_rollback, &mut state);
                     return Err(e);
                 }
             }
@@ -743,7 +743,7 @@ impl LoroDoc {
                     if keep_prefix {
                         oplog.commit_owned_import_rollback(owns_rollback);
                     } else {
-                        oplog.rollback_owned_import(owns_rollback, &self.state.lock());
+                        oplog.rollback_owned_import(owns_rollback, &mut self.state.lock());
                     }
                     Err(e)
                 }
@@ -755,7 +755,7 @@ impl LoroDoc {
                     Ok(result)
                 }
                 Err(e) => {
-                    oplog.rollback_owned_import(owns_rollback, &self.state.lock());
+                    oplog.rollback_owned_import(owns_rollback, &mut self.state.lock());
                     Err(e)
                 }
             }
@@ -776,7 +776,7 @@ impl LoroDoc {
         {
             Ok(changes) => changes,
             Err(e) => {
-                oplog.rollback_arena(arena_checkpoint, &self.state.lock());
+                oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
                 return Err(e);
             }
         };
@@ -785,7 +785,7 @@ impl LoroDoc {
         if preflight.has_deps_before_shallow_root
             && (self.is_detached() || !preflight.applies_to_dag)
         {
-            oplog.rollback_arena(arena_checkpoint, &self.state.lock());
+            oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
         }
 
@@ -800,7 +800,7 @@ impl LoroDoc {
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if owns_rollback {
                 if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
-                    oplog.rollback_import(&self.state.lock());
+                    oplog.rollback_import(&mut self.state.lock());
                     return Err(e);
                 }
                 oplog.commit_import_rollback();
@@ -816,7 +816,7 @@ impl LoroDoc {
             let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
             let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
             if result.has_deps_before_shallow_root {
-                oplog.rollback_arena(arena_checkpoint, &self.state.lock());
+                oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
             }
 
@@ -851,7 +851,7 @@ impl LoroDoc {
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
                 if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
-                    oplog.rollback_import(&self.state.lock());
+                    oplog.rollback_import(&mut self.state.lock());
                     return Err(e);
                 }
             }
@@ -909,7 +909,7 @@ impl LoroDoc {
                 diff_mode,
             ) {
                 if rollback_enabled {
-                    oplog.rollback_import(&state);
+                    oplog.rollback_import(&mut state);
                     return Err(e);
                 }
 
@@ -3246,7 +3246,7 @@ impl BatchImportGuard<'_> {
                 // still at its pre-batch version; undoing the batch in the `OpLog`
                 // makes the two agree again, which is what lets the doc stay attached.
                 tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
-                doc.oplog.lock().rollback_import(&doc.state.lock());
+                doc.oplog.lock().rollback_import(&mut doc.state.lock());
                 // The shared diff calculator cached ranges against the rolled-back
                 // history; drop that cache instead of reusing stale entries.
                 *doc.diff_calculator.lock() = DiffCalculator::new(true);

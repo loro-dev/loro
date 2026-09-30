@@ -54,8 +54,9 @@ Consequences to keep in mind:
   rare within a single blob (the lamport-ordered main pass applies deps first), routine
   across a batch, where later blobs unlock what earlier blobs parked. Undoing individual
   mutations then depends on getting their relative order right, and getting it wrong
-  resurrects scope-local changes whose `ContainerIdx` registrations the arena rollback
-  already truncated (dangling indices — a corruption vector on the next unlock).
+  resurrects scope-local changes whose value slices and parent links the arena rollback
+  already dropped (before loro-dev/loro#1164 it also freed their `ContainerIdx`
+  registrations — a corruption vector on the next unlock).
   Per-slot snapshots are order-independent by construction. The batch must also *re-park*
   pre-batch pending changes it unlocked, or they are silently dropped and the doc
   diverges when their deps arrive; the same snapshot handles both directions. Note that

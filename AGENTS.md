@@ -66,6 +66,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - How the arena learns a container's parent (parsed changes, state KV, the op
   log's creator resolver), its locking (including `ChangeStore`'s lock order),
   and import rollback: [context/arena-parent-links.md](context/arena-parent-links.md).
+- Why a failed import's rollback keeps arena indices (DocState, caches and handlers
+  are keyed by them) and what it drops instead:
+  [context/failed-import-arena-indices.md](context/failed-import-arena-indices.md).
 - Which deletions `DocState::is_deleted` caches, and how tree/movable-list
   children are revived: [context/dead-container-cache.md](context/dead-container-cache.md).
 - Movable-list `apply_diff`/undo: delete + re-insert of a child becomes a move,

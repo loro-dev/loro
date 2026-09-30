@@ -483,11 +483,12 @@ impl ChangeStore {
     /// the parsed changes of the cached blocks that were parsed since. Every arena rollback must
     /// go through here (or [`Self::rollback_import`] / [`Self::retire`]).
     ///
-    /// Parsing a block registers the containers its ops use and allocates their values, and
-    /// the arena rollback drops what was registered or allocated after the checkpoint, so a
-    /// block parsed in between may hold indices and value slices that no longer exist or that
-    /// new registrations reuse. Such a block keeps only its bytes, so the next access parses and
-    /// registers again. A block parsed before the checkpoint can only refer to what was there
+    /// Parsing a block registers the containers its ops use with their parent links and
+    /// allocates their values. The arena rollback truncates the values and text allocated after
+    /// the checkpoint and drops the parent links of containers registered after it (their
+    /// indices stay; see `SharedArena::rollback`), so a block parsed in between may hold value
+    /// slices that no longer exist, and parsing it again is what registers those links again.
+    /// Such a block keeps only its bytes, so the next access parses and registers again. A block parsed before the checkpoint can only refer to what was there
     /// then (its `parsed_extent`), and keeps its parsed changes. A block without bytes was built
     /// in memory from changes inserted before the import, whose containers were registered
     /// then.
