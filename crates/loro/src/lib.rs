@@ -1470,6 +1470,26 @@ impl LoroDoc {
         self.doc.revert_to(version)
     }
 
+    /// Append the ops that invert `span` — the same machinery
+    /// [`UndoManager`] uses for undo, callable on *any* peer's ops, not
+    /// just the bound peer's. Unlike [`revert_to`](Self::revert_to), which
+    /// rewinds state to a target version (discarding whatever arrived
+    /// since), this inverts only the ops in the span: everything else —
+    /// including edits merged in after the span — is untouched. The
+    /// inverse ops commit under this peer's id with `origin: "undo"`.
+    ///
+    /// The spans a merge imported are `pre_vv.diff(&post_vv).forward` —
+    /// `undo_span` is how a merge (or any oplog range) is reverted
+    /// surgically rather than by rewinding the whole document.
+    #[inline]
+    pub fn undo_span(&self, span: IdSpan) -> LoroResult<()> {
+        let commit = self
+            .doc
+            .undo_internal(span, &mut Default::default(), None, &mut |_| {})?;
+        drop(commit);
+        Ok(())
+    }
+
     /// Apply a diff to the current document state.
     ///
     /// Internally, it will apply the diff to the current state.

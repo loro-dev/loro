@@ -18,7 +18,6 @@ mod value;
 
 pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
 pub use internal_string::InternalString;
-pub use logging::log::*;
 #[doc(hidden)]
 pub use rustc_hash::FxHashMap;
 pub use span::*;
