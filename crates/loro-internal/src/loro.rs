@@ -487,10 +487,10 @@ impl LoroDoc {
         self.config.set_record_timestamp(record);
     }
 
-    /// Set the interval of mergeable changes, in seconds.
+    /// Set the interval of mergeable changes, in milliseconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The default value is 1000 seconds.
+    /// The default value is 1000 milliseconds.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.config.set_merge_interval(interval);
@@ -3514,7 +3514,7 @@ pub struct CommitOptions {
     /// Defaults to true.
     pub immediate_renew: bool,
 
-    /// Custom timestamp for the commit in seconds since Unix epoch.
+    /// Custom timestamp for the commit in milliseconds since Unix epoch.
     /// If None, the current time will be used.
     pub timestamp: Option<Timestamp>,
 
@@ -3547,7 +3547,7 @@ impl CommitOptions {
 
     /// Set the timestamp of the commit.
     ///
-    /// The timestamp is the number of **seconds** that have elapsed since 00:00:00 UTC on January 1, 1970.
+    /// The timestamp is the number of **milliseconds** that have elapsed since 00:00:00 UTC on January 1, 1970.
     pub fn timestamp(mut self, timestamp: Timestamp) -> Self {
         self.timestamp = Some(timestamp);
         self
