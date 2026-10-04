@@ -41,41 +41,43 @@ impl IdToCursor {
         if let Some(last) = list.last_mut() {
             let last_end = last.counter + last.cursor.rle_len() as Counter;
             debug_assert!(last_end <= id.counter, "id:{}, {:#?}", id, &self);
-            if last_end == id.counter
-                && last.cursor.can_merge(&cursor)
-                && last.cursor.rle_len() + cursor.rle_len() < MAX_FRAGMENT_LEN
-            {
-                last.cursor.merge_right(&cursor);
+            if last_end == id.counter && last.cursor.try_merge(&cursor) {
                 return;
             }
         }
 
-        if let Cursor::Insert(InsertSet::Small(set)) = cursor {
-            if set.len > MAX_FRAGMENT_LEN as u32 {
-                assert!(set.set.len() == 1);
-                let insert = set.set[0];
-                let mut counter = id.counter;
-                for start in (0..set.len).step_by(MAX_FRAGMENT_LEN) {
-                    let end = (start + MAX_FRAGMENT_LEN as u32).min(set.len);
-                    let len = (end - start) as usize;
-                    list.push(Fragment {
-                        counter,
-                        cursor: Cursor::new_insert(insert.leaf, len),
-                    });
-                    counter += len as Counter;
-                }
-            } else {
-                list.push(Fragment {
-                    counter: id.counter,
-                    cursor: Cursor::Insert(InsertSet::Small(set)),
-                });
-            }
-        } else {
-            list.push(Fragment {
-                counter: id.counter,
-                cursor,
-            });
+        // A fragment's cost is bounded by its run count, not its atom
+        // length — a single-run fragment has one cursor at any size, so
+        // there is no reason to split a large uniform span into
+        // MAX_FRAGMENT_LEN chunks. Coalescing keeps later id→leaf remaps
+        // proportional to leaf-boundary runs instead of atoms.
+        list.push(Fragment {
+            counter: id.counter,
+            cursor,
+        });
+    }
+
+    /// Merge adjacent fragments in `list[lo..hi]` whose cursors combine
+    /// within the small-set run cap. Only adjacent fragments
+    /// (`a.counter_end() == b.counter`) may merge: the list can carry
+    /// counter gaps left by other containers' ops, and merging across a
+    /// gap would change `get_insert` results inside it.
+    fn coalesce(list: &mut Vec<Fragment>, lo: usize, hi: usize) {
+        if hi - lo < 2 {
+            return;
         }
+
+        let removed: Vec<Fragment> = list.splice(lo..hi, []).collect();
+        let mut merged: Vec<Fragment> = Vec::with_capacity(removed.len());
+        for f in removed {
+            let absorbed = merged.last_mut().is_some_and(|last| {
+                last.counter_end() == f.counter && last.cursor.try_merge(&f.cursor)
+            });
+            if !absorbed {
+                merged.push(f);
+            }
+        }
+        list.splice(lo..lo, merged);
     }
 
     /// Update the given id_span to the new_leaf
@@ -91,6 +93,7 @@ impl IdToCursor {
             Err(index) => index.saturating_sub(1),
         };
 
+        let first = index;
         let mut start_counter = id_span.counter.start;
         while start_counter < id_span.counter.end
             && index < list.len()
@@ -107,6 +110,7 @@ impl IdToCursor {
         }
 
         assert_eq!(start_counter, id_span.counter.end);
+        Self::coalesce(list, first.saturating_sub(1), (index + 1).min(list.len()));
     }
 
     pub fn update_insert_batch(&mut self, updates: &mut [(IdSpan, LeafIndex)]) {
@@ -132,6 +136,7 @@ impl IdToCursor {
             let Some(list) = self.map.get_mut(&peer) else {
                 continue;
             };
+
 
             let mut per_fragment: FxHashMap<usize, Vec<(usize, usize, LeafIndex)>> =
                 FxHashMap::default();
@@ -170,10 +175,15 @@ impl IdToCursor {
 
             let mut fragment_indexes: Vec<usize> = per_fragment.keys().copied().collect();
             fragment_indexes.sort_unstable();
+            let (lo, hi) = (
+                *fragment_indexes.first().unwrap(),
+                *fragment_indexes.last().unwrap(),
+            );
             for index in fragment_indexes {
                 let updates = per_fragment.get(&index).unwrap();
                 list[index].cursor.update_insert_many(updates);
             }
+            Self::coalesce(list, lo.saturating_sub(1), (hi + 2).min(list.len()));
         }
     }
 
@@ -955,6 +965,36 @@ impl Cursor {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Merge `rhs` (the cursor immediately following `self`) into `self`
+    /// when both are Small insert sets whose combined run count stays
+    /// within the small-set cap. The caller must guarantee the two spans
+    /// are counter-adjacent.
+    fn try_merge(&mut self, rhs: &Self) -> bool {
+        let (Cursor::Insert(InsertSet::Small(a)), Cursor::Insert(InsertSet::Small(b))) =
+            (self, rhs)
+        else {
+            return false;
+        };
+        let boundary_merge = matches!(
+            (a.set.last(), b.set.first()),
+            (Some(l), Some(f)) if l.leaf == f.leaf
+        );
+        let runs = a.set.len() + b.set.len() - boundary_merge as usize;
+        if runs > SMALL_SET_MAX_LEN {
+            return false;
+        }
+
+        if boundary_merge {
+            let add = b.set[0].len;
+            a.set.last_mut().unwrap().len += add;
+            a.set.extend(b.set.iter().skip(1).copied());
+        } else {
+            a.set.extend(b.set.iter().copied());
+        }
+        a.len += b.len;
+        true
     }
 
     fn get_insert(&self, pos: usize) -> Option<LeafIndex> {
