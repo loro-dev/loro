@@ -147,6 +147,8 @@ impl CrdtRope {
 
                 (origin_right, parent_right_idx, in_between)
             };
+            #[cfg(feature = "tracker-stats")]
+            super::stats::bump(&super::stats::IN_BETWEEN_ELEMS, in_between.len());
 
             content.origin_left = origin_left.map(|x| x.try_into().unwrap());
             content.origin_right = origin_right.map(|x| x.try_into().unwrap());

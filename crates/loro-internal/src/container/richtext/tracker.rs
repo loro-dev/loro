@@ -27,6 +27,54 @@ pub(crate) const UNKNOWN_SPAN_LEN: u32 = u32::MAX / 4;
 
 pub(crate) use crdt_rope::CrdtRopeDelta;
 
+#[cfg(feature = "tracker-stats")]
+pub(crate) mod stats {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    pub static INSERTS: AtomicUsize = AtomicUsize::new(0);
+    pub static CHECKOUTS: AtomicUsize = AtomicUsize::new(0);
+    pub static RETREAT_ELEMS: AtomicUsize = AtomicUsize::new(0);
+    pub static FORWARD_ELEMS: AtomicUsize = AtomicUsize::new(0);
+    pub static SKIP_FORWARD_CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub static SKIP_FORWARD_ELEMS: AtomicUsize = AtomicUsize::new(0);
+    pub static IN_BETWEEN_ELEMS: AtomicUsize = AtomicUsize::new(0);
+    pub static SPLIT_LEAVES: AtomicUsize = AtomicUsize::new(0);
+    pub static UPDATE_INSERT_FRAGS: AtomicUsize = AtomicUsize::new(0);
+    pub static UPDATE_MANY_DENSE: AtomicUsize = AtomicUsize::new(0);
+    pub static LARGE_SEQ_UPDATES: AtomicUsize = AtomicUsize::new(0);
+    pub static ITER_YIELDS: AtomicUsize = AtomicUsize::new(0);
+    pub static UPDATE_MANY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub static BATCH_CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub static SPAN_ATOMS: AtomicUsize = AtomicUsize::new(0);
+    pub static MAX_LIST_LEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    pub fn bump(c: &'static AtomicUsize, n: usize) {
+        c.fetch_add(n, Ordering::Relaxed);
+    }
+    pub fn dump(tag: &str) {
+        eprintln!(
+            "tracker-stats {tag}: inserts={} checkouts={} retreat_elems={} forward_elems={} skip_fwd_calls={} skip_fwd_elems={} in_between={} split_leaves={} upd_frag_iters={} dense_elems={} large_seq={} iter_yields={} update_many_calls={}",
+            INSERTS.load(Ordering::Relaxed),
+            CHECKOUTS.load(Ordering::Relaxed),
+            RETREAT_ELEMS.load(Ordering::Relaxed),
+            FORWARD_ELEMS.load(Ordering::Relaxed),
+            SKIP_FORWARD_CALLS.load(Ordering::Relaxed),
+            SKIP_FORWARD_ELEMS.load(Ordering::Relaxed),
+            IN_BETWEEN_ELEMS.load(Ordering::Relaxed),
+            SPLIT_LEAVES.load(Ordering::Relaxed),
+            UPDATE_INSERT_FRAGS.load(Ordering::Relaxed),
+            UPDATE_MANY_DENSE.load(Ordering::Relaxed),
+            LARGE_SEQ_UPDATES.load(Ordering::Relaxed),
+            ITER_YIELDS.load(Ordering::Relaxed),
+            UPDATE_MANY_CALLS.load(Ordering::Relaxed),
+        );
+        eprintln!(
+            "tracker-stats {tag}: batch_calls={} span_atoms={} max_list_len={}",
+            BATCH_CALLS.load(Ordering::Relaxed),
+            SPAN_ATOMS.load(Ordering::Relaxed),
+            MAX_LIST_LEN.load(Ordering::Relaxed),
+        );
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Tracker {
     applied_vv: VersionVector,
@@ -98,6 +146,8 @@ impl Tracker {
         //     &pos,
         //     &content
         // );
+        #[cfg(feature = "tracker-stats")]
+        stats::bump(&stats::INSERTS, 1);
         // tracing::span!(tracing::Level::INFO, "TrackerInsert");
         if let ControlFlow::Break(_) =
             self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {
@@ -166,6 +216,8 @@ impl Tracker {
     }
 
     fn update_insert_by_split(&mut self, split: &[LeafIndex]) {
+        #[cfg(feature = "tracker-stats")]
+        stats::bump(&stats::SPLIT_LEAVES, split.len());
         match split.len() {
             0 => {}
             1 => {
@@ -274,6 +326,11 @@ impl Tracker {
                     IdSpan::new(op_id.peer, cnt_start, op_id.counter + len as Counter),
                     &mut updates,
                 );
+                #[cfg(feature = "tracker-stats")]
+                {
+                    stats::bump(&stats::SKIP_FORWARD_CALLS, 1);
+                    stats::bump(&stats::SKIP_FORWARD_ELEMS, updates.len());
+                }
                 self.batch_update(updates, false);
             }
 
@@ -363,11 +420,15 @@ impl Tracker {
             self.rope.clear_diff_status();
         }
 
+        #[cfg(feature = "tracker-stats")]
+        stats::bump(&stats::CHECKOUTS, 1);
         let current_vv = std::mem::take(&mut self.current_vv);
         let (retreat, forward) = current_vv.diff_iter(vv);
         let mut updates = Vec::new();
         for span in retreat {
             for c in self.id_to_cursor.iter(span) {
+                #[cfg(feature = "tracker-stats")]
+                stats::bump(&stats::RETREAT_ELEMS, 1);
                 match c {
                     id_to_cursor::IterCursor::Insert { leaf, id_span } => {
                         updates.push(crdt_rope::LeafUpdate {
@@ -453,9 +514,13 @@ impl Tracker {
             }
         }
 
+        #[cfg(feature = "tracker-stats")]
+        let fwd_before = updates.len();
         for span in forward {
             self.forward(span, &mut updates);
         }
+        #[cfg(feature = "tracker-stats")]
+        stats::bump(&stats::FORWARD_ELEMS, updates.len() - fwd_before);
 
         if !on_diff_status {
             self.current_vv = vv.clone();
