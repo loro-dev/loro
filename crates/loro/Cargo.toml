@@ -42,6 +42,7 @@ default = ["counter"]
 counter = ["loro-internal/counter"]
 jsonpath = ["loro-internal/jsonpath"]
 logging = ["loro-internal/logging"]
+tracker-stats = ["loro-internal/tracker-stats"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }

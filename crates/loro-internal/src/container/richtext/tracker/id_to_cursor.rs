@@ -8,6 +8,8 @@ use rustc_hash::FxHashMap;
 use smallvec::smallvec;
 
 use self::insert_set::InsertSet;
+#[cfg(feature = "tracker-stats")]
+use super::stats;
 
 // If we make this too large, we may have too many cursors inside a fragment
 // and trigger the worst case
@@ -99,6 +101,8 @@ impl IdToCursor {
             && index < list.len()
             && start_counter < list[index].counter_end()
         {
+            #[cfg(feature = "tracker-stats")]
+            stats::bump(&stats::UPDATE_INSERT_FRAGS, 1);
             let fragment = &mut list[index];
             let from = (start_counter - fragment.counter) as usize;
             let to =
@@ -137,12 +141,23 @@ impl IdToCursor {
                 continue;
             };
 
+            #[cfg(feature = "tracker-stats")]
+            {
+                stats::bump(&stats::BATCH_CALLS, 1);
+                let l = list.len() as u64;
+                let m = stats::MAX_LIST_LEN.load(std::sync::atomic::Ordering::Relaxed);
+                if l > m {
+                    stats::MAX_LIST_LEN.store(l, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
 
             let mut per_fragment: FxHashMap<usize, Vec<(usize, usize, LeafIndex)>> =
                 FxHashMap::default();
 
             for (id_span, new_leaf) in peer_updates {
                 debug_assert!(!id_span.is_reversed());
+                #[cfg(feature = "tracker-stats")]
+                stats::bump(&stats::SPAN_ATOMS, id_span.atom_len());
                 let mut index =
                     match list.binary_search_by_key(&id_span.counter.start, |x| x.counter) {
                         Ok(index) => index,
@@ -237,6 +252,8 @@ impl IdToCursor {
                     continue;
                 };
 
+                #[cfg(feature = "tracker-stats")]
+                stats::bump(&stats::ITER_YIELDS, 1);
                 return Some(next);
             }
 
@@ -272,11 +289,15 @@ impl IdToCursor {
                         continue;
                     }
 
+                    #[cfg(feature = "tracker-stats")]
+                    stats::bump(&stats::ITER_YIELDS, 1);
                     return Some(IterCursor::Delete(span.slice(from as usize, to as usize)));
                 }
                 Cursor::Move { from, to } => {
                     index += 1;
                     let op_id = ID::new(iter_id_span.peer, f.counter);
+                    #[cfg(feature = "tracker-stats")]
+                    stats::bump(&stats::ITER_YIELDS, 1);
                     return Some(IterCursor::Move {
                         from_id: *from,
                         to_leaf: *to,
@@ -431,6 +452,8 @@ mod insert_set {
         }
 
         pub(crate) fn update_many(&mut self, updates: &[(usize, usize, LeafIndex)]) {
+            #[cfg(feature = "tracker-stats")]
+            stats::bump(&stats::UPDATE_MANY_CALLS, updates.len());
             if updates.is_empty() {
                 return;
             }
@@ -443,12 +466,16 @@ mod insert_set {
 
             let len = self.len();
             if len > MAX_FRAGMENT_LEN {
+                #[cfg(feature = "tracker-stats")]
+                stats::bump(&stats::LARGE_SEQ_UPDATES, updates.len());
                 for &(from, to, leaf) in updates {
                     self.update(from, to, leaf);
                 }
                 return;
             }
 
+            #[cfg(feature = "tracker-stats")]
+            stats::bump(&stats::UPDATE_MANY_DENSE, len);
             let mut dense: SmallVec<[LeafIndex; MAX_FRAGMENT_LEN]> = SmallVec::with_capacity(len);
             match self {
                 InsertSet::Small(set) => {
