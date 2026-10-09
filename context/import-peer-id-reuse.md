@@ -61,14 +61,90 @@ is per atom range, not per change:
   (`unicode_start` is an arena offset), and a one-atom delete ignores the sign of
   `signed_len`, because slicing a reversed delete down to one atom yields `-1`
   where a forward one yields `1`.
-- **JSON imports** use `ImportedValues::Lossy`: JSON text does not round-trip every
-  value (`NaN` becomes `null`, binary may come back as a list), so value payloads
-  are not compared there. Containers, positions, text, keys, ids and deps still are.
+- **Value payloads** use the caller's `ImportedValues` mode. `Exact` is the
+  default for binary `import`, `import_with`, fast updates, fast snapshots, and
+  `import_batch`, and it is always available (not test-only). It is structural
+  equality: finite doubles use `==` (a 1 ULP gap is rejected), large integers
+  stay distinct, binary is not a list, non-finite doubles are not null, a marker
+  string is not a Container, and unknown payloads are compared. `JsonLossy` is
+  used by `import_json_updates` and by `import_with_history_mode` /
+  `import_batch_with_history_mode` when the caller opts in, because a later
+  binary export can carry values degraded by an earlier JSON hop. It accepts,
+  symmetrically and recursively inside lists, maps, and rich-text styles:
+  `Binary` versus a list of the same u8 numbers, non-finite doubles (`NaN`,
+  positive or negative infinity) versus `Null`, and `Double(d)` versus `I64(i)`
+  when `d == i as f64`. JS numbers erase the distinction between an integral
+  Double and I64; JSON text written by JS also drops the `.0`
+  (`crates/loro-wasm/src/convert.rs`, `js_json_schema_to_loro_json_schema`;
+  `LoroValueVisitor` in `loro-common/src/value.rs`). Two I64s also match when
+  they convert to the same f64 and at least one has `|i| > 2^53`: a JS-number
+  relay can round `2^60 + 1` to `2^60`. Inside `[-2^53, 2^53]`, distinct
+  integers still differ and Double/I64 equality is exact numerically. Finite
+  Double/Double stays `==` in both modes. `serde_json`'s `float_roundtrip`
+  feature is on the normal dependency, so a true JSON text round trip of a
+  finite double keeps its bits and passes `Exact`.
+- **Large-integer JSON paths.** Native JSON text preserves an I64, but parsing it
+  into JS numbers can lose precision. The WASM object importer uses
+  `serde_wasm_bindgen::Deserializer::deserialize_any`, which reads numbers outside
+  JS's safe integer range (`|n| > 2^53 - 1`) as Double. The generic
+  `js_value_to_loro_value` also returns Double for `|n| > 2^53`, but returns I64
+  at the boundary; a JS-written JSON string can decode a rounded I64 instead.
+  Both representations are tolerated, including JS's shortest decimal spelling
+  (for example `JSON.stringify(2 ** 60)` writes `1152921504606847000`, which converts
+  to the same f64). The direct WASM schema exporter currently uses
+  `serde_wasm_bindgen::Serializer::serialize_i64`, which rejects unsafe I64s
+  rather than rounding them. The tolerance covers history relayed through JS
+  parsing native JSON; it does not change that exporter's existing limitation.
+- **Ambiguous payload kinds.** A valid `🦜:cid:` string becomes a Container in
+  JSON (`LoroValueVisitor::visit_str`). JSON peer compression can then reinterpret
+  the string's peer as an index, so a marker-string versus Container pair is
+  accepted without comparing the encoded id. Two Containers or two strings still
+  must match. Unknown-op payloads (`FutureInnerContent::Unknown`) are not
+  compared in `JsonLossy`: they may carry nested LoroValues or arena references
+  whose meaning this version cannot establish. The op's prop and container still
+  must match. `Exact` compares the payload. This retains the prior JSON bypass
+  for that opaque kind; a later binary relay of it is accepted only when the
+  caller opts into `JsonLossy`.
+- **Counter ops** carry tagged `OwnedValue::F64`/`I64` values in JSON
+  (`encoding/json_schema.rs::decode_op`), both decoded to `Counter(f64)`.
+  Finite increments therefore remain comparable numerically, including integral
+  increments. NaN equals NaN. A nonzero counter is not treated as zero: integer
+  encoding is used only when `fract() == 0.0` (and the existing magnitude bound
+  holds), so `±1e-17` is not stored as `I64(0)`. Applying that delta does not
+  treat a magnitude below `f64::EPSILON` as an empty diff. Already-corrupted old history
+  cannot be recovered. A non-finite counter increment serialized as JSON text is
+  already invalid at decode because its tagged f64 becomes null; this is not a
+  new known-history rejection.
+- **Other values** are compared exactly. Unlike main's blanket JSON value bypass,
+  JSON imports now reject genuinely different representable payloads. Text,
+  op container ids, positions, keys, element ids, style metadata and deps still
+  must match on every import path.
+  The known prefix is then trimmed, so the receiver keeps its own values.
+  This fixes the 1.16.4 rejection of JSON-relayed history without changing the JSON
+  format: a JSON importer still gets a list instead of `Binary` (including mergeable
+  container markers), `Null` instead of a non-finite double, an I64 instead of an
+  integral Double, a rounded large integer, or a Container instead of a
+  marker-looking string. It does not repair that importer's lost values or make
+  its state identical to the binary receiver's.
 - History below the shallow root, or any local change `get_change` cannot find,
   is not compared. The import then behaves as it did before this check.
 
 ## What it does not catch
 
+- **Conflicts indistinguishable from JSON loss, only under `JsonLossy`.** Two
+  actual writers using the same op id can store Binary versus a list of the same
+  bytes, NaN/positive or negative infinity versus null, or an integral Double
+  versus the matching I64. Different large integers (or a large integer versus a
+  Double) also pass when they convert to the same f64 and at least one is
+  outside `[-2^53, 2^53]`, such as `2^60 + 1` versus `2^60`; distinct integers
+  inside that range remain checked exactly. This ambiguity exists even when both
+  writers stored I64s directly. Default binary import rejects it (`UsedOpID`).
+  It passes only for `import_json_updates` or an explicit `JsonLossy` binary
+  import. A valid marker-string versus Container pair and differing unknown-op
+  payloads also pass under those bypasses. The receiver keeps its own prefix;
+  the conflicting value (or its type) remains different, while unrelated matching
+  values stay the same. `Exact` must not leave the documents with equal version
+  vectors and different values.
 - **Delta sync.** If the conflicting prefix is not in the import (the sender
   exported from the receiver's version vector), nothing can be compared: the
   receiver's vv already claims those ids. A tail position past the end of a
@@ -120,9 +196,27 @@ universal ratio.
   and re-imports that must still succeed (piecewise vs merged change stores, every
   op kind including `NaN` and one-atom reversed deletes, shallow docs).
 - `crates/loro-wasm/tests/import_reused_peer_id.test.ts`.
-
-- `oplog::known_history::tests`: cross-arena container identity and Unicode atom
-  comparisons, and a dependency mismatch inside a merged import's cold prefix.
+- `crates/loro/tests/import_json_relay.rs`: JSON-to-binary relays through full
+  updates, snapshots and batch import using `ImportHistoryMode::JsonLossy`;
+  binary values, mergeable text/counter, non-finite/integral doubles, rounded
+  large integers as I64 and Double (including the `2^53` boundary, both signs
+  and i64 extrema), marker strings with peer compression, tagged counter values
+  and unknown payloads, nested/sequence/style values, both comparison directions
+  and JSON re-imports, later relay edits, retained prefix history, genuine
+  text/value conflicts that must still be rejected, and an exact-path rejection
+  of `2^60` versus `2^60 + 1`.
+- `oplog::known_history::json_lossy_value_tests`: the precise value equivalences
+  and rejection boundaries, including nested values, byte-list contents, numeric
+  representations, 1 ULP finite doubles, marker-string ambiguity and unknown-op
+  prop/container checks.
+- `oplog::known_history::two_arena_tests`: cross-arena container identity and
+  Unicode atom comparisons, and a dependency mismatch inside a merged import's
+  cold prefix.
+- `crates/json-float-consumer`: a normal `loro` dependency, without the `loro`
+  crate's dev-only `float_roundtrip`, checks finite-double JSON text then an
+  exact binary reimport, and the same `2^60` conflict under both modes.
+- `crates/loro/tests/contracts/counter.rs`: encoding `1e-17` and importing the
+  binary update yields `1e-17`, not `0`.
 - `oplog::change_store::test`: identical blocks stay lazy, dirty caches shadow
   old KV bytes, repeated snapshots allocate only new text/list values, and
   `merged_cold_text_overlap_is_accepted_without_parsing_the_known_block` proves

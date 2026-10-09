@@ -1,0 +1,13 @@
+[package]
+name = "json-float-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "External loro consumer without serde_json float_roundtrip"
+
+[dependencies]
+loro = { path = "../loro" }
+# Deliberately not the workspace dependency and not float_roundtrip. Feature
+# unification must come from loro-internal's normal dependency, not from a
+# dev-dependency of the loro crate.
+serde_json = "1.0"

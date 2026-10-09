@@ -824,8 +824,12 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<ImportStatus, LoroError> {
-        decode_oplog(self, data)
+    pub(crate) fn decode(
+        &mut self,
+        data: ParsedHeaderAndBody,
+        values: ImportedValues,
+    ) -> Result<ImportStatus, LoroError> {
+        decode_oplog(self, data, values)
     }
 
     /// Containers that have at least one op inside `spans`.
