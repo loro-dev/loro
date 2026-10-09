@@ -251,7 +251,9 @@ fn update_with_out_of_bounds_list_insert(peer: u64) -> LoroResult<Vec<u8>> {
     doc.get_list("list").insert(1, "tail")?;
     doc.commit();
 
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let last_op = json
         .changes
         .last_mut()

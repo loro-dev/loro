@@ -43,8 +43,9 @@ pub fn forge_as(build: impl FnOnce(&LoroDoc), unknown: bool) -> LoroDoc {
     src.set_peer_id(1).unwrap();
     build(&src);
     src.commit();
-    let mut json =
-        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
+    let mut json = src
+        .export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv())
+        .unwrap();
     for change in json.changes.iter_mut().filter(|_| unknown) {
         for op in change.ops.iter_mut() {
             forge_id(&mut op.container);

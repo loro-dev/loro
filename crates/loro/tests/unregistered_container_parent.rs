@@ -364,7 +364,8 @@ fn failed_import_that_loads_an_old_change() {
     list.insert(0, "seed").unwrap();
     list.insert(1, "tail").unwrap();
     e.commit();
-    let mut json = serde_json::to_value(e.export_json_updates(&b_vv, &e.oplog_vv())).unwrap();
+    let mut json =
+        serde_json::to_value(e.export_json_updates(&b_vv, &e.oplog_vv()).unwrap()).unwrap();
     let last_op = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
         .as_array_mut()
         .unwrap()
@@ -394,7 +395,11 @@ fn failed_import_that_loads_an_old_change() {
     // The history, including the change the failed import loaded, must still name the
     // right containers.
     let history = |doc: &LoroDoc| {
-        serde_json::to_string(&doc.export_json_updates(&Default::default(), &a.oplog_vv())).unwrap()
+        serde_json::to_string(
+            &doc.export_json_updates(&Default::default(), &a.oplog_vv())
+                .unwrap(),
+        )
+        .unwrap()
     };
     assert_eq!(history(&dst), history(&a));
     assert!(dst.get_tree("tree").get_meta(child).unwrap().is_deleted());
@@ -436,7 +441,8 @@ fn failed_import_that_loads_old_movable_list_values() {
         e.get_list("list").insert(0, 1).unwrap();
         e.get_list("list").insert(1, 2).unwrap();
         e.commit();
-        let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+        let mut json =
+            serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
         let last_op = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
             .as_array_mut()
             .unwrap()
@@ -654,7 +660,8 @@ fn queries_race_with_failing_imports() {
             .unwrap();
         e.commit();
     }
-    let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+    let mut json =
+        serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
     let changes = json["changes"].as_array_mut().unwrap();
     let mut empty = changes.last().unwrap().clone();
     empty["ops"] = serde_json::json!([]);
@@ -673,7 +680,7 @@ fn queries_race_with_failing_imports() {
     let old_deps = o.export(ExportMode::all_updates()).unwrap();
 
     let history = |doc: &LoroDoc, from: &VersionVector| {
-        serde_json::to_string(&doc.export_json_updates(from, &vv)).unwrap()
+        serde_json::to_string(&doc.export_json_updates(from, &vv).unwrap()).unwrap()
     };
     let reference = import(&a.export(ExportMode::all_updates()).unwrap());
     let empty_vv = VersionVector::new();
@@ -1098,10 +1105,9 @@ fn fallible_history_readers_reject_a_truncated_block_on_the_first_read() {
     map_remote.set_peer_id(10).unwrap();
     map_remote.get_map("map").insert("key", -1).unwrap();
     let map_updates = map_remote.export(ExportMode::all_updates()).unwrap();
-    let json = remote.export_json_updates_without_peer_compression(
-        &VersionVector::default(),
-        &remote.oplog_vv(),
-    );
+    let json = remote
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &remote.oplog_vv())
+        .unwrap();
     for block in 0..3 {
         let (forged, id) = snapshot_with_truncated_history(&snapshot, block);
         // Regenerate the WASM regression fixture from the same public-API rewrite:

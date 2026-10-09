@@ -308,8 +308,10 @@ fn storage_blobs_json_updates_and_batch_import_follow_contract() -> anyhow::Resu
 
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let compressed = doc.export_json_updates(&start, &end);
-    let uncompressed = doc.export_json_updates_without_peer_compression(&start, &end);
+    let compressed = doc.export_json_updates(&start, &end).unwrap();
+    let uncompressed = doc
+        .export_json_updates_without_peer_compression(&start, &end)
+        .unwrap();
     assert!(compressed.peers.is_some());
     assert!(uncompressed.peers.is_none());
 

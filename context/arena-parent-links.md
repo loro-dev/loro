@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-10-01.
+Verified against code 2026-10-09.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -111,13 +111,15 @@ checksums can therefore be accepted before its contents are read. Honest data
 does not produce such a block; a decode/parse failure is invalid external input,
 not an impossible internal invariant.
 
-Every change-store reader that fails to decode or parse records the block in
-`ChangeStore::parse_failures` (a leaf lock; the first failure is kept). Legacy
-`Option` readers answer "no such change". The creator resolver answers
+Every ordinary history reader that fails to decode or parse a block records
+it in `ChangeStore::parse_failures` (a leaf lock; the first failure is kept) and
+answers "no such change", as the readers other than the resolver always did.
+Legacy `Option` readers answer "no such change". The creator resolver answers
 `CreatorOp::Corrupt`, which the arena treats like `Absent` for that one lookup:
-`is_deleted`, `has_container`, and `get_path` cannot return an error, and the
-container reads as deleted or absent. This avoids panicking under their state
-lock, but does not establish that the container is actually absent.
+`is_deleted`, `has_container`, and `get_path` cannot return an error, so the
+container reads as deleted or absent and the ID as not a container. This avoids
+panicking under their state lock, but does not establish that the container is
+actually absent.
 
 `OpLog::check_history_parsable` converts the record to
 `DecodeError("cannot parse change block ...")`. Public fallible operations check
@@ -155,17 +157,28 @@ already recorded failures, and their history reads also propagate failures
 - Query signatures that previously returned `Option` or plain values remain
   available. Use `try_frontiers_to_vv`, `try_vv_to_frontiers`,
   `try_minimize_frontiers`, `try_find_id_spans_between`, `try_get_change`
-  (`OpLog::try_get_change_at`), and `try_get_changed_containers_in` to receive
-  decode errors. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
+  (`OpLog::try_get_change_at`), `try_get_changed_containers_in`,
+  `try_state_vv`, `try_export_json_updates`, and `try_get_cursor_pos` to
+  receive decode errors. `state_vv` clones `OpLog::vv` when the state and op
+  log frontiers are equal; that vector is cached and does not parse block
+  bodies. Otherwise it uses `try_frontiers_to_vv`, and returns
+  `FrontiersNotFound` when a frontier id is absent rather than an empty
+  version vector. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
   which can now carry the decode-error message; `travel_change_ancestors`
   returns `ChangeTravelError::HistoryUnreadable(LoroError::DecodeError(..))`.
   `ChangeTravelError` is now non-exhaustive, so downstream matches need a
-  wildcard arm. `FrontiersNotIncluded` now has a private message field and a
-  same-named constant: old construction/pattern syntax still works, but an
-  unreadable-history error is not equal to that missing-frontiers constant.
-  WASM queries that already return `JsResult` use these fallible readers too,
-  including `findIdSpansBetween`, `frontiersToVV`, `vvToFrontiers`,
-  `getChangeAt`, `getChangeAtLamport`, `getOpsInChange`, and
+  wildcard arm. `FrontiersNotIncluded` is a struct with a private field plus a
+  same-named constant. Construction via the constant still compiles, but an
+  exhaustive `match` of `Err(FrontiersNotIncluded)` does not (`E0004`): the
+  `history_error: Some(_)` pattern cannot be written from another crate
+  (`E0451`) because the field is private. Downstream must use `Err(_)`. An
+  unreadable-history error is not equal to the constant.
+  `CannotFindRelativePosition` is non-exhaustive and gains `HistoryUnreadable`.
+  `LoroEncodeError` gains `DecodeError`, so `fork_at` keeps a decode failure
+  instead of wrapping it as `Unknown`. WASM queries that already return
+  `JsResult` use these fallible readers too, including `version`,
+  `exportJsonUpdates`, `getCursorPos`, `findIdSpansBetween`, `frontiersToVV`,
+  `vvToFrontiers`, `getChangeAt`, `getChangeAtLamport`, `getOpsInChange`, and
   `getChangedContainersIn`; their JS names and return types stay the same.
 
 A failed fallible operation leaves materialized values, document versions, and
@@ -189,19 +202,26 @@ Limits and compatibility:
 - Reads that need no history do not eagerly validate every block. For example,
   full snapshot import and byte-faithful full snapshot export can copy an
   unreadable block before any failure has been recorded. A query that can use
-  the latest version directly may also succeed without reading it.
+  the latest version directly may also succeed without reading it, including
+  `state_vv` when the state frontiers are the op-log frontiers.
 - The legacy helpers used by `undo`, `checkout_to_latest`, and `fork` retain
   their infallible boundaries. Their fallible reads record the failure first,
   then their existing unwrap boundary may panic if they need the broken history.
-  A detached `fork` fails
-  outside the source document's locks, leaving fallible reads on the source
-  able to report the record. Other infallible paths can still unwind under
-  locks or trap WASM. Do not add blanket record checks to their shared internal
-  helpers: a recorded failure alone must not break an operation that can finish
-  using healthy history.
+  A detached `fork` fails outside the source document's locks, leaving fallible
+  reads on the source able to report the record. Other infallible paths can
+  still unwind under locks or trap WASM. Do not add blanket record checks to
+  their shared internal helpers: a recorded failure alone must not break an
+  operation that can finish using healthy history. A missing node with no
+  recorded parse failure is still the internal "unparsed vv don't match with
+  change store" assertion in `ensure_lazy_load_node`.
+- The direct cold Text comparison in `known_history.rs` falls back to the
+  ordinary reader on a decoding/eligibility error. Its stricter op-length and
+  change-boundary checks never record a `parse_failures` entry themselves; only
+  a failure of the ordinary parser declares local history unparsable. A read
+  that returns before any failure was recorded is not undone.
 - Local edits and `get_deep_value` can still use the current state after a
   failure is recorded. Fallible history operations and public exports then
-  reject the unreadable history.
+  reject the unreadable history, so the document can no longer be exported.
 
 Regression tests in `change_store.rs` cover every store reader, the creator
 resolver, first DAG reads on tree history, and infallible compatibility. The
@@ -248,6 +268,20 @@ Measured with 2k IDs on a 20k-node, 100k-op document, `main` vs the resolver:
 A vv shortcut for IDs beyond the history would have to be exact for every path
 that writes the KV store, or a live container would read as deleted. Measured
 2026-09-28 (loro-dev/loro#1159).
+
+## Snapshot overlap decoding
+
+`ChangeStore::decode_snapshot_for_updates` uses a temporary arena for unmatched
+incoming blocks, rather than allocating a second known prefix in the document
+arena. Known-history comparison resolves container IDs across the two arenas;
+only checked, trimmed new ops are converted into document indices/value slices.
+`register_container_and_parent_link` runs on those converted changes before they
+leave the decoder. Temporary indices and parent links never escape into the
+document. A rejected comparison follows the existing arena rollback path.
+
+Cold Text-insert-only local blocks can also be compared directly from bytes
+without registering anything in the document arena. Other blocks still use the
+normal lazy reader. See [import-peer-id-reuse.md](import-peer-id-reuse.md).
 
 ## Import rollback
 

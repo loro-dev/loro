@@ -84,7 +84,9 @@ fn make_json_list_update_with_four_ops(peer: u64) -> (LoroDoc, JsonSchema) {
     list.insert_with_txn(&mut txn, 1, "tail".into()).unwrap();
     txn.commit().unwrap();
 
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false);
+    let json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+        .unwrap();
     assert_eq!(json.changes.len(), 1);
     assert_eq!(json.changes[0].ops.len(), 4);
     (doc, json)
@@ -752,7 +754,7 @@ fn binary_update_bypassing_validation(doc: &LoroDoc, json: serde_json::Value) ->
         let mut oplog = carrier.oplog().lock();
         let changes =
             crate::encoding::json_schema::decode_json_changes(json, &oplog.arena).unwrap();
-        crate::encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+        crate::encoding::apply_decoded_changes_to_oplog(&mut oplog, changes).unwrap();
     }
     carrier
         .export(ExportMode::updates(&doc.oplog_vv()))
@@ -862,4 +864,48 @@ fn import_batch_with_move_of_unknown_movable_list_elem_rolls_back() {
     doc.get_movable_list("list").mov(0, 1).unwrap();
     doc.commit_then_renew();
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+}
+
+#[test]
+fn detached_text_import_that_unlocks_invalid_movable_list_ops_rolls_back() {
+    let (doc, _) = binary_update_moving_unknown_movable_list_elem();
+    let text_peer = LoroDoc::new_auto_commit();
+    text_peer.set_peer_id(2).unwrap();
+    text_peer
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    text_peer
+        .get_text("t")
+        .insert(0, "unlock", PosType::Unicode)
+        .unwrap();
+    text_peer.commit_then_renew();
+    let text_update = text_peer
+        .export(ExportMode::updates(&doc.oplog_vv()))
+        .unwrap();
+    let bad = binary_update_bypassing_validation(
+        &text_peer,
+        serde_json::json!({
+            "schema_version": 1, "start_version": {}, "peers": ["2", "3"],
+            "changes": [{
+                "id": "0@1", "timestamp": 0, "deps": ["0@0"], "lamport": 8, "msg": null,
+                "ops": [{
+                    "container": "cid:root-list:MovableList", "counter": 0,
+                    "content": {"type": "move", "from": 0, "to": 1, "elem_id": "L99@0"}
+                }]
+            }]
+        }),
+    );
+    let vv = doc.oplog_vv();
+    let frontiers = doc.oplog_frontiers();
+    let state = doc.get_deep_value();
+    doc.detach();
+    doc.import(&bad).unwrap();
+    let pending_before = doc.oplog().lock().pending_changes_len();
+    assert!(pending_before > 0);
+    let err = doc.import(&text_update).unwrap_err();
+    assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+    assert!(doc.is_detached());
+    assert_eq!(doc.oplog().lock().pending_changes_len(), pending_before);
+    doc.attach();
+    assert_doc_unchanged(&doc, &vv, &frontiers, &state);
 }

@@ -803,6 +803,9 @@ impl AppDag {
         false
     }
 
+    /// Panics when a dependency block cannot be parsed. Production callers use
+    /// [`Self::try_import_deps_before_shallow_root`].
+    #[allow(dead_code)]
     pub(crate) fn import_deps_before_shallow_root(&self, deps: &Frontiers) -> bool {
         self.try_import_deps_before_shallow_root(deps).unwrap()
     }
@@ -1439,12 +1442,24 @@ impl AppDag {
     }
 }
 
+/// Frontiers were not found, or comparing them had to read history that cannot
+/// be parsed.
+///
+/// Construct an absent-frontiers error with the [`FrontiersNotIncluded`]
+/// constant. That construction still compiles, but an exhaustive `match` of
+/// `Err(FrontiersNotIncluded)` does not (`E0004`): the struct has a private
+/// field, so a `history_error: Some(_)` pattern cannot be written from another
+/// crate (`E0451`). Downstream code must use `Err(_)`. An unreadable-history
+/// error is not equal to the [`FrontiersNotIncluded`] constant.
 #[derive(Debug, PartialEq, Eq)]
 pub struct FrontiersNotIncluded {
     history_error: Option<Box<str>>,
 }
 
-// Retain the unit-like constructor used by existing callers and pattern matches.
+/// Absent frontiers. Not equal to an error produced from unreadable history.
+///
+/// See [`FrontiersNotIncluded`] for why an exhaustive match of this value does
+/// not compile.
 #[allow(non_upper_case_globals)]
 pub const FrontiersNotIncluded: FrontiersNotIncluded = FrontiersNotIncluded {
     history_error: None,

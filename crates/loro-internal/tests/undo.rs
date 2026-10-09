@@ -71,7 +71,7 @@ fn test_simulate_intersecting_remote_undo() {
     let snapshot = doc.export(ExportMode::Snapshot).unwrap();
     let doc2 = LoroDoc::from_snapshot(&snapshot).unwrap();
     let text2 = doc2.get_text("text");
-    let vv = doc2.state_vv();
+    let vv = doc2.state_vv().unwrap();
     text2.update("123", UpdateOptions::default()).unwrap();
     doc2.commit_then_renew();
 
@@ -114,7 +114,7 @@ fn test_simulate_non_intersecting_remote_undo() {
     // The doc 2 has state of "123" in the "text2" container
     let doc2 = LoroDoc::from_snapshot(&snapshot).unwrap();
     let text2 = doc2.get_text("text2");
-    let vv = doc2.state_vv();
+    let vv = doc2.state_vv().unwrap();
     text2.update("123", UpdateOptions::default()).unwrap();
     doc2.commit_then_renew();
     let update = doc2

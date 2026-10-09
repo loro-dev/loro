@@ -735,7 +735,7 @@ impl LoroDoc {
     /// let a = LoroDoc::new();
     /// a.get_text("t").insert(0, "hi").unwrap();
     /// a.commit();
-    /// let json = a.export_json_updates(&VersionVector::default(), &a.oplog_vv());
+    /// let json = a.export_json_updates(&VersionVector::default(), &a.oplog_vv()).unwrap();
     ///
     /// let b = LoroDoc::new();
     /// b.import_json_updates(json).unwrap();
@@ -757,15 +757,28 @@ impl LoroDoc {
     /// let doc = LoroDoc::new();
     /// let start = VersionVector::default();
     /// let end = doc.oplog_vv();
-    /// let json = doc.export_json_updates(&start, &end);
+    /// let json = doc.export_json_updates(&start, &end).unwrap();
     /// ```
+    ///
+    /// Returns [`LoroError::DecodeError`] when the range has to read a change
+    /// block that cannot be parsed.
     #[inline]
     pub fn export_json_updates(
         &self,
         start_vv: &VersionVector,
         end_vv: &VersionVector,
-    ) -> JsonSchema {
-        self.doc.export_json_updates(start_vv, end_vv, true)
+    ) -> LoroResult<JsonSchema> {
+        self.try_export_json_updates(start_vv, end_vv)
+    }
+
+    /// [`export_json_updates`](Self::export_json_updates).
+    #[inline]
+    pub fn try_export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+    ) -> LoroResult<JsonSchema> {
+        self.doc.try_export_json_updates(start_vv, end_vv, true)
     }
 
     /// Export the current state with json-string format of the document, without peer compression.
@@ -779,15 +792,15 @@ impl LoroDoc {
     /// let doc = LoroDoc::new();
     /// let start = VersionVector::default();
     /// let end = doc.oplog_vv();
-    /// let json = doc.export_json_updates_without_peer_compression(&start, &end);
+    /// let json = doc.export_json_updates_without_peer_compression(&start, &end).unwrap();
     /// ```
     #[inline]
     pub fn export_json_updates_without_peer_compression(
         &self,
         start_vv: &VersionVector,
         end_vv: &VersionVector,
-    ) -> JsonSchema {
-        self.doc.export_json_updates(start_vv, end_vv, false)
+    ) -> LoroResult<JsonSchema> {
+        self.doc.try_export_json_updates(start_vv, end_vv, false)
     }
 
     /// Exports changes within the specified ID span to JSON schema format.
@@ -908,10 +921,22 @@ impl LoroDoc {
         self.doc.oplog_vv()
     }
 
-    /// Get the `VersionVector` version of `DocState`
+    /// Get the `VersionVector` version of `DocState`.
+    ///
+    /// When the state is at the op-log frontiers this clones the cached op-log
+    /// version vector and does not parse change blocks. Otherwise it walks the
+    /// frontiers. A change block that cannot be parsed is [`LoroError::DecodeError`].
+    /// Frontiers that are not in the dag are [`LoroError::FrontiersNotFound`] when
+    /// an id can be named, not an empty version vector.
     #[inline]
-    pub fn state_vv(&self) -> VersionVector {
-        self.doc.state_vv()
+    pub fn state_vv(&self) -> LoroResult<VersionVector> {
+        self.try_state_vv()
+    }
+
+    /// [`state_vv`](Self::state_vv).
+    #[inline]
+    pub fn try_state_vv(&self) -> LoroResult<VersionVector> {
+        self.doc.try_state_vv()
     }
 
     /// The doc only contains the history since this version
@@ -1254,6 +1279,16 @@ impl LoroDoc {
         cursor: &Cursor,
     ) -> Result<PosQueryResult, CannotFindRelativePosition> {
         self.doc.query_pos(cursor)
+    }
+
+    /// [`get_cursor_pos`](Self::get_cursor_pos), preserving a decode error.
+    ///
+    /// [`get_cursor_pos`](Self::get_cursor_pos) maps an unreadable change block to
+    /// [`CannotFindRelativePosition::HistoryUnreadable`]. This method returns the
+    /// [`LoroError::DecodeError`] itself.
+    #[inline]
+    pub fn try_get_cursor_pos(&self, cursor: &Cursor) -> LoroResult<PosQueryResult> {
+        self.doc.try_get_cursor_pos(cursor)
     }
 
     /// Get the inner LoroDoc ref.

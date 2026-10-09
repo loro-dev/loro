@@ -64,13 +64,13 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     assert_eq!(doc.get_text("text").to_string(), "Hello alice!");
     assert_eq!(&**string.lock().unwrap(), "Hello alice!");
     assert_ne!(doc.state_frontiers(), doc.oplog_frontiers());
-    assert_ne!(doc.oplog_vv(), doc.state_vv());
+    assert_ne!(doc.oplog_vv(), doc.state_vv().unwrap());
     assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(2, 6)));
     assert_eq!(
         doc.oplog_frontiers(),
         Frontiers::from([ID::new(1, 11), ID::new(2, 6)])
     );
-    assert_eq!(doc.state_vv(), vv!(1 => 5, 2 => 7));
+    assert_eq!(doc.state_vv().unwrap(), vv!(1 => 5, 2 => 7));
     assert_eq!(doc.oplog_vv(), vv!(1 => 12, 2 => 7));
 
     doc.checkout_to_latest();
@@ -82,7 +82,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     assert_eq!(doc.get_text("text").to_string(), "Hello world! alice!");
     assert_eq!(&**string.lock().unwrap(), "Hello world! alice!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
-    assert_eq!(doc.oplog_vv(), doc.state_vv());
+    assert_eq!(doc.oplog_vv(), doc.state_vv().unwrap());
 
     // New op on peer id 1
     doc.set_peer_id(1).unwrap();
@@ -91,9 +91,11 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled() {
     assert_eq!(&**string.lock().unwrap(), "Hi Hello world! alice!");
     assert_eq!(doc.get_text("text").to_string(), "Hi Hello world! alice!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
-    assert_eq!(doc.oplog_vv(), doc.state_vv());
+    assert_eq!(doc.oplog_vv(), doc.state_vv().unwrap());
     assert_eq!(doc.state_frontiers(), Frontiers::from_id(ID::new(1, 14)));
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let actual = format!("{json:#?}");
     let expected = r#"JsonSchema {
     schema_version: 1,
@@ -220,13 +222,13 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
     assert_eq!(doc.get_text("text").to_string(), "Hello alice!");
     assert_eq!(&**string.lock().unwrap(), "Hello alice!");
     assert_ne!(doc.state_frontiers(), doc.oplog_frontiers());
-    assert_ne!(doc.oplog_vv(), doc.state_vv());
+    assert_ne!(doc.oplog_vv(), doc.state_vv().unwrap());
     assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(0, 6)));
     assert_eq!(
         doc.oplog_frontiers(),
         Frontiers::from([ID::new(1, 11), ID::new(0, 6)])
     );
-    assert_eq!(doc.state_vv(), vv!(1 => 5, 0 => 7));
+    assert_eq!(doc.state_vv().unwrap(), vv!(1 => 5, 0 => 7));
     assert_eq!(doc.oplog_vv(), vv!(1 => 12, 0 => 7));
 
     doc.checkout_to_latest();
@@ -238,7 +240,7 @@ fn allow_editing_on_detached_mode_when_detached_editing_is_enabled_2() {
     assert_eq!(doc.get_text("text").to_string(), "Hello alice! world!");
     assert_eq!(&**string.lock().unwrap(), "Hello alice! world!");
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
-    assert_eq!(doc.oplog_vv(), doc.state_vv());
+    assert_eq!(doc.oplog_vv(), doc.state_vv().unwrap());
 }
 
 #[test]

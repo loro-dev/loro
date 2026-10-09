@@ -17,7 +17,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
-    cursor::{self, CannotFindRelativePosition, PosType, Side},
+    cursor::{self, PosType, Side},
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -1522,8 +1522,8 @@ impl LoroDoc {
     /// Get the version vector of the current document state.
     ///
     /// If you checkout to a specific version, the version vector will change.
-    pub fn version(&self) -> VersionVector {
-        VersionVector(self.doc.state_vv())
+    pub fn version(&self) -> JsResult<VersionVector> {
+        Ok(VersionVector(self.doc.try_state_vv()?))
     }
 
     /// The doc only contains the history since this version
@@ -1696,11 +1696,11 @@ impl LoroDoc {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
-        let json_schema = self.doc.export_json_updates(
+        let json_schema = self.doc.try_export_json_updates(
             json_start_vv,
             json_end_vv,
             with_peer_compression.unwrap_or(true),
-        );
+        )?;
 
         loro_json_schema_to_js_json_schema(json_schema)
     }
@@ -2214,20 +2214,20 @@ impl LoroDoc {
     /// }
     /// ```
     pub fn getCursorPos(&self, cursor: &Cursor) -> JsResult<JsCursorQueryAns> {
-        let cursor = self.doc.query_pos(&cursor.pos);
-        let ans = match cursor {
+        let ans = match self.doc.try_get_cursor_pos(&cursor.pos) {
             Ok(ans) => ans,
-            Err(
-                CannotFindRelativePosition::ContainerDeleted
-                | CannotFindRelativePosition::IdNotFound,
-            ) => return Ok(JsValue::UNDEFINED.into()),
-            Err(CannotFindRelativePosition::HistoryCleared) => {
+            Err(loro_internal::LoroError::NotFoundError(msg))
+                if msg.contains("history is cleared") =>
+            {
                 console_warn!(
-                    "Cannot find cursor position of {:?} because the related history is cleared.",
-                    cursor
+                    "Cannot find cursor position because the related history is cleared: {msg}"
                 );
                 return Ok(JsValue::UNDEFINED.into());
             }
+            Err(loro_internal::LoroError::NotFoundError(_)) => {
+                return Ok(JsValue::UNDEFINED.into());
+            }
+            Err(err) => return Err(err.into()),
         };
 
         let obj = Object::new();

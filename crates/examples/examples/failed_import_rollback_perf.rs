@@ -73,8 +73,12 @@ fn main() {
     // A failed import: the large update plus a list insert forged out of bounds.
     other.get_list("list").insert(0, -1).unwrap();
     other.commit();
-    let mut json =
-        serde_json::to_value(other.export_json_updates(&base_vv, &other.oplog_vv())).unwrap();
+    let mut json = serde_json::to_value(
+        other
+            .export_json_updates(&base_vv, &other.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
     let last = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
         .as_array_mut()
         .unwrap()

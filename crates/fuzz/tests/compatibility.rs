@@ -224,9 +224,11 @@ mod compatibility_with_10_alpha_4 {
         let updates =
             serde_json::to_value(doc1.export_json_updates(&Default::default(), &doc1.oplog_vv()))
                 .unwrap();
-        let updates_b =
-            serde_json::to_value(doc2.export_json_updates(&Default::default(), &doc2.oplog_vv()))
-                .unwrap();
+        let updates_b = serde_json::to_value(
+            doc2.export_json_updates(&Default::default(), &doc2.oplog_vv())
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(updates, updates_b);
     }
 

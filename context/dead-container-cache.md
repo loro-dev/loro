@@ -1,6 +1,6 @@
 # Dead Container Cache
 
-Verified against code 2026-09-30.
+Verified against code 2026-10-01.
 
 `DocState::is_deleted` (`crates/loro-internal/src/state/dead_containers_cache.rs`)
 answers whether a container is unreachable from a root: it walks the arena
@@ -55,8 +55,14 @@ walk and assert that no cached entry on the chain contradicts the result.
   rollback drops is not true of the kept history. See
   [failed-import-arena-indices.md](failed-import-arena-indices.md).
 
-`clear_revivable` is O(1) when the set is empty, so documents that never query
-deleted containers pay nothing.
+`DeadContainersCache::clear_revivable` replaces the set with a fresh empty set,
+releasing its allocation. Its entries are plain `ContainerIdx` values, so this
+does not walk the table. The full `clear` also uses this path for `revivable`;
+it retains the `final_deletions` allocation. Reusing the revivable table with
+`HashSet::clear` would scan its peak capacity whenever a deleted-container
+query inserts even one entry before the next move, making a loop of queries
+and moves quadratic after caching many deleted containers. Empty caches need
+no allocation.
 
 Undo, redo, `revert_to`, and `apply_diff` do not revive container IDs by
 themselves: `Handler::apply_diff` creates a new tree node for a deleted target
@@ -81,3 +87,7 @@ like any other internal assertion under that lock.
   `--release` as well; debug builds recompute the answer.
 - Unit tests in `dead_containers_cache.rs` check the cache entries directly,
   so they also fail in debug builds when an invalidation is missing.
+- `crates/loro/tests/dead_container_cache_perf.rs`: ignored release-mode
+  regression that measures three repeats at 32k and 128k deleted nodes, with
+  one deletion query per local tree move and a moves-only control. It asserts
+  a median `time(4n)/time(n)` ratio below 8, not a wall-clock limit.

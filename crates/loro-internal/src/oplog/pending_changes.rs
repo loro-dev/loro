@@ -37,14 +37,14 @@ pub(crate) struct PendingChanges {
 }
 
 impl PendingChanges {
-    pub(crate) fn has_state_apply_rollback_ops(&self) -> bool {
+    pub(crate) fn has_import_rollback_ops(&self, detached: bool) -> bool {
         self.changes.values().any(|tree| {
             tree.values().any(|changes| {
                 changes.iter().any(|change| {
                     change
                         .ops
                         .iter()
-                        .any(|op| super::state_apply_can_reject(op.container.get_type()))
+                        .any(|op| super::import_op_can_reject(op, detached))
                 })
             })
         })

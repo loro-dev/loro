@@ -90,7 +90,9 @@ fn counter_events_json_updates_and_deletion_follow_contract() -> LoroResult<()> 
         &[("counter-local".to_string(), 7.0)]
     );
 
-    let json_updates = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
+    let json_updates = doc
+        .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     let imported = LoroDoc::new();
     imported.import_json_updates(json_updates)?;
     assert_eq!(
@@ -168,7 +170,9 @@ fn counters_nested_in_tree_meta_and_movable_list_survive_diff_and_snapshot() -> 
     restored.apply_diff(reverse)?;
     assert_eq!(restored.get_deep_value().to_json_value(), json_v1);
 
-    let json_updates = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv());
+    let json_updates = doc
+        .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     let imported = LoroDoc::new();
     imported.import_json_updates(json_updates)?;
     assert_eq!(

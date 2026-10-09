@@ -81,11 +81,11 @@ fn main() {
         output.len(),
     );
 
-    let json_updates = serde_json::to_string(&loro.export_json_updates(
-        &Default::default(),
-        &loro.oplog_vv(),
-        true,
-    ))
+    let json_updates = serde_json::to_string(
+        &loro
+            .export_json_updates(&Default::default(), &loro.oplog_vv(), true)
+            .unwrap(),
+    )
     .unwrap();
     let output = miniz_oxide::deflate::compress_to_vec(json_updates.as_bytes(), 6);
     println!(

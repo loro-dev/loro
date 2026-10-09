@@ -97,7 +97,9 @@ fn import_overlapping_change_with_different_content_is_rejected() -> LoroResult<
         assert!(!history.is_detached());
     }
 
-    let json = other.export_json_updates(&Default::default(), &other.oplog_vv());
+    let json = other
+        .export_json_updates(&Default::default(), &other.oplog_vv())
+        .unwrap();
     let err = history.import_json_updates(json).unwrap_err();
     assert_used_op_id(err, ID::new(7, 0));
     assert_unchanged(&history, &before);
@@ -261,7 +263,9 @@ fn reimporting_known_history_with_new_changes_still_succeeds() -> LoroResult<()>
 
     let full_updates = source.export(ExportMode::all_updates())?;
     let snapshot = source.export(ExportMode::Snapshot)?;
-    let json = source.export_json_updates(&Default::default(), &source.oplog_vv());
+    let json = source
+        .export_json_updates(&Default::default(), &source.oplog_vv())
+        .unwrap();
     let json_updates = serde_json::to_string(&json).unwrap();
 
     for (name, import) in [
@@ -361,7 +365,9 @@ fn rejected_import_inside_catch_unwind_can_drop_the_doc() {
 
 /// JSON updates for `doc`'s last change, moved to `peer` at `counter` with `deps`.
 fn forged_json_change(doc: &LoroDoc, peer: u64, counter: i32, deps: Vec<ID>) -> loro::JsonSchema {
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     json.changes.drain(..json.changes.len() - 1);
     let change = json.changes.last_mut().unwrap();
     let shift = counter - change.id.counter;
@@ -411,7 +417,9 @@ fn import_change_that_skips_counters_is_rejected() -> LoroResult<()> {
     helper.set_peer_id(9)?;
     helper.get_map("m").insert("k", 1)?;
     helper.commit();
-    let mut json = helper.export_json_updates(&Default::default(), &helper.oplog_vv());
+    let mut json = helper
+        .export_json_updates(&Default::default(), &helper.oplog_vv())
+        .unwrap();
     let forged = forged_json_change(&writer, 7, 5, vec![ID::new(1, 0)]);
     // Peer index 1 is peer 7, index 0 is peer 9.
     json.peers = Some(vec![9, 7]);
@@ -459,5 +467,76 @@ fn reimporting_into_a_shallow_doc_still_succeeds() -> LoroResult<()> {
         shallow.get_deep_value().to_json_value(),
         source.get_deep_value().to_json_value()
     );
+    Ok(())
+}
+
+/// Exercise many cold blocks, a merged update, and the snapshot scratch arena.
+/// The first mismatch must still name the exact atom far inside the prefix.
+#[test]
+fn cold_history_conflict_inside_a_large_known_prefix_is_rejected() -> LoroResult<()> {
+    let history = LoroDoc::new();
+    let other = LoroDoc::new();
+    for doc in [&history, &other] {
+        doc.set_peer_id(7)?;
+        doc.set_change_merge_interval(-1);
+    }
+    for i in 0..3000 {
+        history.get_text("t").insert(i, "a")?;
+        history.commit();
+        other
+            .get_text("t")
+            .insert(i, if i == 2000 { "O" } else { "a" })?;
+        other.commit();
+    }
+    other.get_text("t").insert(3000, "Z")?;
+    other.commit();
+    let base = history.export(ExportMode::Snapshot)?;
+    for blob in [
+        other.export(ExportMode::all_updates())?,
+        other.export(ExportMode::Snapshot)?,
+    ] {
+        for batch in [false, true] {
+            let target = LoroDoc::new();
+            target.import(&base)?;
+            let before = snapshot_of(&target);
+            let err = if batch {
+                target.import_batch(&[blob.clone()]).unwrap_err()
+            } else {
+                target.import(&blob).unwrap_err()
+            };
+            assert_used_op_id(err, ID::new(7, 2000));
+            assert_unchanged(&target, &before);
+            assert_still_usable(&target);
+        }
+    }
+    Ok(())
+}
+
+/// The same history can arrive as one merged Text insert instead of thousands
+/// of small changes. Its blocks differ from the snapshot's cold history, but
+/// the overlap is equal and its new suffix must be accepted.
+#[test]
+fn cold_text_overlap_with_merged_updates_is_accepted() -> LoroResult<()> {
+    let history = LoroDoc::new();
+    history.set_peer_id(7)?;
+    history.set_change_merge_interval(-1);
+    for i in 0..3000 {
+        history.get_text("t").insert(i * 2, "a😀")?;
+        history.commit();
+    }
+
+    let merged = LoroDoc::new();
+    merged.set_peer_id(7)?;
+    merged
+        .get_text("t")
+        .insert(0, &("a😀".repeat(3000) + "Z"))?;
+    merged.commit();
+
+    let target = LoroDoc::new();
+    target.import(&history.export(ExportMode::Snapshot)?)?;
+    target.import(&merged.export(ExportMode::all_updates())?)?;
+    assert_eq!(target.get_deep_value(), merged.get_deep_value());
+    assert_eq!(target.oplog_vv(), merged.oplog_vv());
+    assert_eq!(target.state_frontiers(), merged.state_frontiers());
     Ok(())
 }

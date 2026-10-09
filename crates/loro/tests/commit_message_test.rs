@@ -191,7 +191,7 @@ fn test_commit_message_json_updates() {
 
     let start_vv = VersionVector::new();
     let end_vv = doc1.oplog_vv();
-    let json_updates = doc1.export_json_updates(&start_vv, &end_vv);
+    let json_updates = doc1.export_json_updates(&start_vv, &end_vv).unwrap();
 
     let doc2 = LoroDoc::new();
     doc2.import_json_updates(json_updates).unwrap();

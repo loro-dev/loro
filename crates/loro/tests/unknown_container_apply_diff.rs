@@ -47,7 +47,8 @@ fn doc_with_unknown_in(setup: impl Fn(&LoroDoc) -> ContainerID) -> (LoroDoc, Con
     let text_id = setup(&doc);
     doc.commit();
     let json = serde_json::to_string(
-        &doc.export_json_updates_without_peer_compression(&Default::default(), &doc.oplog_vv()),
+        &doc.export_json_updates_without_peer_compression(&Default::default(), &doc.oplog_vv())
+            .unwrap(),
     )
     .unwrap();
     let text_cid = text_id.to_string();
@@ -363,7 +364,8 @@ fn edited_unknown_child_updates() -> String {
     counter.increment(2.0).unwrap();
     doc.commit();
     let json = serde_json::to_string(
-        &doc.export_json_updates_without_peer_compression(&Default::default(), &doc.oplog_vv()),
+        &doc.export_json_updates_without_peer_compression(&Default::default(), &doc.oplog_vv())
+            .unwrap(),
     )
     .unwrap();
     assert!(json.contains("cid:0@1:Counter") && json.contains(r#""type":"counter""#));

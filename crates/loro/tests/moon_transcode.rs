@@ -91,7 +91,11 @@ fn run_transcode(node_bin: &str, cli_js: &Path, input: &[u8]) -> anyhow::Result<
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let tmp = std::env::temp_dir().join(format!("loro-moon-transcode-{}-{ts}-{}", std::process::id(), next_tmp_id()));
+    let tmp = std::env::temp_dir().join(format!(
+        "loro-moon-transcode-{}-{ts}-{}",
+        std::process::id(),
+        next_tmp_id()
+    ));
     std::fs::create_dir_all(&tmp)?;
     let in_path = tmp.join("in.blob");
     let out_path = tmp.join("out.blob");
@@ -773,7 +777,7 @@ fn assert_updates_jsonschema_matches_rust(doc: &LoroDoc, ctx: &MoonCtx) -> anyho
     let moon_json = run_export_jsonschema(&ctx.node_bin, &ctx.cli_js, &updates_blob)?;
     let moon_value: serde_json::Value = serde_json::from_str(&moon_json)?;
 
-    let rust_schema = doc.export_json_updates(&start, &end);
+    let rust_schema = doc.export_json_updates(&start, &end).unwrap();
     let rust_value = serde_json::to_value(&rust_schema)?;
 
     anyhow::ensure!(
@@ -1221,7 +1225,7 @@ fn moon_edge_varints_and_lengths() -> anyhow::Result<()> {
     // Roundtrip: Moon encode-jsonschema output must be importable by Rust (large peer/key tables).
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let schema = doc.export_json_updates(&start, &end);
+    let schema = doc.export_json_updates(&start, &end).unwrap();
     let json = serde_json::to_string(&schema)?;
     let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
     let doc2 = LoroDoc::new();
@@ -1371,7 +1375,7 @@ fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
 
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let schema = doc.export_json_updates(&start, &end);
+    let schema = doc.export_json_updates(&start, &end).unwrap();
     let json = serde_json::to_string(&schema)?;
 
     let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
@@ -1407,7 +1411,9 @@ fn moon_encode_jsonschema_cross_peer_container_refs() -> anyhow::Result<()> {
     let end = doc.oplog_vv();
 
     // Full range should import on a fresh doc.
-    let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+    let schema0 = doc
+        .export_json_updates(&VersionVector::default(), &end)
+        .unwrap();
     let json0 = serde_json::to_string(&schema0)?;
     let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
     let doc0 = LoroDoc::new();
@@ -1416,7 +1422,7 @@ fn moon_encode_jsonschema_cross_peer_container_refs() -> anyhow::Result<()> {
 
     // Incremental range should apply on top of SnapshotAt(v1).
     let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
-    let schema = doc.export_json_updates(&vv_v1, &end);
+    let schema = doc.export_json_updates(&vv_v1, &end).unwrap();
     let json = serde_json::to_string(&schema)?;
     let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
     let base_snapshot = doc.export(ExportMode::SnapshotAt {
@@ -1455,7 +1461,9 @@ fn moon_encode_jsonschema_random_roundtrip() -> anyhow::Result<()> {
         let end = doc.oplog_vv();
 
         // Full range (empty start) should roundtrip on a fresh doc.
-        let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+        let schema0 = doc
+            .export_json_updates(&VersionVector::default(), &end)
+            .unwrap();
         let json0 = serde_json::to_string(&schema0)?;
         let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
         let doc0 = LoroDoc::new();
@@ -1469,7 +1477,7 @@ fn moon_encode_jsonschema_random_roundtrip() -> anyhow::Result<()> {
 
         // Incremental range should apply cleanly on top of SnapshotAt(v1).
         let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
-        let schema = doc.export_json_updates(&vv_v1, &end);
+        let schema = doc.export_json_updates(&vv_v1, &end).unwrap();
         let json = serde_json::to_string(&schema)?;
 
         let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
@@ -1539,7 +1547,9 @@ fn moon_encode_jsonschema_richtext_roundtrip() -> anyhow::Result<()> {
     let end = doc.oplog_vv();
 
     // Full range.
-    let schema0 = doc.export_json_updates(&VersionVector::default(), &end);
+    let schema0 = doc
+        .export_json_updates(&VersionVector::default(), &end)
+        .unwrap();
     let json0 = serde_json::to_string(&schema0)?;
     let blob0 = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json0)?;
     let doc0 = LoroDoc::new();
@@ -1556,7 +1566,7 @@ fn moon_encode_jsonschema_richtext_roundtrip() -> anyhow::Result<()> {
 
     // Incremental range (SnapshotAt(v1) + Updates(from v1)).
     let vv_v1: VersionVector = doc.frontiers_to_vv(&frontiers_v1).unwrap();
-    let schema = doc.export_json_updates(&vv_v1, &end);
+    let schema = doc.export_json_updates(&vv_v1, &end).unwrap();
     let json = serde_json::to_string(&schema)?;
     let blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
     let base_snapshot = doc.export(ExportMode::SnapshotAt {
@@ -1924,7 +1934,7 @@ fn moon_encode_jsonschema_counter() -> anyhow::Result<()> {
 
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let schema = doc.export_json_updates(&start, &end);
+    let schema = doc.export_json_updates(&start, &end).unwrap();
     let json = serde_json::to_string(&schema)?;
 
     let out_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
