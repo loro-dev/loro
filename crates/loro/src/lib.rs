@@ -91,6 +91,23 @@ mod counter;
 #[cfg(feature = "counter")]
 pub use counter::LoroCounter;
 
+/// How overlapping op ids are compared during import.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ImportHistoryMode {
+    /// Reject op-id reuse unless the overlapping ops are identical.
+    #[default]
+    Exact,
+    /// Accept only the equivalences JSON export/import is known to introduce:
+    /// I64/I64 or I64/Double that match as f64 when at least one integer is outside ±2^53;
+    /// Binary vs a same-length list of I64/Double bytes;
+    /// non-finite Double vs Null;
+    /// a string that parses as a Loro container marker vs any Container (peer compression can rewrite the peer, so the id is not compared);
+    /// unknown payloads skipped.
+    /// Finite doubles still use ==. Distinct ops that merely look like these conversions are accepted; callers must opt in.
+    JsonLossy,
+}
+
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Container`]s will be invalidated.
 ///
@@ -426,6 +443,19 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
+    /// Like [`import_batch`], with the same history mode as [`import_with_history_mode`].
+    ///
+    /// The existing [`import_batch`] signature stays exact.
+    #[inline]
+    pub fn import_batch_with_history_mode(
+        &self,
+        bytes: &[Vec<u8>],
+        mode: ImportHistoryMode,
+    ) -> LoroResult<ImportStatus> {
+        self.doc
+            .import_batch_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
+    }
+
     /// Get a [Container] by container id.
     #[inline]
     pub fn get_container(&self, id: ContainerID) -> Option<Container> {
@@ -717,9 +747,30 @@ impl LoroDoc {
     /// for telemetry or filtering.
     /// Pitfalls:
     /// - Same as [`import`]: verify `ImportStatus.pending` and fetch dependencies if needed.
+    /// - Known-history comparison is [`ImportHistoryMode::Exact`]. Bytes that already
+    ///   passed through JSON need [`import_with_history_mode`].
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, origin.into())
+    }
+
+    /// Import binary bytes, choosing how overlapping op ids are compared.
+    ///
+    /// [`import`] and [`import_with`] stay [`ImportHistoryMode::Exact`].
+    /// [`ImportHistoryMode::JsonLossy`] is for bytes whose values may have been
+    /// degraded by an earlier JSON hop. [`import_json_updates`] already uses that mode.
+    #[inline]
+    pub fn import_with_history_mode(
+        &self,
+        bytes: &[u8],
+        origin: &str,
+        mode: ImportHistoryMode,
+    ) -> Result<ImportStatus, LoroError> {
+        self.doc.import_with_history_mode(
+            bytes,
+            origin.into(),
+            mode == ImportHistoryMode::JsonLossy,
+        )
     }
 
     /// Import the json schema updates.

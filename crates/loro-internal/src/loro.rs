@@ -612,7 +612,23 @@ impl LoroDoc {
         bytes: &[u8],
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
-        self.with_barrier(|| self._import_with(bytes, origin))
+        self.import_with_history_mode(bytes, origin, false)
+    }
+
+    /// Import binary bytes. `json_lossy` accepts only the equivalences a JSON hop
+    /// can introduce; the default binary path passes `false`.
+    pub fn import_with_history_mode(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+        json_lossy: bool,
+    ) -> Result<ImportStatus, LoroError> {
+        let values = if json_lossy {
+            ImportedValues::JsonLossy
+        } else {
+            ImportedValues::Exact
+        };
+        self.with_barrier(|| self._import_with(bytes, origin, values))
     }
 
     #[tracing::instrument(skip_all)]
@@ -620,6 +636,7 @@ impl LoroDoc {
         &self,
         bytes: &[u8],
         origin: InternalString,
+        values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes, true)?;
@@ -637,7 +654,7 @@ impl LoroDoc {
                 );
                 let _e = s.enter();
                 self.update_oplog_and_apply_delta_to_state_if_needed(
-                    |oplog| oplog.decode(parsed),
+                    |oplog| oplog.decode(parsed, values),
                     origin,
                 )
             }
@@ -647,7 +664,7 @@ impl LoroDoc {
                     decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {
                     self.update_oplog_and_apply_delta_to_state_if_needed(
-                        |oplog| oplog.decode(parsed),
+                        |oplog| oplog.decode(parsed, values),
                         origin,
                     )
                 }
@@ -659,8 +676,8 @@ impl LoroDoc {
                     decode_snapshot(self, parsed.mode, parsed.body, origin)
                 } else {
                     self.import_changes_and_apply_delta_to_state_if_needed(
-                        |oplog| encoding::decode_oplog_changes(oplog, parsed),
-                        ImportedValues::Lossy,
+                        |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
+                        values,
                         origin,
                     )
 
@@ -671,8 +688,8 @@ impl LoroDoc {
                 }
             }
             EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
-                |oplog| encoding::decode_oplog_changes(oplog, parsed),
-                ImportedValues::Lossy,
+                |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
+                values,
                 origin,
             ),
             EncodeMode::Auto => {
@@ -782,15 +799,16 @@ impl LoroDoc {
             }
         };
 
-        let preflight = oplog.preflight_import_changes(&changes);
-        if preflight.has_deps_before_shallow_root
-            && (self.is_detached() || !preflight.applies_to_dag)
-        {
+        // Read once: attach/detach can change the flag without the oplog lock.
+        // The apply branch must use the same mode as preflight's rollback decision.
+        let detached = self.is_detached();
+        let preflight = oplog.preflight_import_changes(&changes, detached);
+        if preflight.has_deps_before_shallow_root && (detached || !preflight.applies_to_dag) {
             oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
         }
 
-        if self.is_detached() {
+        if detached {
             // An enclosing `import_batch` scope validates the whole batch before it
             // reattaches (`BatchImportGuard::finish`).
             let owns_rollback =
@@ -957,7 +975,7 @@ impl LoroDoc {
         self.with_barrier(|| {
             let result = self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
-                ImportedValues::Lossy,
+                ImportedValues::JsonLossy,
                 Default::default(),
             );
             self.emit_events();
@@ -2236,12 +2254,27 @@ impl LoroDoc {
     // PERF: opt
     #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
+        self.import_batch_with_history_mode(bytes, false)
+    }
+
+    /// Like [`Self::import_batch`]. `json_lossy` is the same opt-in as
+    /// [`Self::import_with_history_mode`].
+    pub fn import_batch_with_history_mode(
+        &self,
+        bytes: &[Vec<u8>],
+        json_lossy: bool,
+    ) -> LoroResult<ImportStatus> {
+        let values = if json_lossy {
+            ImportedValues::JsonLossy
+        } else {
+            ImportedValues::Exact
+        };
         if bytes.is_empty() {
             return Ok(ImportStatus::default());
         }
 
         if bytes.len() == 1 {
-            return self.import(&bytes[0]);
+            return self.import_with_history_mode(&bytes[0], Default::default(), json_lossy);
         }
 
         let mut success = VersionRange::default();
@@ -2319,7 +2352,7 @@ impl LoroDoc {
             for (_meta, data) in meta_arr {
                 #[cfg(test)]
                 take_panic_at_batch_import_blob_for_test();
-                match guard.doc._import_with(data, Default::default()) {
+                match guard.doc._import_with(data, Default::default(), values) {
                     Ok(s) => {
                         for (peer, (start, end)) in s.success.iter() {
                             match success.0.entry(*peer) {

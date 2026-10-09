@@ -94,6 +94,7 @@ struct MovableListElemRef {
 pub(crate) struct ImportChangesPreflight {
     pub applies_to_dag: bool,
     pub has_deps_before_shallow_root: bool,
+    /// Attached: state apply can reject. Detached: element validation can reject.
     pub needs_state_apply_rollback: bool,
 }
 
@@ -159,6 +160,22 @@ pub(crate) fn state_apply_can_reject(ty: ContainerType) -> bool {
             | ContainerType::Text
             | ContainerType::Tree
     )
+}
+
+/// Detached imports do not apply state. Only Move/Set element validation can
+/// reject after adding history; an enclosing batch still owns its full scope.
+pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
+    if detached {
+        op.container.get_type() == ContainerType::MovableList
+            && matches!(
+                op.content,
+                InnerContent::List(
+                    list_op::InnerListOp::Move { .. } | list_op::InnerListOp::Set { .. }
+                )
+            )
+    } else {
+        state_apply_can_reject(op.container.get_type())
+    }
 }
 
 impl OpLog {
@@ -373,7 +390,11 @@ impl OpLog {
         }
     }
 
-    pub(crate) fn preflight_import_changes(&self, changes: &[Change]) -> ImportChangesPreflight {
+    pub(crate) fn preflight_import_changes(
+        &self,
+        changes: &[Change],
+        detached: bool,
+    ) -> ImportChangesPreflight {
         let mut ans = ImportChangesPreflight::default();
         for change in changes {
             if change.ctr_end() <= self.vv().get(&change.id.peer).copied().unwrap_or(0) {
@@ -390,7 +411,7 @@ impl OpLog {
             if change
                 .ops
                 .iter()
-                .any(|op| state_apply_can_reject(op.container.get_type()))
+                .any(|op| import_op_can_reject(op, detached))
             {
                 ans.needs_state_apply_rollback = true;
             }
@@ -411,20 +432,20 @@ impl OpLog {
         // small sync/import workloads.
         //
         // Scan pending last, and only when it can still change the answer:
-        // `has_state_apply_rollback_ops` walks every parked change and every op in
+        // `has_import_rollback_ops` walks every parked change and every op in
         // it, while a blob that only parks (deps not here yet) leaves
         // `applies_to_dag` false. Evaluating it eagerly made a batch of N
         // out-of-order blobs quadratic, since each blob re-scanned the pending set
         // the earlier blobs had grown.
         if ans.applies_to_dag
             && !ans.needs_state_apply_rollback
-            && self.pending_changes.has_state_apply_rollback_ops()
+            && self.pending_changes.has_import_rollback_ops(detached)
         {
             ans.needs_state_apply_rollback = true;
         }
 
         #[cfg(test)]
-        if ans.applies_to_dag {
+        if ans.applies_to_dag && !detached {
             ans.needs_state_apply_rollback = true;
         }
 
@@ -761,8 +782,12 @@ impl OpLog {
     }
 
     #[inline(always)]
-    pub(crate) fn decode(&mut self, data: ParsedHeaderAndBody) -> Result<ImportStatus, LoroError> {
-        decode_oplog(self, data)
+    pub(crate) fn decode(
+        &mut self,
+        data: ParsedHeaderAndBody,
+        values: ImportedValues,
+    ) -> Result<ImportStatus, LoroError> {
+        decode_oplog(self, data, values)
     }
 
     /// Containers that have at least one op inside `spans`.

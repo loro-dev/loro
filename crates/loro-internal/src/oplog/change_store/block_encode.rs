@@ -473,19 +473,37 @@ pub fn decode_block_range(
 ) -> LoroResult<((Counter, Counter), (Lamport, Lamport))> {
     let counter_start = leb128::read::unsigned(&mut bytes).map_err(|e| {
         LoroError::DecodeError(format!("Failed to read counter start: {e}").into_boxed_str())
-    })? as Counter;
+    })?;
+    let counter_start =
+        Counter::try_from(counter_start).map_err(|_| LoroError::DecodeDataCorruptionError)?;
     let counter_len = leb128::read::unsigned(&mut bytes).map_err(|e| {
         LoroError::DecodeError(format!("Failed to read counter length: {e}").into_boxed_str())
-    })? as Counter;
+    })?;
+    let counter_len =
+        Counter::try_from(counter_len).map_err(|_| LoroError::DecodeDataCorruptionError)?;
     let lamport_start = leb128::read::unsigned(&mut bytes).map_err(|e| {
         LoroError::DecodeError(format!("Failed to read lamport start: {e}").into_boxed_str())
-    })? as Lamport;
+    })?;
+    let lamport_start =
+        Lamport::try_from(lamport_start).map_err(|_| LoroError::DecodeDataCorruptionError)?;
     let lamport_len = leb128::read::unsigned(&mut bytes).map_err(|e| {
         LoroError::DecodeError(format!("Failed to read lamport length: {e}").into_boxed_str())
-    })? as Lamport;
+    })?;
+    let lamport_len =
+        Lamport::try_from(lamport_len).map_err(|_| LoroError::DecodeDataCorruptionError)?;
     Ok((
-        (counter_start, counter_start + counter_len),
-        (lamport_start, lamport_start + lamport_len),
+        (
+            counter_start,
+            counter_start
+                .checked_add(counter_len)
+                .ok_or(LoroError::DecodeDataCorruptionError)?,
+        ),
+        (
+            lamport_start,
+            lamport_start
+                .checked_add(lamport_len)
+                .ok_or(LoroError::DecodeDataCorruptionError)?,
+        ),
     ))
 }
 
@@ -524,6 +542,70 @@ pub fn decode_cids(
             .try_collect()
     })?;
     Ok(header)
+}
+
+/// Visit a Text-insert-only block without building changes or allocating arena
+/// strings. Other op kinds use the general decoder and semantic comparison.
+/// Timestamps/messages are intentionally irrelevant to known-history equality.
+pub(super) fn visit_text_insert_block(
+    bytes: &[u8],
+    mut on_insert: impl FnMut(Counter, &ContainerID, u32, &str, u32, &Frontiers) -> LoroResult<()>,
+) -> LoroResult<bool> {
+    use crate::encoding::value::{ValueKind, ValueReader};
+    let doc: EncodedBlock<'_> =
+        postcard::from_bytes(bytes).map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let header = decode_cids(bytes, None)?;
+    let cids = header.cids.get().unwrap();
+    let mut reader = ValueReader::new(&doc.values);
+    let ops = serde_columnar::iter_from_bytes::<EncodedOps>(&doc.ops)?.ops;
+    let mut counter = header.counter;
+    let mut change_index = 0;
+    for op in ops {
+        let op = op?;
+        let cid = cids
+            .get(op.container_index as usize)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if cid.container_type() != loro_common::ContainerType::Text
+            || op.value_type != ValueKind::Str.to_u8()
+        {
+            return Ok(false);
+        }
+        let text = reader.read_str()?;
+        if text.chars().count() != op.len as usize {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        let implicit_deps = Frontiers::from_id(ID::new(
+            header.peer,
+            counter
+                .checked_sub(1)
+                .ok_or(LoroError::DecodeDataCorruptionError)?,
+        ));
+        let deps = if header.counters.get(change_index) == Some(&counter) {
+            header
+                .deps_groups
+                .get(change_index)
+                .ok_or(LoroError::DecodeDataCorruptionError)?
+        } else {
+            &implicit_deps
+        };
+        on_insert(counter, cid, op.prop as u32, text, op.len, deps)?;
+        counter = counter
+            .checked_add(op.len as Counter)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if header.counters.get(change_index + 1) == Some(&counter) {
+            change_index += 1;
+        } else if header
+            .counters
+            .get(change_index + 1)
+            .is_none_or(|&end| counter > end)
+        {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+    }
+    if Some(&counter) != header.counters.last() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    Ok(true)
 }
 
 // MARK: decode_block
@@ -712,6 +794,22 @@ mod test {
     use super::*;
 
     #[test]
+    fn block_range_rejects_overflow_instead_of_panicking_on_external_bytes() {
+        for fields in [
+            [u64::MAX, 0, 0, 0],
+            [Counter::MAX as u64, 1, 0, 0],
+            [0, u64::MAX, 0, 0],
+            [0, 0, Lamport::MAX as u64, 1],
+        ] {
+            let mut bytes = Vec::new();
+            for field in fields {
+                leb128::write::unsigned(&mut bytes, field).unwrap();
+            }
+            assert!(decode_block_range(&bytes).is_err());
+        }
+    }
+
+    #[test]
     fn decode_block_rejects_corrupt_payload_without_panic() {
         let doc = LoroDoc::new_auto_commit();
         doc.get_map("map").insert("x", 100).unwrap();
@@ -732,6 +830,68 @@ mod test {
         }));
         assert!(result.is_ok(), "corrupt block payload should not panic");
         assert!(result.unwrap().is_err());
+    }
+
+    #[test]
+    fn cold_text_reader_errors_fall_back_without_recording_parse_failures() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.set_change_merge_interval(-1);
+        doc.get_text("t").insert_unicode(0, "ab").unwrap();
+        doc.commit_then_renew();
+        doc.get_text("t").insert_unicode(2, "c").unwrap();
+        doc.commit_then_renew();
+        let oplog = doc.oplog.lock();
+        let mut changes = Vec::new();
+        oplog
+            .change_store()
+            .visit_all_changes(&mut |change| changes.push(change.clone()));
+        assert_eq!(changes.len(), 2);
+        let block_bytes = encode_block(&changes, &oplog.arena);
+
+        for crosses_change_boundary in [false, true] {
+            let mut encoded: EncodedBlock = postcard::from_bytes(&block_bytes).unwrap();
+            if crosses_change_boundary {
+                // The header starts with a peer count, peer IDs, then the first
+                // change's atom length. Move its end from counter 2 to counter 1
+                // while keeping the two-character insert and total range intact.
+                let mut header = encoded.header.as_ref();
+                let peers = leb128::read::unsigned(&mut header).unwrap() as usize;
+                let length_offset = encoded.header.len() - header.len() + peers * 8;
+                assert_eq!(encoded.header[length_offset], 2);
+                encoded.header.to_mut()[length_offset] = 1;
+            } else {
+                // decode_block uses the actual string length for the text op,
+                // while the cold reader requires it to equal the encoded length.
+                let mut ops: EncodedOps = serde_columnar::from_bytes(&encoded.ops).unwrap();
+                ops.ops[0].len = 1;
+                encoded.ops = Cow::Owned(serde_columnar::to_vec(&ops).unwrap());
+            }
+            let bytes = postcard::to_allocvec(&encoded).unwrap();
+            assert!(visit_text_insert_block(&bytes, |_, _, _, _, _, _| Ok(())).is_err());
+            assert!(decode_block(&bytes, &SharedArena::new(), None).is_ok());
+
+            let store = crate::oplog::ChangeStore::new_for_test();
+            let id = ID::new(1, 0);
+            store
+                .external_kv
+                .lock()
+                .set(&id.to_bytes(), bytes.clone().into());
+            let mut visits = 0;
+            assert!(!store
+                .check_text_insert_block(&bytes, |_, _, _, _, _, _| {
+                    visits += 1;
+                    // Even a mismatch before a later reader error must fall back.
+                    Err(LoroError::UsedOpID { id })
+                })
+                .unwrap());
+            if crosses_change_boundary {
+                assert_eq!(visits, 1);
+            }
+            assert!(store.corrupt_block_error().is_ok());
+            assert!(store.get_change(id).is_some());
+            assert!(store.corrupt_block_error().is_ok());
+        }
     }
 
     #[test]

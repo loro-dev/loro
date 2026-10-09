@@ -122,6 +122,13 @@ pub(crate) struct ArenaExtent {
     str_bytes: usize,
 }
 
+#[cfg(test)]
+impl ArenaExtent {
+    pub(crate) fn values_for_test(&self) -> usize {
+        self.values
+    }
+}
+
 impl SharedArenaRollback {
     /// Whether rolling back to this checkpoint keeps everything within `extent`.
     pub(crate) fn keeps(&self, extent: ArenaExtent) -> bool {

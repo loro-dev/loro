@@ -1,10 +1,10 @@
 //! History relayed through JSON keeps its lossy values even after binary export.
-//! Known prefixes must be compared with that loss in mind, then trimmed without
-//! replacing the receiver's original values.
+//! Re-importing those bytes requires `ImportHistoryMode::JsonLossy`. Default
+//! binary import stays exact and does not replace the receiver's original values.
 
 use loro::{
-    ContainerID, ContainerType, ExpandType, ExportMode, JsonFutureOp, JsonOpContent, LoroDoc,
-    LoroError, LoroValue, StyleConfig, ValueOrContainer, ID,
+    ContainerID, ContainerType, ExpandType, ExportMode, ImportHistoryMode, JsonFutureOp,
+    JsonOpContent, LoroDoc, LoroError, LoroValue, StyleConfig, ValueOrContainer, ID,
 };
 
 fn source() -> LoroDoc {
@@ -131,10 +131,15 @@ fn assert_relay_keeps_prefix_with_json(
                     .unwrap();
                 match &blob {
                     Some(blob) if batch => {
-                        c.import_batch(&[blob.clone()]).unwrap();
+                        c.import_batch_with_history_mode(
+                            &[blob.clone()],
+                            ImportHistoryMode::JsonLossy,
+                        )
+                        .unwrap();
                     }
                     Some(blob) => {
-                        c.import(blob).unwrap();
+                        c.import_with_history_mode(blob, "", ImportHistoryMode::JsonLossy)
+                            .unwrap();
                     }
                     None => {
                         c.import_json_updates(to_json(&b).as_str()).unwrap();
@@ -183,7 +188,13 @@ fn assert_relay_keeps_prefix_with_json(
             .import(&c.export(ExportMode::all_updates()).unwrap())
             .unwrap();
         if let Some(mode) = mode {
-            receiver.import(&a.export(mode).unwrap()).unwrap();
+            receiver
+                .import_with_history_mode(
+                    &a.export(mode).unwrap(),
+                    "",
+                    ImportHistoryMode::JsonLossy,
+                )
+                .unwrap();
         } else {
             receiver.import_json_updates(to_json(a).as_str()).unwrap();
         }
@@ -486,6 +497,34 @@ fn real_text_conflict_is_rejected_after_json_then_binary_relay() {
         assert_eq!(c.get_deep_value(), before);
         assert_eq!(c.oplog_vv(), vv);
     }
+}
+
+#[test]
+fn exact_import_rejects_large_integers_one_apart() {
+    let local = 1i64 << 60;
+    let remote = local + 1;
+    let a = source();
+    a.get_map("m").insert("n", local).unwrap();
+    a.commit();
+    let b = source();
+    b.get_map("m").insert("n", remote).unwrap();
+    b.commit();
+    b.get_map("m").insert("extra", 1).unwrap();
+    b.commit();
+    let bytes = b.export(ExportMode::all_updates()).unwrap();
+    let before = a.get_deep_value();
+    let vv = a.oplog_vv();
+    let err = a.import(&bytes).unwrap_err();
+    assert!(matches!(err, LoroError::UsedOpID { .. }));
+    assert_eq!(a.get_deep_value(), before);
+    assert_eq!(a.oplog_vv(), vv);
+    assert!(a.oplog_vv() != b.oplog_vv() || a.get_deep_value() == b.get_deep_value());
+
+    a.import_with_history_mode(&bytes, "", ImportHistoryMode::JsonLossy)
+        .unwrap();
+    assert_eq!(a.oplog_vv(), b.oplog_vv());
+    assert_eq!(map_value(&a, "n"), LoroValue::I64(local));
+    assert_ne!(map_value(&a, "n"), map_value(&b, "n"));
 }
 
 #[test]

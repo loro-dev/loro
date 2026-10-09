@@ -346,7 +346,11 @@ fn encode_snapshot_inner_with(
     snapshot
 }
 
-pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change>, LoroError> {
+pub(crate) fn decode_oplog(
+    oplog: &mut OpLog,
+    bytes: &[u8],
+    values: crate::oplog::ImportedValues,
+) -> Result<Vec<Change>, LoroError> {
     let oplog_len = bytes
         .get(0..4)
         .ok_or_else(|| LoroError::DecodeError("decode_oplog: missing length prefix".into()))?;
@@ -358,11 +362,8 @@ pub(crate) fn decode_oplog(oplog: &mut OpLog, bytes: &[u8]) -> Result<Vec<Change
     let oplog_bytes = bytes
         .get(4..4 + oplog_len)
         .ok_or_else(|| LoroError::DecodeError("decode_oplog: invalid oplog length".into()))?;
-    let mut changes = ChangeStore::decode_snapshot_for_updates(
-        oplog_bytes.to_vec().into(),
-        &oplog.arena,
-        oplog.vv(),
-    )?;
+    let mut changes =
+        ChangeStore::decode_snapshot_for_updates(oplog_bytes.to_vec().into(), oplog, values)?;
     changes.sort_unstable_by_key(|x| x.lamport);
     Ok(changes)
 }
@@ -399,8 +400,11 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
             ));
         }
         let block_bytes = body.slice(index..end);
-        let new_changes = ChangeStore::decode_block_bytes(block_bytes, &oplog.arena)?;
-        changes.extend(new_changes);
+        changes.extend(
+            oplog
+                .change_store()
+                .decode_update_block(block_bytes, oplog.vv())?,
+        );
         index = end;
         reader = &reader[len..];
     }

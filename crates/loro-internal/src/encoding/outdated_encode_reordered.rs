@@ -197,7 +197,7 @@ mod encode {
                 #[cfg(feature = "counter")]
                 FutureInnerContent::Counter(c) => {
                     let c_abs = c.abs();
-                    if c_abs.fract() < f64::EPSILON && (c_abs as i64) < (2 << 26) {
+                    if c_abs.fract() == 0.0 && (c_abs as i64) < (2 << 26) {
                         Value::I64(*c as i64)
                     } else {
                         Value::F64(*c)

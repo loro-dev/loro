@@ -7,6 +7,17 @@ use loro::{
 use serde_json::json;
 
 #[test]
+fn tiny_counter_increment_round_trips_through_binary_updates() -> LoroResult<()> {
+    let a = LoroDoc::new();
+    a.get_counter("c").increment(1e-17)?;
+    let bytes = a.export(ExportMode::all_updates())?;
+    let b = LoroDoc::new();
+    b.import(&bytes)?;
+    assert_eq!(b.get_counter("c").get_value(), 1e-17);
+    Ok(())
+}
+
+#[test]
 fn detached_counter_attaches_with_value_and_keeps_identity() -> LoroResult<()> {
     let doc = LoroDoc::new();
     let root = doc.get_map("root");
