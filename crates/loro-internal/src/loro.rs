@@ -32,7 +32,7 @@ use crate::{
     subscription::{LocalUpdateCallback, Observer, Subscriber},
     undo::DiffBatch,
     utils::subscription::{SubscriberSetWithQueue, Subscription},
-    version::{shrink_frontiers, Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
+    version::{Frontiers, ImVersionVector, VersionRange, VersionVectorDiff},
     ChangeMeta, DocDiff, HandlerTrait, InternalString, ListHandler, LoroDoc, LoroError, MapHandler,
     VersionVector,
 };
@@ -707,7 +707,7 @@ impl LoroDoc {
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
                 let mut diff = DiffCalculator::new(false);
-                let (diff, diff_mode) = diff.calc_diff_internal(
+                let computed = diff.try_calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -715,6 +715,13 @@ impl LoroDoc {
                     oplog.dag.get_frontiers(),
                     None,
                 );
+                let (diff, diff_mode) = match computed {
+                    Ok(diff) => diff,
+                    Err(err) => {
+                        oplog.rollback_owned_import(owns_rollback, &mut self.state.lock());
+                        return Err(err);
+                    }
+                };
                 let mut state = self.state.lock();
                 if let Err(e) = state.apply_diff(
                     InternalDocDiff {
@@ -785,7 +792,13 @@ impl LoroDoc {
         // Read once: attach/detach can change the flag without the oplog lock.
         // The apply branch must use the same mode as preflight's rollback decision.
         let detached = self.is_detached();
-        let preflight = oplog.preflight_import_changes(&changes, detached);
+        let preflight = match oplog.preflight_import_changes(&changes, detached) {
+            Ok(preflight) => preflight,
+            Err(err) => {
+                oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
+                return Err(err);
+            }
+        };
         if preflight.has_deps_before_shallow_root && (detached || !preflight.applies_to_dag) {
             oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
             return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
@@ -799,7 +812,15 @@ impl LoroDoc {
             if owns_rollback {
                 oplog.begin_import_rollback_with_arena(arena_checkpoint);
             }
-            let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            let result = match encoding::apply_decoded_changes_to_oplog(&mut oplog, changes) {
+                Ok(result) => result,
+                Err(err) => {
+                    if owns_rollback {
+                        oplog.rollback_import(&mut self.state.lock());
+                    }
+                    return Err(err);
+                }
+            };
             if owns_rollback {
                 if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
                     oplog.rollback_import(&mut self.state.lock());
@@ -815,8 +836,23 @@ impl LoroDoc {
         }
 
         if !preflight.applies_to_dag {
-            let pending_root_containers = pending_root_containers_to_materialize(&oplog, &changes);
-            let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+            let pending_root_containers =
+                match pending_root_containers_to_materialize(&oplog, &changes) {
+                    Ok(ids) => ids,
+                    Err(err) => {
+                        oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
+                        return Err(err);
+                    }
+                };
+            let result = match encoding::apply_decoded_changes_to_oplog(&mut oplog, changes) {
+                Ok(result) => result,
+                Err(err) => {
+                    if !oplog.has_import_rollback() {
+                        oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
+                    }
+                    return Err(err);
+                }
+            };
             if result.has_deps_before_shallow_root {
                 oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
@@ -832,7 +868,7 @@ impl LoroDoc {
             return Ok(result.status);
         }
 
-        let old_vv = oplog.vv().clone();
+        let old_vv = Arc::new(oplog.vv().clone());
         let old_frontiers = oplog.frontiers().clone();
         // Checked before the changes are applied, while the store still holds only old history.
         let isolated_batch = isolated_scalar_root_batch(&oplog, &changes).filter(|(_, names)| {
@@ -842,13 +878,20 @@ impl LoroDoc {
                 !state.store.contains_id(&id)
             })
         });
-        let rollback_enabled = preflight.needs_state_apply_rollback;
+        let rollback_enabled =
+            preflight.needs_state_apply_rollback || oplog.change_store().may_have_unparsed_bodies();
         if rollback_enabled {
-            oplog.begin_import_rollback_with_arena(arena_checkpoint);
+            oplog.begin_import_rollback_with_version(arena_checkpoint, old_vv.clone());
         }
 
-        let result = encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
-        if &old_vv != oplog.vv() {
+        let result = match encoding::apply_decoded_changes_to_oplog(&mut oplog, changes) {
+            Ok(result) => result,
+            Err(err) => {
+                oplog.rollback_owned_import(rollback_enabled, &mut self.state.lock());
+                return Err(err);
+            }
+        };
+        if old_vv.as_ref() != oplog.vv() {
             // The preflight enables rollback whenever the imported or unlocked
             // pending changes hold movable-list ops, so other imports skip the scan.
             if rollback_enabled {
@@ -870,37 +913,54 @@ impl LoroDoc {
                         *end == old_end.max(component_end)
                     })
             });
-            let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
-                #[cfg(test)]
-                ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
-                let component_frontiers = oplog.dag.vv_to_frontiers(&component_vv);
-                let (diff, _) = calc.calc_diff_internal(
-                    &oplog,
-                    &VersionVector::default(),
-                    &Frontiers::default(),
-                    &component_vv,
-                    &component_frontiers,
-                    None,
-                );
-                (diff, DiffMode::Import)
-            } else {
-                calc.calc_diff_internal(
-                    &oplog,
-                    &old_vv,
-                    &old_frontiers,
-                    oplog.vv(),
-                    oplog.dag.get_frontiers(),
-                    None,
-                )
+            let computed = (|| -> LoroResult<_> {
+                let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
+                    #[cfg(test)]
+                    ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
+                    let component_frontiers = oplog.dag.try_vv_to_frontiers(&component_vv)?;
+                    let (diff, _) = calc.try_calc_diff_internal(
+                        &oplog,
+                        &VersionVector::default(),
+                        &Frontiers::default(),
+                        &component_vv,
+                        &component_frontiers,
+                        None,
+                    )?;
+                    (diff, DiffMode::Import)
+                } else {
+                    calc.try_calc_diff_internal(
+                        &oplog,
+                        &old_vv,
+                        &old_frontiers,
+                        oplog.vv(),
+                        oplog.dag.get_frontiers(),
+                        None,
+                    )?
+                };
+                oplog.check_history_parsable()?;
+                Ok((diff, diff_mode))
+            })();
+            let (diff, diff_mode) = match computed {
+                Ok(diff) => diff,
+                Err(err) => {
+                    oplog.rollback_owned_import(rollback_enabled, &mut self.state.lock());
+                    return Err(err);
+                }
             };
             let mut state = self.state.lock();
-            let diff = recalc_in_checkout_mode_if_needed(
+            let diff = match recalc_in_checkout_mode_if_needed(
                 &mut state,
                 &oplog,
                 &old_vv,
                 &old_frontiers,
                 diff,
-            );
+            ) {
+                Ok(diff) => diff,
+                Err(err) => {
+                    oplog.rollback_owned_import(rollback_enabled, &mut state);
+                    return Err(err);
+                }
+            };
             if let Err(e) = state.apply_diff(
                 InternalDocDiff {
                     origin,
@@ -971,7 +1031,16 @@ impl LoroDoc {
         start_vv: &VersionVector,
         end_vv: &VersionVector,
         with_peer_compression: bool,
-    ) -> JsonSchema {
+    ) -> LoroResult<JsonSchema> {
+        self.try_export_json_updates(start_vv, end_vv, with_peer_compression)
+    }
+
+    pub fn try_export_json_updates(
+        &self,
+        start_vv: &VersionVector,
+        end_vv: &VersionVector,
+        with_peer_compression: bool,
+    ) -> LoroResult<JsonSchema> {
         self.with_barrier(|| {
             let oplog = self.oplog.lock();
             let mut start_vv = start_vv;
@@ -995,7 +1064,7 @@ impl LoroDoc {
                 }
             }
 
-            crate::encoding::json_schema::export_json(
+            crate::encoding::json_schema::try_export_json(
                 &oplog,
                 start_vv,
                 end_vv,
@@ -1020,12 +1089,29 @@ impl LoroDoc {
         self.oplog.lock().vv().clone()
     }
 
-    /// Get the version vector of the current [DocState]
+    /// Get the version vector of the current [DocState].
+    ///
+    /// When the state frontiers are the op-log frontiers, this clones the cached
+    /// op-log version vector and does not parse change blocks. Otherwise it
+    /// walks the frontiers.
     #[inline]
-    pub fn state_vv(&self) -> VersionVector {
+    pub fn state_vv(&self) -> LoroResult<VersionVector> {
+        self.try_state_vv()
+    }
+
+    /// [`state_vv`](Self::state_vv), including a decode error from unreadable history.
+    ///
+    /// `Ok(None)` from the frontier walk (the frontiers are not in the dag) is
+    /// [`LoroError::FrontiersNotFound`] for an id that can be named, not an empty
+    /// version vector.
+    pub fn try_state_vv(&self) -> LoroResult<VersionVector> {
         let oplog = self.oplog.lock();
-        let f = &self.state.lock().frontiers;
-        oplog.dag.frontiers_to_vv(f).unwrap()
+        let frontiers = self.state.lock().frontiers.clone();
+        if &frontiers == oplog.frontiers() {
+            // `OpLog::vv` is the cached DAG version vector. It does not parse blocks.
+            return Ok(oplog.vv().clone());
+        }
+        frontiers_to_vv_or_not_found(&oplog, &frontiers)
     }
 
     pub fn get_by_path(&self, path: &[Index]) -> Option<ValueOrHandler> {
@@ -1495,6 +1581,14 @@ impl LoroDoc {
             return Err(LoroError::EditWhenDetached);
         }
 
+        // Rollback checks the state out through the current frontiers. If that
+        // history cannot be read, refuse before the batch mutates anything.
+        {
+            let oplog = self.oplog.lock();
+            let frontiers = self.state.lock().frontiers.clone();
+            frontiers_to_vv_or_not_found(&oplog, &frontiers)?;
+        }
+
         let scope = self.begin_apply_diff_scope();
         let result = self._apply_diff(
             diff,
@@ -1505,8 +1599,8 @@ impl LoroDoc {
         if let Some(scope) = scope {
             if result.is_ok() {
                 self.end_apply_diff_scope(scope);
-            } else {
-                self.rollback_apply_diff_scope(scope);
+            } else if let Err(err) = self.rollback_apply_diff_scope(scope) {
+                return Err(err);
             }
         }
         result
@@ -1552,7 +1646,7 @@ impl LoroDoc {
     /// rollback scope, so that the diff calculator can compute the checkout from the batch's
     /// last op back to the version before the batch; then the scope is rolled back and the
     /// ops before the batch are put back into the DAG's version as pending local ops.
-    fn rollback_apply_diff_scope(&self, scope: u64) {
+    fn rollback_apply_diff_scope(&self, scope: u64) -> LoroResult<()> {
         let mut guard = self.txn.lock();
         let Some(txn) = guard
             .as_mut()
@@ -1565,7 +1659,7 @@ impl LoroDoc {
                 txn.end_rollback_scope(scope);
             }
             self.state.lock().end_local_rollback(scope);
-            return;
+            return Ok(());
         };
 
         let batch = txn.roll_back_scope(scope);
@@ -1614,39 +1708,35 @@ impl LoroDoc {
                 batch_last,
                 Frontiers::from_id(ID::new(peer, batch.batch_end - 1))
             );
-            let from = oplog
-                .dag
-                .frontiers_to_vv(&batch_last)
-                .expect("the batch's ops are in the DAG");
-            let to = oplog
-                .dag
-                .frontiers_to_vv(&before_batch)
-                .expect("the version before the batch is in the DAG");
-            let (diff, diff_mode) = DiffCalculator::new(false).calc_diff_internal(
-                &oplog,
-                &from,
-                &batch_last,
-                &to,
-                &before_batch,
-                None,
-            );
-            // `DocState::apply_diff` refuses to run inside a transaction, and records nothing
-            // without its event recorder.
-            state.abort_txn();
-            let recorder = state.take_event_recorder();
-            state
-                .apply_diff(
+            let undone = (|| -> LoroResult<()> {
+                let from = frontiers_to_vv_or_not_found(&oplog, &batch_last)?;
+                let to = frontiers_to_vv_or_not_found(&oplog, &before_batch)?;
+                let (diff, diff_mode) = DiffCalculator::new(false).try_calc_diff_internal(
+                    &oplog,
+                    &from,
+                    &batch_last,
+                    &to,
+                    &before_batch,
+                    None,
+                )?;
+                // `DocState::apply_diff` refuses to run inside a transaction, and records nothing
+                // without its event recorder.
+                state.abort_txn();
+                let recorder = state.take_event_recorder();
+                let applied = state.apply_diff(
                     InternalDocDiff {
                         origin: Default::default(),
                         by: EventTriggerKind::Checkout,
                         diff: Cow::Owned(diff),
-                        new_version: Cow::Owned(before_batch),
+                        new_version: Cow::Owned(before_batch.clone()),
                     },
                     diff_mode,
-                )
-                .expect("undoing the ops of a failed apply_diff from the state");
-            state.restore_event_recorder(recorder);
-            state.resume_txn();
+                );
+                state.restore_event_recorder(recorder);
+                state.resume_txn();
+                applied
+            })();
+            // The temporary change must not stay in the op log if the checkout cannot be read.
             oplog.rollback_import_keeping_arena(&state);
             if txn_ops_before > 0 {
                 oplog.dag.update_version_on_new_local_op(
@@ -1657,8 +1747,10 @@ impl LoroDoc {
                 );
                 oplog.refresh_visible_op_count();
             }
+            undone?;
         }
         state.finish_local_rollback(scope, batch.peer, batch.batch_start);
+        Ok(())
     }
 
     /// Apply a diff to the current state.
@@ -2207,7 +2299,11 @@ impl LoroDoc {
         a: &Frontiers,
         b: &Frontiers,
     ) -> Result<Option<Ordering>, FrontiersNotIncluded> {
-        self.oplog().lock().cmp_frontiers(a, b)
+        let oplog = self.oplog.lock();
+        oplog
+            .check_history_parsable()
+            .map_err(FrontiersNotIncluded::unreadable)?;
+        oplog.cmp_frontiers(a, b)
     }
 
     pub fn subscribe_root(&self, callback: Subscriber) -> Subscription {
@@ -2536,7 +2632,7 @@ impl LoroDoc {
         }
 
         let frontiers = if to_shrink_frontiers {
-            shrink_frontiers(frontiers, &oplog.dag).map_err(LoroError::FrontiersNotFound)?
+            crate::version::try_shrink_frontiers(frontiers, &oplog.dag)?
         } else {
             frontiers.clone()
         };
@@ -2553,24 +2649,33 @@ impl LoroDoc {
             }
         }
 
-        let before = oplog.dag.frontiers_to_vv(&state.frontiers).ok_or_else(|| {
-            LoroError::NotFoundError(
-                format!(
-                    "Cannot find the current state version {:?}",
-                    state.frontiers
+        let before = oplog
+            .dag
+            .try_frontiers_to_vv(&state.frontiers)?
+            .ok_or_else(|| {
+                LoroError::NotFoundError(
+                    format!(
+                        "Cannot find the current state version {:?}",
+                        state.frontiers
+                    )
+                    .into_boxed_str(),
                 )
-                .into_boxed_str(),
-            )
-        })?;
-        let Some(after) = &oplog.dag.frontiers_to_vv(&frontiers) else {
+            })?;
+        let Some(after) = &oplog.dag.try_frontiers_to_vv(&frontiers)? else {
             return Err(LoroError::NotFoundError(
                 format!("Cannot find the specified version {:?}", frontiers).into_boxed_str(),
             ));
         };
 
+        let (diff, diff_mode) = calc.try_calc_diff_internal(
+            &oplog,
+            &before,
+            &state.frontiers,
+            after,
+            &frontiers,
+            None,
+        )?;
         self.set_detached(true);
-        let (diff, diff_mode) =
-            calc.calc_diff_internal(&oplog, &before, &state.frontiers, after, &frontiers, None);
         state.apply_diff(
             InternalDocDiff {
                 origin,
@@ -2598,6 +2703,34 @@ impl LoroDoc {
     #[inline]
     pub fn frontiers_to_vv(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         self.oplog.lock().dag.frontiers_to_vv(frontiers)
+    }
+
+    /// Converts frontiers to a version vector, reporting unreadable history.
+    pub fn try_frontiers_to_vv(&self, frontiers: &Frontiers) -> LoroResult<Option<VersionVector>> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        oplog.dag.try_frontiers_to_vv(frontiers)
+    }
+
+    /// Converts a version vector to frontiers, reporting unreadable history.
+    pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        oplog.dag.try_vv_to_frontiers(vv)
+    }
+
+    /// Removes redundant frontiers, reporting unreadable history or an absent id.
+    pub fn try_minimize_frontiers(&self, frontiers: &Frontiers) -> LoroResult<Frontiers> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        crate::version::try_shrink_frontiers(frontiers, &oplog.dag)
+    }
+
+    /// Reads change metadata, distinguishing unreadable history from an absent id.
+    pub fn try_get_change(&self, id: ID) -> LoroResult<Option<ChangeMeta>> {
+        let oplog = self.oplog.lock();
+        let change = oplog.try_get_change_at(id)?;
+        Ok(change.as_deref().map(ChangeMeta::from_change))
     }
 
     /// Import ops from other doc.
@@ -2705,7 +2838,24 @@ impl LoroDoc {
     }
 
     pub fn query_pos(&self, pos: &Cursor) -> Result<PosQueryResult, CannotFindRelativePosition> {
-        self.query_pos_internal(pos, true)
+        match self.query_pos_internal(pos, true) {
+            Ok(ans) => Ok(ans),
+            Err(QueryPosError::Missing(err)) => Err(err),
+            // `CannotFindRelativePosition` is `Copy` and has no room for the
+            // decode error. `HistoryUnreadable` is the non-panicking mapping.
+            Err(QueryPosError::History(_)) => Err(CannotFindRelativePosition::HistoryUnreadable),
+        }
+    }
+
+    /// [`query_pos`](Self::query_pos), preserving a decode error from unreadable history.
+    pub fn try_get_cursor_pos(&self, pos: &Cursor) -> LoroResult<PosQueryResult> {
+        match self.query_pos_internal(pos, true) {
+            Ok(ans) => Ok(ans),
+            Err(QueryPosError::History(err)) => Err(err),
+            Err(QueryPosError::Missing(err)) => {
+                Err(LoroError::NotFoundError(err.to_string().into_boxed_str()))
+            }
+        }
     }
 
     /// Get position in a seq container
@@ -2713,9 +2863,9 @@ impl LoroDoc {
         &self,
         pos: &Cursor,
         ret_event_index: bool,
-    ) -> Result<PosQueryResult, CannotFindRelativePosition> {
+    ) -> Result<PosQueryResult, QueryPosError> {
         if !self.has_container(&pos.container) {
-            return Err(CannotFindRelativePosition::IdNotFound);
+            return Err(CannotFindRelativePosition::IdNotFound.into());
         }
 
         // Cursors can only point into sequence containers
@@ -2723,7 +2873,7 @@ impl LoroDoc {
             pos.container.container_type(),
             ContainerType::Text | ContainerType::List | ContainerType::MovableList
         ) {
-            return Err(CannotFindRelativePosition::IdNotFound);
+            return Err(CannotFindRelativePosition::IdNotFound.into());
         }
 
         let mut state = self.state.lock();
@@ -2756,34 +2906,34 @@ impl LoroDoc {
                     if oplog.arena.id_to_idx(&pos.container).is_none() {
                         let mut s = self.state.lock();
                         if !s.does_container_exist(&pos.container) {
-                            return Err(CannotFindRelativePosition::ContainerDeleted);
+                            return Err(CannotFindRelativePosition::ContainerDeleted.into());
                         }
                         s.ensure_container(&pos.container);
                         drop(s);
                     }
                     let idx = oplog.arena.id_to_idx(&pos.container).unwrap();
                     // We know where the target id is when we trace back to the delete_op_id.
-                    let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx) else {
+                    let Some(delete_op_id) = find_last_delete_op(&oplog, id, idx)? else {
                         if oplog.shallow_since_vv().includes_id(id) {
-                            return Err(CannotFindRelativePosition::HistoryCleared);
+                            return Err(CannotFindRelativePosition::HistoryCleared.into());
                         }
 
                         tracing::error!("Cannot find id {}", id);
-                        return Err(CannotFindRelativePosition::IdNotFound);
+                        return Err(CannotFindRelativePosition::IdNotFound.into());
                     };
                     // Should use persist mode so that it will force all the diff calculators to use the `checkout` mode
                     let mut diff_calc = DiffCalculator::new(true);
                     let before_frontiers: Frontiers = oplog.dag.find_deps_of_id(delete_op_id);
-                    let before = &oplog.dag.frontiers_to_vv(&before_frontiers).unwrap();
+                    let before = frontiers_to_vv_or_not_found(&oplog, &before_frontiers)?;
                     // TODO: PERF: it doesn't need to calc the effects here
-                    diff_calc.calc_diff_internal(
+                    diff_calc.try_calc_diff_internal(
                         &oplog,
-                        before,
+                        &before,
                         &before_frontiers,
                         oplog.vv(),
                         oplog.frontiers(),
                         Some(&|target| idx == target),
-                    );
+                    )?;
                     // TODO: remove depth info
                     let depth = self.arena.get_depth(idx);
                     let (_, diff_calc) = &mut diff_calc.get_or_create_calc(idx, depth);
@@ -3021,6 +3171,22 @@ impl LoroDoc {
         self.oplog().lock().dag.find_path(from, to)
     }
 
+    /// Finds operation spans between versions, reporting unreadable history.
+    pub fn try_find_id_spans_between(
+        &self,
+        from: &Frontiers,
+        to: &Frontiers,
+    ) -> LoroResult<VersionVectorDiff> {
+        let oplog = self.oplog.lock();
+        oplog.check_history_parsable()?;
+        for id in from.iter().chain(to.iter()) {
+            if !oplog.vv().includes_id(id) {
+                return Err(LoroError::FrontiersNotFound(id));
+            }
+        }
+        oplog.dag.try_find_path(from, to)
+    }
+
     /// Subscribe to the first commit from a peer. Operations performed on the `LoroDoc` within this callback
     /// will be merged into the current commit.
     ///
@@ -3066,7 +3232,10 @@ fn materialize_touched_roots(state: &mut DocState, calc: &DiffCalculator, arena:
     }
 }
 
-fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> Vec<ContainerID> {
+fn pending_root_containers_to_materialize(
+    oplog: &OpLog,
+    changes: &[Change],
+) -> LoroResult<Vec<ContainerID>> {
     let mut roots = FxHashSet::default();
     for change in changes {
         if change.ctr_end() <= oplog.vv().get(&change.id.peer).copied().unwrap_or(0) {
@@ -3076,7 +3245,7 @@ fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> 
         if oplog.dag.is_before_shallow_root(&change.deps)
             || oplog
                 .dag
-                .get_change_lamport_from_deps(&change.deps)
+                .try_get_change_lamport_from_deps(&change.deps)?
                 .is_some()
         {
             continue;
@@ -3101,7 +3270,25 @@ fn pending_root_containers_to_materialize(oplog: &OpLog, changes: &[Change]) -> 
         }
     }
 
-    roots.into_iter().collect()
+    Ok(roots.into_iter().collect())
+}
+
+/// Version vector of `frontiers`. `None` from the dag walk is a missing id, not
+/// an empty vector and not a panic.
+fn frontiers_to_vv_or_not_found(oplog: &OpLog, frontiers: &Frontiers) -> LoroResult<VersionVector> {
+    match oplog.dag.try_frontiers_to_vv(frontiers)? {
+        Some(vv) => Ok(vv),
+        None => {
+            for id in frontiers.iter() {
+                if oplog.dag.try_get(id)?.is_none() {
+                    return Err(LoroError::FrontiersNotFound(id));
+                }
+            }
+            Err(LoroError::NotFoundError(
+                format!("Cannot find the specified version {frontiers:?}").into_boxed_str(),
+            ))
+        }
+    }
 }
 
 /// Identify a causally closed update component that can be applied without replaying unrelated
@@ -3181,7 +3368,10 @@ fn isolated_scalar_root_batch(
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ChangeTravelError {
+    #[error(transparent)]
+    HistoryUnreadable(#[from] LoroError),
     #[error("Target id not found {0:?}")]
     TargetIdNotFound(ID),
     #[error("The shallow history of the doc doesn't include the target version")]
@@ -3219,43 +3409,49 @@ impl LoroDoc {
             }
         }
 
-        for id in ids {
-            let op_log = &self.oplog().lock();
-            if !op_log.vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetIdNotFound(*id));
-            }
-            if op_log.dag.shallow_since_vv().includes_id(*id) {
-                return Err(ChangeTravelError::TargetVersionNotIncluded);
-            }
-        }
-
-        let mut visited = FxHashSet::default();
-        let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
-        for id in ids {
-            pending.push(PendingNode(ChangeMeta::from_change(
-                &self.oplog().lock().get_change_at(*id).unwrap(),
-            )));
-        }
-        while let Some(PendingNode(node)) = pending.pop() {
-            let deps = node.deps.clone();
-            if f(node).is_break() {
-                break;
+        let ans = (|| {
+            for id in ids {
+                let op_log = &self.oplog().lock();
+                op_log.check_history_parsable()?;
+                if !op_log.vv().includes_id(*id) {
+                    return Err(ChangeTravelError::TargetIdNotFound(*id));
+                }
+                if op_log.dag.shallow_since_vv().includes_id(*id) {
+                    return Err(ChangeTravelError::TargetVersionNotIncluded);
+                }
             }
 
-            for dep in deps.iter() {
-                let Some(dep_node) = self.oplog().lock().get_change_at(dep) else {
-                    continue;
-                };
-                if visited.contains(&dep_node.id) {
-                    continue;
+            let mut visited = FxHashSet::default();
+            let mut pending: BinaryHeap<PendingNode> = BinaryHeap::new();
+            for id in ids {
+                let change = self
+                    .oplog()
+                    .lock()
+                    .try_get_change_at(*id)?
+                    .ok_or(ChangeTravelError::TargetIdNotFound(*id))?;
+                pending.push(PendingNode(ChangeMeta::from_change(&change)));
+            }
+            while let Some(PendingNode(node)) = pending.pop() {
+                let deps = node.deps.clone();
+                if f(node).is_break() {
+                    break;
                 }
 
-                visited.insert(dep_node.id);
-                pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
-            }
-        }
+                for dep in deps.iter() {
+                    let Some(dep_node) = self.oplog().lock().try_get_change_at(dep)? else {
+                        continue;
+                    };
+                    if visited.contains(&dep_node.id) {
+                        continue;
+                    }
 
-        let ans = Ok(());
+                    visited.insert(dep_node.id);
+                    pending.push(PendingNode(ChangeMeta::from_change(&dep_node)));
+                }
+            }
+
+            Ok(())
+        })();
         self.renew_txn_if_auto_commit(options);
         ans
     }
@@ -3286,6 +3482,18 @@ impl LoroDoc {
             }
             set
         })
+    }
+
+    /// Gets modified container IDs, reporting unreadable history.
+    pub fn try_get_changed_containers_in(
+        &self,
+        id: ID,
+        len: usize,
+    ) -> LoroResult<FxHashSet<ContainerID>> {
+        self.oplog.lock().check_history_parsable()?;
+        let containers = self.get_changed_containers_in(id, len);
+        self.oplog.lock().check_history_parsable()?;
+        Ok(containers)
     }
 
     pub fn delete_root_container(&self, cid: ContainerID) {
@@ -3319,7 +3527,24 @@ impl LoroDoc {
     }
 }
 
-fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
+pub(crate) enum QueryPosError {
+    Missing(CannotFindRelativePosition),
+    History(LoroError),
+}
+
+impl From<LoroError> for QueryPosError {
+    fn from(err: LoroError) -> Self {
+        QueryPosError::History(err)
+    }
+}
+
+impl From<CannotFindRelativePosition> for QueryPosError {
+    fn from(err: CannotFindRelativePosition) -> Self {
+        QueryPosError::Missing(err)
+    }
+}
+
+fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> LoroResult<Option<ID>> {
     // Any delete op that covers `id` must have observed it, so its peer's counter
     // at delete time was > id.counter. start_vv (the vv at `id`) is therefore a
     // valid lower bound: changes at or before start_vv[peer] predate `id` and can
@@ -3330,10 +3555,10 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
     // ordering. op_lamport is the Lamport of the specific op within the change
     // (change.lamport + op offset), not just the change's starting Lamport, so
     // concurrent deletes with equal change Lamports are broken deterministically.
-    let start_vv = oplog
-        .dag
-        .frontiers_to_vv(&id.into())
-        .unwrap_or_else(|| oplog.shallow_since_vv().to_vv());
+    let start_vv = match oplog.dag.try_frontiers_to_vv(&id.into())? {
+        Some(vv) => vv,
+        None => oplog.shallow_since_vv().to_vv(),
+    };
 
     // (op_lamport, peer) gives a deterministic total order for concurrent deletes.
     // A single peer cannot produce two ops with the same lamport, so peer suffices
@@ -3360,7 +3585,10 @@ fn find_last_delete_op(oplog: &OpLog, id: ID, idx: ContainerIdx) -> Option<ID> {
         }
     }
 
-    best.map(|(_, op_id)| op_id)
+    // The legacy peer iterator records a bad block and skips it. A skipped
+    // block may hold the delete, so that is a decode error, not a missing id.
+    oplog.check_history_parsable()?;
+    Ok(best.map(|(_, op_id)| op_id))
 }
 
 /// Cleanup for the critical section of [`LoroDoc::import_batch`].
@@ -3398,21 +3626,21 @@ fn recalc_in_checkout_mode_if_needed(
     old_vv: &VersionVector,
     old_frontiers: &Frontiers,
     diff: Vec<crate::event::InternalContainerDiff>,
-) -> Vec<crate::event::InternalContainerDiff> {
+) -> LoroResult<Vec<crate::event::InternalContainerDiff>> {
     if !state.needs_checkout_diff(&diff) {
-        return diff;
+        return Ok(diff);
     }
 
-    DiffCalculator::new(true)
-        .calc_diff_internal(
+    Ok(DiffCalculator::new(true)
+        .try_calc_diff_internal(
             oplog,
             old_vv,
             old_frontiers,
             oplog.vv(),
             oplog.dag.get_frontiers(),
             None,
-        )
-        .0
+        )?
+        .0)
 }
 
 impl BatchImportGuard<'_> {
@@ -3697,7 +3925,9 @@ mod test {
         list.insert_with_txn(&mut txn, 1, "tail".into()).unwrap();
         txn.commit().unwrap();
 
-        let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false);
+        let json = doc
+            .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+            .unwrap();
         assert_eq!(json.changes.len(), 1);
         assert_eq!(json.changes[0].ops.len(), 4);
         (doc, json)
@@ -3799,7 +4029,9 @@ mod test {
     #[test]
     fn failed_import_json_updates_rolls_back_complex_empty_doc() {
         let src = make_json_import_stress_doc(11);
-        let json = src.export_json_updates(&Default::default(), &src.oplog_vv(), false);
+        let json = src
+            .export_json_updates(&Default::default(), &src.oplog_vv(), false)
+            .unwrap();
 
         let dst = LoroDoc::new();
         let vv_before_import = dst.oplog_vv();
@@ -3836,7 +4068,9 @@ mod test {
         tree.get_meta(root).unwrap().insert("name", "root").unwrap();
 
         let first_vv = src.oplog_vv();
-        let first_json = src.export_json_updates(&Default::default(), &first_vv, false);
+        let first_json = src
+            .export_json_updates(&Default::default(), &first_vv, false)
+            .unwrap();
 
         let mut text_pos = text.len_unicode();
         for i in 0..64 {
@@ -3855,7 +4089,9 @@ mod test {
             .insert("name", "child")
             .unwrap();
 
-        let second_json = src.export_json_updates(&first_vv, &src.oplog_vv(), false);
+        let second_json = src
+            .export_json_updates(&first_vv, &src.oplog_vv(), false)
+            .unwrap();
 
         let dst = LoroDoc::new();
         dst.import_json_updates(first_json).unwrap();
@@ -3891,12 +4127,16 @@ mod test {
 
         let last_op_counter = good_json.changes[0].ops.last().unwrap().counter;
         let prefix_vv = VersionVector::from_iter([(peer, last_op_counter)]);
-        let prefix_json = src.export_json_updates(&Default::default(), &prefix_vv, false);
+        let prefix_json = src
+            .export_json_updates(&Default::default(), &prefix_vv, false)
+            .unwrap();
         assert_eq!(
             prefix_json.changes[0].ops.len(),
             good_json.changes[0].ops.len() - 1
         );
-        let good_suffix_json = src.export_json_updates(&prefix_vv, &src.oplog_vv(), false);
+        let good_suffix_json = src
+            .export_json_updates(&prefix_vv, &src.oplog_vv(), false)
+            .unwrap();
         assert_eq!(good_suffix_json.changes[0].ops.len(), 1);
         let mut bad_suffix_json = good_suffix_json.clone();
         move_last_list_insert_far_out_of_bounds(&mut bad_suffix_json);

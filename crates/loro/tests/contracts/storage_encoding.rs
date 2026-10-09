@@ -348,8 +348,10 @@ fn storage_blobs_and_json_schema_roundtrip_state_and_metadata() -> anyhow::Resul
 
     let start = VersionVector::default();
     let end = source.oplog_vv();
-    let compressed = source.export_json_updates(&start, &end);
-    let uncompressed = source.export_json_updates_without_peer_compression(&start, &end);
+    let compressed = source.export_json_updates(&start, &end).unwrap();
+    let uncompressed = source
+        .export_json_updates_without_peer_compression(&start, &end)
+        .unwrap();
 
     assert!(compressed.peers.is_some());
     assert!(uncompressed.peers.is_none());

@@ -12,7 +12,9 @@ fn redact_text_doc() {
     text.insert(0, "Hello, world! This is a secret message.")
         .unwrap();
 
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let mut range = VersionRange::new();
     range.insert(1, 24, 30);
     redact(&mut json, range).unwrap();
@@ -33,7 +35,9 @@ fn redact_rejects_overflowing_json_counters_without_panicking() {
     let text = doc.get_text("text");
     text.insert(0, "secret").unwrap();
 
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let change = &mut json.changes[0];
     change.id.counter = i32::MAX;
     change.ops[0].counter = i32::MAX;
@@ -64,7 +68,9 @@ fn redact_map_list_insertions() {
     list.insert(0, "secret info").unwrap();
     list.insert(1, true).unwrap();
 
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let mut range = VersionRange::new();
     range.insert(1, 0, 5); // Redact all operations
     redact(&mut json, range).unwrap();
@@ -155,7 +161,9 @@ fn redact_movable_list() {
     list.insert(1, "sensitive data 2").unwrap();
     list.set(0, "updated sensitive data").unwrap();
 
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let mut range = VersionRange::new();
     range.insert(1, 0, 3);
     redact(&mut json, range).unwrap();
@@ -245,7 +253,9 @@ fn redact_should_keep_parent_child_relationship() {
     let _m = sub_map
         .insert_container("ll", LoroMovableList::new())
         .unwrap();
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let mut range = VersionRange::new();
     range.insert(1, 0, 100);
     redact(&mut json, range).unwrap();

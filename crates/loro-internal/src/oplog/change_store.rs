@@ -15,7 +15,6 @@ use crate::{
 };
 use block_encode::decode_block_range;
 use bytes::Bytes;
-use itertools::Itertools;
 use loro_common::{
     ContainerID, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport,
     LoroError, LoroResult, PeerID, ID,
@@ -163,11 +162,13 @@ struct ChangeStoreInner {
     /// Set by [`ChangeStore::retire`]: the op log replaced this store, so loading from it
     /// must not register anything in the arena any more.
     retired: bool,
+    /// Conservative until a full history walk: headers do not validate block bodies.
+    may_have_unparsed_bodies: bool,
 }
 
 #[derive(Debug)]
 pub(crate) struct ChangeStoreRollback {
-    old_vv: VersionVector,
+    old_vv: Arc<VersionVector>,
     /// Pre-scope blocks that an import appended to, keyed by block id. `None` means the
     /// block was flushed, so its KV copy is the pre-scope version.
     blocks_before_mutation: BTreeMap<ID, Option<BlockShape>>,
@@ -192,7 +193,7 @@ struct BlockShape {
 }
 
 impl ChangeStoreRollback {
-    pub(crate) fn new(old_vv: VersionVector) -> Self {
+    pub(crate) fn new(old_vv: Arc<VersionVector>) -> Self {
         Self {
             old_vv,
             blocks_before_mutation: BTreeMap::new(),
@@ -270,6 +271,7 @@ impl ChangeStore {
                 start_frontiers: Frontiers::default(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                may_have_unparsed_bodies: false,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -370,7 +372,10 @@ impl ChangeStore {
             for span in layer {
                 // PERF: this can be optimized by reusing the current encoded blocks
                 // In the current method, it needs to parse and re-encode the blocks
-                for c in self.iter_changes(span) {
+                let Ok(changes) = self.try_iter_changes(span) else {
+                    return;
+                };
+                for c in changes {
                     let start =
                         ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
                     let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
@@ -673,14 +678,17 @@ impl ChangeStore {
     }
 
     fn rollback_arena_in(&self, inner: &mut ChangeStoreInner, arena: SharedArenaRollback) {
+        let mut dropped_body = false;
         for block in inner.mem_parsed_kv.values_mut() {
             if let ChangesBlockContent::Both(_, bytes) = &block.content {
                 if !arena.keeps(block.parsed_extent) {
                     let bytes = bytes.clone();
                     Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+                    dropped_body = true;
                 }
             }
         }
+        inner.may_have_unparsed_bodies |= dropped_body;
         self.arena.rollback(arena);
     }
 
@@ -705,6 +713,12 @@ impl ChangeStore {
         Some(block.content.iter_dag_nodes())
     }
 
+    /// Whether diff calculation may still encounter an unvalidated snapshot body.
+    /// Loading all DAG headers cannot clear this; only a successful full body walk can.
+    pub(crate) fn may_have_unparsed_bodies(&self) -> bool {
+        self.inner.lock().may_have_unparsed_bodies
+    }
+
     pub fn visit_all_changes(&self, f: &mut dyn FnMut(&Change)) {
         self.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
         let mut inner = self.inner.lock();
@@ -717,6 +731,9 @@ impl ChangeStore {
             for c in block.content.try_changes().unwrap() {
                 f(c);
             }
+        }
+        if self.corrupt_block_error().is_ok() {
+            inner.may_have_unparsed_bodies = false;
         }
     }
 
@@ -840,83 +857,86 @@ impl ChangeStore {
     }
 
     pub(crate) fn iter_blocks(&self, id_span: IdSpan) -> Vec<(Arc<ChangesBlock>, usize, usize)> {
+        self.iter_blocks_inner(id_span, false).unwrap()
+    }
+
+    fn try_iter_blocks(
+        &self,
+        id_span: IdSpan,
+    ) -> LoroResult<Vec<(Arc<ChangesBlock>, usize, usize)>> {
+        self.iter_blocks_inner(id_span, true)
+    }
+
+    fn iter_blocks_inner(
+        &self,
+        id_span: IdSpan,
+        fail_on_corrupt: bool,
+    ) -> LoroResult<Vec<(Arc<ChangesBlock>, usize, usize)>> {
         if id_span.counter.start == id_span.counter.end {
-            return vec![];
+            return Ok(vec![]);
         }
-
         assert!(id_span.counter.start < id_span.counter.end);
-        self.ensure_block_loaded_in_range(
-            Bound::Included(id_span.id_start()),
-            Bound::Excluded(id_span.id_end()),
-        );
+        if fail_on_corrupt {
+            self.try_ensure_block_loaded_in_range(
+                Bound::Included(id_span.id_start()),
+                Bound::Excluded(id_span.id_end()),
+            )?;
+        } else {
+            self.ensure_block_loaded_in_range(
+                Bound::Included(id_span.id_start()),
+                Bound::Excluded(id_span.id_end()),
+            );
+        }
         let mut inner = self.inner.lock();
-        let next_back = inner.mem_parsed_kv.range(..=id_span.id_start()).next_back();
-        match next_back {
-            None => {
-                return vec![];
+        let start_counter = inner
+            .mem_parsed_kv
+            .range(..=id_span.id_start())
+            .next_back()
+            .filter(|(id, _)| id.peer == id_span.peer)
+            .map_or(id_span.counter.start, |(id, _)| id.counter);
+        let mut blocks = Vec::new();
+        for (block_id, block) in inner.mem_parsed_kv.range_mut(
+            ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
+        ) {
+            if block.counter_range.1 < id_span.counter.start {
+                continue;
             }
-            Some(next_back) => {
-                if next_back.0.peer != id_span.peer {
-                    return vec![];
+            if let Err(err) = block.ensure_changes(&self.arena) {
+                warn!(?block_id, ?err, "failed to parse change block");
+                self.parse_failures.record(*block_id, &err);
+                if fail_on_corrupt {
+                    return Err(self.corrupt_block_error().unwrap_err());
                 }
+                continue;
+            }
+            let changes = block.content.try_changes().unwrap();
+            let (start, end) = if id_span.counter.start <= block.counter_range.0
+                && id_span.counter.end >= block.counter_range.1
+            {
+                (0, changes.len())
+            } else {
+                let start = block
+                    .get_change_index_by_counter(id_span.counter.start)
+                    .unwrap_or_else(|x| x);
+                let end = match block.get_change_index_by_counter(id_span.counter.end - 1) {
+                    Ok(end) => end + 1,
+                    Err(0) => continue,
+                    Err(end) => end,
+                };
+                (start, end)
+            };
+            if start != end {
+                blocks.push((block.clone(), start, end));
             }
         }
-        let start_counter = next_back.map(|(id, _)| id.counter).unwrap_or(0);
-        let ans = inner
-            .mem_parsed_kv
-            .range_mut(
-                ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end),
-            )
-            .filter_map(|(_id, block)| {
-                if block.counter_range.1 < id_span.counter.start {
-                    return None;
-                }
-
-                if let Err(err) = block.ensure_changes(&self.arena) {
-                    warn!(block_id = ?_id, ?err, "failed to parse change block");
-                    self.parse_failures.record(*_id, &err);
-                    return None;
-                }
-                let changes = block.content.try_changes().unwrap();
-                let start;
-                let end;
-                if id_span.counter.start <= block.counter_range.0
-                    && id_span.counter.end >= block.counter_range.1
-                {
-                    start = 0;
-                    end = changes.len();
-                } else {
-                    start = block
-                        .get_change_index_by_counter(id_span.counter.start)
-                        .unwrap_or_else(|x| x);
-
-                    match block.get_change_index_by_counter(id_span.counter.end - 1) {
-                        Ok(e) => {
-                            end = e + 1;
-                        }
-                        Err(0) => return None,
-                        Err(e) => {
-                            end = e;
-                        }
-                    }
-                }
-                if start == end {
-                    return None;
-                }
-
-                Some((block.clone(), start, end))
-            })
-            // TODO: PERF avoid alloc
-            .collect_vec();
-
-        ans
+        Ok(blocks)
     }
 
     pub fn iter_changes(&self, id_span: IdSpan) -> impl Iterator<Item = BlockChangeRef> + '_ {
         let v = self.iter_blocks(id_span);
         #[cfg(debug_assertions)]
         {
-            if !v.is_empty() {
+            if !v.is_empty() && self.corrupt_block_error().is_ok() {
                 assert_eq!(v[0].0.peer, id_span.peer);
                 assert_eq!(v.last().unwrap().0.peer, id_span.peer);
                 {
@@ -941,6 +961,21 @@ impl ChangeStore {
                 block: block.clone(),
             })
         })
+    }
+
+    /// Parse the range before handing any changes to a consumer: a missing middle
+    /// block must not become a counter gap in an export's scratch store.
+    pub(crate) fn try_iter_changes(
+        &self,
+        id_span: IdSpan,
+    ) -> LoroResult<impl Iterator<Item = BlockChangeRef>> {
+        let blocks = self.try_iter_blocks(id_span)?;
+        Ok(blocks.into_iter().flat_map(|(block, start, end)| {
+            (start..end).map(move |change_index| BlockChangeRef {
+                change_index,
+                block: block.clone(),
+            })
+        }))
     }
 
     #[allow(dead_code)]
@@ -1031,6 +1066,7 @@ impl ChangeStore {
                 start_frontiers: inner.start_frontiers.clone(),
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
+                may_have_unparsed_bodies: !vv.is_empty(),
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1069,7 +1105,10 @@ impl ChangeStore {
 
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
+            let Ok(changes) = self.try_iter_changes(span) else {
+                return;
+            };
+            for c in changes {
                 let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
@@ -1092,7 +1131,7 @@ impl ChangeStore {
         start_vv: &ImVersionVector,
         frontiers: &Frontiers,
         vv: &VersionVector,
-    ) -> Bytes {
+    ) -> LoroResult<Bytes> {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
         for mut span in vv.sub_iter_im(start_vv) {
             let counter_lower_bound = start_vv.get(&span.peer).copied().unwrap_or(0);
@@ -1104,7 +1143,7 @@ impl ChangeStore {
 
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
+            for c in self.try_iter_changes(span)? {
                 let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
                     as usize)
                     .min(c.atom_len());
@@ -1118,7 +1157,7 @@ impl ChangeStore {
             }
         }
 
-        new_store.encode_all(vv, frontiers)
+        Ok(new_store.encode_all(vv, frontiers))
     }
 }
 
@@ -1181,6 +1220,7 @@ mod mut_external_kv {
                 }
             }
 
+            self.inner.lock().may_have_unparsed_bodies = !vv.is_empty();
             *self.external_vv.lock() = vv.clone();
             let frontiers_bytes = self
                 .external_kv
@@ -1825,6 +1865,23 @@ mod mut_inner_kv {
         /// This is fast because we don't actually parse the content.
         // TODO: PERF: This method feels slow.
         pub(super) fn ensure_block_loaded_in_range(&self, start: Bound<ID>, end: Bound<ID>) {
+            let _ = self.load_blocks_in_range(start, end, false);
+        }
+
+        pub(super) fn try_ensure_block_loaded_in_range(
+            &self,
+            start: Bound<ID>,
+            end: Bound<ID>,
+        ) -> LoroResult<()> {
+            self.load_blocks_in_range(start, end, true)
+        }
+
+        fn load_blocks_in_range(
+            &self,
+            start: Bound<ID>,
+            end: Bound<ID>,
+            stop_on_error: bool,
+        ) -> LoroResult<()> {
             let mut whether_need_scan_backward = match start {
                 Bound::Included(id) => Some(id),
                 Bound::Excluded(id) => Some(id.inc(1)),
@@ -1859,6 +1916,9 @@ mod mut_inner_kv {
                         Err(err) => {
                             warn!(?id, ?err, "failed to decode external change block");
                             self.parse_failures.record(id, &err);
+                            if stop_on_error {
+                                return Err(self.corrupt_block_error().unwrap_err());
+                            }
                             continue;
                         }
                     };
@@ -1867,24 +1927,33 @@ mod mut_inner_kv {
             }
 
             if let Some(start_id) = whether_need_scan_backward {
-                self.ensure_id_lte(start_id);
+                if stop_on_error {
+                    self.try_ensure_id_lte(start_id)?;
+                } else {
+                    self.ensure_id_lte(start_id);
+                }
             }
+            Ok(())
         }
 
         pub(super) fn ensure_id_lte(&self, id: ID) {
+            let _ = self.try_ensure_id_lte(id);
+        }
+
+        pub(super) fn try_ensure_id_lte(&self, id: ID) -> LoroResult<()> {
             let kv = self.external_kv.lock();
             let mut inner = self.inner.lock();
             let Some((next_back_id, next_back_bytes)) = kv
                 .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
                 .rfind(|(id, _)| id.len() == 12)
             else {
-                return;
+                return Ok(());
             };
 
             let next_back_id = ID::from_bytes(&next_back_id);
             if next_back_id.peer == id.peer {
                 if inner.mem_parsed_kv.contains_key(&next_back_id) {
-                    return;
+                    return Ok(());
                 }
 
                 let block = match ChangesBlock::from_bytes(next_back_bytes) {
@@ -1896,11 +1965,12 @@ mod mut_inner_kv {
                             "failed to decode external change block"
                         );
                         self.parse_failures.record(next_back_id, &err);
-                        return;
+                        return Err(self.corrupt_block_error().unwrap_err());
                     }
                 };
                 inner.mem_parsed_kv.insert(next_back_id, Arc::new(block));
             }
+            Ok(())
         }
     }
 }
@@ -2689,6 +2759,61 @@ mod test {
     }
 
     #[test]
+    fn legacy_block_iteration_skips_only_the_broken_block() {
+        for position in 0..3 {
+            let (store, end, _) = kv_only_store_and_next_change();
+            let ids: Vec<_> = store
+                .external_kv
+                .lock()
+                .scan(Bound::Unbounded, Bound::Unbounded)
+                .filter(|(key, _)| key.len() == 12)
+                .map(|(key, _)| ID::from_bytes(&key))
+                .collect();
+            assert!(ids.len() >= 3);
+            let broken = ids[match position {
+                0 => 0,
+                1 => ids.len() / 2,
+                _ => ids.len() - 1,
+            }];
+            truncate_block(&store, broken);
+            let span = IdSpan::new(1, 0, end);
+            let blocks = store.iter_blocks(span);
+            assert_eq!(blocks.len(), ids.len() - 1, "position={position}");
+            assert!(blocks
+                .iter()
+                .all(|(block, _, _)| block.counter_range.0 != broken.counter));
+            assert!(store
+                .corrupt_block_error()
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse change block"));
+            // The legacy iterator also yields the healthy portions, without bounds asserts.
+            assert!(store.iter_changes(span).count() > 0);
+            assert!(store
+                .try_iter_blocks(span)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse change block"));
+        }
+    }
+
+    #[test]
+    fn body_validation_stays_lazy_after_header_reads_and_can_be_reset_by_rollback() {
+        let (store, end, _) = kv_only_store_and_next_change();
+        assert!(store.may_have_unparsed_bodies());
+        assert!(store.get_dag_nodes_that_contains(ID::new(1, 0)).is_some());
+        assert!(store.may_have_unparsed_bodies());
+        let arena = store.arena.checkpoint_for_rollback();
+        store.visit_all_changes(&mut |_| {});
+        assert!(!store.may_have_unparsed_bodies());
+        store.rollback_arena(arena);
+        assert!(store.may_have_unparsed_bodies());
+        assert!(store.get_change(ID::new(1, end - 1)).is_some());
+        store.visit_all_changes(&mut |_| {});
+        assert!(!store.may_have_unparsed_bodies());
+    }
+
+    #[test]
     fn the_creator_resolver_reports_an_unparsable_block_instead_of_panicking() {
         let (store, _, _) = kv_only_store_and_next_change();
         truncate_block(&store, ID::new(1, 0));
@@ -2800,6 +2925,69 @@ mod test {
     }
 
     #[test]
+    fn the_first_dag_reader_reports_unparsable_tree_history_without_changing_state() {
+        let (snapshot, _, peer) = snapshot_with_a_container_only_the_history_knows();
+        for api in ["checkout", "diff", "revert", "frontiers", "travel", "cmp"] {
+            let doc = LoroDoc::new();
+            doc.import(&snapshot).unwrap();
+            truncate_block(&doc.oplog().lock().change_store, ID::new(peer, 0));
+            assert!(doc.oplog().lock().check_history_parsable().is_ok());
+            let value = doc.get_deep_value();
+            let state_frontiers = doc.state_frontiers();
+            let mid = Frontiers::from(ID::new(peer, 10));
+            let result = match api {
+                "checkout" => doc.checkout(&mid).map_err(|err| err.to_string()),
+                "diff" => doc
+                    .diff(&mid, &state_frontiers)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                "revert" => doc.revert_to(&mid).map_err(|err| err.to_string()),
+                "frontiers" => doc
+                    .try_frontiers_to_vv(&mid)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                "travel" => doc
+                    .travel_change_ancestors(&[ID::new(peer, 10)], &mut |_| {
+                        std::ops::ControlFlow::Continue(())
+                    })
+                    .map_err(|err| err.to_string()),
+                "cmp" => doc
+                    .cmp_frontiers(&mid, &state_frontiers)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string()),
+                _ => unreachable!(),
+            };
+            assert!(
+                result.unwrap_err().contains("cannot parse change block"),
+                "{api}"
+            );
+            assert_eq!(doc.get_deep_value(), value, "{api}");
+            assert_eq!(doc.state_frontiers(), state_frontiers, "{api}");
+            assert!(matches!(
+                doc.oplog().lock().check_history_parsable(),
+                Err(LoroError::DecodeError(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn a_detached_fork_records_unparsable_history_before_its_infallible_boundary_panics() {
+        let (snapshot, _, peer) = snapshot_with_a_container_only_the_history_knows();
+        let doc = LoroDoc::new();
+        doc.import(&snapshot).unwrap();
+        truncate_block(&doc.oplog().lock().change_store, ID::new(peer, 0));
+        let value = doc.get_deep_value();
+        doc.detach();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.fork())).is_err());
+        assert_eq!(doc.get_deep_value(), value);
+        assert!(doc
+            .checkout(&doc.oplog_frontiers())
+            .unwrap_err()
+            .to_string()
+            .contains("cannot parse change block"));
+    }
+
+    #[test]
     fn a_recorded_parse_failure_does_not_panic_where_no_error_can_be_returned() {
         // `undo`, `checkout_to_latest` and a detached `fork` run the same checkout and export
         // code as the public entry points, and `unwrap` its result. So the recorded failure
@@ -2863,7 +3051,7 @@ mod test {
         let (store, end, next) = kv_only_store_and_next_change();
         let mut old_vv = VersionVector::new();
         old_vv.insert(1, end);
-        let mut rollback = ChangeStoreRollback::new(old_vv);
+        let mut rollback = ChangeStoreRollback::new(Arc::new(old_vv));
         let arena = store.arena.checkpoint_for_rollback();
         store.insert_change_with_rollback(next.clone(), true, false, &mut rollback);
         assert!(store.get_change(ID::new(1, 0)).is_some());
@@ -2913,7 +3101,7 @@ mod test {
         for c in first {
             rolled_back.insert_change(c.clone(), true, false);
         }
-        let mut rollback = ChangeStoreRollback::new(vv_of(first));
+        let mut rollback = ChangeStoreRollback::new(Arc::new(vv_of(first)));
         let arena_checkpoint = arena.checkpoint_for_rollback();
         for c in &rest[..rest.len() / 2] {
             rolled_back.insert_change_with_rollback(c.clone(), true, false, &mut rollback);

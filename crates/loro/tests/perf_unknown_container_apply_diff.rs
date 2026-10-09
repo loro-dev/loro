@@ -40,7 +40,8 @@ fn doc_with_unknown_element() -> LoroDoc {
     src.commit();
     let cid = loro::ContainerTrait::id(&text).to_string();
     let json = serde_json::to_string(
-        &src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv()),
+        &src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv())
+            .unwrap(),
     )
     .unwrap()
     .replace(&cid, &cid.replace(":Text", ":Unknown(9)"));
@@ -214,8 +215,9 @@ fn doc_with_mergeable_list(unknown: bool) -> LoroDoc {
         list.insert_container(N / 2, LoroText::new()).unwrap();
     }
     src.commit();
-    let mut json =
-        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
+    let mut json = src
+        .export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv())
+        .unwrap();
     for change in json.changes.iter_mut() {
         for op in change.ops.iter_mut() {
             if let loro::JsonOpContent::List(loro::JsonListOp::Insert { value, .. }) =
@@ -261,8 +263,9 @@ fn perf_full_state_revival() {
 /// Replays `src` with the ids of its Text containers (which must have no ops)
 /// turned into `Unknown(9)`, editing the typed JSON so mergeable markers stay.
 fn forge_texts(src: &LoroDoc) -> LoroDoc {
-    let mut json =
-        src.export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv());
+    let mut json = src
+        .export_json_updates_without_peer_compression(&Default::default(), &src.oplog_vv())
+        .unwrap();
     let forge = |v: &mut LoroValue| {
         if let LoroValue::Container(ContainerID::Normal {
             peer,

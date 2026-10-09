@@ -421,9 +421,12 @@ mod loom_test {
             let reference = LoroDoc::new();
             reference.import(&snapshot).unwrap();
             let vv = reference.oplog_vv();
-            let history =
-                serde_json::to_string(&reference.export_json_updates(&Default::default(), &vv))
-                    .unwrap();
+            let history = serde_json::to_string(
+                &reference
+                    .export_json_updates(&Default::default(), &vv)
+                    .unwrap(),
+            )
+            .unwrap();
             // Another peer creates a container, so decoding its change registers one. The
             // empty change after it fails the decode.
             let e = LoroDoc::new();
@@ -435,7 +438,8 @@ mod loom_test {
                 .insert("q", 1)
                 .unwrap();
             e.commit();
-            let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+            let mut json =
+                serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
             let changes = json["changes"].as_array_mut().unwrap();
             let mut empty = changes.last().unwrap().clone();
             empty["ops"] = serde_json::json!([]);
@@ -466,9 +470,10 @@ mod loom_test {
             h0.join().unwrap();
             h1.join().unwrap();
             assert!(doc.has_container(&f.meta));
-            let history =
-                serde_json::to_string(&doc.export_json_updates(&Default::default(), &f.vv))
-                    .unwrap();
+            let history = serde_json::to_string(
+                &doc.export_json_updates(&Default::default(), &f.vv).unwrap(),
+            )
+            .unwrap();
             assert_eq!(history, f.history);
         });
     }

@@ -122,9 +122,9 @@ fn changed_containers_between(
     oplog: &OpLog,
     before: &VersionVector,
     after: &VersionVector,
-) -> FxHashSet<ContainerIdx> {
+) -> loro_common::LoroResult<FxHashSet<ContainerIdx>> {
     let (retreat, forward) = before.diff_iter(after);
-    oplog.containers_in_spans(retreat.chain(forward))
+    oplog.try_containers_in_spans(retreat.chain(forward))
 }
 
 impl DiffCalculator {
@@ -161,15 +161,35 @@ impl DiffCalculator {
     /// change).
     pub(crate) fn calc_diff_internal(
         &mut self,
+        oplog: &OpLog,
+        before: &VersionVector,
+        before_frontiers: &Frontiers,
+        after: &VersionVector,
+        after_frontiers: &Frontiers,
+        container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
+    ) -> (Vec<InternalContainerDiff>, DiffMode) {
+        self.try_calc_diff_internal(
+            oplog,
+            before,
+            before_frontiers,
+            after,
+            after_frontiers,
+            container_filter,
+        )
+        .unwrap()
+    }
+
+    pub(crate) fn try_calc_diff_internal(
+        &mut self,
         oplog: &super::oplog::OpLog,
         before: &crate::VersionVector,
         before_frontiers: &Frontiers,
         after: &crate::VersionVector,
         after_frontiers: &Frontiers,
         container_filter: Option<&dyn Fn(ContainerIdx) -> bool>,
-    ) -> (Vec<InternalContainerDiff>, DiffMode) {
+    ) -> loro_common::LoroResult<(Vec<InternalContainerDiff>, DiffMode)> {
         if before == after {
-            return (Vec::new(), DiffMode::Linear);
+            return Ok((Vec::new(), DiffMode::Linear));
         }
 
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
@@ -185,14 +205,20 @@ impl DiffCalculator {
                 concurrent_containers,
             },
             iter,
-        ) = oplog.iter_from_replay_base_causally(before, before_frontiers, after, after_frontiers);
+        ) = oplog.try_iter_from_replay_base_causally(
+            before,
+            before_frontiers,
+            after,
+            after_frontiers,
+        )?;
         // A conservative replay base may be much older than `before`. The causal replay
         // still needs that common history as position context, but containers
         // whose ops are present on both sides cannot contribute to the diff.
         // Without this filter, every such List/Text/MovableList can trigger its
         // own full-history safety rebuild below.
-        let changed_containers =
-            (&replay_base != before).then(|| changed_containers_between(oplog, before, after));
+        let changed_containers = (&replay_base != before)
+            .then(|| changed_containers_between(oplog, before, after))
+            .transpose()?;
         // Two distinct mode values live in this function — do not conflate them:
         // - `origin_diff_mode` describes the DIRECTION of the transition
         //   (Checkout can go backwards; the other modes imply `after ⊇ before`).
@@ -219,7 +245,8 @@ impl DiffCalculator {
         let affected_set = {
             loro_common::debug!("replay_base: {:?} mode={:?}", &replay_base, calc_mode);
             let mut started_set = FxHashSet::default();
-            for (change, (start_counter, end_counter), vv) in iter {
+            for item in iter {
+                let (change, (start_counter, end_counter), vv) = item?;
                 let iter_start = change
                     .ops
                     .binary_search_by(|op| op.ctr_last().cmp(&start_counter))
@@ -430,10 +457,10 @@ impl DiffCalculator {
             }
         }
 
-        (
+        Ok((
             ans.into_values().map(|x| x.1).collect_vec(),
             origin_diff_mode,
-        )
+        ))
     }
 
     // TODO: we may remove depth info
@@ -2340,7 +2367,7 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
     assert_eq!(base.vv, before);
     assert_eq!(base.diff_mode, DiffMode::ImportGreaterUpdates);
     assert_eq!(
-        changed_containers_between(&oplog, &before, &after),
+        changed_containers_between(&oplog, &before, &after).unwrap(),
         [expected_idx].into_iter().collect()
     );
 
@@ -2398,7 +2425,7 @@ fn conservative_replay_only_builds_calculators_for_changed_containers() {
     );
     assert_eq!(base.diff_mode, DiffMode::Import);
     assert_eq!(
-        changed_containers_between(&oplog, &before, &after),
+        changed_containers_between(&oplog, &before, &after).unwrap(),
         [expected_idx, list_idx].into_iter().collect()
     );
 
@@ -2461,7 +2488,7 @@ fn conservative_checkout_replay_filters_to_retreat_changed_containers() {
     );
     assert_eq!(base.diff_mode, DiffMode::Checkout);
     assert_eq!(
-        changed_containers_between(&oplog, &before, &after),
+        changed_containers_between(&oplog, &before, &after).unwrap(),
         [expected_idx].into_iter().collect()
     );
 

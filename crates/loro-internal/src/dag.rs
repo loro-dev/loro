@@ -12,10 +12,11 @@ use std::{
     fmt::Debug,
 };
 
-use loro_common::IdSpanVector;
+use loro_common::{IdSpanVector, LoroError, LoroResult};
 use rle::{HasLength, Sliceable};
 use rustc_hash::{FxHashMap, FxHashSet};
 mod iter;
+pub(crate) use iter::DagCausalIter;
 mod mermaid;
 #[cfg(feature = "test_utils")]
 mod test;
@@ -31,7 +32,7 @@ use crate::{
 };
 
 use self::{
-    iter::{iter_dag, iter_dag_with_vv, DagCausalIter, DagIterator, DagIteratorVV},
+    iter::{iter_dag, iter_dag_with_vv, DagIterator, DagIteratorVV},
     mermaid::dag_to_mermaid,
 };
 
@@ -53,6 +54,9 @@ pub(crate) trait Dag: Debug {
     type Node: DagNode;
 
     fn get(&self, id: ID) -> Option<Self::Node>;
+    fn try_get(&self, id: ID) -> LoroResult<Option<Self::Node>> {
+        Ok(self.get(id))
+    }
     #[allow(unused)]
     fn frontier(&self) -> &Frontiers;
     fn vv(&self) -> &VersionVector;
@@ -95,13 +99,34 @@ pub(crate) trait DagUtils: Dag {
     /// one it can find itself). Finding the single-head cut walks the whole
     /// DAG, so callers that usually have a better answer should not pay for
     /// it up front.
-    fn find_meet_and_mode(&self, a_id: &Frontiers, b_id: &Frontiers) -> (MeetAsBase, DiffMode);
-    fn latest_single_head_critical_version(&self, a_id: &Frontiers, b_id: &Frontiers) -> Frontiers;
+    #[cfg(test)]
+    fn find_meet_and_mode(&self, a_id: &Frontiers, b_id: &Frontiers) -> (MeetAsBase, DiffMode) {
+        self.try_find_meet_and_mode(a_id, b_id).unwrap()
+    }
+    fn try_find_meet_and_mode(
+        &self,
+        a_id: &Frontiers,
+        b_id: &Frontiers,
+    ) -> LoroResult<(MeetAsBase, DiffMode)>;
+    #[cfg(test)]
+    fn latest_single_head_critical_version(&self, a_id: &Frontiers, b_id: &Frontiers) -> Frontiers {
+        self.try_latest_single_head_critical_version(a_id, b_id)
+            .unwrap()
+    }
+    fn try_latest_single_head_critical_version(
+        &self,
+        a_id: &Frontiers,
+        b_id: &Frontiers,
+    ) -> LoroResult<Frontiers>;
     /// Slow, should probably only use on dev
     #[allow(unused)]
     fn get_vv(&self, id: ID) -> VersionVector;
     #[allow(unused)]
-    fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff;
+    fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+        self.try_find_path(from, to).unwrap()
+    }
+    fn try_find_path(&self, from: &Frontiers, to: &Frontiers) -> LoroResult<VersionVectorDiff>;
+    #[cfg(test)]
     fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized;
@@ -135,13 +160,21 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     #[inline]
-    fn find_meet_and_mode(&self, a_id: &Frontiers, b_id: &Frontiers) -> (MeetAsBase, DiffMode) {
-        find_meet_and_mode(&|id| self.get(id), a_id, b_id)
+    fn try_find_meet_and_mode(
+        &self,
+        a_id: &Frontiers,
+        b_id: &Frontiers,
+    ) -> LoroResult<(MeetAsBase, DiffMode)> {
+        find_meet_and_mode(&|id| self.try_get(id), a_id, b_id)
     }
 
     #[inline]
-    fn latest_single_head_critical_version(&self, a_id: &Frontiers, b_id: &Frontiers) -> Frontiers {
-        latest_single_head_critical_version(&|id| self.get(id), a_id, b_id)
+    fn try_latest_single_head_critical_version(
+        &self,
+        a_id: &Frontiers,
+        b_id: &Frontiers,
+    ) -> LoroResult<Frontiers> {
+        latest_single_head_critical_version(&|id| self.try_get(id), a_id, b_id)
     }
 
     #[inline]
@@ -149,18 +182,20 @@ impl<T: Dag + ?Sized> DagUtils for T {
         get_version_vector(&|id| self.get(id), id)
     }
 
-    fn find_path(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
+    fn try_find_path(&self, from: &Frontiers, to: &Frontiers) -> LoroResult<VersionVectorDiff> {
         let mut ans = VersionVectorDiff::default();
         if from == to {
-            return ans;
+            return Ok(ans);
         }
 
         if from.len() == 1 && to.len() == 1 {
             let from = from.as_single().unwrap();
             let to = to.as_single().unwrap();
             if from.peer == to.peer {
-                let from_span = self.get(from).unwrap();
-                let to_span = self.get(to).unwrap();
+                let from_span = self
+                    .try_get(from)?
+                    .ok_or(LoroError::FrontiersNotFound(from))?;
+                let to_span = self.try_get(to)?.ok_or(LoroError::FrontiersNotFound(to))?;
                 if from_span.id_start() == to_span.id_start() {
                     if from.counter < to.counter {
                         ans.forward.insert(
@@ -173,7 +208,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
                             CounterSpan::new(to.counter + 1, from.counter + 1),
                         );
                     }
-                    return ans;
+                    return Ok(ans);
                 }
 
                 if from_span.deps().len() == 1
@@ -183,7 +218,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
                         from.peer,
                         CounterSpan::new(to.counter + 1, from.counter + 1),
                     );
-                    return ans;
+                    return Ok(ans);
                 }
 
                 if to_span.deps().len() == 1
@@ -193,13 +228,13 @@ impl<T: Dag + ?Sized> DagUtils for T {
                         from.peer,
                         CounterSpan::new(from.counter + 1, to.counter + 1),
                     );
-                    return ans;
+                    return Ok(ans);
                 }
             }
         }
 
         _walk_to_meet(
-            &|v| self.get(v),
+            &|v| self.try_get(v),
             from,
             to,
             &mut |span, node_type| match node_type {
@@ -211,9 +246,9 @@ impl<T: Dag + ?Sized> DagUtils for T {
                 }
             },
             true,
-        );
+        )?;
 
-        ans
+        Ok(ans)
     }
 
     #[inline(always)]
@@ -225,6 +260,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     #[inline(always)]
+    #[cfg(test)]
     fn iter_causal(&self, from: Frontiers, target: IdSpanVector) -> DagCausalIter<'_, Self>
     where
         Self: Sized,
@@ -342,19 +378,21 @@ enum NodeType {
 
 impl<'a> OrdIdSpan<'a> {
     #[inline]
-    fn from_dag_node<D, F>(id: ID, get: &'a F) -> Option<OrdIdSpan<'a>>
+    fn from_dag_node<D, F>(id: ID, get: &'a F) -> LoroResult<Option<OrdIdSpan<'a>>>
     where
         D: DagNode + 'a,
-        F: Fn(ID) -> Option<D>,
+        F: Fn(ID) -> LoroResult<Option<D>>,
     {
-        let span = get(id)?;
+        let Some(span) = get(id)? else {
+            return Ok(None);
+        };
         let span_id = span.id_start();
-        Some(OrdIdSpan {
+        Ok(Some(OrdIdSpan {
             id: span_id,
             lamport: span.lamport(),
             deps: Cow::Owned(span.deps().clone()),
             len: (id.counter - span_id.counter) as usize + 1,
-        })
+        }))
     }
 
     #[inline]
@@ -373,13 +411,13 @@ fn find_meet_and_mode<'a, F, D>(
     get: &'a F,
     a_id: &Frontiers,
     b_id: &Frontiers,
-) -> (MeetAsBase, DiffMode)
+) -> LoroResult<(MeetAsBase, DiffMode)>
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<D>,
+    F: Fn(ID) -> LoroResult<Option<D>>,
 {
     if b_id.is_empty() {
-        return (MeetAsBase::Valid(Default::default()), DiffMode::Checkout);
+        return Ok((MeetAsBase::Valid(Default::default()), DiffMode::Checkout));
     }
 
     _find_meet_and_mode(get, a_id, b_id)
@@ -392,19 +430,19 @@ fn _walk_to_meet<'a, F, D, G>(
     b_ids: &Frontiers,
     notify: &mut G,
     find_path: bool,
-) -> FxHashMap<PeerID, Counter>
+) -> LoroResult<FxHashMap<PeerID, Counter>>
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<D>,
+    F: Fn(ID) -> LoroResult<Option<D>>,
     G: FnMut(IdSpan, NodeType),
 {
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids.iter() {
-        queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::A));
+        queue.push((OrdIdSpan::from_dag_node(id, get)?.unwrap(), NodeType::A));
     }
     for id in b_ids.iter() {
-        queue.push((OrdIdSpan::from_dag_node(id, get).unwrap(), NodeType::B));
+        queue.push((OrdIdSpan::from_dag_node(id, get)?.unwrap(), NodeType::B));
     }
     let mut visited: HashMap<PeerID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
@@ -502,7 +540,7 @@ where
         }
 
         for dep_id in node.deps.as_ref().iter() {
-            queue.push((OrdIdSpan::from_dag_node(dep_id, get).unwrap(), node_type));
+            queue.push((OrdIdSpan::from_dag_node(dep_id, get)?.unwrap(), node_type));
         }
 
         if node_type != NodeType::Shared {
@@ -535,44 +573,46 @@ where
         }
     }
 
-    ans
+    Ok(ans)
 }
 
 /// Resolves each frontier id to the span of its containing node, truncated at
 /// that id. Returns `None` when an id is unavailable (trimmed history).
-fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+fn ids_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
     ids: &Frontiers,
     get: &'a F,
-) -> Option<Vec<OrdIdSpan<'a>>> {
+) -> LoroResult<Option<Vec<OrdIdSpan<'a>>>> {
     let mut ans = Vec::with_capacity(ids.len());
     for id in ids.iter() {
-        if let Some(node) = OrdIdSpan::from_dag_node(id, get) {
+        if let Some(node) = OrdIdSpan::from_dag_node(id, get)? {
             ans.push(node);
         } else {
-            return None;
+            return Ok(None);
         }
     }
 
-    Some(ans)
+    Ok(Some(ans))
 }
 
 /// The parent set of a span's first op: the node's explicit deps plus the
 /// implicit same-peer predecessor when it is not already covered by one of them.
-fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
     node: &OrdIdSpan<'a>,
     get: &'a F,
-) -> Option<Vec<OrdIdSpan<'a>>> {
-    let mut deps = ids_to_ord_id_spans(node.deps.as_ref(), get)?;
+) -> LoroResult<Option<Vec<OrdIdSpan<'a>>>> {
+    let Some(mut deps) = ids_to_ord_id_spans(node.deps.as_ref(), get)? else {
+        return Ok(None);
+    };
     if node.id.counter > 0 {
         let prev = node.id.inc(-1);
-        if let Some(prev) = OrdIdSpan::from_dag_node(prev, get) {
+        if let Some(prev) = OrdIdSpan::from_dag_node(prev, get)? {
             if !deps.iter().any(|dep| dep.contains_id(prev.id_last())) {
                 deps.push(prev);
             }
         }
     }
 
-    Some(deps)
+    Ok(Some(deps))
 }
 
 /// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
@@ -590,18 +630,18 @@ fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
 /// endpoint is concurrent with everything below the current level, so no
 /// later singleton can be valid — bail out to the empty version, which is
 /// the old behaviour.
-fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
     get: &'a F,
     left: &Frontiers,
     right: &Frontiers,
-) -> Frontiers {
+) -> LoroResult<Frontiers> {
     let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
-    let Some(spans) = ids_to_ord_id_spans(left, get) else {
-        return Default::default();
+    let Some(spans) = ids_to_ord_id_spans(left, get)? else {
+        return Ok(Default::default());
     };
     queue.extend(spans);
-    let Some(spans) = ids_to_ord_id_spans(right, get) else {
-        return Default::default();
+    let Some(spans) = ids_to_ord_id_spans(right, get)? else {
+        return Ok(Default::default());
     };
     queue.extend(spans);
 
@@ -615,7 +655,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<
         }
 
         if queue.is_empty() {
-            return node.id_last().into();
+            return Ok(node.id_last().into());
         }
 
         if let Some(other) = queue.peek() {
@@ -636,17 +676,17 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> Option<
             }
         }
 
-        match deps_to_ord_id_spans(&node, get) {
+        match deps_to_ord_id_spans(&node, get)? {
             Some(deps) if !deps.is_empty() => {
                 for dep in deps {
                     queue.push(dep);
                 }
             }
-            _ => return Default::default(),
+            _ => return Ok(Default::default()),
         }
     }
 
-    Default::default()
+    Ok(Default::default())
 }
 
 /// Finds the replay base and diff mode for the transition `left -> right`.
@@ -671,65 +711,65 @@ fn _find_meet_and_mode<'a, F, D>(
     get: &'a F,
     left: &Frontiers,
     right: &Frontiers,
-) -> (MeetAsBase, DiffMode)
+) -> LoroResult<(MeetAsBase, DiffMode)>
 where
     D: DagNode + 'a,
-    F: Fn(ID) -> Option<D>,
+    F: Fn(ID) -> LoroResult<Option<D>>,
 {
     if right.is_empty() {
-        return (MeetAsBase::Valid(Default::default()), DiffMode::Checkout);
+        return Ok((MeetAsBase::Valid(Default::default()), DiffMode::Checkout));
     }
 
     if left.is_empty() {
         if right.len() == 1 {
             let mut node_id = right.as_single().unwrap();
-            let mut node = get(node_id).unwrap();
+            let mut node = get(node_id)?.unwrap();
             while node.deps().len() == 1 {
                 node_id = node.deps().as_single().unwrap();
-                let Some(next) = get(node_id) else {
-                    return (
+                let Some(next) = get(node_id)? else {
+                    return Ok((
                         MeetAsBase::Valid(Default::default()),
                         DiffMode::ImportGreaterUpdates,
-                    );
+                    ));
                 };
                 node = next;
             }
 
             if node.deps().is_empty() {
-                return (MeetAsBase::Valid(Default::default()), DiffMode::Linear);
+                return Ok((MeetAsBase::Valid(Default::default()), DiffMode::Linear));
             }
         }
 
-        return (
+        return Ok((
             MeetAsBase::Valid(Default::default()),
             DiffMode::ImportGreaterUpdates,
-        );
+        ));
     }
 
     if left.len() == 1 && right.len() == 1 {
         let left = left.as_single().unwrap();
         let right = right.as_single().unwrap();
         if left.peer == right.peer {
-            let left_span = get(left).unwrap();
-            let right_span = get(right).unwrap();
+            let left_span = get(left)?.unwrap();
+            let right_span = get(right)?.unwrap();
             if left_span.id_start() == right_span.id_start() {
                 if left.counter < right.counter {
-                    return (MeetAsBase::Valid(left.into()), DiffMode::Linear);
+                    return Ok((MeetAsBase::Valid(left.into()), DiffMode::Linear));
                 } else {
-                    return (MeetAsBase::Valid(right.into()), DiffMode::Checkout);
+                    return Ok((MeetAsBase::Valid(right.into()), DiffMode::Checkout));
                 }
             }
 
             if left_span.deps().len() == 1
                 && right_span.contains_id(left_span.deps().as_single().unwrap())
             {
-                return (MeetAsBase::Valid(right.into()), DiffMode::Checkout);
+                return Ok((MeetAsBase::Valid(right.into()), DiffMode::Checkout));
             }
 
             if right_span.deps().len() == 1
                 && left_span.contains_id(right_span.deps().as_single().unwrap())
             {
-                return (MeetAsBase::Valid(left.into()), DiffMode::Linear);
+                return Ok((MeetAsBase::Valid(left.into()), DiffMode::Linear));
             }
         }
     }
@@ -740,21 +780,21 @@ where
     let mut has_unresolved_unmatched_branch = false;
     let mut ans: Frontiers = Default::default();
 
-    fn shrink_ancestor_frontiers<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn shrink_ancestor_frontiers<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
         ids: &Frontiers,
         get: &'a F,
-    ) -> Frontiers {
+    ) -> LoroResult<Frontiers> {
         if ids.len() <= 1 {
-            return ids.clone();
+            return Ok(ids.clone());
         }
 
-        let mut ids = ids_to_ord_id_spans(ids, get).expect("meet candidates should be in dag");
+        let mut ids = ids_to_ord_id_spans(ids, get)?.expect("meet candidates should be in dag");
         ids.sort_unstable();
         let mut frontiers = Vec::with_capacity(ids.len());
         for id in ids.iter().rev() {
             let mut should_insert = true;
             for frontier in frontiers.iter().rev() {
-                if contains_in_ancestors(get, *frontier, id) {
+                if contains_in_ancestors(get, *frontier, id)? {
                     should_insert = false;
                     break;
                 }
@@ -765,19 +805,22 @@ where
             }
         }
 
-        frontiers.into_iter().collect()
+        Ok(frontiers.into_iter().collect())
     }
 
-    fn has_trimmed_history_deps<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn has_trimmed_history_deps<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
         ids: &Frontiers,
         get: &'a F,
-    ) -> bool {
-        ids.iter().any(|id| {
-            let Some(node) = OrdIdSpan::from_dag_node(id, get) else {
-                return true;
+    ) -> LoroResult<bool> {
+        for id in ids.iter() {
+            let Some(node) = OrdIdSpan::from_dag_node(id, get)? else {
+                return Ok(true);
             };
-            ids_to_ord_id_spans(node.deps.as_ref(), get).is_none()
-        })
+            if ids_to_ord_id_spans(node.deps.as_ref(), get)?.is_none() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether every tip in `tips` is contained in the ancestors of `frontiers`
@@ -785,21 +828,21 @@ where
     /// frontier with a shared visited set and prunes by the lowest lamport among
     /// the still-unproven tips, so the ancestor region is traversed at most once
     /// per call instead of once per (tip, frontier) pair.
-    fn all_tips_covered_by_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn all_tips_covered_by_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
         get: &'a F,
         frontiers: &Frontiers,
         tips: &FxHashSet<ID>,
-    ) -> bool {
+    ) -> LoroResult<bool> {
         let mut remaining = Vec::with_capacity(tips.len());
         for id in tips.iter() {
-            let Some(span) = OrdIdSpan::from_dag_node(*id, get) else {
-                return false;
+            let Some(span) = OrdIdSpan::from_dag_node(*id, get)? else {
+                return Ok(false);
             };
             remaining.push(span);
         }
 
         if remaining.is_empty() {
-            return true;
+            return Ok(true);
         }
 
         let mut min_lamport = remaining
@@ -810,7 +853,7 @@ where
         let mut visited = FxHashSet::default();
         let mut pending = Vec::new();
         for frontier in frontiers.iter() {
-            if let Some(node) = OrdIdSpan::from_dag_node(frontier, get) {
+            if let Some(node) = OrdIdSpan::from_dag_node(frontier, get)? {
                 pending.push(node);
             }
         }
@@ -819,7 +862,7 @@ where
             let len_before = remaining.len();
             remaining.retain(|tip| !node.contains_id(tip.id_last()));
             if remaining.is_empty() {
-                return true;
+                return Ok(true);
             }
 
             if remaining.len() != len_before {
@@ -840,14 +883,14 @@ where
                 continue;
             }
 
-            if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+            if let Some(deps) = deps_to_ord_id_spans(&node, get)? {
                 for dep in deps {
                     pending.push(dep);
                 }
             }
         }
 
-        false
+        Ok(false)
     }
 
     /// Verifies the `ImportGreaterUpdates` contract for a multi-head `left`:
@@ -866,15 +909,15 @@ where
     /// through their new parents. The common healthy shape — a change whose
     /// deps equal the left frontier — passes with a set comparison and no
     /// graph walk. Trimmed history fails conservatively.
-    fn new_region_after_all_left_heads<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn new_region_after_all_left_heads<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
         get: &'a F,
         left: &Frontiers,
         right: &Frontiers,
-    ) -> bool {
+    ) -> LoroResult<bool> {
         let left_ids: FxHashSet<ID> = left.iter().collect();
-        let is_old = |id: ID| -> bool {
+        let is_old = |id: ID| -> LoroResult<bool> {
             if left_ids.contains(&id) {
-                return true;
+                return Ok(true);
             }
             let mut single = FxHashSet::default();
             single.insert(id);
@@ -884,11 +927,11 @@ where
         let mut visited: FxHashSet<ID> = FxHashSet::default();
         let mut stack: Vec<OrdIdSpan> = Vec::new();
         for id in right.iter() {
-            if is_old(id) {
+            if is_old(id)? {
                 continue;
             }
-            let Some(span) = OrdIdSpan::from_dag_node(id, get) else {
-                return false;
+            let Some(span) = OrdIdSpan::from_dag_node(id, get)? else {
+                return Ok(false);
             };
             stack.push(span);
         }
@@ -898,14 +941,14 @@ where
                 continue;
             }
 
-            let Some(parents) = deps_to_ord_id_spans(&span, get) else {
-                return false;
+            let Some(parents) = deps_to_ord_id_spans(&span, get)? else {
+                return Ok(false);
             };
             let mut entry_point = true;
             let mut old_parents = Frontiers::default();
             for parent in parents {
                 let pid = parent.id_last();
-                if is_old(pid) {
+                if is_old(pid)? {
                     old_parents.push(pid);
                 } else {
                     entry_point = false;
@@ -918,29 +961,29 @@ where
                     continue;
                 }
 
-                if !all_tips_covered_by_ancestors(get, &old_parents, &left_ids) {
-                    return false;
+                if !all_tips_covered_by_ancestors(get, &old_parents, &left_ids)? {
+                    return Ok(false);
                 }
             }
         }
 
-        true
+        Ok(true)
     }
 
-    fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> Option<D>>(
+    fn contains_in_ancestors<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
         get: &'a F,
         frontier: ID,
         target: &OrdIdSpan<'_>,
-    ) -> bool {
+    ) -> LoroResult<bool> {
         let mut visited = FxHashSet::default();
         let mut pending = Vec::new();
-        let Some(node) = OrdIdSpan::from_dag_node(frontier, get) else {
-            return false;
+        let Some(node) = OrdIdSpan::from_dag_node(frontier, get)? else {
+            return Ok(false);
         };
         pending.push(node);
         while let Some(node) = pending.pop() {
             if node.contains_id(target.id_last()) {
-                return true;
+                return Ok(true);
             }
 
             if node.lamport_last() < target.lamport_last() {
@@ -951,14 +994,14 @@ where
                 continue;
             }
 
-            if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+            if let Some(deps) = deps_to_ord_id_spans(&node, get)? {
                 for dep in deps {
                     pending.push(dep);
                 }
             }
         }
 
-        false
+        Ok(false)
     }
 
     // The third tuple item carries the dependency tips at which this path first
@@ -966,7 +1009,7 @@ where
     // side, those tips tell us whether it was a real concurrent branch or merely
     // a redundant route into an ancestor we already found.
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType, Vec<ID>)> = BinaryHeap::new();
-    for span in ids_to_ord_id_spans(left, get).unwrap() {
+    for span in ids_to_ord_id_spans(left, get)?.unwrap() {
         let branch_tips = if left.len() > 1 {
             vec![span.id_last()]
         } else {
@@ -975,7 +1018,7 @@ where
         queue.push((span, NodeType::A, branch_tips));
     }
 
-    for span in ids_to_ord_id_spans(right, get).unwrap() {
+    for span in ids_to_ord_id_spans(right, get)?.unwrap() {
         let branch_tips = if right.len() > 1 {
             vec![span.id_last()]
         } else {
@@ -1049,7 +1092,7 @@ where
             }
         }
 
-        if let Some(deps) = deps_to_ord_id_spans(&node, get) {
+        if let Some(deps) = deps_to_ord_id_spans(&node, get)? {
             if !deps.is_empty() {
                 let starts_new_branches = branch_tips.is_empty() && deps.len() > 1;
                 for dep in deps {
@@ -1086,20 +1129,20 @@ where
         }
     }
 
-    ans = shrink_ancestor_frontiers(&ans, get);
+    ans = shrink_ancestor_frontiers(&ans, get)?;
     // A branch can look unmatched merely because a shared node was found first
     // and was therefore not expanded. In that case another queued path may still
     // walk into one of the shared node's ancestors. That path is redundant, not a
     // concurrent branch. Only fall back when an unmatched tip is not causally
     // covered by the meet candidates we found.
     let has_uncovered_unmatched_branch = has_unresolved_unmatched_branch
-        || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches);
+        || !all_tips_covered_by_ancestors(get, &ans, &unmatched_branches)?;
     // A genuine concurrent branch invalidates the meet as a replay base. The
     // caller has to retreat to a critical version; which one is its choice, so
     // it can try a cheap multi-head cut before paying for the full-DAG
     // single-head descent.
     let mut needs_critical_retreat =
-        has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get);
+        has_uncovered_unmatched_branch && !has_trimmed_history_deps(&ans, get)?;
 
     if has_uncovered_unmatched_branch {
         is_right_greater = false;
@@ -1110,7 +1153,7 @@ where
         is_right_greater = true;
     }
 
-    if is_right_greater && left.len() > 1 && !new_region_after_all_left_heads(get, left, right) {
+    if is_right_greater && left.len() > 1 && !new_region_after_all_left_heads(get, left, right)? {
         // Version inclusion holds, but part of the new region entered old
         // history through a strict subset of the left heads and is therefore
         // concurrent with the others. `ImportGreaterUpdates` promises "no
@@ -1144,7 +1187,7 @@ where
     } else {
         MeetAsBase::Valid(ans)
     };
-    (meet, mode)
+    Ok((meet, mode))
 }
 
 pub fn remove_included_frontiers(frontiers: &mut VersionVector, new_change_deps: &[ID]) {
@@ -1745,13 +1788,7 @@ mod tests {
         let root = node(1, 0, 1, 0, Frontiers::default());
         let x = node(2, 0, 1, 1, ID::new(1, 0).into());
         let y = node(3, 0, 1, 1, ID::new(1, 0).into());
-        let merge = node(
-            4,
-            0,
-            1,
-            2,
-            Frontiers::from([ID::new(2, 0), ID::new(3, 0)]),
-        );
+        let merge = node(4, 0, 1, 2, Frontiers::from([ID::new(2, 0), ID::new(3, 0)]));
         let dag = TestDag::new(vec![root, x, y, merge], ID::new(4, 0).into());
 
         let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);

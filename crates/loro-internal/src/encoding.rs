@@ -235,7 +235,7 @@ pub(crate) fn decode_oplog(
     parsed: ParsedHeaderAndBody,
 ) -> Result<ImportStatus, LoroError> {
     let changes = decode_oplog_changes(oplog, parsed)?;
-    let result = apply_decoded_changes_to_oplog(oplog, changes);
+    let result = apply_decoded_changes_to_oplog(oplog, changes)?;
     if result.has_deps_before_shallow_root {
         return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
     }
@@ -266,13 +266,13 @@ pub(crate) struct ApplyDecodedChangesResult {
 pub(crate) fn apply_decoded_changes_to_oplog(
     oplog: &mut OpLog,
     changes: Vec<Change>,
-) -> ApplyDecodedChangesResult {
+) -> LoroResult<ApplyDecodedChangesResult> {
     let ImportChangesResult {
         mut imported,
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root,
-    } = import_changes_to_oplog(changes, oplog);
+    } = import_changes_to_oplog(changes, oplog)?;
 
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
     oplog.try_apply_pending(latest_ids, Some(&mut imported));
@@ -281,13 +281,13 @@ pub(crate) fn apply_decoded_changes_to_oplog(
     // remain in the returned pending range.
     let pending =
         oplog.import_unknown_lamport_pending_changes(pending_changes, Some(&mut imported));
-    ApplyDecodedChangesResult {
+    Ok(ApplyDecodedChangesResult {
         status: ImportStatus {
             success: imported,
             pending: (!pending.is_empty()).then_some(pending),
         },
         has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty(),
-    }
+    })
 }
 
 pub(crate) struct ParsedHeaderAndBody<'a> {

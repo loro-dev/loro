@@ -54,7 +54,8 @@ fn snapshot_bad_and_good_update() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     e.get_list("list").insert(0, 1).unwrap();
     e.get_list("list").insert(1, 2).unwrap();
     e.commit();
-    let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+    let mut json =
+        serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
     let last = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
         .as_array_mut()
         .unwrap()
@@ -120,7 +121,8 @@ fn failed_import_leaves_state_at_freed_indices() {
     e.get_list("list").insert(0, 1).unwrap();
     e.get_list("list").insert(1, 2).unwrap();
     e.commit();
-    let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+    let mut json =
+        serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
     let last = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
         .as_array_mut()
         .unwrap()
@@ -294,7 +296,8 @@ fn handlers_created_during_a_failed_import_keep_their_containers() {
     e.get_list("list").insert(0, 1).unwrap();
     e.get_list("list").insert(1, 2).unwrap();
     e.commit();
-    let mut json = serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv())).unwrap();
+    let mut json =
+        serde_json::to_value(e.export_json_updates(&vv, &e.oplog_vv()).unwrap()).unwrap();
     let last = json["changes"].as_array_mut().unwrap().last_mut().unwrap()["ops"]
         .as_array_mut()
         .unwrap()

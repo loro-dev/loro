@@ -313,8 +313,10 @@ fn json_updates_roundtrip_nested_values_and_peer_compression() -> anyhow::Result
     let start = VersionVector::default();
     let end = doc.oplog_vv();
 
-    let compressed = doc.export_json_updates(&start, &end);
-    let uncompressed = doc.export_json_updates_without_peer_compression(&start, &end);
+    let compressed = doc.export_json_updates(&start, &end).unwrap();
+    let uncompressed = doc
+        .export_json_updates_without_peer_compression(&start, &end)
+        .unwrap();
 
     assert_eq!(compressed.schema_version, 1);
     assert_eq!(uncompressed.schema_version, 1);
@@ -391,7 +393,8 @@ fn import_json_updates_accepts_reordered_op_fields() -> anyhow::Result<()> {
     doc.commit();
 
     let json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     let value = serde_json::to_value(json)?;
     let change = &value["changes"][0];
     let op = &change["ops"][0];
@@ -428,7 +431,8 @@ fn import_json_updates_rejects_unsupported_schema_version() -> anyhow::Result<()
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     json.schema_version = 2;
 
     let err = LoroDoc::new().import_json_updates(json).unwrap_err();
@@ -470,14 +474,18 @@ fn export_json_updates_clamps_negative_version_ranges() -> anyhow::Result<()> {
 
     let mut negative_start = VersionVector::new();
     negative_start.insert(doc.peer_id(), i32::MIN);
-    let json = doc.export_json_updates(&negative_start, &doc.oplog_vv());
+    let json = doc
+        .export_json_updates(&negative_start, &doc.oplog_vv())
+        .unwrap();
     let restored = LoroDoc::new();
     restored.import_json_updates(json)?;
     assert_eq!(restored.get_text("text").to_string(), "a");
 
     let mut negative_end = VersionVector::new();
     negative_end.insert(doc.peer_id(), -1);
-    let json = doc.export_json_updates(&VersionVector::default(), &negative_end);
+    let json = doc
+        .export_json_updates(&VersionVector::default(), &negative_end)
+        .unwrap();
     let restored = LoroDoc::new();
     restored.import_json_updates(json)?;
     assert_eq!(restored.get_text("text").to_string(), "");
@@ -492,7 +500,8 @@ fn import_json_updates_rejects_negative_op_counters() -> anyhow::Result<()> {
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     json.changes[0].id.counter = -1;
     json.changes[0].ops[0].counter = -1;
 
@@ -513,7 +522,8 @@ fn import_json_updates_rejects_negative_dependency_counters() -> anyhow::Result<
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     json.changes[0].deps.push(ID::new(77, -1));
 
     let err = LoroDoc::new().import_json_updates(json).unwrap_err();
@@ -576,6 +586,7 @@ fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow
         serde_json::to_value(&changes)?,
         serde_json::to_value(
             &doc.export_json_updates_without_peer_compression(&VersionVector::default(), &end)
+                .unwrap()
                 .changes
         )?
     );
@@ -671,7 +682,9 @@ fn json_update_schema_covers_list_map_text_tree_and_movable_list_ops() -> anyhow
     assert!(saw_tree_move);
     assert!(saw_tree_delete);
 
-    let compressed = doc.export_json_updates(&VersionVector::default(), &end);
+    let compressed = doc
+        .export_json_updates(&VersionVector::default(), &end)
+        .unwrap();
     assert!(compressed.peers.is_some());
     assert_eq!(compressed.changes.len(), changes.len());
 
@@ -700,7 +713,8 @@ fn import_json_updates_rejects_non_contiguous_op_counters() -> anyhow::Result<()
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     json.changes[0].ops[0].counter += 1;
 
     let err = LoroDoc::new().import_json_updates(json).unwrap_err();
@@ -721,7 +735,8 @@ fn import_json_updates_rejects_mismatched_created_container_id() -> anyhow::Resu
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::Map(JsonMapOp::Insert {
             value: LoroValue::Container(id),
@@ -751,10 +766,12 @@ fn import_json_updates_rejects_mismatched_list_created_container_ids() -> anyhow
         .insert_container(0, LoroMap::new())?;
     list_doc.commit();
 
-    let mut list_json = list_doc.export_json_updates_without_peer_compression(
-        &VersionVector::default(),
-        &list_doc.oplog_vv(),
-    );
+    let mut list_json = list_doc
+        .export_json_updates_without_peer_compression(
+            &VersionVector::default(),
+            &list_doc.oplog_vv(),
+        )
+        .unwrap();
     for op in &mut list_json.changes[0].ops {
         if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
             if let Some(LoroValue::Container(id)) = value.first_mut() {
@@ -777,10 +794,12 @@ fn import_json_updates_rejects_mismatched_list_created_container_ids() -> anyhow
     movable.set_container(0, LoroText::new())?;
     movable_doc.commit();
 
-    let mut movable_json = movable_doc.export_json_updates_without_peer_compression(
-        &VersionVector::default(),
-        &movable_doc.oplog_vv(),
-    );
+    let mut movable_json = movable_doc
+        .export_json_updates_without_peer_compression(
+            &VersionVector::default(),
+            &movable_doc.oplog_vv(),
+        )
+        .unwrap();
     for op in &mut movable_json.changes[0].ops {
         if let JsonOpContent::MovableList(JsonMovableListOp::Set {
             value: LoroValue::Container(id),
@@ -811,7 +830,8 @@ fn import_json_updates_rejects_tree_create_target_not_matching_op_id() -> anyhow
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::Tree(JsonTreeOp::Create { target, .. }) = &mut op.content {
             *target = TreeID {
@@ -849,7 +869,8 @@ fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::Map(JsonMapOp::Insert { value, .. }) = &mut op.content {
             *value = nested_container_value(76, op.counter);
@@ -869,7 +890,8 @@ fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::List(JsonListOp::Insert { value, .. }) = &mut op.content {
             value[0] = nested_container_value(77, op.counter);
@@ -891,7 +913,8 @@ fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::Text(JsonTextOp::Mark { style_value, .. }) = &mut op.content {
             *style_value = nested_container_value(78, op.counter);
@@ -913,7 +936,8 @@ fn import_json_updates_rejects_nested_container_values() -> anyhow::Result<()> {
     doc.commit();
 
     let mut json = doc
-        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv());
+        .export_json_updates_without_peer_compression(&VersionVector::default(), &doc.oplog_vv())
+        .unwrap();
     for op in &mut json.changes[0].ops {
         if let JsonOpContent::MovableList(JsonMovableListOp::Set { value, .. }) = &mut op.content {
             *value = nested_container_value(79, op.counter);

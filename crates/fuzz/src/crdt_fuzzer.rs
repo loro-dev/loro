@@ -533,13 +533,15 @@ impl CRDTFuzzer {
                     }
                     _ => {
                         info_span!("JsonFormat", from = i, to = j).in_scope(|| {
-                            let a_json =
-                                a_doc.export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv());
+                            let a_json = a_doc
+                                .export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv())
+                                .unwrap();
                             b_doc.import_json_updates(a_json).unwrap();
                         });
                         info_span!("JsonFormat", from = j, to = i).in_scope(|| {
-                            let b_json =
-                                b_doc.export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv());
+                            let b_json = b_doc
+                                .export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv())
+                                .unwrap();
                             a_doc.import_json_updates(b_json).unwrap();
                         });
                     }
@@ -815,8 +817,9 @@ pub fn test_multi_sites_with_gc(
                     }
                     _ => {
                         let synced = info_span!("JsonFormat", from = i, to = j).in_scope(|| {
-                            let a_json =
-                                a_doc.export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv());
+                            let a_json = a_doc
+                                .export_json_updates(&b_doc.oplog_vv(), &a_doc.oplog_vv())
+                                .unwrap();
                             handle_gc_sync_import_result(b_doc.import_json_updates(a_json))
                         });
                         can_check_eq &= synced;
@@ -824,7 +827,8 @@ pub fn test_multi_sites_with_gc(
                             let synced =
                                 info_span!("JsonFormat", from = j, to = i).in_scope(|| {
                                     let b_json = b_doc
-                                        .export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv());
+                                        .export_json_updates(&a_doc.oplog_vv(), &b_doc.oplog_vv())
+                                        .unwrap();
                                     handle_gc_sync_import_result(a_doc.import_json_updates(b_json))
                                 });
                             can_check_eq &= synced;
