@@ -280,13 +280,13 @@ impl LoroDoc {
         self.doc.is_detached_editing_enabled()
     }
 
-    /// Set the interval of mergeable changes, **in seconds**.
+    /// Set the interval of mergeable changes, **in milliseconds**.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.
-    /// The default value is 1000 seconds.
+    /// The default value is 1000 milliseconds.
     ///
-    /// By default, we record timestamps in seconds for each change. So if the merge interval is 1, and changes A and B
-    /// have timestamps of 3 and 4 respectively, then they will be merged into one change.
+    /// By default, we record timestamps in milliseconds for each change. So if the merge interval is 1000, and changes A and B
+    /// have timestamps of 3000 and 4000 respectively, then they will be merged into one change.
     #[inline]
     pub fn set_change_merge_interval(&self, interval: i64) {
         self.doc.set_change_merge_interval(interval);
@@ -1468,6 +1468,26 @@ impl LoroDoc {
     #[inline]
     pub fn revert_to(&self, version: &Frontiers) -> LoroResult<()> {
         self.doc.revert_to(version)
+    }
+
+    /// Append the ops that invert `span` — the same machinery
+    /// [`UndoManager`] uses for undo, callable on *any* peer's ops, not
+    /// just the bound peer's. Unlike [`revert_to`](Self::revert_to), which
+    /// rewinds state to a target version (discarding whatever arrived
+    /// since), this inverts only the ops in the span: everything else —
+    /// including edits merged in after the span — is untouched. The
+    /// inverse ops commit under this peer's id with `origin: "undo"`.
+    ///
+    /// The spans a merge imported are `pre_vv.diff(&post_vv).forward` —
+    /// `undo_span` is how a merge (or any oplog range) is reverted
+    /// surgically rather than by rewinding the whole document.
+    #[inline]
+    pub fn undo_span(&self, span: IdSpan) -> LoroResult<()> {
+        let commit = self
+            .doc
+            .undo_internal(span, &mut Default::default(), None, &mut |_| {})?;
+        drop(commit);
+        Ok(())
     }
 
     /// Apply a diff to the current document state.

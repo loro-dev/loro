@@ -32,7 +32,7 @@ pub struct Change<O = Op> {
     pub(crate) lamport: Lamport,
     pub(crate) deps: Frontiers,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
-    /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+    /// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub(crate) timestamp: Timestamp,
     pub(crate) commit_msg: Option<Arc<str>>,
     pub(crate) ops: RleVec<[O; 1]>,

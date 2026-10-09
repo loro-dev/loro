@@ -430,6 +430,8 @@ impl DiffCalculator {
             }
         }
 
+        #[cfg(feature = "tracker-stats")]
+        crate::container::richtext::tracker::stats::dump("calc_diff");
         (
             ans.into_values().map(|x| x.1).collect_vec(),
             origin_diff_mode,
@@ -1503,6 +1505,8 @@ impl RichtextDiffCalculator {
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
+        #[cfg(feature = "tracker-stats")]
+        crate::container::richtext::tracker::stats::dump("rebuild");
         (tracker, styles)
     }
 }

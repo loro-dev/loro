@@ -11,7 +11,7 @@ use std::sync::Arc;
 pub struct Configure {
     pub(crate) text_style_config: Arc<RwLock<StyleConfigMap>>,
     record_timestamp: Arc<AtomicBool>,
-    pub(crate) merge_interval_in_s: Arc<AtomicI64>,
+    pub(crate) merge_interval_in_ms: Arc<AtomicI64>,
     pub(crate) editable_detached_mode: Arc<AtomicBool>,
     pub(crate) deleted_root_containers: Arc<Mutex<FxHashSet<ContainerID>>>,
     pub(crate) hide_empty_root_containers: Arc<AtomicBool>,
@@ -35,7 +35,7 @@ impl Default for Configure {
             text_style_config: Arc::new(RwLock::new(StyleConfigMap::default_rich_text_config())),
             record_timestamp: Arc::new(AtomicBool::new(false)),
             editable_detached_mode: Arc::new(AtomicBool::new(false)),
-            merge_interval_in_s: Arc::new(AtomicI64::new(1000)),
+            merge_interval_in_ms: Arc::new(AtomicI64::new(1000)),
             deleted_root_containers: Arc::new(Mutex::new(Default::default())),
             hide_empty_root_containers: Arc::new(AtomicBool::new(false)),
         }
@@ -50,8 +50,8 @@ impl Configure {
                 self.record_timestamp
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
-            merge_interval_in_s: Arc::new(AtomicI64::new(
-                self.merge_interval_in_s
+            merge_interval_in_ms: Arc::new(AtomicI64::new(
+                self.merge_interval_in_ms
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
             editable_detached_mode: Arc::new(AtomicBool::new(
@@ -93,12 +93,12 @@ impl Configure {
     }
 
     pub fn merge_interval(&self) -> i64 {
-        self.merge_interval_in_s
+        self.merge_interval_in_ms
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn set_merge_interval(&self, interval: i64) {
-        self.merge_interval_in_s
+        self.merge_interval_in_ms
             .store(interval, std::sync::atomic::Ordering::Relaxed);
     }
 

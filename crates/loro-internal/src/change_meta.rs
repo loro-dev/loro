@@ -27,7 +27,7 @@ pub struct ChangeMeta {
     /// The first Op id of the Change
     pub id: ID,
     /// [Unix time](https://en.wikipedia.org/wiki/Unix_time)
-    /// It is the number of seconds that have elapsed since 00:00:00 UTC on 1 January 1970.
+    /// It is the number of milliseconds that have elapsed since 00:00:00 UTC on 1 January 1970.
     pub timestamp: Timestamp,
     /// The commit message of the change
     pub message: Option<Arc<str>>,
@@ -91,7 +91,7 @@ impl ChangeMeta {
         }
     }
 
-    /// Get the commit timestamp in seconds since Unix epoch.
+    /// Get the commit timestamp in milliseconds since Unix epoch.
     pub fn timestamp(&self) -> crate::change::Timestamp {
         self.timestamp
     }

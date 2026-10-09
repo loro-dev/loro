@@ -183,7 +183,7 @@ impl OpLog {
     pub(crate) fn new(visible_op_count: Arc<AtomicUsize>) -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
-        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
+        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_ms.clone());
         arena.set_creator_resolver(change_store.creator_resolver());
         Self {
             visible_op_count,
@@ -515,7 +515,7 @@ impl OpLog {
         let configure = self.configure.clone();
         // Also rolls back the arena; see `ChangeStore::retire`.
         self.change_store.retire(arena_checkpoint);
-        let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_s.clone());
+        let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_ms.clone());
         arena.set_creator_resolver(change_store.creator_resolver());
         self.history_cache = Mutex::new(ContainerHistoryCache::new(change_store.clone(), None));
         self.dag = AppDag::new(change_store.clone());
@@ -1603,7 +1603,11 @@ pub(crate) fn local_op_to_remote(
 }
 
 pub(crate) fn get_timestamp_now_txn() -> Timestamp {
-    (get_sys_timestamp() as Timestamp + 500) / 1000
+    // Milliseconds — `get_sys_timestamp` already yields ms, and every
+    // other consumer (awareness, undo, diff timeouts) treats Timestamp as
+    // ms. Rounding to seconds here made per-commit timing useless for
+    // replay (creation tapes pace edits on these values).
+    get_sys_timestamp() as Timestamp
 }
 
 #[cfg(test)]

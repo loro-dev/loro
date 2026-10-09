@@ -196,7 +196,8 @@ fn timestamp() {
     doc1.commit();
     doc1.with_oplog(|oplog| {
         let c = oplog.get_change_at(ID::new(1, 2)).unwrap();
-        assert!(c.timestamp() < last_timestamp + 10);
+        // timestamps are milliseconds — 10s of slack around the previous commit
+        assert!(c.timestamp() < last_timestamp + 10_000);
     });
 }
 

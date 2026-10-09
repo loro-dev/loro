@@ -959,8 +959,7 @@ impl UndoManager {
                         return Err(e);
                     }
                     Err(e) => {
-                        get_stack(&mut self.inner.lock().borrow_mut())
-                            .push(span.span, span.meta);
+                        get_stack(&mut self.inner.lock().borrow_mut()).push(span.span, span.meta);
                         return Err(e);
                     }
                 };
