@@ -41,35 +41,37 @@ fn refine_vv(vv: &VersionVector, oplog: &OpLog) -> VersionVector {
     refined
 }
 
-pub(crate) fn export_json<'a, 'c: 'a>(
+pub(crate) fn try_export_json<'a, 'c: 'a>(
     oplog: &'c OpLog,
     start_vv: &VersionVector,
     end_vv: &VersionVector,
     with_peer_compression: bool,
-) -> JsonSchema {
+) -> LoroResult<JsonSchema> {
     let actual_start_vv = refine_vv(start_vv, oplog);
     let actual_end_vv = refine_vv(end_vv, oplog);
 
-    let frontiers = oplog.dag.vv_to_frontiers(&actual_start_vv);
+    let frontiers = oplog.dag.try_vv_to_frontiers(&actual_start_vv)?;
 
     let diff_changes = init_encode(oplog, &actual_start_vv, &actual_end_vv);
+    // Legacy iteration records a bad block and skips it. Do not return that gap.
+    oplog.check_history_parsable()?;
     if with_peer_compression {
         let mut peer_register = ValueRegister::<PeerID>::new();
         let changes = encode_changes(&diff_changes, &oplog.arena, Some(&mut peer_register));
-        JsonSchema {
+        Ok(JsonSchema {
             changes,
             schema_version: SCHEMA_VERSION,
             peers: Some(peer_register.unwrap_vec()),
             start_version: frontiers,
-        }
+        })
     } else {
         let changes = encode_changes(&diff_changes, &oplog.arena, None);
-        JsonSchema {
+        Ok(JsonSchema {
             changes,
             schema_version: SCHEMA_VERSION,
             peers: None,
             start_version: frontiers,
-        }
+        })
     }
 }
 
@@ -1899,17 +1901,21 @@ mod tests {
         list.insert(0, "a").unwrap();
         list.insert(0, "b").unwrap();
         list.insert(0, "c").unwrap();
-        let json = doc.export_json_updates(
-            &VersionVector::from_iter(vec![(0, 1)]),
-            &VersionVector::from_iter(vec![(0, 2)]),
-            true,
-        );
+        let json = doc
+            .export_json_updates(
+                &VersionVector::from_iter(vec![(0, 1)]),
+                &VersionVector::from_iter(vec![(0, 2)]),
+                true,
+            )
+            .unwrap();
         assert_eq!(json.changes[0].ops.len(), 1);
-        let json = doc.export_json_updates(
-            &VersionVector::from_iter(vec![(0, 0)]),
-            &VersionVector::from_iter(vec![(0, 2)]),
-            true,
-        );
+        let json = doc
+            .export_json_updates(
+                &VersionVector::from_iter(vec![(0, 0)]),
+                &VersionVector::from_iter(vec![(0, 2)]),
+                true,
+            )
+            .unwrap();
         assert_eq!(json.changes[0].ops.len(), 2);
     }
 }

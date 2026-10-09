@@ -972,7 +972,9 @@ mod test {
         println!("Snapshot bytes {:?}", dev_utils::ByteSize(bytes.length()));
         // assert!(bytes.len() < 30);
 
-        let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), true);
+        let json = doc
+            .export_json_updates(&Default::default(), &doc.oplog_vv(), true)
+            .unwrap();
         let json_string = serde_json::to_string(&json.changes).unwrap();
         println!(
             "JSON string bytes {:?}",

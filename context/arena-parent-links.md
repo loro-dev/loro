@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-10-01.
+Verified against code 2026-10-09.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -105,62 +105,145 @@ No path leads to it, so callers treat it like a deleted container:
 
 ## A block that cannot be parsed
 
-Snapshot import validates the KV checksums (`ChangeStore::import_all`), so a
-lazily loaded block that fails to parse is forged or truncated external input,
-not an internal invariant. The resolver runs under the state lock from queries
-that return `bool` or `Option` (`is_deleted`, `has_container`, `get_path`), so
-it has no `Err` to return, and a panic there unwinds under the locks and traps
-the WASM instance. Until 2026-09-30 it panicked.
+Snapshot import validates the KV checksums (`ChangeStore::import_all`), but
+loads full-snapshot history lazily. A forged or truncated block with recomputed
+checksums can therefore be accepted before its contents are read. Honest data
+does not produce such a block; a decode/parse failure is invalid external input,
+not an impossible internal invariant.
 
 Every ordinary history reader that fails to decode or parse a block records
 it in `ChangeStore::parse_failures` (a leaf lock; the first failure is kept) and
 answers "no such change", as the readers other than the resolver always did.
-The resolver answers `CreatorOp::Corrupt`, which the arena treats like `Absent`
-for that one lookup: the container reads as deleted, the ID as not a container.
+Legacy `Option` readers answer "no such change". The creator resolver answers
+`CreatorOp::Corrupt`, which the arena treats like `Absent` for that one lookup:
+`is_deleted`, `has_container`, and `get_path` cannot return an error, so the
+container reads as deleted or absent and the ID as not a container. This avoids
+panicking under their state lock, but does not establish that the container is
+actually absent.
 
-That answer may be wrong, so `OpLog::check_history_parsable` turns the record
-into `DecodeError("cannot parse change block ...")`. **Only public entry points
-that return a `Result` call it:**
+`OpLog::check_history_parsable` converts the record to
+`DecodeError("cannot parse change block ...")`. Public fallible operations check
+already recorded failures, and their history reads also propagate failures
+**on the first read**, without requiring an earlier query to record them:
 
-- `LoroDoc::checkout`, `diff` and `revert_to` (through `diff_events`), and
-  `import` (every path, through
-  `import_changes_and_apply_delta_to_state_if_needed`), before they start.
-- `LoroDoc::export` (and so `fork_at` and `merge`), before it starts and again
-  when it is done, so an export that is the first to read the block fails
-  instead of returning bytes without the block's changes.
+- `AppDag::ensure_lazy_load_node` returns `LoroResult<()>`. If the change store
+  cannot provide a node, it checks the recorded parse failure and returns it.
+  If there is no parse failure, an id promised by `unparsed_vv` but absent from
+  the store is still an impossible internal inconsistency: the original
+  "unparsed vv don't match with change store" assertion remains.
+- DAG version conversion, replay-base selection, causal iteration, and diff
+  calculation use fallible reads. `checkout`, `diff`, `revert_to`, `fork_at`,
+  binary/JSON/batch imports, and shallow/state-only/snapshot-at exports propagate
+  the error before applying state. Attached imports enable their existing
+  rollback journal when the change store may still hold unparsed **bodies**,
+  including register-only imports that otherwise need no journal. DAG loading
+  reads headers only: draining `AppDag::unparsed_vv` does not validate bodies.
+  `ChangeStoreInner::may_have_unparsed_bodies` is a conservative flag set on
+  snapshot import/fork, cleared by a successful `visit_all_changes`, and set
+  again when arena rollback discards parsed bodies. Individual body reads do
+  not clear it; imports can therefore keep using a journal after all bodies
+  have been read individually, until a full walk confirms that fact.
+  The attached import, DAG journal, and change-store journal share one
+  `Arc<VersionVector>` snapshot instead of copying that vector three times.
+  The DAG's separate `unparsed_vv` checkpoint is still copied; after header
+  warming it is empty. Initial shallow-snapshot import also
+  returns the error if reading its root fails, then resets state and op log.
+- `ChangeStore::try_iter_changes` validates the requested range before handing
+  changes to a consumer. Export stops at an unreadable block rather than
+  feeding a gap into a scratch history or returning partial bytes; the public
+  export's final history check returns the recorded error. Legacy `iter_blocks`
+  and `iter_changes` instead record and skip only the bad block, preserving
+  the healthy portions of the requested range at their infallible boundaries.
+- Query signatures that previously returned `Option` or plain values remain
+  available. Use `try_frontiers_to_vv`, `try_vv_to_frontiers`,
+  `try_minimize_frontiers`, `try_find_id_spans_between`, `try_get_change`
+  (`OpLog::try_get_change_at`), `try_get_changed_containers_in`,
+  `try_state_vv`, `try_export_json_updates`, and `try_get_cursor_pos` to
+  receive decode errors. `state_vv` clones `OpLog::vv` when the state and op
+  log frontiers are equal; that vector is cached and does not parse block
+  bodies. Otherwise it uses `try_frontiers_to_vv`, and returns
+  `FrontiersNotFound` when a frontier id is absent rather than an empty
+  version vector. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
+  which can now carry the decode-error message; `travel_change_ancestors`
+  returns `ChangeTravelError::HistoryUnreadable(LoroError::DecodeError(..))`.
+  `ChangeTravelError` is now non-exhaustive, so downstream matches need a
+  wildcard arm. `FrontiersNotIncluded` is a struct with a private field plus a
+  same-named constant. Construction via the constant still compiles, but an
+  exhaustive `match` of `Err(FrontiersNotIncluded)` does not (`E0004`): the
+  `history_error: Some(_)` pattern cannot be written from another crate
+  (`E0451`) because the field is private. Downstream must use `Err(_)`. An
+  unreadable-history error is not equal to the constant.
+  `CannotFindRelativePosition` is non-exhaustive and gains `HistoryUnreadable`.
+  `LoroEncodeError` gains `DecodeError`, so `fork_at` keeps a decode failure
+  instead of wrapping it as `Unknown`. WASM queries that already return
+  `JsResult` use these fallible readers too, including `version`,
+  `exportJsonUpdates`, `getCursorPos`, `findIdSpansBetween`, `frontiersToVV`,
+  `vvToFrontiers`, `getChangeAt`, `getChangeAtLamport`, `getOpsInChange`, and
+  `getChangedContainersIn`; their JS names and return types stay the same.
 
-Do not move the check into `_checkout_without_emitting` or the exporters.
-`undo` (`calc_diff`), `checkout_to_latest`, and `fork` on a detached doc call
-them and `unwrap` the result, so a check there turns the record into a panic
-on those paths (the first version of this fix did). `fork` uses
-`export_inner(.., false)` / `fork_at_inner(.., false)` for the same reason.
+A failed fallible operation leaves materialized values, document versions, and
+attached/detached status unchanged; loading valid blocks may populate history
+caches. The successful DAG lazy-load path does no additional block reads or
+parse-failure checks: the error-record lookup is inside the missing-node branch.
+The release benchmark `crates/loro/tests/perf_history_lazy_load.rs` measures
+fresh snapshot import, cold historical checkout, and concurrent update import.
+Its `perf_map_import_many_peers` case measures a one-op causal map import with
+1k/10k peers, both cold and after warming every DAG header without parsing old
+bodies. Setup is outside the timer. Against pre-review commit `be17aed3`,
+three alternating before/after pairs, each with three repeats of 30 imports,
+gave median after/before ratios of 1.001/1.011 (cold) and 0.997/0.996 (headers
+warmed), on macOS arm64 in release. Sharing the version snapshot removes two
+extra full-vector clones from journal creation; opening the journal no longer
+adds those O(peers) copies. These timings show no material increase in this
+workload, rather than a bound on every import workload.
 
-Limits:
+Limits and compatibility:
 
-- The paths without the check behave as before the record existed. They can
-  still panic when they need the broken block itself: `AppDag` loads its nodes
-  from the change store and panics with "unparsed vv don't match with change
-  store" (`loro_dag.rs`, `ensure_lazy_load_node`).
-- A read that returns before any failure was recorded is not undone: an
-  `import` or `checkout` using a general history reader can finish on partial
-  history when it is the first to read the block. Only `export` checks again at
-  the end. The direct cold Text comparison in `known_history.rs` falls back to
-  the ordinary reader on a decoding/eligibility error. Its stricter op-length
-  and change-boundary checks never record a `parse_failures` entry themselves;
-  only a failure of the ordinary parser declares local history unparsable.
-- Local edits still succeed after a failure was recorded, but they cannot be
-  exported from this document any more. What can be salvaged is the current
-  state (`get_deep_value`).
+- Reads that need no history do not eagerly validate every block. For example,
+  full snapshot import and byte-faithful full snapshot export can copy an
+  unreadable block before any failure has been recorded. A query that can use
+  the latest version directly may also succeed without reading it, including
+  `state_vv` when the state frontiers are the op-log frontiers.
+- The legacy helpers used by `undo`, `checkout_to_latest`, and `fork` retain
+  their infallible boundaries. Their fallible reads record the failure first,
+  then their existing unwrap boundary may panic if they need the broken history.
+  A detached `fork` fails outside the source document's locks, leaving fallible
+  reads on the source able to report the record. Other infallible paths can
+  still unwind under locks or trap WASM. Do not add blanket record checks to
+  their shared internal helpers: a recorded failure alone must not break an
+  operation that can finish using healthy history. A missing node with no
+  recorded parse failure is still the internal "unparsed vv don't match with
+  change store" assertion in `ensure_lazy_load_node`.
+- The direct cold Text comparison in `known_history.rs` falls back to the
+  ordinary reader on a decoding/eligibility error. Its stricter op-length and
+  change-boundary checks never record a `parse_failures` entry themselves; only
+  a failure of the ordinary parser declares local history unparsable. A read
+  that returns before any failure was recorded is not undone.
+- Local edits and `get_deep_value` can still use the current state after a
+  failure is recorded. Fallible history operations and public exports then
+  reject the unreadable history, so the document can no longer be exported.
 
-Tests, in `change_store.rs`:
-`the_creator_resolver_reports_an_unparsable_block_instead_of_panicking`,
-`every_reader_records_an_unparsable_block`,
-`a_doc_with_an_unparsable_block_neither_panics_nor_exports_partial_history`
-(a truncated block; the container is one that a healthy history finds),
-`an_export_that_finds_an_unparsable_block_fails_instead_of_skipping_it`, and
-`a_recorded_parse_failure_does_not_panic_where_no_error_can_be_returned` (the
-record is set by hand on a healthy doc, to separate the check from the DAG
-panic above).
+Regression tests in `change_store.rs` cover every store reader, the creator
+resolver, first DAG reads on tree history, and infallible compatibility. The
+internal missing-node assertion is tested in `loro_dag.rs`.
+`crates/loro/tests/unregistered_container_parent.rs`
+rewrites snapshot bytes through the public KV API and repairs both checksum
+layers. Each fallible entry point gets its own fresh document, with the first,
+middle, and last peer-1 block truncated; it must return "cannot parse change
+block" without a panic, preserve the value/version/status, and leave locks
+usable. It also tests initial shallow-import rollback. The regression
+`register_only_import_rolls_back_when_only_old_block_headers_were_read` flips
+the third byte from the end of the first/middle/last peer-1 block and repairs
+the checksums. Both peers' DAG version queries succeed before a concurrent
+map import first parses the bad body. The import must return the decode error,
+with op log and state frontiers still equal to their original frontiers,
+unchanged values/version vector, and an attached document. The healthy-doc test
+`a_recorded_parse_failure_does_not_panic_where_no_error_can_be_returned` keeps
+manual error records separate from actual unreadable blocks.
+`crates/loro-wasm/tests/unparsable_history.test.ts` uses the same corrupted
+snapshot as a fixture and checks JS exceptions, unchanged values/versions,
+and a usable WASM instance after each first read. Its body-corruption fixture
+also verifies a map import's rollback after both peers' header queries succeed.
 
 ## Cost of looking up an ID
 

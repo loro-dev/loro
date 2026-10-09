@@ -398,7 +398,7 @@ fn main() -> anyhow::Result<()> {
     })?;
     std::fs::write(out_dir.join("updates.blob"), &updates_blob)?;
 
-    let updates_schema = doc.export_json_updates(&start, &end);
+    let updates_schema = doc.export_json_updates(&start, &end).unwrap();
     let updates_json = serde_json::to_value(&updates_schema)?;
     write_json(&out_dir.join("updates.json"), &updates_json)?;
 

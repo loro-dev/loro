@@ -52,7 +52,13 @@ pub struct AbsolutePosition {
     pub side: Side,
 }
 
+/// Why a cursor could not be resolved to an absolute position.
+///
+/// Non-exhaustive: `HistoryUnreadable` means the lookup had to read history
+/// that cannot be parsed. It is not the same as a missing id. Downstream
+/// matches need a wildcard arm.
 #[derive(Debug, Clone, Copy, thiserror::Error)]
+#[non_exhaustive]
 pub enum CannotFindRelativePosition {
     #[error("Cannot find relative position. The container is deleted.")]
     ContainerDeleted,
@@ -60,6 +66,9 @@ pub enum CannotFindRelativePosition {
     HistoryCleared,
     #[error("Cannot find relative position. The id is not found.")]
     IdNotFound,
+    /// The lookup needed a change block that cannot be parsed.
+    #[error("Cannot find relative position because the document history cannot be read.")]
+    HistoryUnreadable,
 }
 
 impl Cursor {

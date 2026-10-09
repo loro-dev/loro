@@ -118,12 +118,16 @@ mod run {
         b.bench_function("B4_encode_json_update", |b| {
             ensure_ran();
             b.iter(|| {
-                let _ = loro.export_json_updates(&Default::default(), &loro.oplog_vv(), true);
+                let _ = loro
+                    .export_json_updates(&Default::default(), &loro.oplog_vv(), true)
+                    .unwrap();
             })
         });
         b.bench_function("B4_decode_json_update", |b| {
             ensure_ran();
-            let json = loro.export_json_updates(&Default::default(), &loro.oplog_vv(), true);
+            let json = loro
+                .export_json_updates(&Default::default(), &loro.oplog_vv(), true)
+                .unwrap();
             b.iter(|| {
                 let store2 = LoroDoc::default();
                 store2.import_json_updates(json.clone()).unwrap();

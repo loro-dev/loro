@@ -1614,6 +1614,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "tracing",
+ "xxhash-rust",
 ]
 
 [[package]]

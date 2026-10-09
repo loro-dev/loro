@@ -67,7 +67,10 @@ fn every_import_path_agrees() {
 
     let from_json = LoroDoc::new();
     from_json
-        .import_json_updates(a.export_json_updates(&Default::default(), &a.oplog_vv()))
+        .import_json_updates(
+            a.export_json_updates(&Default::default(), &a.oplog_vv())
+                .unwrap(),
+        )
         .unwrap();
     assert_eq!(value(&from_json), expected, "json");
 

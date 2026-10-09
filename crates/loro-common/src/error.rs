@@ -144,6 +144,8 @@ pub enum LoroEncodeError {
     ShallowSnapshotIncompatibleWithOldFormat,
     #[error("Cannot export shallow snapshot with unknown container type. Please upgrade the Loro version.")]
     UnknownContainer,
+    #[error("Decode error: ({0})")]
+    DecodeError(Box<str>),
     #[error("Export failed: {0}")]
     InternalError(Box<str>),
 }
@@ -211,6 +213,7 @@ impl From<LoroEncodeError> for LoroError {
             | LoroEncodeError::UnknownContainer => {
                 LoroError::Unknown(value.to_string().into_boxed_str())
             }
+            LoroEncodeError::DecodeError(msg) => LoroError::DecodeError(msg),
             LoroEncodeError::InternalError(msg) => LoroError::Unknown(msg),
         }
     }
@@ -223,6 +226,7 @@ impl From<LoroError> for LoroEncodeError {
                 LoroEncodeError::FrontiersNotFound(format!("{id:?}"))
             }
             LoroError::NotFoundError(msg) => LoroEncodeError::FrontiersNotFound(msg.into()),
+            LoroError::DecodeError(msg) => LoroEncodeError::DecodeError(msg),
             LoroError::Unknown(msg) => LoroEncodeError::InternalError(msg),
             other => LoroEncodeError::InternalError(other.to_string().into_boxed_str()),
         }

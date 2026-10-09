@@ -17,7 +17,7 @@ use loro_internal::{
     change::Lamport,
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
-    cursor::{self, CannotFindRelativePosition, PosType, Side},
+    cursor::{self, PosType, Side},
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -1087,7 +1087,7 @@ impl LoroDoc {
 
         let from = ids_to_frontiers(from)?;
         let to = ids_to_frontiers(to)?;
-        let diff = self.doc.find_id_spans_between(&from, &to);
+        let diff = self.doc.try_find_id_spans_between(&from, &to)?;
         let obj = Object::new();
 
         js_sys::Reflect::set(&obj, &"retreat".into(), &id_span_vector_to_js(diff.retreat)).unwrap();
@@ -1522,8 +1522,8 @@ impl LoroDoc {
     /// Get the version vector of the current document state.
     ///
     /// If you checkout to a specific version, the version vector will change.
-    pub fn version(&self) -> VersionVector {
-        VersionVector(self.doc.state_vv())
+    pub fn version(&self) -> JsResult<VersionVector> {
+        Ok(VersionVector(self.doc.try_state_vv()?))
     }
 
     /// The doc only contains the history since this version
@@ -1696,11 +1696,11 @@ impl LoroDoc {
             temp_end_vv = Some(js_to_version_vector(end_vv)?);
             json_end_vv = &temp_end_vv.as_ref().unwrap().0;
         }
-        let json_schema = self.doc.export_json_updates(
+        let json_schema = self.doc.try_export_json_updates(
             json_start_vv,
             json_end_vv,
             with_peer_compression.unwrap_or(true),
-        );
+        )?;
 
         loro_json_schema_to_js_json_schema(json_schema)
     }
@@ -2037,7 +2037,7 @@ impl LoroDoc {
         let borrow_mut = &self.doc;
         let oplog = borrow_mut.oplog().lock();
         let change = oplog
-            .get_change_at(id)
+            .try_get_change_at(id)?
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
         let change = ChangeMeta {
             lamport: change.lamport(),
@@ -2070,7 +2070,8 @@ impl LoroDoc {
         let peer_id = peer_id
             .parse()
             .map_err(|_| JsValue::from_str(ID_CONVERT_ERROR))?;
-        let Some(change) = oplog.get_change_with_lamport_lte(peer_id, lamport) else {
+        let change = oplog.try_get_change_with_lamport_lte(peer_id, lamport)?;
+        let Some(change) = change else {
             return Ok(JsValue::UNDEFINED.into());
         };
 
@@ -2104,7 +2105,7 @@ impl LoroDoc {
             serde_wasm_bindgen::Serializer::new().serialize_large_number_types_as_bigints(true);
 
         let change = oplog
-            .get_remote_change_at(id)
+            .try_get_remote_change_at(id)?
             .ok_or_else(|| JsError::new(&format!("Change {:?} not found", id)))?;
         let ops = change
             .ops()
@@ -2132,11 +2133,8 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "frontiersToVV")]
     pub fn frontiers_to_vv(&self, frontiers: Vec<JsID>) -> JsResult<VersionVector> {
         let frontiers = ids_to_frontiers(frontiers)?;
-        let borrow_mut = &self.doc;
-        let oplog = borrow_mut.oplog().lock();
-        oplog
-            .dag()
-            .frontiers_to_vv(&frontiers)
+        self.doc
+            .try_frontiers_to_vv(&frontiers)?
             .map(VersionVector)
             .ok_or_else(|| JsError::new("Frontiers not found").into())
     }
@@ -2155,7 +2153,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "vvToFrontiers")]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> JsResult<JsIDs> {
-        let f = self.doc.oplog().lock().dag().vv_to_frontiers(&vv.0);
+        let f = self.doc.try_vv_to_frontiers(&vv.0)?;
         frontiers_to_ids(&f)
     }
 
@@ -2216,20 +2214,20 @@ impl LoroDoc {
     /// }
     /// ```
     pub fn getCursorPos(&self, cursor: &Cursor) -> JsResult<JsCursorQueryAns> {
-        let cursor = self.doc.query_pos(&cursor.pos);
-        let ans = match cursor {
+        let ans = match self.doc.try_get_cursor_pos(&cursor.pos) {
             Ok(ans) => ans,
-            Err(
-                CannotFindRelativePosition::ContainerDeleted
-                | CannotFindRelativePosition::IdNotFound,
-            ) => return Ok(JsValue::UNDEFINED.into()),
-            Err(CannotFindRelativePosition::HistoryCleared) => {
+            Err(loro_internal::LoroError::NotFoundError(msg))
+                if msg.contains("history is cleared") =>
+            {
                 console_warn!(
-                    "Cannot find cursor position of {:?} because the related history is cleared.",
-                    cursor
+                    "Cannot find cursor position because the related history is cleared: {msg}"
                 );
                 return Ok(JsValue::UNDEFINED.into());
             }
+            Err(loro_internal::LoroError::NotFoundError(_)) => {
+                return Ok(JsValue::UNDEFINED.into());
+            }
+            Err(err) => return Err(err.into()),
         };
 
         let obj = Object::new();
@@ -2266,7 +2264,7 @@ impl LoroDoc {
         let id = js_id_to_id(id)?;
         Ok(self
             .doc
-            .get_changed_containers_in(id, len)
+            .try_get_changed_containers_in(id, len)?
             .into_iter()
             .map(|cid| {
                 let v: JsValue = (&cid).into();

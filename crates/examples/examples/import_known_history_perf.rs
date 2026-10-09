@@ -86,7 +86,9 @@ fn main() {
     let mut vv = VersionVector::default();
     {
         let replay = LoroDoc::new();
-        let json = inc_src.export_json_updates(&Default::default(), &inc_src.oplog_vv());
+        let json = inc_src
+            .export_json_updates(&Default::default(), &inc_src.oplog_vv())
+            .unwrap();
         for change in json.changes {
             replay
                 .import_json_updates(json_schema_with(&json.peers, change))

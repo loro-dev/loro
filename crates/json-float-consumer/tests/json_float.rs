@@ -9,7 +9,9 @@ fn finite_doubles_survive_json_text_then_exact_binary_import() {
     ] {
         let a = LoroDoc::new();
         a.get_map("m").insert("n", number).unwrap();
-        let json = a.export_json_updates(&VersionVector::default(), &a.oplog_vv());
+        let json = a
+            .export_json_updates(&VersionVector::default(), &a.oplog_vv())
+            .unwrap();
         let text = serde_json::to_string(&json).unwrap();
         let b = LoroDoc::new();
         b.import_json_updates(text).unwrap();

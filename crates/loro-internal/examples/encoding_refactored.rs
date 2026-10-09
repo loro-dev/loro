@@ -25,11 +25,11 @@ fn log_size() {
         txn.commit().unwrap();
         let snapshot = loro.export(ExportMode::Snapshot).unwrap();
         let updates = loro.export(ExportMode::all_updates()).unwrap();
-        let json_updates = serde_json::to_string(&loro.export_json_updates(
-            &Default::default(),
-            &loro.oplog_vv(),
-            true,
-        ))
+        let json_updates = serde_json::to_string(
+            &loro
+                .export_json_updates(&Default::default(), &loro.oplog_vv(), true)
+                .unwrap(),
+        )
         .unwrap();
         println!("\n");
         println!("Snapshot size={}", snapshot.len());

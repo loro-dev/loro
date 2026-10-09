@@ -84,7 +84,9 @@ fn make_json_list_update_with_four_ops(peer: u64) -> (LoroDoc, JsonSchema) {
     list.insert_with_txn(&mut txn, 1, "tail".into()).unwrap();
     txn.commit().unwrap();
 
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false);
+    let json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+        .unwrap();
     assert_eq!(json.changes.len(), 1);
     assert_eq!(json.changes[0].ops.len(), 4);
     (doc, json)
@@ -752,7 +754,7 @@ fn binary_update_bypassing_validation(doc: &LoroDoc, json: serde_json::Value) ->
         let mut oplog = carrier.oplog().lock();
         let changes =
             crate::encoding::json_schema::decode_json_changes(json, &oplog.arena).unwrap();
-        crate::encoding::apply_decoded_changes_to_oplog(&mut oplog, changes);
+        crate::encoding::apply_decoded_changes_to_oplog(&mut oplog, changes).unwrap();
     }
     carrier
         .export(ExportMode::updates(&doc.oplog_vv()))

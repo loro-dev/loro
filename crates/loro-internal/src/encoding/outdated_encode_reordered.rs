@@ -40,7 +40,7 @@ pub(crate) struct ImportChangesResult {
 pub(crate) fn import_changes_to_oplog(
     changes: Vec<Change>,
     oplog: &mut OpLog,
-) -> ImportChangesResult {
+) -> LoroResult<ImportChangesResult> {
     let mut pending_changes = Vec::new();
     let mut latest_ids = Vec::new();
     let mut changes_before_shallow_root = Vec::new();
@@ -51,14 +51,17 @@ pub(crate) fn import_changes_to_oplog(
             continue;
         }
 
-        if oplog.dag.import_deps_before_shallow_root(&change.deps) {
+        if oplog
+            .dag
+            .try_import_deps_before_shallow_root(&change.deps)?
+        {
             changes_before_shallow_root.push(change);
             continue;
         }
 
         latest_ids.push(change.id_last());
         // calc lamport or pending if its deps are not satisfied
-        match oplog.dag.get_change_lamport_from_deps(&change.deps) {
+        match oplog.dag.try_get_change_lamport_from_deps(&change.deps)? {
             Some(lamport) => change.lamport = lamport,
             None => {
                 pending_changes.push(change);
@@ -74,12 +77,12 @@ pub(crate) fn import_changes_to_oplog(
         oplog.insert_new_change(change, false);
     }
 
-    ImportChangesResult {
+    Ok(ImportChangesResult {
         latest_ids,
         pending_changes,
         changes_that_have_deps_before_shallow_root: changes_before_shallow_root,
         imported,
-    }
+    })
 }
 
 mod encode {

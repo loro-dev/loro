@@ -933,7 +933,9 @@ fn counter() {
     counter.increment(1.).unwrap();
     counter.increment(2.).unwrap();
     counter.decrement(1.).unwrap();
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv(), true);
+    let json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv(), true)
+        .unwrap();
     let doc2 = LoroDoc::new_auto_commit();
     doc2.import_json_updates(json).unwrap();
 }
@@ -1353,6 +1355,7 @@ fn test_on_first_commit_from_peer_with_lock() {
     assert_eq!(doc.get_text("text").to_string(), "ba");
     assert_eq!(
         doc.export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+            .unwrap()
             .changes
             .len(),
         1
@@ -1447,6 +1450,7 @@ fn test_pre_commit_with_hash() {
     sub.unsubscribe();
     let changes = doc
         .export_json_updates(&Default::default(), &doc.oplog_vv(), false)
+        .unwrap()
         .changes;
     assert_eq!(changes.len(), 2);
     for c in changes {

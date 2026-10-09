@@ -9636,7 +9636,9 @@ fn failed_shallow_snapshot_import_keeps_text_subscription_recording() {
         Err(LoroError::SwitchToVersionBeforeShallowRoot)
     ));
 
-    let json = c.export_json_updates(&Default::default(), &c.oplog_vv());
+    let json = c
+        .export_json_updates(&Default::default(), &c.oplog_vv())
+        .unwrap();
     target.import_json_updates(json).unwrap();
     assert_eq!(
         target.get_text("text").to_string(),

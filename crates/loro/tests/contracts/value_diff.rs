@@ -211,8 +211,10 @@ fn mixed_state_roundtrips_through_updates_json_and_snapshots() -> anyhow::Result
 
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let json_updates = doc.export_json_updates(&start, &end);
-    let json_updates_no_peers = doc.export_json_updates_without_peer_compression(&start, &end);
+    let json_updates = doc.export_json_updates(&start, &end).unwrap();
+    let json_updates_no_peers = doc
+        .export_json_updates_without_peer_compression(&start, &end)
+        .unwrap();
     assert!(json_updates.peers.is_some());
     assert!(json_updates_no_peers.peers.is_none());
 

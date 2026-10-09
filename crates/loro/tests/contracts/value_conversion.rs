@@ -285,8 +285,10 @@ fn json_schema_roundtrip_keeps_value_types_and_imports_back_state() -> anyhow::R
 
     let start = VersionVector::default();
     let end = doc.oplog_vv();
-    let compressed = doc.export_json_updates(&start, &end);
-    let uncompressed = doc.export_json_updates_without_peer_compression(&start, &end);
+    let compressed = doc.export_json_updates(&start, &end).unwrap();
+    let uncompressed = doc
+        .export_json_updates_without_peer_compression(&start, &end)
+        .unwrap();
 
     let compressed_json = serde_json::to_string(&compressed)?;
     let uncompressed_json = serde_json::to_string(&uncompressed)?;

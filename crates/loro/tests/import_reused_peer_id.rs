@@ -97,7 +97,9 @@ fn import_overlapping_change_with_different_content_is_rejected() -> LoroResult<
         assert!(!history.is_detached());
     }
 
-    let json = other.export_json_updates(&Default::default(), &other.oplog_vv());
+    let json = other
+        .export_json_updates(&Default::default(), &other.oplog_vv())
+        .unwrap();
     let err = history.import_json_updates(json).unwrap_err();
     assert_used_op_id(err, ID::new(7, 0));
     assert_unchanged(&history, &before);
@@ -261,7 +263,9 @@ fn reimporting_known_history_with_new_changes_still_succeeds() -> LoroResult<()>
 
     let full_updates = source.export(ExportMode::all_updates())?;
     let snapshot = source.export(ExportMode::Snapshot)?;
-    let json = source.export_json_updates(&Default::default(), &source.oplog_vv());
+    let json = source
+        .export_json_updates(&Default::default(), &source.oplog_vv())
+        .unwrap();
     let json_updates = serde_json::to_string(&json).unwrap();
 
     for (name, import) in [
@@ -361,7 +365,9 @@ fn rejected_import_inside_catch_unwind_can_drop_the_doc() {
 
 /// JSON updates for `doc`'s last change, moved to `peer` at `counter` with `deps`.
 fn forged_json_change(doc: &LoroDoc, peer: u64, counter: i32, deps: Vec<ID>) -> loro::JsonSchema {
-    let mut json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let mut json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     json.changes.drain(..json.changes.len() - 1);
     let change = json.changes.last_mut().unwrap();
     let shift = counter - change.id.counter;
@@ -411,7 +417,9 @@ fn import_change_that_skips_counters_is_rejected() -> LoroResult<()> {
     helper.set_peer_id(9)?;
     helper.get_map("m").insert("k", 1)?;
     helper.commit();
-    let mut json = helper.export_json_updates(&Default::default(), &helper.oplog_vv());
+    let mut json = helper
+        .export_json_updates(&Default::default(), &helper.oplog_vv())
+        .unwrap();
     let forged = forged_json_change(&writer, 7, 5, vec![ID::new(1, 0)]);
     // Peer index 1 is peer 7, index 0 is peer 9.
     json.peers = Some(vec![9, 7]);

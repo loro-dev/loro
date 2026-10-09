@@ -265,6 +265,7 @@ impl Actor {
                             self.loro.oplog_vv(),
                             self.loro
                                 .export_json_updates(&Default::default(), &self.loro.oplog_vv())
+                                .unwrap()
                         )
                     }),
                 );
@@ -421,7 +422,8 @@ impl Actor {
     pub(crate) fn log_json_history(&self) {
         let json = self
             .loro
-            .export_json_updates(&Default::default(), &self.loro.oplog_vv());
+            .export_json_updates(&Default::default(), &self.loro.oplog_vv())
+            .unwrap();
         let string = serde_json::to_string_pretty(&json).unwrap();
         info!("vv={:?} json = {}", self.loro.oplog_vv(), string);
     }

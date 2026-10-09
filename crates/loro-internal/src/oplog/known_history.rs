@@ -169,7 +169,9 @@ impl OpLog {
             };
             let peer = change.id.peer;
             let end = end_of(&ends, &peer);
-            if change.ctr_end() <= end || self.dag.import_deps_before_shallow_root(&change.deps) {
+            if change.ctr_end() <= end
+                || self.dag.try_import_deps_before_shallow_root(&change.deps)?
+            {
                 continue;
             }
 

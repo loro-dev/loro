@@ -22,7 +22,9 @@ fn legacy_history() -> LoroDoc {
     text.insert(1, "!").unwrap();
     writer.commit();
 
-    let mut json = writer.export_json_updates(&Default::default(), &writer.oplog_vv());
+    let mut json = writer
+        .export_json_updates(&Default::default(), &writer.oplog_vv())
+        .unwrap();
     for change in json.changes.iter_mut() {
         let deletes: Vec<usize> = change
             .ops

@@ -586,7 +586,7 @@ fn main() -> anyhow::Result<()> {
         expected_doc.import(&rust_updates_blob)?;
         let expected = expected_doc.get_deep_value().to_json_value();
 
-        let schema = doc.export_json_updates(&start_vv, &end);
+        let schema = doc.export_json_updates(&start_vv, &end).unwrap();
         let json = serde_json::to_string(&schema)?;
 
         let out_blob = run_encode_jsonschema(&node_bin, &cli_js, &json)?;

@@ -21,7 +21,9 @@ fn js_json(doc: &LoroDoc) -> String {
 }
 
 fn js_json_numbers(doc: &LoroDoc, large_as_double: bool) -> String {
-    let json = doc.export_json_updates(&Default::default(), &doc.oplog_vv());
+    let json = doc
+        .export_json_updates(&Default::default(), &doc.oplog_vv())
+        .unwrap();
     let mut json = serde_json::to_value(&json).unwrap();
     // Model JS-number precision and integral-number normalization. Large I64s
     // passed through JSON.parse lose bits. In loro-wasm/src/convert.rs,
@@ -123,12 +125,14 @@ fn assert_relay_keeps_prefix_with_json(
                 let expected = c.get_deep_value().into_map().unwrap();
                 let expected_style = style_delta(&c);
                 let prefix_vv = c.oplog_vv();
-                let expected_history =
-                    serde_json::to_string(&c.export_json_updates_without_peer_compression(
+                let expected_history = serde_json::to_string(
+                    &c.export_json_updates_without_peer_compression(
                         &Default::default(),
                         &prefix_vv,
-                    ))
-                    .unwrap();
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
                 match &blob {
                     Some(blob) if batch => {
                         c.import_batch_with_history_mode(
@@ -154,10 +158,13 @@ fn assert_relay_keeps_prefix_with_json(
                 assert_eq!(actual["relay"]["extra"], LoroValue::from(tail));
                 assert_eq!(style_delta(&c), expected_style);
                 assert_eq!(
-                    serde_json::to_string(&c.export_json_updates_without_peer_compression(
-                        &Default::default(),
-                        &prefix_vv
-                    ))
+                    serde_json::to_string(
+                        &c.export_json_updates_without_peer_compression(
+                            &Default::default(),
+                            &prefix_vv,
+                        )
+                        .unwrap(),
+                    )
                     .unwrap(),
                     expected_history
                 );
@@ -173,7 +180,8 @@ fn assert_relay_keeps_prefix_with_json(
     let expected_style = style_delta(&c);
     let prefix_vv = c.oplog_vv();
     let expected_history = serde_json::to_string(
-        &c.export_json_updates_without_peer_compression(&Default::default(), &prefix_vv),
+        &c.export_json_updates_without_peer_compression(&Default::default(), &prefix_vv)
+            .unwrap(),
     )
     .unwrap();
     a.get_map("relay").insert("extra", 3).unwrap();
@@ -207,6 +215,7 @@ fn assert_relay_keeps_prefix_with_json(
             serde_json::to_string(
                 &receiver
                     .export_json_updates_without_peer_compression(&Default::default(), &prefix_vv)
+                    .unwrap(),
             )
             .unwrap(),
             expected_history
@@ -415,7 +424,8 @@ fn unknown_op_payload_survives_json_and_binary_relays() {
     template.get_counter("unknown").increment(1.0).unwrap();
     template.commit();
     let mut json = template
-        .export_json_updates_without_peer_compression(&Default::default(), &template.oplog_vv());
+        .export_json_updates_without_peer_compression(&Default::default(), &template.oplog_vv())
+        .unwrap();
     let op = &mut json.changes[0].ops[0];
     op.container = ContainerID::new_root("unknown", ContainerType::Unknown(9));
     let JsonOpContent::Future(future) = &mut op.content else {
@@ -564,9 +574,11 @@ fn genuine_value_conflicts_are_rejected_on_json_and_binary_imports() {
             let b = json_copy(&conflict);
             b.get_map("relay").insert("extra", 1).unwrap();
             b.commit();
-            let json =
-                serde_json::to_string(&b.export_json_updates(&Default::default(), &b.oplog_vv()))
-                    .unwrap();
+            let json = serde_json::to_string(
+                &b.export_json_updates(&Default::default(), &b.oplog_vv())
+                    .unwrap(),
+            )
+            .unwrap();
             for import_kind in ["json", "updates", "snapshot"] {
                 let c = LoroDoc::new();
                 c.import(&a.export(ExportMode::all_updates()).unwrap())
