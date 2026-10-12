@@ -229,3 +229,38 @@ fn test_clear_undo() {
     undo_manager.redo().unwrap();
     assert_eq!(text.to_string(), "hello world");
 }
+
+#[test]
+fn test_undo_one_consumes_a_noop_without_reverting_older_map_edit() {
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let list = doc.get_movable_list("list");
+    list.insert(0, 1).unwrap();
+    list.insert(1, 2).unwrap();
+    doc.commit_then_renew();
+    let other = LoroDoc::new_auto_commit();
+    other.set_peer_id(2).unwrap();
+    other
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let undo = UndoManager::new(&doc);
+    doc.get_map("map").insert("prior", 42).unwrap();
+    doc.commit_then_renew();
+    list.insert(0, 0).unwrap();
+    doc.commit_then_renew();
+    other
+        .import(&doc.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    other.get_movable_list("list").mov(0, 2).unwrap();
+    other.commit_then_renew();
+    doc.import(&other.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(undo.undo_count(), 2);
+    assert!(!undo.undo_one().unwrap());
+    assert_eq!(undo.undo_count(), 1);
+    assert_eq!(doc.get_map("map").get("prior"), Some(42.into()));
+    assert!(undo.undo_one().unwrap());
+    assert_eq!(doc.get_map("map").get("prior"), None);
+    assert!(undo.redo_one().unwrap());
+    assert_eq!(doc.get_map("map").get("prior"), Some(42.into()));
+}

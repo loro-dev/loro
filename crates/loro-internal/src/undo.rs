@@ -832,6 +832,7 @@ impl UndoManager {
             |x| &mut x.undo_stack,
             |x| &mut x.redo_stack,
             UndoOrRedo::Undo,
+            true,
         )
     }
 
@@ -841,6 +842,37 @@ impl UndoManager {
             |x| &mut x.redo_stack,
             |x| &mut x.undo_stack,
             UndoOrRedo::Redo,
+            true,
+        )
+    }
+
+    /// Consume at most one undo stack item, including an item whose inverse is a no-op.
+    ///
+    /// Returns whether local operations were generated. A `false` result does not
+    /// imply that the undo stack is empty; see [`Self::can_undo`]. Unlike
+    /// [`Self::undo`], this does not skip no-op items to reach older edits.
+    #[instrument(skip_all)]
+    pub fn undo_one(&self) -> LoroResult<bool> {
+        self.perform(
+            |x| &mut x.undo_stack,
+            |x| &mut x.redo_stack,
+            UndoOrRedo::Undo,
+            false,
+        )
+    }
+
+    /// Consume at most one redo stack item, including an item whose inverse is a no-op.
+    ///
+    /// Returns whether local operations were generated. A `false` result does not
+    /// imply that the redo stack is empty; see [`Self::can_redo`]. Unlike
+    /// [`Self::redo`], this does not skip no-op items to reach older edits.
+    #[instrument(skip_all)]
+    pub fn redo_one(&self) -> LoroResult<bool> {
+        self.perform(
+            |x| &mut x.redo_stack,
+            |x| &mut x.undo_stack,
+            UndoOrRedo::Redo,
+            false,
         )
     }
 
@@ -849,6 +881,7 @@ impl UndoManager {
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
+        skip_noops: bool,
     ) -> LoroResult<bool> {
         if self.inner.lock().borrow().paused {
             return Ok(false);
@@ -1020,6 +1053,9 @@ impl UndoManager {
                 executed = true;
                 break;
             } else {
+                if !skip_noops {
+                    break;
+                }
                 // continue to pop the undo item as this undo is a no-op
                 top = get_stack(&mut self.inner.lock().borrow_mut()).pop();
                 continue;
