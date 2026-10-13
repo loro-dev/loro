@@ -43,6 +43,12 @@ use crate::{
     txn::Transaction,
 };
 use either::Either;
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_APPLY_DIFF_AFTER_HANDLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static AFTER_APPLY_DIFF_HANDLER: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
 use loro_common::{
     ContainerID, ContainerType, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError,
     LoroResult, LoroValue, ID,
@@ -1357,6 +1363,7 @@ impl LoroDoc {
         before_diff: &mut dyn FnMut(&DiffBatch),
         rejected_step: &mut Option<DiffBatch>,
     ) -> LoroResult<CommitWhenDrop<'_>> {
+        let _exclusive = self.txn.lock_exclusive();
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -1418,8 +1425,6 @@ impl LoroDoc {
             self._checkout_without_emitting(&latest_frontiers, false, false)?;
             self.set_detached(false);
             *rejected_step = Some(changes);
-        } else if let Some(event_a) = &last_event_a {
-            before_diff(event_a);
         }
 
         if was_recording {
@@ -1427,24 +1432,25 @@ impl LoroDoc {
         }
         drop(txn);
         self.start_auto_commit();
-        if rejected.is_none() {
-            // Try applying the diff, but ignore the error if it happens.
-            // MovableList's undo behavior is too tricky to handle in a collaborative env
-            // so in edge cases this may be an Error
-            if let Err(e) = self._apply_diff(diff, container_remap, true, false) {
-                debug_assert!(
-                    !crate::handler::is_unknown_container_creation_err(&e),
-                    "the unknown container check missed {e:?}"
-                );
-                warn!("Undo Failed {:?}", e);
-            }
-        }
+        let remap_before = container_remap.clone();
+        let applied = if rejected.is_none() {
+            self.apply_diff_all_or_nothing(diff, container_remap, true, false)
+        } else {
+            Ok(())
+        };
 
         if let Some(options) = options {
             self.set_next_commit_options(options);
         }
         if let Some(e) = rejected {
             return Err(e);
+        }
+        if let Err(e) = applied {
+            *container_remap = remap_before;
+            return Err(e);
+        }
+        if let Some(event_a) = &last_event_a {
+            before_diff(event_a);
         }
         Ok(CommitWhenDrop {
             doc: self,
@@ -1568,8 +1574,8 @@ impl LoroDoc {
         self.apply_diff_all_or_nothing(diff, &mut Default::default(), true, align)
     }
 
-    /// [`Self::_apply_diff`], rolled back when it fails (loro-dev/loro#1154). Undo uses
-    /// `_apply_diff` directly and keeps what applied. See `context/apply-diff-atomicity.md`.
+    /// [`Self::_apply_diff`], rolled back when it fails (loro-dev/loro#1154).
+    /// Undo holds the writer gate throughout this scope; see `context/undo-atomicity.md`.
     pub(crate) fn apply_diff_all_or_nothing(
         &self,
         diff: DiffBatch,
@@ -1791,9 +1797,7 @@ impl LoroDoc {
             } else {
                 FullStatePlan::default()
             };
-        // Undo applies its diff without a rollback (`apply_diff` and
-        // `revert_to` roll back a failed batch), so reject the diff before
-        // touching the doc if it needs an unknown container.
+        // Reject unsupported container recreation before touching the doc.
         let predicted_skips = self.check_apply_diff_creates_no_unknown_container(
             &diff,
             align_revived_mergeable.then_some(&plan),
@@ -1887,7 +1891,26 @@ impl LoroDoc {
                 );
                 diff
             };
-            if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
+            let result = h.apply_diff(diff, container_remap, &mut full_state_targets);
+            // Fault injection after real operations exercises rollback.
+            #[cfg(test)]
+            let result = result.and_then(|()| {
+                AFTER_APPLY_DIFF_HANDLER.with(|hook| {
+                    if let Some(hook) = hook.borrow_mut().take() {
+                        hook();
+                    }
+                });
+                if FAIL_APPLY_DIFF_AFTER_HANDLER.with(|flag| flag.replace(false)) {
+                    Err(LoroError::OutOfBound {
+                        pos: usize::MAX,
+                        len: 0,
+                        info: "injected apply failure".into(),
+                    })
+                } else {
+                    Ok(())
+                }
+            });
+            if let Err(e) = result {
                 debug_assert!(
                     !crate::handler::is_unknown_container_creation_err(&e),
                     "the unknown container check missed {e:?} in {batch_id}"

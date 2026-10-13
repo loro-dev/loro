@@ -3969,6 +3969,8 @@ impl UndoManager {
     ///
     /// Unlike [`Self::undo`], this does not skip no-op items to reach older edits.
     /// Grouping and the merge interval still determine what one stack item contains.
+    /// Application errors leave the committed document and both history stacks
+    /// unchanged; pending user edits are checkpointed before attempting the step.
     pub fn undo_one(&mut self) -> LoroResult<bool> {
         self.0.undo_one()
     }
@@ -3980,6 +3982,8 @@ impl UndoManager {
     /// to check whether more redo history remains.
     ///
     /// Unlike [`Self::redo`], this does not skip no-op items to reach older edits.
+    /// Application errors leave the committed document and both history stacks
+    /// unchanged; pending user edits are checkpointed before attempting the step.
     pub fn redo_one(&mut self) -> LoroResult<bool> {
         self.0.redo_one()
     }

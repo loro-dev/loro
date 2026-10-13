@@ -18,6 +18,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
 ## Context Index
 
+- Rust undo failure rollback and transaction writer serialization:
+  [context/undo-atomicity.md](context/undo-atomicity.md).
+
 - Encoding/import/export modes, current vs outdated formats, shallow snapshots:
   [context/internal-encoding.md](context/internal-encoding.md).
 - Mergeable container model, marker/cid rules, tests, and common pitfalls:
