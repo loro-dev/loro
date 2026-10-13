@@ -6,10 +6,12 @@ use crate::container::richtext::richtext_state::{RichtextStateChunk, RichtextTre
 
 /// An easy way to implement [Query] by using key index
 ///
-/// This query implementation will
+/// By default this query implementation will
 /// - prefer next element when this element has zero length.
 /// - prefer next element rather than previous element when the left is at the middle of two elements.
-pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait> {
+/// With `LEFT_BOUNDARY`, it instead prefers the preceding nonempty element at
+/// an exact boundary, which excludes zero-length elements from a range end.
+pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait, const LEFT_BOUNDARY: bool = false> {
     pub left: usize,
     _data: PhantomData<(T, B)>,
 }
@@ -52,7 +54,9 @@ pub trait QueryByLen<B: BTreeTrait> {
     fn get_offset_and_found(left: usize, elem: &B::Elem) -> (usize, bool);
 }
 
-impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQuery<T, B> {
+impl<T: QueryByLen<B>, B: BTreeTrait, const LEFT_BOUNDARY: bool> Query<B>
+    for IndexQuery<T, B, LEFT_BOUNDARY>
+{
     type QueryArg = usize;
 
     fn init(target: &Self::QueryArg) -> Self {
@@ -70,7 +74,11 @@ impl<T: QueryByLen<B>, B: BTreeTrait> Query<B> for IndexQuery<T, B> {
         let mut last_left = self.left;
         for (i, cache) in child_caches.iter().enumerate() {
             let len = T::get_cache_len(&cache.cache);
-            if self.left >= len {
+            // Range ends should stop at the preceding nonempty element. A
+            // right-biased endpoint may include arbitrarily many zero-length
+            // style anchors at this position, making a tiny slice linear in
+            // the number of marks outside its visible content.
+            if len == 0 || self.left > len || (!LEFT_BOUNDARY && self.left == len) {
                 last_left = self.left;
                 self.left -= len;
             } else {
