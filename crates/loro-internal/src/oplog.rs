@@ -1246,6 +1246,13 @@ impl OpLog {
             .try_frontiers_to_vv(&replay_base_frontiers)?
             .unwrap();
         replay_base_is_critical |= replay_base_vv.is_empty();
+        if !replay_base_is_critical && from > to && &replay_base_vv == to {
+            // A retreat's target is critical when every retreated change
+            // covers it: the entry check with the roles swapped (spec L14).
+            replay_base_is_critical = self
+                .uncovered_entry_parents(to, to_frontiers, from)?
+                .is_some_and(|uncovered| uncovered.is_empty());
+        }
         if !replay_base_vv.includes_vv(&shallow_since_vv) {
             // The replay base cannot point before shallow history because those
             // ops are no longer available to the causal iterator.

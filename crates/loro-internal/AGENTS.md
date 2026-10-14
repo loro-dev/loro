@@ -91,7 +91,11 @@ coverage under `crates/fuzz` and ask before running long fuzz targets.
   instead); `dag.rs`/`oplog.rs` enforce it via the
   `ImportGreaterUpdates` entry check and, on conservative retreat, the
   multi-head fixpoint `OpLog::latest_critical_version_below_meet`, with
-  the `latest_single_head_critical_version` descent as fallback. Do not
+  the `latest_single_head_critical_version` descent as fallback. A retreat
+  (undo, checkout to an older version) certifies its target with the same
+  entry check, roles swapped (spec L14); list and movable-list trackers then
+  serve the retreat unless they have deleted part of their opaque span
+  (`Tracker::has_deleted_unknown`). Do not
   use "LCA" or "common ancestor" in new code or docs: the meet of two
   versions is generally NOT a safe replay base, and a caller that needs a
   critical version must ask for one (loro-dev/loro#1095). Read

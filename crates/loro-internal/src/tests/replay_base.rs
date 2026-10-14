@@ -581,3 +581,203 @@ fn criss_cross_sync_never_rebuilds_the_list_tracker() {
         "concurrent list imports must not rebuild the tracker"
     );
 }
+
+// ---- Trusting a critical replay base across a retreat ----
+
+#[test]
+fn retreat_target_is_certified_critical() {
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_list("l").insert(0, "seed").unwrap();
+    a.commit_then_renew();
+    let target = a.oplog_vv();
+    let target_frontiers = a.oplog_frontiers();
+    for i in 0..4 {
+        a.get_list("l").insert(0, i).unwrap();
+        a.commit_then_renew();
+    }
+    let latest = a.oplog_vv();
+    let latest_frontiers = a.oplog_frontiers();
+
+    let oplog = a.oplog().lock();
+    let (base, _) = oplog.iter_from_replay_base_causally(
+        &latest,
+        &latest_frontiers,
+        &target,
+        &target_frontiers,
+    );
+    assert_eq!(base.vv, target);
+    assert!(base.is_critical);
+    assert_eq!(base.diff_mode, DiffMode::Checkout);
+}
+
+/// Peer 2's change does not cover peer 1's, so the target is not critical.
+#[test]
+fn retreat_over_concurrent_history_is_not_certified() {
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_list("l").insert(0, "a").unwrap();
+    a.commit_then_renew();
+    let target = a.oplog_vv();
+    let target_frontiers = a.oplog_frontiers();
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    b.get_list("l").insert(0, "b").unwrap();
+    b.commit_then_renew();
+    a.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let latest = a.oplog_vv();
+    let latest_frontiers = a.oplog_frontiers();
+
+    let oplog = a.oplog().lock();
+    let (base, _) = oplog.iter_from_replay_base_causally(
+        &latest,
+        &latest_frontiers,
+        &target,
+        &target_frontiers,
+    );
+    assert!(
+        !(base.vv == target && base.is_critical),
+        "a target concurrent with the retreated change is not critical"
+    );
+}
+
+/// The shape of an editor's "convert to paths": many movable lists in one commit.
+#[test]
+fn undo_of_a_commit_that_makes_lists_never_rebuilds_their_trackers() {
+    use crate::diff_calc::FULL_TRACKER_REBUILD_COUNT;
+    use crate::{ListHandler, MapHandler, MovableListHandler, UndoManager};
+
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    doc.get_list("history").insert(0, "older").unwrap();
+    doc.get_map("root").insert("title", "paths").unwrap();
+    doc.commit_then_renew();
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let before = doc.get_deep_value();
+
+    let paths = doc
+        .get_map("root")
+        .insert_container("paths", ListHandler::new_detached())
+        .unwrap();
+    for p in 0..8 {
+        let path = paths.push_container(MapHandler::new_detached()).unwrap();
+        let anchors = path
+            .insert_container("anchors", MovableListHandler::new_detached())
+            .unwrap();
+        for k in 0..6 {
+            let anchor = anchors.push_container(MapHandler::new_detached()).unwrap();
+            anchor.insert("x", (p * 10 + k) as i64).unwrap();
+        }
+        anchors.mov(0, 5).unwrap();
+        anchors.set(1, "set").unwrap();
+        anchors.delete(2, 1).unwrap();
+    }
+    doc.commit_then_renew();
+    let after = doc.get_deep_value();
+
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    assert!(undo.undo().unwrap());
+    assert_eq!(doc.get_deep_value(), before);
+    assert!(undo.redo().unwrap());
+    assert_eq!(doc.get_deep_value(), after);
+    assert_eq!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before,
+        0,
+        "a retreat to a critical target must not rebuild the list trackers"
+    );
+}
+
+#[test]
+fn retreat_over_a_delete_below_the_base_rebuilds() {
+    use crate::diff_calc::FULL_TRACKER_REBUILD_COUNT;
+    use crate::UndoManager;
+
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let list = doc.get_list("l");
+    let movable = doc.get_movable_list("m");
+    for i in 0..4 {
+        list.insert(i, i as i64).unwrap();
+        movable.insert(i, i as i64).unwrap();
+    }
+    doc.commit_then_renew();
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let before = doc.get_deep_value();
+
+    list.delete(1, 2).unwrap();
+    movable.mov(0, 3).unwrap();
+    movable.delete(1, 1).unwrap();
+    doc.commit_then_renew();
+    let after = doc.get_deep_value();
+
+    let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+    assert!(undo.undo().unwrap());
+    assert_eq!(doc.get_deep_value(), before);
+    assert!(
+        FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before >= 2,
+        "both trackers deleted below-base content and must be rebuilt"
+    );
+    assert!(undo.redo().unwrap());
+    assert_eq!(doc.get_deep_value(), after);
+}
+
+#[test]
+fn randomized_undo_redo_of_list_edits_restores_every_state() {
+    use crate::UndoManager;
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn below(&mut self, n: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((self.0 >> 33) as usize) % n
+        }
+    }
+
+    for seed in 0..8u64 {
+        let mut rng = Lcg(seed);
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let list = doc.get_list("l");
+        let movable = doc.get_movable_list("m");
+        list.insert(0, "seed").unwrap();
+        movable.insert(0, "seed").unwrap();
+        doc.commit_then_renew();
+        let undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+        undo.set_max_undo_steps(1000);
+        let mut states = vec![doc.get_deep_value()];
+        for step in 0..60 {
+            for _ in 0..1 + rng.below(4) {
+                let n = list.len();
+                match rng.below(3) {
+                    0 if n > 0 => list.delete(rng.below(n), 1).unwrap(),
+                    _ => list.insert(rng.below(n + 1), step as i64).unwrap(),
+                }
+                let n = movable.len();
+                match rng.below(5) {
+                    0 if n > 0 => movable.delete(rng.below(n), 1).unwrap(),
+                    1 if n > 1 => movable.mov(rng.below(n), rng.below(n)).unwrap(),
+                    2 if n > 0 => movable.set(rng.below(n), -(step as i64)).unwrap(),
+                    _ => movable.insert(rng.below(n + 1), step as i64).unwrap(),
+                }
+            }
+            doc.commit_then_renew();
+            states.push(doc.get_deep_value());
+        }
+
+        for state in states.iter().rev().skip(1) {
+            assert!(undo.undo().unwrap(), "seed {seed}");
+            assert_eq!(&doc.get_deep_value(), state, "seed {seed}");
+        }
+        for state in states.iter().skip(1) {
+            assert!(undo.redo().unwrap());
+            assert_eq!(&doc.get_deep_value(), state, "seed {seed}");
+        }
+    }
+}

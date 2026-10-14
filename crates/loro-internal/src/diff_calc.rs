@@ -775,6 +775,12 @@ impl ListDiffCalculator {
         self.source_not_in_op_context = true;
     }
 
+    /// A retreat never goes below a critical base, so it can only bring back
+    /// opaque content that a replayed op deleted.
+    fn retreat_is_trustworthy(&self) -> bool {
+        !self.tracker.has_deleted_unknown()
+    }
+
     #[inline(never)]
     fn apply_op_to_tracker(tracker: &mut RichtextTracker, op: &crate::op::RichOp<'_>) {
         match &op.op().content {
@@ -885,12 +891,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             // arm additionally requires a non-shallow doc, which preserves
             // the old behavior exactly: list trackers have no shallow-root
             // seeding, and the pre-existing `base == from` arm never had a
-            // shallow term. `has_retreat` stays load-bearing: a retreat is
-            // the only way a diff could emit the opaque below-base span.
+            // shallow term.
             let base_is_trustworthy = (info.replay_base_is_critical
                 && oplog.shallow_since_vv().is_empty())
                 || (info.replay_base_vv == info.from_vv && !self.source_not_in_op_context);
-            has_retreat || !base_is_trustworthy
+            !base_is_trustworthy || (has_retreat && !self.retreat_is_trustworthy())
         };
         let diff_items = if should_rebuild {
             #[cfg(test)]
@@ -902,7 +907,17 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             *self.tracker = full_tracker;
             diff_items
         } else {
-            self.tracker.diff(info.from_vv, info.to_vv).collect_vec()
+            let diff_items = self.tracker.diff(info.from_vv, info.to_vv).collect_vec();
+            debug_assert!(
+                self.tracker.has_deleted_unknown()
+                    || diff_items.iter().all(|item| !matches!(
+                        item,
+                        CrdtRopeDelta::Insert { chunk, .. }
+                            if matches!(chunk.value(), RichtextChunkValue::Unknown(_))
+                    )),
+                "the opaque below-base span leaked into a list diff"
+            );
+            diff_items
         };
 
         for item in diff_items {
@@ -2039,13 +2054,14 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     ) -> (InternalDiff, DiffMode) {
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
-        // Deliberately NOT relaxed for a certified-critical replay base: the
-        // movable-list element phase reads positions from a tracker this
-        // rebuild has just refreshed, and trusting an unknown-span tracker
-        // here needs its own argument about element/position state. See the
-        // soundness comment in `RichtextDiffCalculator::calculate_diff`.
-        if has_retreat || info.replay_base_vv != info.from_vv || self.list.source_not_in_op_context
-        {
+        // As for lists: the element phase reads positions and values from the
+        // checkout index, and every replayed move is in `move_id_to_elem_id`.
+        let base_is_trustworthy = (info.replay_base_is_critical
+            && oplog.shallow_since_vv().is_empty())
+            || (info.replay_base_vv == info.from_vv && !self.list.source_not_in_op_context);
+        if !base_is_trustworthy || (has_retreat && !self.list.retreat_is_trustworthy()) {
+            #[cfg(test)]
+            FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             self.rebuild_full_tracker(idx, oplog, &merged);
