@@ -126,8 +126,8 @@ impl FromLoro for Todo {
 impl ToLoro for Todo {
     const KEY_FIELD: Option<&'static str> = Some("id");
 
-    fn key(&self) -> Option<LoroValue> {
-        Some(LoroValue::from(self.id.clone()))
+    fn key(&self) -> Option<&str> {
+        Some(&self.id)
     }
 
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {

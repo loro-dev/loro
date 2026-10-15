@@ -22,7 +22,7 @@
 //!   dead keys, and append unordered live items sorted by key; the next
 //!   `update_from` writes that order back.
 
-use loro::{LoroMap, LoroValue, ValueOrContainer};
+use loro::{LoroListValue, LoroMap, LoroValue, ValueOrContainer};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::slot::{ListRef, Slot};
@@ -46,14 +46,6 @@ pub fn reconcile_positional<T: ToLoro>(list: &ListRef, items: &[T]) -> Result<()
             .map_err(|e| e.in_index(i))?;
     }
     Ok(())
-}
-
-/// Map keys are strings, so keyed elements must have string keys.
-pub fn key_string(k: &LoroValue) -> Result<&str> {
-    match k {
-        LoroValue::String(s) => Ok(s.as_str()),
-        other => Err(ModelError::mismatch("string key", other)),
-    }
 }
 
 /// The `items` and `order` containers of a keyed vec, creating them if needed.
@@ -94,8 +86,8 @@ impl KeyedParts {
     pub fn visible(&self) -> Vec<(Option<usize>, String)> {
         let mut live: FxHashSet<String> = self.items.keys().map(|k| k.to_string()).collect();
         let mut out = Vec::with_capacity(live.len());
-        for (i, v) in raw_keys(&self.order).into_iter().enumerate() {
-            let Some(LoroValue::String(k)) = v else {
+        for (i, v) in raw_keys(&self.order).iter().enumerate() {
+            let LoroValue::String(k) = v else {
                 continue;
             };
             if live.remove(k.as_str()) {
@@ -109,24 +101,24 @@ impl KeyedParts {
     }
 }
 
-fn raw_keys(order: &ListRef) -> Vec<Option<LoroValue>> {
+fn raw_keys(order: &ListRef) -> LoroListValue {
     match order.get_deep_value() {
-        LoroValue::List(l) => l.iter().map(|v| Some(v.clone())).collect(),
-        _ => Vec::new(),
+        LoroValue::List(l) => l,
+        _ => LoroListValue::default(),
     }
 }
 
 pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
     let parts = KeyedParts::ensure(slot)?;
-    let mut want: Vec<LoroValue> = Vec::with_capacity(elems.len());
-    let mut want_index: FxHashMap<LoroValue, usize> = FxHashMap::default();
+    let mut want: Vec<&str> = Vec::with_capacity(elems.len());
+    let mut want_index: FxHashMap<&str, usize> =
+        FxHashMap::with_capacity_and_hasher(elems.len(), Default::default());
     for (i, e) in elems.iter().enumerate() {
         let k = e
             .key()
             .ok_or_else(|| ModelError::new(ErrorKind::Missing).in_index(i))?;
-        key_string(&k).map_err(|e| e.in_index(i))?;
-        if want_index.insert(k.clone(), i).is_some() {
-            return Err(ModelError::new(ErrorKind::DuplicateKey(format!("{k:?}"))).in_index(i));
+        if want_index.insert(k, i).is_some() {
+            return Err(ModelError::new(ErrorKind::DuplicateKey(k.to_string())).in_index(i));
         }
         want.push(k);
     }
@@ -135,7 +127,7 @@ pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
     let stale: Vec<String> = parts
         .items
         .keys()
-        .filter(|k| !want_index.contains_key(&LoroValue::from(k.as_str())))
+        .filter(|k| !want_index.contains_key(k.as_str()))
         .map(|k| k.to_string())
         .collect();
     for k in stale {
@@ -143,13 +135,12 @@ pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
     }
 
     // Order: scalar keys, reconciled with moves.
-    reconcile_order(&parts.order, &want, &want_index, raw_keys(&parts.order))
+    reconcile_order(&parts.order, &want, &want_index, &raw_keys(&parts.order))
         .map_err(|e| e.in_key(ORDER))?;
 
     // Content: each element lives under its key.
     for (j, e) in elems.iter().enumerate() {
-        let k = key_string(&want[j]).unwrap();
-        e.to_loro(Slot::MapKey(&parts.items, k))
+        e.to_loro(Slot::MapKey(&parts.items, want[j]))
             .map_err(|e| e.in_index(j))?;
     }
     Ok(())
@@ -168,17 +159,19 @@ pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
 /// `O(n log n)` plus an `O(n)` memmove/scan per emitted move or insert.
 fn reconcile_order(
     list: &ListRef,
-    want: &[LoroValue],
-    want_index: &FxHashMap<LoroValue, usize>,
-    cur: Vec<Option<LoroValue>>,
+    want: &[&str],
+    want_index: &FxHashMap<&str, usize>,
+    cur: &[LoroValue],
 ) -> Result<()> {
-    let mut seen = FxHashSet::default();
+    let mut seen = vec![false; want.len()];
     let keep: Vec<Option<u32>> = cur
         .iter()
         .map(|k| {
-            let k = k.as_ref()?;
-            let &j = want_index.get(k)?;
-            seen.insert(j).then_some(j as u32)
+            let LoroValue::String(k) = k else {
+                return None;
+            };
+            let &j = want_index.get(k.as_str())?;
+            (!std::mem::replace(&mut seen[j], true)).then_some(j as u32)
         })
         .collect();
     let mut i = keep.len();
@@ -197,7 +190,7 @@ fn reconcile_order(
 
     if cur.is_empty() {
         for (j, k) in want.iter().enumerate() {
-            Slot::ListInsert(list, j).set_value(k.clone())?;
+            Slot::ListInsert(list, j).set_value((*k).into())?;
         }
         return Ok(());
     }
@@ -222,7 +215,7 @@ fn reconcile_order(
         };
         let placed = match old_pos[j] {
             None => {
-                Slot::ListInsert(list, anchor).set_value(want[j].clone())?;
+                Slot::ListInsert(list, anchor).set_value(want[j].into())?;
                 cur.insert(anchor, j as u32);
                 anchor
             }

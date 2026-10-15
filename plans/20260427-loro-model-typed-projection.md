@@ -163,7 +163,7 @@ pub trait FromLoro: Sized {
 pub trait ToLoro {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()>;
     const KEY_FIELD: Option<&'static str> = None; // #[loro(key)]
-    fn key(&self) -> Option<LoroValue> { None }
+    fn key(&self) -> Option<&str> { None }   // string: a map key in the keyed layout
 }
 
 /// Links a data type to its views, so derive output for `todos: Vec<Todo>`
@@ -396,16 +396,69 @@ Findings:
   100k). It now uses a `Vec<u32>` simulation with anchor tracking and a fast
   path for an empty list.
 
+## Performance Work (2026-10-15)
+
+Profiled with an in-process sampler (`pprof`; `perf` is unavailable on the dev
+machine) on 100k keyed todos. The model layer itself was a small share; the
+time went to Loro core paths that every mergeable child pays:
+
+| Path | Hot spot | Share |
+| --- | --- | --- |
+| initial write | `is_deleted` per op re-parses each mergeable ancestor's cid string and re-hashes its marker | 54% |
+| `update_from` (unchanged) | `MapHandler::get` interns the key in the global interner; marker → cid translation rebuilds and interns the cid string | ~30% |
+| `get_deep_value` | per child: marker CRC (bitwise, two `Vec` allocations), cid string build + intern, arena hash of the long cid | ~45% |
+
+Changes (all in core, semantics unchanged; see
+`context/mergeable-containers.md`, "Arena Edge Cache"):
+
+- loro-common: table-driven, allocation-free marker CRC
+  (`MergeableMarkerDigest`); a test pins it to the original bitwise CRC because
+  the digest is stored data.
+- `InternalString: Borrow<str>`; `MapState` looks keys up by `&str` without
+  interning.
+- The arena caches each mergeable cid's parsed edge and activating marker bytes,
+  with a `(parent, key) -> child` reverse index. Liveness, map reads, deep
+  values, the alive walk and `read_container_tree` use it.
+- Model layer: keyed reconcile uses borrowed `&str` keys; `ToLoro::key()` returns
+  `Option<&str>`.
+
+A/B against the previous commit, same binary interleaved, minimum of 3–5 runs
+each, 100k todos, shared 8-core machine:
+
+| Operation | Before | After | Speedup |
+| --- | --- | --- | --- |
+| `update_from`, unchanged | 715 ms | 323 ms | 2.2× |
+| `get_deep_value` | 950 ms | 528 ms | 1.8× |
+| `read_as::<Project>()` | 1.18 s | 0.77 s | 1.5× |
+| initial `update_from` | 3.68 s | 2.1–2.4 s | 1.6× |
+| `by_key` | 4.4 µs | 1.6 µs | 2.7× |
+| held element `set` + commit | 9.9 µs | 4.4 µs | 2.3× |
+| first `get_deep_value` after snapshot import | 2.1 s | 2.0 s | — |
+
+What is left, and the structural change each needs:
+
+- **`read_as` is bounded by `LoroValue` materialization.** Building a
+  `HashMap<String, LoroValue>` per map (`MapState::to_map`) and dropping it again
+  is ~60% of `get_deep_value`, and converting to the DTO is another ~30% of
+  `read_as`. Next step: a read API that walks state under one lock without
+  building `LoroValue` trees, e.g. `FromLoro` over a borrowed node reader
+  (`node.get(key)`, `node.as_str()`, `node.iter()`). `read_container_tree`'s
+  `Sink` is a starting point, but it still calls `to_map` per container.
+  Needs a public API design; measure with a prototype first.
+- **`update_from` is bounded by one handler read per field.** Each read takes the
+  document lock, looks up the container store, and binary-searches a `BTreeMap`
+  of `InternalString` (string compares on a 100k-entry `items` map). Next step:
+  a batched read (`get_many`, or a closure that holds one state lock across a
+  subtree), then compare in memory.
+- **First read after import** is half KV point lookups (one `SsTable::get` and
+  block decode per container) and half registering 100k cids. Next step: scan the
+  KV range once for a subtree read instead of point lookups.
+
 ## Known Costs and Follow-Ups
 
-- **Mergeable children in core** (Loro core, not this crate): about 2.2× write
-  and 3.6× `get_deep_value` cost versus regular children. Profile
-  marker-to-container translation in `state/mergeable.rs` and `map_state.rs`.
-  This would make every keyed vec and struct field cheaper.
-- **`update_from` comparisons**: reconcile reads current values through
-  handlers, one lock per field. Options: (a) take one `get_deep_value()` and
-  pass the current subtree value down through `Slot`; (b) skip comparisons
-  inside containers created in the same call. Measure each before adopting.
+- **Mergeable children in core**: before the work above, about 2.2× write and
+  3.6× `get_deep_value` cost versus regular children. Re-measure the baselines
+  in `model_bench` after the changes.
 - **Index-based keyed operations** (`insert` at an index, `move_to`, `remove`,
   `position_of`) scan `order`: `O(n)` scalar reads. A core API for movable-list
   element position by element id, or an order-statistic index, would make them
@@ -485,17 +538,19 @@ only `FromLoro`.
       before implementation.
 - Exit: example compiles from the derive alone.
 
-### Phase 3: Performance — Not Started
+### Phase 3: Performance — In Progress
 
-Gate each item on the benchmark; keep the table above updated.
+Gate each item on the benchmark; keep the tables above updated.
 
-- [ ] `update_from`: compare against one deep value instead of per-field handler
-      reads; skip comparisons inside newly created containers.
-- [ ] Core: profile mergeable child creation and `get_deep_value` through
-      mergeable markers.
+- [x] Core: mergeable edge cache, table CRC, `&str` map lookups
+      (see "Performance Work").
+- [ ] Core: non-materializing state reader for `read_as`.
+- [ ] Core: batched map reads for `update_from` comparisons.
+- [ ] Core: range scan instead of KV point lookups for the first subtree read
+      after import.
 - [ ] Keyed index-based operations: `O(log n)` position of an `order` entry.
-- Exit: `update_from` unchanged at 100k within 2× of
-  `get_deep_value()` of the same data, or a documented reason why not.
+- Exit: `update_from` unchanged at 100k within 2× of `get_deep_value()` of the
+  same data, or a documented reason why not.
 
 ### Phase 4: Snapshot layer — Not Started, optional
 
@@ -545,3 +600,5 @@ containers, with a benchmark.
   from events or a model cache.
 - 2026-10-15: `Vec<T>` projection accepts both list layouts; `FromLoro` has no
   key concept.
+- 2026-10-15: `ToLoro::key()` returns `Option<&str>`: keys are map keys in the
+  keyed vec layout, and borrowing avoids an allocation per element.

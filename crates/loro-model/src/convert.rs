@@ -35,8 +35,9 @@ pub trait ToLoro {
     /// with moves.
     const KEY_FIELD: Option<&'static str> = None;
 
-    /// The value of [`ToLoro::KEY_FIELD`] for this element. Must be a string.
-    fn key(&self) -> Option<LoroValue> {
+    /// The value of [`ToLoro::KEY_FIELD`] for this element. Keys are map keys in the keyed
+    /// vec layout, so they are strings.
+    fn key(&self) -> Option<&str> {
         None
     }
 }

@@ -457,8 +457,8 @@ impl<T: LoroSchema> KeyedVec<T> {
     pub fn insert(&self, index: usize, value: &T) -> Result<()> {
         let key = value
             .key()
-            .ok_or_else(|| ModelError::new(ErrorKind::Missing))?;
-        let key = list::key_string(&key)?.to_string();
+            .ok_or_else(|| ModelError::new(ErrorKind::Missing))?
+            .to_string();
         let parts = self.parts_mut()?;
         if parts.items.get(&key).is_some() {
             return Err(ModelError::new(ErrorKind::DuplicateKey(key)));
