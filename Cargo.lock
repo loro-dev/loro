@@ -1892,6 +1892,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "loro-model"
+version = "0.0.0"
+dependencies = [
+ "loro 1.16.2",
+ "rustc-hash",
+]
+
+[[package]]
 name = "loro-rle"
 version = "0.16.12"
 source = "git+https://github.com/loro-dev/loro.git?tag=loro-crdt%401.0.0-alpha.4#9bfe97bce4912c6dc8439817497d18423a0e8cb7"
