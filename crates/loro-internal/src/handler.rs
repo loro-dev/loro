@@ -366,6 +366,15 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 }
 
 impl BasicHandler {
+    pub(crate) fn container_idx(&self) -> ContainerIdx {
+        self.container_idx
+    }
+
+    /// Whether this handler belongs to the document that owns `arena`.
+    pub(crate) fn is_in_arena(&self, arena: &crate::SharedArena) -> bool {
+        self.doc.arena.ptr_eq(arena)
+    }
+
     pub(crate) fn doc(&self) -> LoroDoc {
         self.doc.clone()
     }
@@ -4671,7 +4680,7 @@ impl MapHandler {
                     inner
                         .doc
                         .arena
-                        .translate_mergeable_marker(inner.container_idx, &inner.id, key, value)
+                        .translate_mergeable_marker(inner.container_idx, key, value)
                         .0,
                 )
             }
@@ -4688,12 +4697,11 @@ impl MapHandler {
             MaybeDetached::Attached(inner) => {
                 let value = inner
                     .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
-                let (value, child_idx) = inner.doc.arena.translate_mergeable_marker(
-                    inner.container_idx,
-                    &inner.id,
-                    key,
-                    value,
-                );
+                let (value, child_idx) =
+                    inner
+                        .doc
+                        .arena
+                        .translate_mergeable_marker(inner.container_idx, key, value);
                 Some(match (value, child_idx) {
                     (LoroValue::Container(id), Some(idx)) => ValueOrHandler::Handler(
                         Handler::new_attached_with_idx(id, idx, inner.doc.clone()),

@@ -155,7 +155,7 @@ impl DocState {
                 s.emit(Event::Object(m.len()))?;
                 for (k, v) in m.iter() {
                     s.emit(Event::Key(k))?;
-                    if let Some(i) = self.mergeable_child_of_value(idx, &id, k, v) {
+                    if let Some(i) = self.mergeable_child_of_value(idx, k, v) {
                         self.read_container_node(s, i, rich, None, None, depth + 1)?;
                     } else {
                         self.read_container_edge(s, v, rich, depth + 1)?;

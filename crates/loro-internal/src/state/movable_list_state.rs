@@ -914,9 +914,20 @@ impl MovableListState {
         }
     }
 
+    /// Values in user order. One in-order walk of the list items, instead of an index query per
+    /// element: an item counts toward the user index exactly when it points to an element
+    /// (`get_elem_cache`).
     pub fn iter(&self) -> impl Iterator<Item = &LoroValue> {
-        // PERF: can be optimized
-        (0..self.len()).map(move |i| self.get(i, IndexType::ForUser).unwrap())
+        let elements = self.inner.elements();
+        self.inner.list().iter().filter_map(move |item| {
+            let elem = item.pointed_by.as_ref()?;
+            Some(
+                &elements
+                    .get(elem)
+                    .expect("a list item points to a live element")
+                    .value,
+            )
+        })
     }
 
     pub fn iter_with_last_move_id_and_elem_id(

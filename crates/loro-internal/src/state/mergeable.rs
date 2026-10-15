@@ -76,13 +76,12 @@ impl DocState {
     pub(super) fn mergeable_children_from_value<'a>(
         &self,
         parent_idx: ContainerIdx,
-        parent_id: &ContainerID,
         map_value: &'a LoroMapValue,
     ) -> Vec<(&'a str, ContainerID, ContainerIdx)> {
         map_value
             .iter()
             .filter_map(|(key, value)| {
-                let idx = self.mergeable_child_of_value(parent_idx, parent_id, key, value)?;
+                let idx = self.mergeable_child_of_value(parent_idx, key, value)?;
                 Some((key.as_str(), self.arena.idx_to_id(idx).unwrap(), idx))
             })
             .collect()
@@ -92,11 +91,9 @@ impl DocState {
     pub(super) fn mergeable_child_of_value(
         &self,
         parent_idx: ContainerIdx,
-        parent_id: &ContainerID,
         key: &str,
         value: &LoroValue,
     ) -> Option<ContainerIdx> {
-        self.arena
-            .mergeable_child_idx(parent_idx, parent_id, key, value)
+        self.arena.mergeable_child_idx(parent_idx, key, value)
     }
 }

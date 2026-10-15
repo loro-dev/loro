@@ -27,6 +27,8 @@ before changing mergeable child behavior.
   moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
+- `reader.rs`: `StateReader`, field-level reads under one state lock:
+  [../../../../context/state-reader.md](../../../../context/state-reader.md).
 - `dead_containers_cache.rs`: dead/alive tracking. Map/list deletions are
   final; tree and movable-list ones are dropped whenever a move could revive
   them; mergeable ones are never cached:

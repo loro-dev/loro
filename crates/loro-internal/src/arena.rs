@@ -420,6 +420,10 @@ impl SharedArena {
         }
     }
 
+    pub(crate) fn ptr_eq(&self, other: &SharedArena) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
         let containers = self.inner.containers.read();
         let container_len = containers.container_idx_to_id.len();
@@ -512,15 +516,14 @@ impl SharedArena {
         self.inner.containers.read().mergeable.get(&idx).cloned()
     }
 
-    /// The mergeable child that `value`, read from the map `parent_idx` (whose cid is
-    /// `parent_id`) at `key`, activates; `None` if `value` is not its marker. Same answer as
+    /// The mergeable child that `value`, read from the map `parent_idx` at `key`, activates;
+    /// `None` if `value` is not its marker. Same answer as
     /// `loro_common::parse_mergeable_marker`, but a registered child is found through the arena
     /// instead of re-hashing the marker, and an unregistered one is registered without
     /// re-parsing its cid.
     pub(crate) fn mergeable_child_idx(
         &self,
         parent_idx: ContainerIdx,
-        parent_id: &ContainerID,
         key: &str,
         value: &LoroValue,
     ) -> Option<ContainerIdx> {
@@ -542,11 +545,12 @@ impl SharedArena {
                 return (bytes.as_slice() == edge.marker).then_some(child);
             }
         }
-        let marker = MergeableMarkerDigest::new(parent_id).marker_bytes(key, kind);
+        let parent_id = self.idx_to_id(parent_idx)?;
+        let marker = MergeableMarkerDigest::new(&parent_id).marker_bytes(key, kind);
         if bytes.as_slice() != marker {
             return None;
         }
-        let id = ContainerID::new_mergeable(parent_id, key, kind);
+        let id = ContainerID::new_mergeable(&parent_id, key, kind);
         Some(
             self.inner
                 .containers
@@ -560,11 +564,10 @@ impl SharedArena {
     pub(crate) fn translate_mergeable_marker(
         &self,
         parent_idx: ContainerIdx,
-        parent_id: &ContainerID,
         key: &str,
         value: LoroValue,
     ) -> (LoroValue, Option<ContainerIdx>) {
-        match self.mergeable_child_idx(parent_idx, parent_id, key, &value) {
+        match self.mergeable_child_idx(parent_idx, key, &value) {
             Some(idx) => (
                 LoroValue::Container(self.idx_to_id(idx).unwrap()),
                 Some(idx),

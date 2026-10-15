@@ -1,4 +1,5 @@
 pub mod container_tree;
+pub mod reader;
 
 use crate::sync::{AtomicU64, Mutex, RwLock};
 #[cfg(test)]
@@ -1774,7 +1775,7 @@ impl DocState {
                 // `MapState` would force the snapshot-backed container to decode and break the
                 // lazy-value invariant for roots.
                 let mergeable_children: Vec<(String, ContainerID, ContainerIdx)> = self
-                    .mergeable_children_from_value(container, &id, &map)
+                    .mergeable_children_from_value(container, &map)
                     .into_iter()
                     .map(|(key, cid, idx)| (key.to_string(), cid, idx))
                     .collect();
@@ -1858,15 +1859,14 @@ impl DocState {
                     return LoroValue::Map(map);
                 }
 
-                let parent_id = self.arena.idx_to_id(container);
                 let map_mut = map.make_mut();
                 for (key, value) in map_mut.iter_mut() {
                     if let LoroValue::Container(child) = value {
                         let container_idx = self.arena.register_container(child);
                         *value = self.get_container_deep_value(container_idx);
-                    } else if let Some(child_idx) = parent_id.as_ref().and_then(|parent_id| {
-                        self.mergeable_child_of_value(container, parent_id, key, value)
-                    }) {
+                    } else if let Some(child_idx) =
+                        self.mergeable_child_of_value(container, key, value)
+                    {
                         // Replace the marker with the nested deep value of its resolved child,
                         // keyed under the same logical key.
                         *value = self.get_container_deep_value(child_idx);
@@ -2235,15 +2235,10 @@ impl DocState {
                 // state. Pull them in so alive-container walks (notably shallow snapshot export)
                 // include mergeable cids and don't filter their KV out by `retain_keys`.
                 let mergeable_cids: Vec<ContainerID> = self
-                    .arena
-                    .idx_to_id(idx)
-                    .map(|parent_id| {
-                        self.mergeable_children_from_value(idx, &parent_id, &map)
-                            .into_iter()
-                            .map(|(_key, cid, _idx)| cid)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                    .mergeable_children_from_value(idx, &map)
+                    .into_iter()
+                    .map(|(_key, cid, _idx)| cid)
+                    .collect();
                 for cid in mergeable_cids {
                     self.register_alive_child(idx, &cid, ans);
                 }
