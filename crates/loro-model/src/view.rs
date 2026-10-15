@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use loro::{
     Container, ContainerID, ContainerTrait, ContainerType, Index, LoroDoc, LoroMap, LoroText,
-    LoroValue, Subscription, ValueOrContainer,
+    LoroValue, ReadEntry, StateReader, Subscription, ValueOrContainer,
 };
 
 use crate::slot::{ListRef, Slot};
@@ -17,14 +17,22 @@ use crate::{list, ErrorKind, FromLoro, ModelError, Result, ToLoro};
 #[derive(Clone, Debug)]
 pub enum Loc {
     /// A concrete container. Used for roots and list elements; it keeps
-    /// pointing at the same element when list indices shift.
-    Container(Container),
+    /// pointing at the same element when list indices shift. The document is
+    /// captured up front: `ContainerTrait::doc()` takes the transaction lock,
+    /// so calling it from a subscriber during a commit would deadlock.
+    Container(Container, Option<LoroDoc>),
     /// A map field, resolved on every access, so replacing the field (locally
     /// or remotely) is observed instead of leaving a stale handle.
     Field(Arc<Loc>, Arc<str>),
 }
 
 impl Loc {
+    /// A view root. Call outside event callbacks (see [`Loc::Container`]).
+    pub fn root(c: Container) -> Loc {
+        let doc = c.doc();
+        Loc::Container(c, doc)
+    }
+
     pub fn field(parent: &Loc, key: &str) -> Loc {
         Loc::Field(Arc::new(parent.clone()), key.into())
     }
@@ -32,7 +40,7 @@ impl Loc {
     /// Current value or container at this location. `None` if absent.
     pub fn resolve(&self) -> Result<Option<ValueOrContainer>> {
         match self {
-            Loc::Container(c) => {
+            Loc::Container(c, _) => {
                 if c.is_deleted() {
                     return Err(ModelError::new(ErrorKind::Deleted));
                 }
@@ -61,7 +69,7 @@ impl Loc {
     /// Run `f` with a writable slot for this location, creating parents.
     pub fn with_slot<R>(&self, f: impl FnOnce(Slot<'_>) -> Result<R>) -> Result<R> {
         match self {
-            Loc::Container(c) => {
+            Loc::Container(c, _) => {
                 if c.is_deleted() {
                     return Err(ModelError::new(ErrorKind::Deleted));
                 }
@@ -78,10 +86,50 @@ impl Loc {
         Ok(self.resolve()?.map(|v| v.get_deep_value()))
     }
 
+    /// [`Loc::resolve`] through a [`StateReader`]: no handlers, no extra locks.
+    pub fn resolve_in<'r>(&self, r: &mut StateReader<'r>) -> Result<Option<ReadEntry<'r>>> {
+        match self {
+            Loc::Container(c, _) => {
+                let c = r
+                    .container(c)
+                    .ok_or_else(|| ModelError::new(ErrorKind::Missing))?;
+                if r.is_deleted(c) {
+                    return Err(ModelError::new(ErrorKind::Deleted));
+                }
+                Ok(Some(ReadEntry::Container(c)))
+            }
+            Loc::Field(parent, key) => match parent.resolve_in(r)? {
+                None => Ok(None),
+                Some(ReadEntry::Container(m)) if m.container_type() == ContainerType::Map => {
+                    Ok(r.map_get(m, key))
+                }
+                Some(ReadEntry::Container(c)) => {
+                    Err(ModelError::mismatch("map", c.container_type()))
+                }
+                Some(ReadEntry::Value(v)) => Err(ModelError::mismatch("map", v)),
+            },
+        }
+    }
+
+    /// Read this location as `T` under one `read_state` lock.
+    pub fn read<T: FromLoro>(&self) -> Result<T> {
+        let Some(doc) = self.doc() else {
+            // Detached: no state to borrow.
+            return match self.deep_value()? {
+                Some(v) => T::from_loro(&v),
+                None => T::from_missing(),
+            };
+        };
+        doc.read_state(|r| match self.resolve_in(r)? {
+            Some(e) => T::read(r, e),
+            None => T::from_missing(),
+        })
+    }
+
     /// The document of the nearest attached container.
     pub fn doc(&self) -> Option<LoroDoc> {
         match self {
-            Loc::Container(c) => c.doc(),
+            Loc::Container(_, doc) => doc.clone(),
             Loc::Field(parent, _) => parent.doc(),
         }
     }
@@ -91,7 +139,7 @@ impl Loc {
     /// replaced or created later is still observed.
     fn subscription_target(&self) -> Result<(ContainerID, Option<Arc<str>>)> {
         match self {
-            Loc::Container(c) => Ok((c.id(), None)),
+            Loc::Container(c, _) => Ok((c.id(), None)),
             Loc::Field(parent, key) => match parent.resolve_map()? {
                 Some(m) => Ok((m.id(), Some(key.clone()))),
                 None => Err(ModelError::new(ErrorKind::Missing)),
@@ -107,10 +155,7 @@ pub trait View: Sized {
 
     /// Project this subtree into any owned type. `O(output size)`.
     fn read_as<T: FromLoro>(&self) -> Result<T> {
-        match self.loc().deep_value()? {
-            Some(v) => T::from_loro(&v),
-            None => T::from_missing(),
-        }
+        self.loc().read()
     }
 
     /// Reconcile a plain value into this subtree, reusing containers and
@@ -161,12 +206,7 @@ pub trait View: Sized {
         T: FromLoro + PartialEq + Send + 'static,
     {
         let loc = self.loc().clone();
-        let read = move || -> Result<T> {
-            match loc.deep_value()? {
-                Some(v) => T::from_loro(&v),
-                None => T::from_missing(),
-            }
-        };
+        let read = move || -> Result<T> { loc.read() };
         let state = std::sync::Mutex::new((read().ok(), on_change));
         self.subscribe(move |_| {
             let Ok(new) = read() else { return };
@@ -348,7 +388,9 @@ impl<T: LoroSchema> ListView<T> {
             return Ok(None);
         };
         Ok(match list.get(index) {
-            Some(ValueOrContainer::Container(c)) => Some(T::View::from_loc(Loc::Container(c))),
+            Some(ValueOrContainer::Container(c)) => {
+                Some(T::View::from_loc(Loc::Container(c, self.loc.doc())))
+            }
             _ => None,
         })
     }

@@ -4,17 +4,18 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
 
-use loro::{ContainerType, LoroValue, ValueOrContainer};
+use loro::{ContainerRef, ContainerType, LoroValue, ReadEntry, StateReader, ValueOrContainer};
 use rustc_hash::FxHashSet;
 
 use crate::slot::Slot;
 use crate::{list, ErrorKind, ModelError, Result};
 
-/// Build an owned value from a Loro deep value.
+/// Build an owned value from the document.
 ///
-/// Projection works on `LoroValue` rather than on handlers: `read_as` takes one
-/// `get_deep_value()` of the subtree and converts it, instead of taking the
-/// document lock once per field.
+/// `read_as` calls [`FromLoro::read`] under one `LoroDoc::read_state` lock, so an
+/// implementation reads only the fields it needs and nothing is materialized as
+/// an intermediate `LoroValue` tree. [`FromLoro::from_loro`] converts an
+/// already materialized value (a scalar, or a deep value).
 pub trait FromLoro: Sized {
     fn from_loro(v: &LoroValue) -> Result<Self>;
 
@@ -22,6 +23,15 @@ pub trait FromLoro: Sized {
     /// fields override this.
     fn from_missing() -> Result<Self> {
         Err(ModelError::new(ErrorKind::Missing))
+    }
+
+    /// Read from document state. The default materializes the entry's deep
+    /// value; container-shaped types override it.
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        match e {
+            ReadEntry::Value(v) => Self::from_loro(&v),
+            ReadEntry::Container(c) => Self::from_loro(&r.deep_value(c)),
+        }
     }
 }
 
@@ -40,11 +50,47 @@ pub trait ToLoro {
     fn key(&self) -> Option<&str> {
         None
     }
+
+    /// Whether the slot already holds this value (`cur` is `None` for an absent
+    /// map key), i.e. [`ToLoro::to_loro`] would emit no ops. Reconcile uses it
+    /// to compare whole collections under one `read_state` lock before writing.
+    ///
+    /// `true` must be exact; `false` is always safe and only costs the write
+    /// path's own comparisons. The default is `false`.
+    fn same_as<'r>(&self, _r: &mut StateReader<'r>, _cur: Option<&ReadEntry<'r>>) -> bool {
+        false
+    }
 }
 
 impl<T: ToLoro + ?Sized> ToLoro for &T {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         (**self).to_loro(slot)
+    }
+
+    const KEY_FIELD: Option<&'static str> = T::KEY_FIELD;
+
+    fn key(&self) -> Option<&str> {
+        (**self).key()
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        (**self).same_as(r, cur)
+    }
+}
+
+/// `same_as` for a value written with `Slot::set_value`.
+fn same_value(cur: Option<&ReadEntry<'_>>, v: &LoroValue) -> bool {
+    matches!(cur, Some(ReadEntry::Value(c)) if c == v)
+}
+
+/// The container in `cur`, if it is one of type `ty` (what `ensure_container` reuses).
+pub fn container_of<'r>(
+    cur: Option<&ReadEntry<'r>>,
+    ty: ContainerType,
+) -> Option<ContainerRef<'r>> {
+    match cur {
+        Some(ReadEntry::Container(c)) if c.container_type() == ty => Some(*c),
+        _ => None,
     }
 }
 
@@ -57,6 +103,10 @@ impl FromLoro for LoroValue {
 impl ToLoro for LoroValue {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         slot.set_value(self.clone())
+    }
+
+    fn same_as<'r>(&self, _r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        same_value(cur, self)
     }
 }
 
@@ -72,6 +122,10 @@ impl FromLoro for bool {
 impl ToLoro for bool {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         slot.set_value(LoroValue::Bool(*self))
+    }
+
+    fn same_as<'r>(&self, _r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        same_value(cur, &LoroValue::Bool(*self))
     }
 }
 
@@ -96,6 +150,10 @@ macro_rules! int_impl {
                 })?;
                 slot.set_value(LoroValue::I64(v))
             }
+
+            fn same_as<'r>(&self, _r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+                i64::try_from(*self).is_ok_and(|v| same_value(cur, &LoroValue::I64(v)))
+            }
         }
     )*};
 }
@@ -116,6 +174,10 @@ impl ToLoro for f64 {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         slot.set_value(LoroValue::Double(*self))
     }
+
+    fn same_as<'r>(&self, _r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        same_value(cur, &LoroValue::Double(*self))
+    }
 }
 
 impl FromLoro for String {
@@ -131,6 +193,10 @@ impl ToLoro for String {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         self.as_str().to_loro(slot)
     }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        self.as_str().same_as(r, cur)
+    }
 }
 
 impl ToLoro for str {
@@ -141,6 +207,10 @@ impl ToLoro for str {
             }
         }
         slot.set_value(LoroValue::from(self))
+    }
+
+    fn same_as<'r>(&self, _r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        matches!(cur, Some(ReadEntry::Value(LoroValue::String(s))) if s.as_str() == self)
     }
 }
 
@@ -155,6 +225,13 @@ impl<T: FromLoro> FromLoro for Option<T> {
     fn from_missing() -> Result<Self> {
         Ok(None)
     }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        match e {
+            ReadEntry::Value(LoroValue::Null) => Ok(None),
+            e => T::read(r, e).map(Some),
+        }
+    }
 }
 
 impl<T: ToLoro> ToLoro for Option<T> {
@@ -162,6 +239,15 @@ impl<T: ToLoro> ToLoro for Option<T> {
         match self {
             Some(v) => v.to_loro(slot),
             None => slot.delete(),
+        }
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        match self {
+            Some(v) => v.same_as(r, cur),
+            // An absent map key. (A list slot holds `Null` instead; answering
+            // `false` there is safe.)
+            None => cur.is_none(),
         }
     }
 }
@@ -180,6 +266,25 @@ impl<T: FromLoro> FromLoro for Vec<T> {
             out.push(T::from_loro(item).map_err(|e| e.in_index(i))?);
         }
         Ok(out)
+    }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let c = match e {
+            ReadEntry::Value(v) => return Self::from_loro(&v),
+            ReadEntry::Container(c) => c,
+        };
+        match c.container_type() {
+            ContainerType::List | ContainerType::MovableList => {
+                let entries = r.list_entries(c);
+                let mut out = Vec::with_capacity(entries.len());
+                for (i, e) in entries.into_iter().enumerate() {
+                    out.push(T::read(r, e).map_err(|e| e.in_index(i))?);
+                }
+                Ok(out)
+            }
+            ContainerType::Map => list::read_keyed_in(r, c),
+            ty => Err(ModelError::mismatch("list", ty)),
+        }
     }
 }
 
@@ -222,6 +327,10 @@ impl<T: ToLoro> ToLoro for Vec<T> {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
         self.as_slice().to_loro(slot)
     }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        self.as_slice().same_as(r, cur)
+    }
 }
 
 impl<T: ToLoro> ToLoro for [T] {
@@ -232,6 +341,60 @@ impl<T: ToLoro> ToLoro for [T] {
         let list = slot.ensure_list(ContainerType::List)?;
         list::reconcile_positional(&list, self)
     }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        if T::KEY_FIELD.is_some() {
+            return list::keyed_same_as(r, cur, self);
+        }
+        let Some(ReadEntry::Container(c)) = cur else {
+            return false;
+        };
+        if !matches!(
+            c.container_type(),
+            ContainerType::List | ContainerType::MovableList
+        ) {
+            return false;
+        }
+        let entries = r.list_entries(*c);
+        entries.len() == self.len()
+            && self
+                .iter()
+                .zip(&entries)
+                .all(|(v, e)| v.same_as(r, Some(e)))
+    }
+}
+
+fn read_map_in<'r, V: FromLoro>(
+    r: &mut StateReader<'r>,
+    e: ReadEntry<'r>,
+    mut put: impl FnMut(String, V),
+) -> Result<()> {
+    let m = match e {
+        ReadEntry::Value(v) => return read_map(&v, put),
+        ReadEntry::Container(c) if c.container_type() == ContainerType::Map => c,
+        ReadEntry::Container(c) => return Err(ModelError::mismatch("map", c.container_type())),
+    };
+    for k in r.map_keys(m) {
+        let e = r.map_get(m, &k).unwrap();
+        put(k.to_string(), V::read(r, e).map_err(|e| e.in_key(&k))?);
+    }
+    Ok(())
+}
+
+fn map_same_as<'r, 'a, V: ToLoro + 'a>(
+    r: &mut StateReader<'r>,
+    cur: Option<&ReadEntry<'r>>,
+    len: usize,
+    mut entries: impl Iterator<Item = (&'a String, &'a V)>,
+) -> bool {
+    let Some(m) = container_of(cur, ContainerType::Map) else {
+        return false;
+    };
+    r.map_len(m) == len
+        && entries.all(|(k, v)| {
+            let e = r.map_get(m, k);
+            e.is_some() && v.same_as(r, e.as_ref())
+        })
 }
 
 fn read_map<V: FromLoro>(v: &LoroValue, mut put: impl FnMut(String, V)) -> Result<()> {
@@ -248,12 +411,12 @@ fn read_map<V: FromLoro>(v: &LoroValue, mut put: impl FnMut(String, V)) -> Resul
 /// (Struct maps, by contrast, keep unknown keys for forward compatibility.)
 fn write_map<'a, V: ToLoro + 'a>(
     slot: Slot<'_>,
-    len: usize,
     contains: impl Fn(&str) -> bool,
     entries: impl Iterator<Item = (&'a String, &'a V)>,
 ) -> Result<()> {
     let map = slot.ensure_map()?;
-    if map.len() > len {
+    // Equal lengths do not mean equal key sets, so always look for stale keys.
+    if !map.is_empty() {
         let stale: Vec<String> = map
             .keys()
             .filter(|k| !contains(k))
@@ -277,11 +440,23 @@ impl<V: FromLoro, S: BuildHasher + Default> FromLoro for HashMap<String, V, S> {
         })?;
         Ok(out)
     }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let mut out = HashMap::default();
+        read_map_in(r, e, |k, v| {
+            out.insert(k, v);
+        })?;
+        Ok(out)
+    }
 }
 
 impl<V: ToLoro, S: BuildHasher> ToLoro for HashMap<String, V, S> {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
-        write_map(slot, self.len(), |k| self.contains_key(k), self.iter())
+        write_map(slot, |k| self.contains_key(k), self.iter())
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        map_same_as(r, cur, self.len(), self.iter())
     }
 }
 
@@ -293,11 +468,23 @@ impl<V: FromLoro> FromLoro for BTreeMap<String, V> {
         })?;
         Ok(out)
     }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let mut out = BTreeMap::new();
+        read_map_in(r, e, |k, v| {
+            out.insert(k, v);
+        })?;
+        Ok(out)
+    }
 }
 
 impl<V: ToLoro> ToLoro for BTreeMap<String, V> {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()> {
-        write_map(slot, self.len(), |k| self.contains_key(k), self.iter())
+        write_map(slot, |k| self.contains_key(k), self.iter())
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        map_same_as(r, cur, self.len(), self.iter())
     }
 }
 
@@ -310,6 +497,20 @@ pub mod text {
 
     pub fn from_loro(v: &LoroValue) -> Result<String> {
         String::from_loro(v)
+    }
+
+    pub fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<String> {
+        match e {
+            ReadEntry::Container(c) if c.container_type() == ContainerType::Text => {
+                String::from_loro(&r.value(c))
+            }
+            e => String::read(r, e),
+        }
+    }
+
+    pub fn same_as<'r>(s: &str, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        container_of(cur, ContainerType::Text)
+            .is_some_and(|c| matches!(r.value(c), LoroValue::String(t) if t.as_str() == s))
     }
 
     pub fn to_loro(s: &str, slot: Slot<'_>) -> Result<()> {
@@ -331,6 +532,20 @@ pub mod counter {
         f64::from_loro(v)
     }
 
+    pub fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<f64> {
+        match e {
+            ReadEntry::Container(c) if c.container_type() == ContainerType::Counter => {
+                f64::from_loro(&r.value(c))
+            }
+            e => f64::read(r, e),
+        }
+    }
+
+    pub fn same_as<'r>(value: f64, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        container_of(cur, ContainerType::Counter)
+            .is_some_and(|c| matches!(r.value(c), LoroValue::Double(v) if value - v == 0.0))
+    }
+
     pub fn to_loro(value: f64, slot: Slot<'_>) -> Result<()> {
         let counter = slot.ensure_counter()?;
         let delta = value - counter.get();
@@ -341,8 +556,44 @@ pub mod counter {
     }
 }
 
+/// The map a struct is stored in, for derive output: `Ok(None)` when the entry
+/// is a plain map value, to be read with `from_loro`.
+pub fn struct_map<'r>(e: &ReadEntry<'r>) -> Result<Option<ContainerRef<'r>>> {
+    match e {
+        ReadEntry::Container(c) if c.container_type() == ContainerType::Map => Ok(Some(*c)),
+        ReadEntry::Container(c) => Err(ModelError::mismatch("map", c.container_type())),
+        ReadEntry::Value(_) => Ok(None),
+    }
+}
+
+/// Read a struct field through a [`StateReader`]; used by derive output.
+pub fn read_field_in<'r, T>(
+    r: &mut StateReader<'r>,
+    map: ContainerRef<'r>,
+    key: &str,
+    read: impl FnOnce(&mut StateReader<'r>, ReadEntry<'r>) -> Result<T>,
+    missing: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match r.map_get(map, key) {
+        Some(e) => read(r, e),
+        None => missing(),
+    }
+    .map_err(|e| e.in_key(key))
+}
+
+/// `same_as` of one struct field; used by derive output.
+pub fn field_same_as<'r>(
+    r: &mut StateReader<'r>,
+    map: ContainerRef<'r>,
+    key: &str,
+    same: impl FnOnce(&mut StateReader<'r>, Option<&ReadEntry<'r>>) -> bool,
+) -> bool {
+    let e = r.map_get(map, key);
+    same(r, e.as_ref())
+}
+
 /// Read a struct field from a deep map value; used by derive output.
-pub fn read_field<T: FromLoro>(
+pub fn read_field<T>(
     map: &loro::LoroMapValue,
     key: &str,
     read: impl FnOnce(&LoroValue) -> Result<T>,

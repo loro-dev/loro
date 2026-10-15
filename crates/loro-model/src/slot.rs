@@ -3,8 +3,8 @@
 //! covers struct fields, list elements and model roots.
 
 use loro::{
-    Container, ContainerTrait, ContainerType, LoroCounter, LoroList, LoroMap, LoroMovableList,
-    LoroText, LoroValue, ValueOrContainer,
+    Container, ContainerRef, ContainerTrait, ContainerType, LoroCounter, LoroList, LoroMap,
+    LoroMovableList, LoroText, LoroValue, StateReader, ValueOrContainer,
 };
 
 use crate::{ErrorKind, ModelError, Result};
@@ -22,6 +22,14 @@ impl ListRef {
             Container::List(l) => Some(Self::List(l.clone())),
             Container::MovableList(l) => Some(Self::Movable(l.clone())),
             _ => None,
+        }
+    }
+
+    /// This list as a [`ContainerRef`] of the reader's document.
+    pub fn container_ref<'r>(&self, r: &StateReader<'r>) -> Option<ContainerRef<'r>> {
+        match self {
+            Self::List(l) => r.container(l),
+            Self::Movable(l) => r.container(l),
         }
     }
 

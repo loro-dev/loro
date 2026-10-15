@@ -5,9 +5,10 @@
 //! through `LoroSchema::{View, VecView}` and `ToLoro::KEY_FIELD`.
 #![allow(dead_code)]
 
-use loro::{LoroMap, LoroValue};
+use loro::{ContainerType, LoroMap, LoroValue, ReadEntry, StateReader};
 use loro_model::{
-    read_field, FromLoro, Loc, LoroSchema, ModelError, Result, Slot, TextField, ToLoro, View,
+    container_of, field_same_as, read_field, read_field_in, struct_map, FromLoro, Loc, LoroSchema,
+    ModelError, Result, Slot, TextField, ToLoro, View,
 };
 
 // #[derive(Clone, Debug, PartialEq, LoroModel)]
@@ -58,6 +59,17 @@ impl FromLoro for Project {
             )?,
         })
     }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let Some(m) = struct_map(&e)? else {
+            return FromLoro::read(r, e);
+        };
+        Ok(Self {
+            title: read_field_in(r, m, "title", String::read, String::from_missing)?,
+            todos: read_field_in(r, m, "todos", Vec::<Todo>::read, Vec::<Todo>::from_missing)?,
+            notes: read_field_in(r, m, "notes", loro_model::text::read, String::from_missing)?,
+        })
+    }
 }
 
 impl ToLoro for Project {
@@ -69,6 +81,17 @@ impl ToLoro for Project {
         loro_model::text::to_loro(&self.notes, Slot::MapKey(&map, "notes"))
             .map_err(|e| e.in_key("notes"))?;
         Ok(())
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        let Some(m) = container_of(cur, ContainerType::Map) else {
+            return false;
+        };
+        field_same_as(r, m, "title", |r, c| self.title.same_as(r, c))
+            && field_same_as(r, m, "todos", |r, c| self.todos.same_as(r, c))
+            && field_same_as(r, m, "notes", |r, c| {
+                loro_model::text::same_as(&self.notes, r, c)
+            })
     }
 }
 
@@ -92,7 +115,7 @@ impl View for ProjectModel {
 
 impl ProjectModel {
     pub fn attach(map: LoroMap) -> Self {
-        Self::from_loc(Loc::Container(loro::ContainerTrait::to_container(&map)))
+        Self::from_loc(Loc::root(loro::ContainerTrait::to_container(&map)))
     }
 
     pub fn title(&self) -> <String as LoroSchema>::View {
@@ -121,6 +144,17 @@ impl FromLoro for Todo {
             done: read_field(m, "done", bool::from_loro, bool::from_missing)?,
         })
     }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let Some(m) = struct_map(&e)? else {
+            return FromLoro::read(r, e);
+        };
+        Ok(Self {
+            id: read_field_in(r, m, "id", String::read, String::from_missing)?,
+            title: read_field_in(r, m, "title", String::read, String::from_missing)?,
+            done: read_field_in(r, m, "done", bool::read, bool::from_missing)?,
+        })
+    }
 }
 
 impl ToLoro for Todo {
@@ -136,6 +170,15 @@ impl ToLoro for Todo {
         ToLoro::to_loro(&self.title, Slot::MapKey(&map, "title")).map_err(|e| e.in_key("title"))?;
         ToLoro::to_loro(&self.done, Slot::MapKey(&map, "done")).map_err(|e| e.in_key("done"))?;
         Ok(())
+    }
+
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool {
+        let Some(m) = container_of(cur, ContainerType::Map) else {
+            return false;
+        };
+        field_same_as(r, m, "id", |r, c| self.id.same_as(r, c))
+            && field_same_as(r, m, "title", |r, c| self.title.same_as(r, c))
+            && field_same_as(r, m, "done", |r, c| self.done.same_as(r, c))
     }
 }
 
@@ -186,6 +229,16 @@ impl FromLoro for TodoSummary {
         Ok(Self {
             id: read_field(m, "id", String::from_loro, String::from_missing)?,
             title: read_field(m, "title", String::from_loro, String::from_missing)?,
+        })
+    }
+
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        let Some(m) = struct_map(&e)? else {
+            return FromLoro::read(r, e);
+        };
+        Ok(Self {
+            id: read_field_in(r, m, "id", String::read, String::from_missing)?,
+            title: read_field_in(r, m, "title", String::read, String::from_missing)?,
         })
     }
 }

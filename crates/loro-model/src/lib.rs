@@ -16,7 +16,10 @@ pub mod list;
 mod slot;
 mod view;
 
-pub use convert::{counter, read_field, text, FromLoro, ToLoro};
+pub use convert::{
+    container_of, counter, field_same_as, read_field, read_field_in, struct_map, text, FromLoro,
+    ToLoro,
+};
 pub use error::{ErrorKind, ModelError, PathSeg, Result};
 pub use slot::{ListRef, Slot};
 pub use view::{KeyedVec, ListView, Loc, LoroSchema, TextField, ValueField, View};

@@ -22,11 +22,14 @@
 //!   dead keys, and append unordered live items sorted by key; the next
 //!   `update_from` writes that order back.
 
-use loro::{LoroListValue, LoroMap, LoroValue, ValueOrContainer};
+use loro::{
+    ContainerRef, ContainerTrait, ContainerType, LoroListValue, LoroMap, LoroValue, ReadEntry,
+    StateReader, ValueOrContainer,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::slot::{ListRef, Slot};
-use crate::{ErrorKind, ModelError, Result, ToLoro};
+use crate::{ErrorKind, FromLoro, ModelError, Result, ToLoro};
 
 pub const ITEMS: &str = "items";
 pub const ORDER: &str = "order";
@@ -108,6 +111,10 @@ fn raw_keys(order: &ListRef) -> LoroListValue {
     }
 }
 
+fn container_of<'r>(cur: Option<&ReadEntry<'r>>, ty: ContainerType) -> Option<ContainerRef<'r>> {
+    crate::convert::container_of(cur, ty)
+}
+
 pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
     let parts = KeyedParts::ensure(slot)?;
     let mut want: Vec<&str> = Vec::with_capacity(elems.len());
@@ -123,27 +130,153 @@ pub fn reconcile_keyed<T: ToLoro>(slot: Slot<'_>, elems: &[T]) -> Result<()> {
         want.push(k);
     }
 
+    // One read pass under one lock: current item keys, current order, and
+    // which elements already hold their input value.
+    let doc = parts.items.doc().expect("keyed vec parts are attached");
+    let (item_keys, order, unchanged) = doc.read_state(|r| {
+        let items = r.container(&parts.items).unwrap();
+        let order = parts.order.container_ref(r).unwrap();
+        let order: Vec<LoroValue> = r
+            .list_entries(order)
+            .into_iter()
+            .map(|e| match e {
+                ReadEntry::Value(v) => v,
+                ReadEntry::Container(_) => LoroValue::Null,
+            })
+            .collect();
+        let mut present = 0;
+        let unchanged: Vec<bool> = elems
+            .iter()
+            .zip(&want)
+            .map(|(e, k)| {
+                let cur = r.map_get(items, k);
+                present += cur.is_some() as usize;
+                cur.is_some() && e.same_as(r, cur.as_ref())
+            })
+            .collect();
+        // Input keys are distinct, so if every item is one of them there is
+        // nothing stale and the key scan can be skipped.
+        let item_keys = if r.map_len(items) == present {
+            Vec::new()
+        } else {
+            r.map_keys(items)
+        };
+        (item_keys, order, unchanged)
+    });
+
     // Items: delete entries that are no longer wanted.
-    let stale: Vec<String> = parts
-        .items
-        .keys()
-        .filter(|k| !want_index.contains_key(k.as_str()))
-        .map(|k| k.to_string())
-        .collect();
-    for k in stale {
-        parts.items.delete(&k)?;
+    for k in item_keys {
+        if !want_index.contains_key(k.as_str()) {
+            parts.items.delete(&k)?;
+        }
     }
 
     // Order: scalar keys, reconciled with moves.
-    reconcile_order(&parts.order, &want, &want_index, &raw_keys(&parts.order))
-        .map_err(|e| e.in_key(ORDER))?;
+    reconcile_order(&parts.order, &want, &want_index, &order).map_err(|e| e.in_key(ORDER))?;
 
     // Content: each element lives under its key.
     for (j, e) in elems.iter().enumerate() {
-        e.to_loro(Slot::MapKey(&parts.items, want[j]))
-            .map_err(|e| e.in_index(j))?;
+        if !unchanged[j] {
+            e.to_loro(Slot::MapKey(&parts.items, want[j]))
+                .map_err(|e| e.in_index(j))?;
+        }
     }
     Ok(())
+}
+
+/// The `items` and `order` containers of a keyed vec read through `r`.
+fn keyed_parts_in<'r>(
+    r: &mut StateReader<'r>,
+    root: ContainerRef<'r>,
+) -> Option<(ContainerRef<'r>, Option<ContainerRef<'r>>)> {
+    let items = container_of(r.map_get(root, ITEMS).as_ref(), ContainerType::Map)?;
+    let order = match r.map_get(root, ORDER) {
+        Some(ReadEntry::Container(c))
+            if matches!(
+                c.container_type(),
+                ContainerType::List | ContainerType::MovableList
+            ) =>
+        {
+            Some(c)
+        }
+        _ => None,
+    };
+    Some((items, order))
+}
+
+/// [`crate::FromLoro::read`] of a keyed vec, in the order defined in the module docs.
+pub fn read_keyed_in<'r, T: FromLoro>(
+    r: &mut StateReader<'r>,
+    root: ContainerRef<'r>,
+) -> Result<Vec<T>> {
+    let Some((items, order)) = keyed_parts_in(r, root) else {
+        return Err(ModelError::mismatch(
+            "keyed vec with items and order",
+            r.deep_value(root),
+        ));
+    };
+    let mut out = Vec::new();
+    let mut seen: FxHashSet<String> = FxHashSet::default();
+    if let Some(order) = order {
+        for e in r.list_entries(order) {
+            let ReadEntry::Value(LoroValue::String(k)) = e else {
+                continue;
+            };
+            let Some(item) = r.map_get(items, &k) else {
+                continue;
+            };
+            if !seen.insert(k.to_string()) {
+                continue;
+            }
+            let i = out.len();
+            out.push(T::read(r, item).map_err(|e| e.in_index(i))?);
+        }
+    }
+    if out.len() < r.map_len(items) {
+        let mut rest: Vec<String> = r
+            .map_keys(items)
+            .into_iter()
+            .filter(|k| !seen.contains(k.as_str()))
+            .map(|k| k.to_string())
+            .collect();
+        rest.sort_unstable();
+        for k in rest {
+            let item = r.map_get(items, &k).unwrap();
+            let i = out.len();
+            out.push(T::read(r, item).map_err(|e| e.in_index(i))?);
+        }
+    }
+    Ok(out)
+}
+
+/// [`ToLoro::same_as`] of a keyed vec: same item set, `order` exactly the input
+/// keys (no repeats or dead keys), and every item the same.
+pub fn keyed_same_as<'r, T: ToLoro>(
+    r: &mut StateReader<'r>,
+    cur: Option<&ReadEntry<'r>>,
+    elems: &[T],
+) -> bool {
+    let Some(root) = container_of(cur, ContainerType::Map) else {
+        return false;
+    };
+    let Some((items, Some(order))) = keyed_parts_in(r, root) else {
+        return false;
+    };
+    if r.map_len(items) != elems.len() {
+        return false;
+    }
+    let order = r.list_entries(order);
+    if order.len() != elems.len() {
+        return false;
+    }
+    elems.iter().zip(&order).all(|(e, o)| {
+        let Some(k) = e.key() else { return false };
+        if !matches!(o, ReadEntry::Value(LoroValue::String(s)) if s.as_str() == k) {
+            return false;
+        }
+        let item = r.map_get(items, k);
+        item.is_some() && e.same_as(r, item.as_ref())
+    })
 }
 
 /// Make `list` (whose elements have keys `cur`) equal to `want`.

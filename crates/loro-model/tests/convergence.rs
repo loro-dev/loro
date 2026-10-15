@@ -6,7 +6,7 @@ mod common;
 
 use common::*;
 use loro::{ExportMode, LoroDoc};
-use loro_model::View;
+use loro_model::{FromLoro, ToLoro, View};
 
 struct Rng(u64);
 
@@ -97,6 +97,14 @@ fn view_op(rng: &mut Rng, m: &ProjectModel) {
     }
 }
 
+fn same_as(doc: &LoroDoc, p: &Project) -> bool {
+    let root = doc.get_map("project");
+    doc.read_state(|r| {
+        let root = r.container(&root).unwrap();
+        p.same_as(r, Some(&loro::ReadEntry::Container(root)))
+    })
+}
+
 fn run(seed: u64, steps: usize) {
     let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let docs: Vec<LoroDoc> = (0..3)
@@ -120,6 +128,8 @@ fn run(seed: u64, steps: usize) {
                 mutate(&mut rng, &mut dto);
                 models[p].update_from(&dto).unwrap();
                 assert_eq!(models[p].read_as::<Project>().unwrap(), dto, "seed {seed}");
+                // `same_as` holds right after reconcile (the fast path is not missed) ...
+                assert!(same_as(&docs[p], &dto), "same_as missed, seed {seed}");
                 docs[p].commit();
                 let before = docs[p].len_ops();
                 models[p].update_from(&dto).unwrap();
@@ -138,6 +148,30 @@ fn run(seed: u64, steps: usize) {
         sync(&docs[1], &docs[2]);
     }
     let read: Vec<Option<Project>> = models.iter().map(|m| m.read_as().ok()).collect();
+    for (d, r) in docs.iter().zip(&read) {
+        // The field-level read path agrees with converting the deep value.
+        let deep = d.get_map("project").get_deep_value();
+        assert_eq!(
+            r.as_ref(),
+            Project::from_loro(&deep).ok().as_ref(),
+            "seed {seed}"
+        );
+        // ... and when `same_as` says "same", reconcile emits nothing.
+        if let Some(r) = r {
+            let mut changed = r.clone();
+            changed.title.push('!');
+            assert!(!same_as(d, &changed), "seed {seed}");
+            if same_as(d, r) {
+                d.commit();
+                let before = d.len_ops();
+                ProjectModel::attach(d.get_map("project"))
+                    .update_from(r)
+                    .unwrap();
+                d.commit();
+                assert_eq!(d.len_ops(), before, "same_as was wrong, seed {seed}");
+            }
+        }
+    }
     assert_eq!(read[0], read[1], "seed {seed}");
     assert_eq!(read[1], read[2], "seed {seed}");
     for (m, r) in models.iter().zip(&read) {

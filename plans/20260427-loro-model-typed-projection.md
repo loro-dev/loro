@@ -151,11 +151,14 @@ read, including imported remote edits (test:
 Four traits, down from eight in the first draft.
 
 ```rust
-/// Projection. Works on a deep `LoroValue`: read_as takes one
-/// get_deep_value() of the subtree instead of one handler read per field.
+/// Projection. `read_as` calls `read` under one `LoroDoc::read_state` lock;
+/// `from_loro` converts an already materialized value.
 pub trait FromLoro: Sized {
     fn from_loro(v: &LoroValue) -> Result<Self>;
     fn from_missing() -> Result<Self> { Err(missing) } // Option<T>, #[loro(default)]
+    fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        /* default: from_loro of the entry's deep value; derive reads field by field */
+    }
 }
 
 /// Reconcile into a slot: map key, list position, new list element, or an
@@ -164,6 +167,8 @@ pub trait ToLoro {
     fn to_loro(&self, slot: Slot<'_>) -> Result<()>;
     const KEY_FIELD: Option<&'static str> = None; // #[loro(key)]
     fn key(&self) -> Option<&str> { None }   // string: a map key in the keyed layout
+    /// Exact "to_loro would emit no ops" test under a read lock; false is always safe.
+    fn same_as<'r>(&self, r: &mut StateReader<'r>, cur: Option<&ReadEntry<'r>>) -> bool { false }
 }
 
 /// Links a data type to its views, so derive output for `todos: Vec<Todo>`
@@ -435,24 +440,79 @@ each, 100k todos, shared 8-core machine:
 | held element `set` + commit | 9.9 µs | 4.4 µs | 2.3× |
 | first `get_deep_value` after snapshot import | 2.1 s | 2.0 s | — |
 
-What is left, and the structural change each needs:
+### Round 2: field-level state reads
 
-- **`read_as` is bounded by `LoroValue` materialization.** Building a
-  `HashMap<String, LoroValue>` per map (`MapState::to_map`) and dropping it again
-  is ~60% of `get_deep_value`, and converting to the DTO is another ~30% of
-  `read_as`. Next step: a read API that walks state under one lock without
-  building `LoroValue` trees, e.g. `FromLoro` over a borrowed node reader
-  (`node.get(key)`, `node.as_str()`, `node.iter()`). `read_container_tree`'s
-  `Sink` is a starting point, but it still calls `to_map` per container.
-  Needs a public API design; measure with a prototype first.
-- **`update_from` is bounded by one handler read per field.** Each read takes the
-  document lock, looks up the container store, and binary-searches a `BTreeMap`
-  of `InternalString` (string compares on a 100k-entry `items` map). Next step:
-  a batched read (`get_many`, or a closure that holds one state lock across a
-  subtree), then compare in memory.
-- **First read after import** is half KV point lookups (one `SsTable::get` and
-  block decode per container) and half registering 100k cids. Next step: scan the
-  KV range once for a subtree read instead of point lookups.
+New public API, `LoroDoc::read_state(|r: &mut StateReader| ...)`
+(`crates/loro/src/state_reader.rs`, design and rules in
+`context/state-reader.md`): one state lock, `map_get` / `list_entries` /
+`value` / ... returning a value or a child `ContainerRef`, nothing
+materialized beyond what is read. `ContainerRef<'r>` is branded with an
+invariant lifetime, so refs cannot escape the closure or mix with another
+call's reader (compile-fail doctests).
+
+Model layer:
+
+- `FromLoro::read`: derive reads struct fields directly; `Vec`, keyed vecs,
+  maps, text and counter read through the reader. `read_as` and `watch` use it.
+- `ToLoro::same_as`: exact "no ops needed" test. Keyed reconcile does one
+  `read_state` pass (order, item keys only if something is stale, and
+  `same_as` per element) and calls `to_loro` only for changed elements.
+- Views capture their `LoroDoc` when created. `ContainerTrait::doc()` calls
+  `start_auto_commit`, which takes the transaction lock that a committing
+  thread holds while emitting events, so calling it from a subscriber panics
+  (debug) or deadlocks (release). This affects any user code that calls
+  `.doc()` in a subscriber; recorded in `context/state-reader.md`.
+
+Core: `MovableListState::iter` walked the list with one tree query per index
+(`O(n log n)`, marked `PERF`); it is now one in-order walk.
+
+A/B against the previous commit, thread CPU time, minimum of 3–7 runs, 100k
+todos, quiet machine:
+
+| Operation | Before | After | Speedup |
+| --- | --- | --- | --- |
+| `read_as::<Project>()` | 747 ms | 371 ms | 2.0× |
+| first `read_as` after snapshot import | 2.04 s | 1.24 s | 1.65× |
+| `update_from`, unchanged | 315 ms | 285 ms | 1.1× |
+
+Cumulative since the start of the performance work: `read_as` 1.18 s → 0.37 s
+(3.2×), `update_from` unchanged 715 ms → 285 ms (2.5×).
+
+### Where the remaining time goes
+
+Per-operation microbenchmarks inside one `read_state`, 100k keyed todos:
+
+| Read | Cost |
+| --- | --- |
+| `map_get` on the 100k-entry `items` map (incl. mergeable child lookup) | ~860–990 ns |
+| three `map_get`s on one todo's 3-entry map | ~610–680 ns |
+| `list_entries` on `order`, per element | ~190 ns |
+| `map_keys` on `items`, per key | ~150 ns |
+
+These are memory-latency bound, not instruction bound: the profile of the
+`items` lookup is two hash probes (`MapState`, then the arena's
+`(parent, key) -> child` index), each dominated by loading control bytes and
+dereferencing the stored `InternalString` (`Arc<Box<str>>`, two hops) on
+scattered memory. The lock that `read_state` removes was not the main cost,
+which is why `update_from` gained little.
+
+Tried and dropped: replacing the large-map `BTreeMap` with a hash map plus a
+lazily sorted key list (keeps encoding byte-identical). Lookups went
+992 → 863 ns, but key iteration went 146 → 255 ns and the change touched
+snapshot encoding paths. Not worth it.
+
+Options that would move the floor, each a core data-layout change:
+
+- `InternalString` with a thin `Arc` holding the bytes inline (one hop instead
+  of two). `Arc<str>` is a fat pointer and would grow every `InternalString`
+  from 16 to 24 bytes.
+- Store the resolved child index next to a mergeable marker in `MapState`, so
+  reading a mergeable child is one probe instead of two.
+- First read after import: each container is decoded from KV on first touch,
+  and the decoded-value cache (bounded at 2048, `context/container-value-cache.md`)
+  evicts and drops most of them during a 100k-container read (~26%);
+  registering 100k mergeable cids, half of it interning keys, is ~21%; KV point
+  lookups ~9%.
 
 ## Known Costs and Follow-Ups
 
@@ -544,10 +604,12 @@ Gate each item on the benchmark; keep the tables above updated.
 
 - [x] Core: mergeable edge cache, table CRC, `&str` map lookups
       (see "Performance Work").
-- [ ] Core: non-materializing state reader for `read_as`.
-- [ ] Core: batched map reads for `update_from` comparisons.
-- [ ] Core: range scan instead of KV point lookups for the first subtree read
-      after import.
+- [x] Core: non-materializing state reader (`LoroDoc::read_state`), used by
+      `read_as` and keyed reconcile.
+- [x] Core: `MovableListState::iter` in one walk.
+- [ ] Core data layout: thin `InternalString`, child index next to mergeable
+      markers (see "Where the remaining time goes").
+- [ ] Core: first read after import (decode/evict churn, cid registration).
 - [ ] Keyed index-based operations: `O(log n)` position of an `order` entry.
 - Exit: `update_from` unchanged at 100k within 2× of `get_deep_value()` of the
   same data, or a documented reason why not.
@@ -600,5 +662,7 @@ containers, with a benchmark.
   from events or a model cache.
 - 2026-10-15: `Vec<T>` projection accepts both list layouts; `FromLoro` has no
   key concept.
+- 2026-10-15: `FromLoro::read` / `ToLoro::same_as` over `LoroDoc::read_state`;
+  views capture their `LoroDoc` instead of calling `ContainerTrait::doc()`.
 - 2026-10-15: `ToLoro::key()` returns `Option<&str>`: keys are map keys in the
   keyed vec layout, and borrowing avoids an allocation per element.
