@@ -10,9 +10,9 @@
 //! resolver fail closed unless the ref's digest matches the exact `(parent, key, kind)` being
 //! resolved.
 
-use loro_common::{ContainerID, ContainerType, InternalString, LoroMapValue};
+use loro_common::{ContainerID, ContainerType, LoroMapValue, LoroValue};
 
-use crate::{container::idx::ContainerIdx, event::Index};
+use crate::{arena::MergeableEdge, container::idx::ContainerIdx, event::Index};
 
 use super::{ContainerState, DocState};
 
@@ -26,10 +26,13 @@ impl DocState {
     pub(super) fn get_logical_child_index(
         &mut self,
         parent_idx: ContainerIdx,
+        child_idx: ContainerIdx,
         child_id: &ContainerID,
     ) -> Option<Index> {
-        if let Some((parent_id, key, kind)) = child_id.parse_mergeable() {
-            return self.resolve_mergeable_child_index(parent_idx, &parent_id, &key, kind);
+        // The arena caches the parsed edge of every mergeable cid, so this does not re-parse
+        // the cid string or re-hash the marker.
+        if let Some(Some(edge)) = self.arena.mergeable_edge(child_idx) {
+            return self.resolve_mergeable_child_index(parent_idx, &edge);
         }
 
         self.store
@@ -40,54 +43,60 @@ impl DocState {
     pub(super) fn contains_logical_child(
         &mut self,
         parent_idx: ContainerIdx,
+        child_idx: ContainerIdx,
         child_id: &ContainerID,
     ) -> bool {
-        self.get_logical_child_index(parent_idx, child_id).is_some()
+        self.get_logical_child_index(parent_idx, child_idx, child_id)
+            .is_some()
     }
 
+    /// The child is active when it hangs under the parent its cid encodes and that parent map
+    /// holds its marker at its key.
     fn resolve_mergeable_child_index(
         &mut self,
         parent_idx: ContainerIdx,
-        encoded_parent_id: &ContainerID,
-        key: &str,
-        kind: ContainerType,
+        edge: &MergeableEdge,
     ) -> Option<Index> {
-        if parent_idx.get_type() != ContainerType::Map {
+        if parent_idx.get_type() != ContainerType::Map || parent_idx != edge.parent {
             return None;
         }
 
-        let actual_parent_id = self.arena.idx_to_id(parent_idx)?;
-        if &actual_parent_id != encoded_parent_id {
-            return None;
-        }
-
-        let value = self.store.map_get(parent_idx, key)?;
-        if loro_common::parse_mergeable_marker(&actual_parent_id, key, &value) == Some(kind) {
-            Some(Index::Key(key.into()))
-        } else {
-            None
-        }
+        let value = self.store.map_get(parent_idx, &edge.key)?;
+        edge.is_activated_by(&value)
+            .then(|| Index::Key(edge.key.clone()))
     }
 
-    /// Derive `(key, cid)` pairs for the active mergeable children of a map directly from its
+    /// Derive `(key, cid, idx)` for the active mergeable children of a map directly from its
     /// current value table.
     ///
     /// This is used by deep-value and alive-container walks. It mirrors regular map semantics:
     /// the current value at a key determines which child is visible. For mergeable children, that
-    /// value is a compact binary child ref rather than `LoroValue::Container`.
-    pub(super) fn mergeable_children_from_value(
+    /// value is a compact binary child ref rather than `LoroValue::Container`. Children already
+    /// registered are found through the arena without rebuilding their cids.
+    pub(super) fn mergeable_children_from_value<'a>(
         &self,
+        parent_idx: ContainerIdx,
         parent_id: &ContainerID,
-        map_value: &LoroMapValue,
-    ) -> Vec<(InternalString, ContainerID)> {
-        let mut ans = Vec::new();
-        for (key, value) in map_value.iter() {
-            if let Some(kind) = loro_common::parse_mergeable_marker(parent_id, key, value) {
-                let key_istr: InternalString = key.as_str().into();
-                let cid = ContainerID::new_mergeable(parent_id, key, kind);
-                ans.push((key_istr, cid));
-            }
-        }
-        ans
+        map_value: &'a LoroMapValue,
+    ) -> Vec<(&'a str, ContainerID, ContainerIdx)> {
+        map_value
+            .iter()
+            .filter_map(|(key, value)| {
+                let idx = self.mergeable_child_of_value(parent_idx, parent_id, key, value)?;
+                Some((key.as_str(), self.arena.idx_to_id(idx).unwrap(), idx))
+            })
+            .collect()
+    }
+
+    /// The mergeable child that `value`, stored at `key` in the map `parent_idx`, activates.
+    pub(super) fn mergeable_child_of_value(
+        &self,
+        parent_idx: ContainerIdx,
+        parent_id: &ContainerID,
+        key: &str,
+        value: &LoroValue,
+    ) -> Option<ContainerIdx> {
+        self.arena
+            .mergeable_child_idx(parent_idx, parent_id, key, value)
     }
 }

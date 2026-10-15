@@ -78,12 +78,12 @@ impl MapEntries {
         }
     }
 
-    fn get(&self, key: &InternalString) -> Option<&MapValue> {
+    fn get(&self, key: &str) -> Option<&MapValue> {
         match self {
             Self::SortedTiny(entries) => {
                 Self::debug_assert_sorted_tiny(entries);
                 entries
-                    .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
+                    .binary_search_by(|(entry_key, _)| entry_key.as_str().cmp(key))
                     .ok()
                     .map(|index| &entries[index].1)
             }
@@ -461,7 +461,7 @@ impl MapState {
     }
 
     pub fn get(&self, k: &str) -> Option<&LoroValue> {
-        match self.map.get(&k.into()) {
+        match self.map.get(k) {
             Some(value) => match &value.value {
                 Some(v) => Some(v),
                 None => None,
@@ -475,7 +475,7 @@ impl MapState {
     }
 
     pub fn get_last_edit_peer(&self, key: &str) -> Option<PeerID> {
-        self.map.get(&key.into()).map(|v| v.peer)
+        self.map.get(key).map(|v| v.peer)
     }
 }
 
@@ -691,7 +691,7 @@ mod snapshot {
                 },
             )
             .unwrap();
-            let v = new_map.map.get(&"2".into()).unwrap();
+            let v = new_map.map.get("2").unwrap();
             assert_eq!(
                 v,
                 &MapValue {
@@ -700,7 +700,7 @@ mod snapshot {
                     peer: 2,
                 }
             );
-            let v = new_map.map.get(&"1".into()).unwrap();
+            let v = new_map.map.get("1").unwrap();
             assert_eq!(
                 v,
                 &MapValue {

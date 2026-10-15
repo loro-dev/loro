@@ -42,8 +42,11 @@ impl StyleConfigMap {
             TextStyleInfoFlag::new(if is_del { x.expand.reverse() } else { x.expand })
         };
         if let Some(index) = key.find(':') {
-            let key = key[..index].into();
-            self.map.get(&key).copied().or(self.default_style).map(f)
+            self.map
+                .get(&key[..index])
+                .copied()
+                .or(self.default_style)
+                .map(f)
         } else {
             self.map.get(key).copied().or(self.default_style).map(f)
         }

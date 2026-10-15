@@ -85,6 +85,7 @@ pub struct CompactId {
 /// every op header, snapshot, and event path.
 pub const MERGEABLE_NAMESPACE_PREFIX: &str = "🤝:";
 
+#[cfg(test)]
 fn write_len_prefixed_segment(out: &mut Vec<u8>, bytes: &[u8]) {
     leb128::write::unsigned(out, bytes.len() as u64).unwrap();
     out.extend_from_slice(bytes);
@@ -390,7 +391,7 @@ pub fn check_root_container_name(name: &str) -> bool {
 pub const MERGEABLE_MARKER_MAGIC: [u8; 4] = [0x00, b'L', b'M', 0x01];
 
 const MERGEABLE_MARKER_DIGEST_LEN: usize = 3;
-const MERGEABLE_MARKER_LEN: usize = 4 + 1 + MERGEABLE_MARKER_DIGEST_LEN;
+pub const MERGEABLE_MARKER_LEN: usize = 4 + 1 + MERGEABLE_MARKER_DIGEST_LEN;
 const MERGEABLE_MARKER_CRC_DOMAIN: &[u8] = b"loro.mergeable.marker.v1";
 
 /// Build the [`LoroValue`] a parent map stores at a mergeable key for `container_type`.
@@ -419,25 +420,9 @@ pub fn parse_mergeable_marker(
     key: &str,
     value: &LoroValue,
 ) -> Option<ContainerType> {
-    let LoroValue::Binary(bytes) = value else {
-        return None;
-    };
-    if bytes.len() != MERGEABLE_MARKER_LEN || !bytes.starts_with(&MERGEABLE_MARKER_MAGIC) {
-        return None;
-    }
-
-    let kind = ContainerType::try_from_u8(bytes[MERGEABLE_MARKER_MAGIC.len()]).ok()?;
-    if matches!(kind, ContainerType::Unknown(_)) {
-        return None;
-    }
-
-    let digest_start = MERGEABLE_MARKER_MAGIC.len() + 1;
-    let expected = mergeable_marker_crc24(parent, key, kind);
-    if &bytes[digest_start..] != expected.as_slice() {
-        return None;
-    }
-
-    Some(kind)
+    // Check the shape before hashing the parent: most values are not markers.
+    marker_kind(value)?;
+    MergeableMarkerDigest::new(parent).parse(key, value)
 }
 
 /// Translate a raw map slot value into the user-visible Container view for a Map at `parent`.
@@ -458,30 +443,109 @@ pub fn translate_mergeable_marker_value(
 }
 
 fn mergeable_marker_crc24(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {
-    let mut input = Vec::new();
-    input.extend_from_slice(MERGEABLE_MARKER_CRC_DOMAIN);
-    write_len_prefixed_segment(&mut input, &parent.to_bytes());
-    write_len_prefixed_segment(&mut input, key.as_bytes());
-    input.push(kind.to_u8());
-
-    let crc = crc32(&input) & 0x00ff_ffff;
-    [
-        ((crc >> 16) & 0xff) as u8,
-        ((crc >> 8) & 0xff) as u8,
-        (crc & 0xff) as u8,
-    ]
+    MergeableMarkerDigest::new(parent).digest(key, kind)
 }
 
-fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = 0xffff_ffff_u32;
-    for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
+/// CRC state of the marker digest input after the domain and parent segments, so the digests
+/// of many keys under one parent hash the parent once.
+#[derive(Clone, Copy)]
+pub struct MergeableMarkerDigest {
+    state: u32,
+}
+
+impl MergeableMarkerDigest {
+    pub fn new(parent: &ContainerID) -> Self {
+        let mut state = crc32_update(!0, MERGEABLE_MARKER_CRC_DOMAIN);
+        let parent = parent.to_bytes();
+        state = crc32_update_len_prefixed(state, &parent);
+        Self { state }
+    }
+
+    pub fn digest(&self, key: &str, kind: ContainerType) -> [u8; 3] {
+        let mut state = crc32_update_len_prefixed(self.state, key.as_bytes());
+        state = crc32_update(state, &[kind.to_u8()]);
+        let crc = !state & 0x00ff_ffff;
+        [
+            ((crc >> 16) & 0xff) as u8,
+            ((crc >> 8) & 0xff) as u8,
+            (crc & 0xff) as u8,
+        ]
+    }
+
+    /// The marker for `(parent, key, kind)`, as [`mergeable_marker`] builds it.
+    pub fn marker_bytes(&self, key: &str, kind: ContainerType) -> [u8; MERGEABLE_MARKER_LEN] {
+        let mut out = [0; MERGEABLE_MARKER_LEN];
+        out[..MERGEABLE_MARKER_MAGIC.len()].copy_from_slice(&MERGEABLE_MARKER_MAGIC);
+        out[MERGEABLE_MARKER_MAGIC.len()] = kind.to_u8();
+        out[MERGEABLE_MARKER_MAGIC.len() + 1..].copy_from_slice(&self.digest(key, kind));
+        out
+    }
+
+    /// [`parse_mergeable_marker`] for a key under this digest's parent.
+    pub fn parse(&self, key: &str, value: &LoroValue) -> Option<ContainerType> {
+        let kind = marker_kind(value)?;
+        let LoroValue::Binary(bytes) = value else {
+            unreachable!()
+        };
+        (bytes[MERGEABLE_MARKER_MAGIC.len() + 1..] == self.digest(key, kind)).then_some(kind)
+    }
+}
+
+/// The kind byte of a value shaped like a marker; the digest is not checked. Cheap filter before
+/// [`parse_mergeable_marker`].
+pub fn mergeable_marker_kind(value: &LoroValue) -> Option<ContainerType> {
+    marker_kind(value)
+}
+
+fn marker_kind(value: &LoroValue) -> Option<ContainerType> {
+    let LoroValue::Binary(bytes) = value else {
+        return None;
+    };
+    if bytes.len() != MERGEABLE_MARKER_LEN || !bytes.starts_with(&MERGEABLE_MARKER_MAGIC) {
+        return None;
+    }
+    let kind = ContainerType::try_from_u8(bytes[MERGEABLE_MARKER_MAGIC.len()]).ok()?;
+    if matches!(kind, ContainerType::Unknown(_)) {
+        return None;
+    }
+    Some(kind)
+}
+
+fn crc32_update_len_prefixed(state: u32, bytes: &[u8]) -> u32 {
+    let mut len = [0u8; 10];
+    let mut cursor = &mut len[..];
+    let n = leb128::write::unsigned(&mut cursor, bytes.len() as u64).unwrap();
+    crc32_update(crc32_update(state, &len[..n]), bytes)
+}
+
+/// Reflected CRC-32 (polynomial 0xEDB88320), table-driven.
+const CRC32_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut crc = i as u32;
+        let mut j = 0;
+        while j < 8 {
             let mask = (crc & 1).wrapping_neg();
             crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+            j += 1;
         }
+        table[i] = crc;
+        i += 1;
     }
-    !crc
+    table
+};
+
+fn crc32_update(mut crc: u32, bytes: &[u8]) -> u32 {
+    for &byte in bytes {
+        crc = (crc >> 8) ^ CRC32_TABLE[((crc ^ u32::from(byte)) & 0xff) as usize];
+    }
+    crc
+}
+
+#[cfg(test)]
+fn crc32(bytes: &[u8]) -> u32 {
+    !crc32_update(!0, bytes)
 }
 
 impl CompactId {
@@ -1249,8 +1313,9 @@ pub mod wasm {
 #[cfg(test)]
 mod test {
     use crate::{
-        mergeable_marker, parse_mergeable_marker, ContainerID, ContainerType, LoroValue, ID,
-        MERGEABLE_MARKER_MAGIC,
+        crc32, mergeable_marker, mergeable_marker_crc24, parse_mergeable_marker,
+        write_len_prefixed_segment, ContainerID, ContainerType, LoroValue, MergeableMarkerDigest,
+        ID, MERGEABLE_MARKER_CRC_DOMAIN, MERGEABLE_MARKER_MAGIC,
     };
 
     #[test]
@@ -1415,6 +1480,57 @@ mod test {
             assert_eq!(cid.parse_mergeable(), None, "payload {name:?}");
             assert!(!cid.is_mergeable(), "payload {name:?}");
         }
+    }
+
+    #[test]
+    fn marker_digest_matches_reference_crc() {
+        // The digest is part of the stored marker format; it must not change.
+        fn reference(parent: &ContainerID, key: &str, kind: ContainerType) -> [u8; 3] {
+            fn bitwise_crc32(bytes: &[u8]) -> u32 {
+                let mut crc = 0xffff_ffff_u32;
+                for &byte in bytes {
+                    crc ^= u32::from(byte);
+                    for _ in 0..8 {
+                        let mask = (crc & 1).wrapping_neg();
+                        crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+                    }
+                }
+                !crc
+            }
+            let mut input = Vec::new();
+            input.extend_from_slice(MERGEABLE_MARKER_CRC_DOMAIN);
+            write_len_prefixed_segment(&mut input, &parent.to_bytes());
+            write_len_prefixed_segment(&mut input, key.as_bytes());
+            input.push(kind.to_u8());
+            let crc = bitwise_crc32(&input) & 0x00ff_ffff;
+            [(crc >> 16) as u8, (crc >> 8) as u8, crc as u8]
+        }
+
+        let root = ContainerID::new_root("state", ContainerType::Map);
+        let normal = ContainerID::new_normal(ID::new(7, 42), ContainerType::Map);
+        let nested = ContainerID::new_mergeable(&root, "child", ContainerType::Map);
+        let long_key = "k".repeat(300);
+        for parent in [&root, &normal, &nested] {
+            for key in ["", "a", "todo-12345", "a>b/c\\d", long_key.as_str()] {
+                for kind in [
+                    ContainerType::Map,
+                    ContainerType::List,
+                    ContainerType::MovableList,
+                    ContainerType::Text,
+                    ContainerType::Tree,
+                ] {
+                    let expected = reference(parent, key, kind);
+                    assert_eq!(mergeable_marker_crc24(parent, key, kind), expected);
+                    let marker = mergeable_marker(parent, key, kind);
+                    assert_eq!(
+                        marker.as_binary().unwrap().as_slice(),
+                        MergeableMarkerDigest::new(parent).marker_bytes(key, kind)
+                    );
+                    assert_eq!(parse_mergeable_marker(parent, key, &marker), Some(kind));
+                }
+            }
+        }
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
     }
 
     #[test]

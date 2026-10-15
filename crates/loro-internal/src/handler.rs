@@ -1255,9 +1255,16 @@ impl Handler {
     }
 
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
+        let idx = doc.arena.register_container(&id);
+        Self::new_attached_with_idx(id, idx, doc)
+    }
+
+    /// [`Handler::new_attached`] for a container already registered as `idx`.
+    pub(crate) fn new_attached_with_idx(id: ContainerID, idx: ContainerIdx, doc: LoroDoc) -> Self {
+        debug_assert_eq!(doc.arena.id_to_idx(&id), Some(idx));
         let kind = id.container_type();
         let handler = BasicHandler {
-            container_idx: doc.arena.register_container(&id),
+            container_idx: idx,
             id,
             doc,
         };
@@ -4660,9 +4667,13 @@ impl MapHandler {
             MaybeDetached::Attached(inner) => {
                 let value = inner
                     .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
-                Some(loro_common::translate_mergeable_marker_value(
-                    &inner.id, key, value,
-                ))
+                Some(
+                    inner
+                        .doc
+                        .arena
+                        .translate_mergeable_marker(inner.container_idx, &inner.id, key, value)
+                        .0,
+                )
             }
         }
     }
@@ -4677,8 +4688,18 @@ impl MapHandler {
             MaybeDetached::Attached(inner) => {
                 let value = inner
                     .with_doc_state(|state| state.get_map_value_by_key(inner.container_idx, key))?;
-                let value = loro_common::translate_mergeable_marker_value(&inner.id, key, value);
-                Some(value_to_value_or_handler(inner, value))
+                let (value, child_idx) = inner.doc.arena.translate_mergeable_marker(
+                    inner.container_idx,
+                    &inner.id,
+                    key,
+                    value,
+                );
+                Some(match (value, child_idx) {
+                    (LoroValue::Container(id), Some(idx)) => ValueOrHandler::Handler(
+                        Handler::new_attached_with_idx(id, idx, inner.doc.clone()),
+                    ),
+                    (value, _) => value_to_value_or_handler(inner, value),
+                })
             }
         }
     }

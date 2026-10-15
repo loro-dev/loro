@@ -14,7 +14,9 @@ diff calculation and `ContainerWrapper::new`), and event routing
    every container an op creates to the op's container. Local ops do the same
    through `DocState::set_container_parent_by_raw_op`, and a tree `Create` diff
    through `DocState::register_meta_parents_of_created_tree_nodes`.
-2. Registering a mergeable root, whose ID encodes its parent.
+2. Registering a mergeable root, whose ID encodes its parent. The arena also
+   caches the parsed edge; see "Arena Edge Cache" in
+   [mergeable-containers.md](mergeable-containers.md).
 3. The state KV (`parent_resolver`, installed by `InnerStore::decode` when a
    snapshot is loaded): a container's own state entry records its parent.
 4. The op log (`creator_resolver`, installed by `OpLog::new` from
