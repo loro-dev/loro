@@ -1954,6 +1954,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "tracing-wasm",
  "wasm-bindgen",
  "wasm-bindgen-derive",

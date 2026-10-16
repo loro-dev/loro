@@ -95,6 +95,10 @@ are documented in
 [context/wasm-container-tree.md](../../context/wasm-container-tree.md) for identity, ownership,
 range and Mirror integration contracts.
 
+`LoroDoc.toContainerTreeJson` uses the same traversal and options but writes a single
+JSON string in Rust. Reject binary and non-finite numbers instead of silently
+changing them. Keep the existing object API and its TypeScript return types intact.
+
 `toContainerTree` on attached containers recursively applies its text format.
 Document `roots` filters before reading values; missing roots are omitted. List
 `toContainerTreeSlice` returns coordinates and items under one state lock, never
