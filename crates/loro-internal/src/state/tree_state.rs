@@ -740,21 +740,23 @@ impl TreeState {
         if !self.trees.contains_key(maybe_ancestor) {
             return false;
         }
-        if let TreeParentId::Node(id) = node_id {
-            if id == maybe_ancestor {
-                return true;
-            }
-        }
-        match node_id {
-            TreeParentId::Node(id) => {
-                let parent = &self.trees.get(id).unwrap().parent;
-                if parent == node_id {
-                    panic!("is_ancestor_of loop")
+        let mut node = *node_id;
+        let mut remaining = self.trees.len();
+        loop {
+            match node {
+                TreeParentId::Node(id) => {
+                    assert!(remaining > 0, "tree parent cycle");
+                    remaining -= 1;
+                    if &id == maybe_ancestor {
+                        return true;
+                    }
+                    let parent = self.trees.get(&id).unwrap().parent;
+                    assert_ne!(parent, node, "is_ancestor_of loop");
+                    node = parent;
                 }
-                self.is_ancestor_of(maybe_ancestor, parent)
+                TreeParentId::Deleted | TreeParentId::Root => return false,
+                TreeParentId::Unexist => unreachable!(),
             }
-            TreeParentId::Deleted | TreeParentId::Root => false,
-            TreeParentId::Unexist => unreachable!(),
         }
     }
 
@@ -765,11 +767,18 @@ impl TreeState {
 
     /// If the node is unexist, return None. If the node is deleted, return true.
     pub(crate) fn is_node_deleted(&self, target: &TreeID) -> Option<bool> {
-        match self.trees.get(target).map(|x| x.parent)? {
-            TreeParentId::Deleted => Some(true),
-            TreeParentId::Root => Some(false),
-            TreeParentId::Node(p) => self.is_node_deleted(&p),
-            TreeParentId::Unexist => unreachable!(),
+        let mut node = *target;
+        let mut remaining = self.trees.len();
+        loop {
+            let parent = self.trees.get(&node)?.parent;
+            assert!(remaining > 0, "tree parent cycle");
+            remaining -= 1;
+            match parent {
+                TreeParentId::Deleted => return Some(true),
+                TreeParentId::Root => return Some(false),
+                TreeParentId::Node(parent) => node = parent,
+                TreeParentId::Unexist => unreachable!(),
+            }
         }
     }
 
@@ -822,17 +831,22 @@ impl TreeState {
         root: TreeParentId,
     ) -> Vec<TreeNodeWithChildren> {
         let mut ans = vec![];
-        let Some(children) = self.children.get(&root) else {
-            return ans;
-        };
-        for (index, (position, &target)) in children.iter().enumerate() {
-            ans.push(TreeNodeWithChildren {
-                id: target,
-                parent: root,
-                fractional_index: position.position.clone(),
-                index,
-                children: self.get_all_hierarchy_nodes_under(TreeParentId::Node(target)),
-            })
+        let mut pending = vec![(root, &mut ans)];
+        while let Some((parent, output)) = pending.pop() {
+            if let Some(children) = self.children.get(&parent) {
+                output.extend(children.iter().enumerate().map(|(index, (position, &id))| {
+                    TreeNodeWithChildren {
+                        id,
+                        parent,
+                        fractional_index: position.position.clone(),
+                        index,
+                        children: Vec::new(),
+                    }
+                }));
+                for node in output.iter_mut().rev() {
+                    pending.push((TreeParentId::Node(node.id), &mut node.children));
+                }
+            }
         }
         ans
     }
@@ -850,21 +864,26 @@ impl TreeState {
     }
 
     fn _bfs_all_nodes(&self, root: TreeParentId, ans: &mut Vec<TreeNode>) {
-        let children = self.children.get(&root);
-        if let Some(children) = children {
+        let mut pending = vec![root];
+        while let Some(parent) = pending.pop() {
+            let Some(children) = self.children.get(&parent) else {
+                continue;
+            };
             for (index, (position, target)) in children.iter().enumerate() {
                 ans.push(TreeNode {
                     id: *target,
-                    parent: root,
+                    parent,
                     fractional_index: position.position.clone(),
                     index,
                     last_move_op: self.trees.get(target).map(|x| x.last_move_op).unwrap(),
                 });
             }
 
-            for (_, id) in children.iter() {
-                self._bfs_all_nodes(TreeParentId::Node(*id), ans);
-            }
+            // Preserve the snapshot's existing order: siblings first, followed
+            // by each sibling's subtree in sibling order.
+            let start = pending.len();
+            pending.extend(children.iter().map(|(_, id)| TreeParentId::Node(*id)));
+            pending[start..].reverse();
         }
     }
 
@@ -1488,13 +1507,14 @@ impl ContainerState for TreeState {
 // convert map container to LoroValue
 #[allow(clippy::ptr_arg)]
 pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
-    for node in nodes.iter_mut() {
+    let mut pending = nodes.iter_mut().rev().collect::<Vec<_>>();
+    while let Some(node) = pending.pop() {
         let map = node.as_map_mut().unwrap().make_mut();
         let meta = map.get_mut("meta").unwrap();
         let id = meta.as_container().unwrap();
         *meta = state.get_container_deep_value(state.arena.register_container(id));
         let children = map.get_mut("children").unwrap().as_list_mut().unwrap();
-        get_meta_value(children.make_mut(), state);
+        pending.extend(children.make_mut().iter_mut().rev());
     }
 }
 
@@ -1518,6 +1538,23 @@ pub struct TreeNodeWithChildren {
 
 impl TreeNodeWithChildren {
     fn into_value(self) -> LoroValue {
+        // Finish a node only after its children, without using the call stack.
+        let mut pending = vec![(self, None)];
+        let mut values = Vec::new();
+        while let Some((mut node, child_count)) = pending.pop() {
+            if let Some(child_count) = child_count {
+                let children = values.split_off(values.len() - child_count);
+                values.push(node.into_value_with_children(children));
+            } else {
+                let children = std::mem::take(&mut node.children);
+                pending.push((node, Some(children.len())));
+                pending.extend(children.into_iter().rev().map(|node| (node, None)));
+            }
+        }
+        values.pop().unwrap()
+    }
+
+    fn into_value_with_children(self, children: Vec<LoroValue>) -> LoroValue {
         let mut t = FxHashMap::default();
         t.insert("id".to_string(), self.id.to_string().into());
         let p = self
@@ -1535,15 +1572,145 @@ impl TreeNodeWithChildren {
             "fractional_index".to_string(),
             self.fractional_index.to_string().into(),
         );
-        t.insert(
-            "children".to_string(),
-            self.children
-                .into_iter()
-                .map(|x| x.into_value())
-                .collect::<Vec<_>>()
-                .into(),
-        );
+        t.insert("children".to_string(), children.into());
         t.into()
+    }
+}
+
+impl Drop for TreeNodeWithChildren {
+    fn drop(&mut self) {
+        let mut pending = std::mem::take(&mut self.children);
+        while let Some(mut node) = pending.pop() {
+            pending.append(&mut node.children);
+        }
+    }
+}
+
+#[cfg(test)]
+mod traversal_tests {
+    use super::*;
+    use loro_common::ContainerType;
+
+    fn cyclic_parents() -> TreeState {
+        let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+        let mut tree = TreeState::new(idx, 1);
+        for counter in 0..3 {
+            tree._init_push_tree_node_in_order(
+                TreeID::new(1, counter),
+                TreeParentId::Root,
+                IdFull::new(1, counter, counter as u32),
+                Some(FractionalIndex::default()),
+            )
+            .unwrap();
+        }
+        tree.trees.get_mut(&TreeID::new(1, 0)).unwrap().parent = TreeID::new(1, 1).into();
+        tree.trees.get_mut(&TreeID::new(1, 1)).unwrap().parent = TreeID::new(1, 0).into();
+        tree
+    }
+
+    #[test]
+    #[should_panic(expected = "tree parent cycle")]
+    fn ancestor_walk_fails_fast_on_an_internal_cycle() {
+        cyclic_parents().is_ancestor_of(&TreeID::new(1, 2), &TreeID::new(1, 0).into());
+    }
+
+    #[test]
+    #[should_panic(expected = "tree parent cycle")]
+    fn deletion_walk_fails_fast_on_an_internal_cycle() {
+        cyclic_parents().is_node_deleted(&TreeID::new(1, 0));
+    }
+
+    #[test]
+    fn iterative_walks_keep_hierarchy_and_snapshot_order() {
+        let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+        let mut tree = TreeState::new(idx, 1);
+        // Two roots, with a branching subtree under each root.
+        for (counter, parent) in [
+            (0, None),
+            (1, None),
+            (2, Some(0)),
+            (3, Some(0)),
+            (4, Some(2)),
+            (5, Some(1)),
+        ] {
+            tree._init_push_tree_node_in_order(
+                TreeID::new(1, counter),
+                parent.map(|counter| TreeID::new(1, counter)).into(),
+                IdFull::new(1, counter, counter as u32),
+                Some(FractionalIndex::default()),
+            )
+            .unwrap();
+        }
+        let hierarchy = tree.get_all_hierarchy_nodes_under(TreeParentId::Root);
+        let mut pending = hierarchy.iter().rev().collect::<Vec<_>>();
+        let mut preorder = Vec::new();
+        while let Some(node) = pending.pop() {
+            assert_eq!(tree.parent(&node.id), Some(node.parent));
+            assert_eq!(tree.get_index_by_tree_id(&node.id), Some(node.index));
+            assert_eq!(
+                tree.get_position(&node.id),
+                Some(node.fractional_index.clone())
+            );
+            preorder.push(node.id.counter);
+            pending.extend(node.children.iter().rev());
+        }
+        assert_eq!(preorder, vec![0, 2, 4, 3, 1, 5]);
+        let snapshot_order = tree.bfs_all_alive_nodes_for_fast_snapshot();
+        assert_eq!(
+            snapshot_order
+                .iter()
+                .map(|node| node.id.counter)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5]
+        );
+        let root = TreeID::new(1, 0);
+        tree.mov(
+            root,
+            TreeParentId::Deleted,
+            IdFull::new(1, 6, 6),
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            tree.bfs_all_deleted_nodes_for_fast_snapshot()
+                .iter()
+                .map(|node| node.id.counter)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn deep_hierarchy_can_be_dropped_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let idx = ContainerIdx::from_index_and_type(0, ContainerType::Tree);
+                let mut tree = TreeState::new(idx, 1);
+                for counter in 0..4_000 {
+                    let parent = (counter > 0).then(|| TreeID::new(1, counter - 1));
+                    tree._init_push_tree_node_in_order(
+                        TreeID::new(1, counter),
+                        parent.into(),
+                        IdFull::new(1, counter, counter as u32),
+                        Some(FractionalIndex::default()),
+                    )
+                    .unwrap();
+                }
+                let hierarchy = tree.get_all_hierarchy_nodes_under(TreeParentId::Root);
+                let mut nodes = &hierarchy;
+                let mut depth = 0;
+                while let Some(node) = nodes.first() {
+                    depth += 1;
+                    nodes = &node.children;
+                }
+                assert_eq!(depth, 4_000);
+                drop(hierarchy);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
 

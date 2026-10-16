@@ -4961,7 +4961,8 @@ impl LoroTreeNode {
         LoroTree {
             handler: self.tree.clone(),
         }
-        .tree_node_to_js_obj(node, true)
+        .get_node_with_children(vec![node], true)
+        .map(|nodes| nodes.get(0))
     }
 
     // Using custom typescript for generic parameter on the returned node
@@ -5207,15 +5208,24 @@ impl LoroTree {
         resolve_meta: bool,
     ) -> JsResult<Array> {
         let ans = Array::new();
-        for v in value {
-            ans.push(&self.tree_node_to_js_obj(v, resolve_meta)?);
+        let mut pending = vec![(value, ans.clone())];
+        while let Some((nodes, output)) = pending.pop() {
+            let start = pending.len();
+            for mut node in nodes {
+                let obj = self.tree_node_to_shallow_js_obj(&node, resolve_meta)?;
+                let children = Array::new();
+                js_sys::Reflect::set(&obj, &"children".into(), &children)?;
+                output.push(&obj);
+                pending.push((std::mem::take(&mut node.children), children));
+            }
+            pending[start..].reverse();
         }
         Ok(ans)
     }
 
-    fn tree_node_to_js_obj(
+    fn tree_node_to_shallow_js_obj(
         &self,
-        v: TreeNodeWithChildren,
+        v: &TreeNodeWithChildren,
         resolve_meta: bool,
     ) -> JsResult<JsValue> {
         let id: JsValue = v.id.into();
@@ -5244,8 +5254,6 @@ impl LoroTree {
         } else {
             js_sys::Reflect::set(&obj, &"meta".into(), &map.into())?;
         }
-        let children = self.get_node_with_children(v.children, resolve_meta)?;
-        js_sys::Reflect::set(&obj, &"children".into(), &children)?;
         Ok(obj.into())
     }
 
