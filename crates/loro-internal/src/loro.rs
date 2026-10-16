@@ -2896,6 +2896,12 @@ impl LoroDoc {
         pos: &Cursor,
         ret_event_index: bool,
     ) -> Result<PosQueryResult, QueryPosError> {
+        // Public construction and Serde can bypass Cursor::decode. Reject invalid
+        // ids before taking document locks or tracing their history in the DAG.
+        if pos.id.is_some_and(|id| id.counter < 0) {
+            return Err(CannotFindRelativePosition::IdNotFound.into());
+        }
+
         if !self.has_container(&pos.container) {
             return Err(CannotFindRelativePosition::IdNotFound.into());
         }

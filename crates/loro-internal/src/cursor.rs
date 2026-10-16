@@ -85,8 +85,13 @@ impl Cursor {
         postcard::to_allocvec(self).unwrap()
     }
 
+    /// Decode a cursor, rejecting negative position counters as invalid encoding.
     pub fn decode(data: &[u8]) -> Result<Self, postcard::Error> {
-        postcard::from_bytes(data)
+        let cursor: Self = postcard::from_bytes(data)?;
+        if cursor.id.is_some_and(|id| id.counter < 0) {
+            return Err(postcard::Error::DeserializeBadEncoding);
+        }
+        Ok(cursor)
     }
 }
 
