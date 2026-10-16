@@ -4,11 +4,15 @@ use std::{num::NonZeroU16, sync::Arc};
 mod counter;
 #[cfg(feature = "counter")]
 pub(crate) use counter::CounterDiffCalculator;
+mod tracker_texts;
+mod tracker_values;
 pub(super) mod tree;
 mod unknown;
 use either::Either;
 use generic_btree::rle::{HasLength as _, Sliceable as _};
 use itertools::Itertools;
+use tracker_texts::TrackerTexts;
+use tracker_values::TrackerValues;
 
 use enum_dispatch::enum_dispatch;
 use loro_common::{
@@ -34,7 +38,7 @@ use crate::{
         Delta, DeltaItem, DeltaValue, ElementDelta, MapDelta, MapValue, MovableListInnerDelta,
     },
     event::{DiffVariant, InternalDiff},
-    op::{InnerContent, RichOp, SliceRange, SliceWithId},
+    op::{InnerContent, RichOp, SliceWithId},
     span::{HasId, HasLamport},
     version::Frontiers,
     InternalString, VersionVector,
@@ -762,8 +766,35 @@ use rle::{HasLength as _, Sliceable};
 #[derive(Default)]
 pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
-    tracker: Box<RichtextTracker>,
+    tracker: Box<ListTracker>,
     source_not_in_op_context: bool,
+}
+
+/// A list tracker and the values its chunks point into, replaced together.
+#[derive(Default)]
+struct ListTracker {
+    tracker: RichtextTracker,
+    values: TrackerValues,
+}
+
+impl ListTracker {
+    fn new(tracker: RichtextTracker, values: TrackerValues) -> Self {
+        Self { tracker, values }
+    }
+}
+
+impl std::ops::Deref for ListTracker {
+    type Target = RichtextTracker;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tracker
+    }
+}
+
+impl std::ops::DerefMut for ListTracker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.tracker
+    }
 }
 
 impl ListDiffCalculator {
@@ -776,11 +807,19 @@ impl ListDiffCalculator {
     }
 
     #[inline(never)]
-    fn apply_op_to_tracker(tracker: &mut RichtextTracker, op: &crate::op::RichOp<'_>) {
+    fn apply_op_to_tracker(
+        tracker: &mut RichtextTracker,
+        values: &mut TrackerValues,
+        op: &crate::op::RichOp<'_>,
+    ) {
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { slice, pos } => {
-                    tracker.insert(op.id_full(), *pos, RichtextChunk::new_text(slice.0.clone()));
+                    tracker.insert(
+                        op.id_full(),
+                        *pos,
+                        RichtextChunk::new_text(values.push(slice)),
+                    );
                 }
                 InnerListOp::Delete(del) => {
                     tracker.delete(
@@ -799,25 +838,32 @@ impl ListDiffCalculator {
 
     #[cold]
     #[inline(never)]
-    fn build_full_tracker(idx: ContainerIdx, oplog: &OpLog, vv: &VersionVector) -> RichtextTracker {
+    fn build_full_tracker(
+        idx: ContainerIdx,
+        oplog: &OpLog,
+        vv: &VersionVector,
+    ) -> (RichtextTracker, TrackerValues) {
         struct ListRebuildVisitor<'a> {
             tracker: &'a mut RichtextTracker,
+            values: &'a mut TrackerValues,
         }
 
         impl RebuildOpVisitor for ListRebuildVisitor<'_> {
             fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
                 self.tracker.checkout(vv);
-                ListDiffCalculator::apply_op_to_tracker(self.tracker, &op);
+                ListDiffCalculator::apply_op_to_tracker(self.tracker, self.values, &op);
             }
         }
 
         let mut tracker = RichtextTracker::new_with_unknown();
+        let mut values = TrackerValues::default();
         let mut visitor = ListRebuildVisitor {
             tracker: &mut tracker,
+            values: &mut values,
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
-        tracker
+        (tracker, values)
     }
 }
 
@@ -845,7 +891,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
         self.source_not_in_op_context = false;
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            *self.tracker = RichtextTracker::new_with_unknown();
+            *self.tracker =
+                ListTracker::new(RichtextTracker::new_with_unknown(), Default::default());
             self.start_vv = vv.clone();
         }
 
@@ -862,7 +909,8 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             self.tracker.checkout(vv);
         }
 
-        Self::apply_op_to_tracker(&mut self.tracker, &op);
+        let ListTracker { tracker, values } = &mut *self.tracker;
+        Self::apply_op_to_tracker(tracker, values, &op);
     }
 
     fn finish_this_round(&mut self) {}
@@ -897,9 +945,9 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
-            let mut full_tracker = Self::build_full_tracker(idx, oplog, &merged);
+            let (mut full_tracker, full_values) = Self::build_full_tracker(idx, oplog, &merged);
             let diff_items = full_tracker.diff(info.from_vv, info.to_vv).collect_vec();
-            *self.tracker = full_tracker;
+            *self.tracker = ListTracker::new(full_tracker, full_values);
             diff_items
         } else {
             self.tracker.diff(info.from_vv, info.to_vv).collect_vec()
@@ -916,16 +964,22 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     lamport,
                 } => match value.value() {
                     RichtextChunkValue::Text(range) => {
-                        for i in range.clone() {
-                            let v = oplog.arena.get_value(i as usize);
-                            if let Some(LoroValue::Container(c)) = &v {
-                                on_new_container(c);
+                        let lamport = lamport.unwrap();
+                        self.tracker.values.for_each_slice(range, |offset, values| {
+                            for v in values.as_slice() {
+                                if let LoroValue::Container(c) = v {
+                                    on_new_container(c);
+                                }
                             }
-                        }
-                        delta = delta.insert(SliceWithId {
-                            values: Either::Left(SliceRange(range)),
-                            id: IdFull::new(id.peer, id.counter, lamport.unwrap()),
-                            elem_id: None,
+                            delta = std::mem::take(&mut delta).insert(SliceWithId {
+                                values: Either::Left(values),
+                                id: IdFull::new(
+                                    id.peer,
+                                    id.counter + offset as Counter,
+                                    lamport + offset as Lamport,
+                                ),
+                                elem_id: None,
+                            });
                         });
                     }
                     RichtextChunkValue::StyleAnchor { .. } => unreachable!(),
@@ -989,16 +1043,14 @@ impl DiffCalculatorTrait for ListDiffCalculator {
                     let lamport = rich_op.lamport();
 
                     if let InnerListOp::Insert { slice, pos: _ } = op.content.as_list().unwrap() {
-                        let range = slice.clone();
-                        for i in slice.0.clone() {
-                            let v = oplog.arena.get_value(i as usize);
-                            if let Some(LoroValue::Container(c)) = &v {
+                        for v in slice.as_slice() {
+                            if let LoroValue::Container(c) = v {
                                 (on_new_container)(c);
                             }
                         }
 
                         delta = delta.insert(SliceWithId {
-                            values: Either::Left(range),
+                            values: Either::Left(slice.clone()),
                             id: IdFull::new(id.peer, op.counter, lamport),
                             elem_id: None,
                         });
@@ -1034,6 +1086,8 @@ enum RichtextCalcMode {
         tracker: Box<RichtextTracker>,
         /// (op, end_pos)
         styles: Vec<(StyleOp, usize)>,
+        /// The text the tracker's text chunks point into.
+        texts: TrackerTexts,
         start_vv: VersionVector,
         source_not_in_op_context: bool,
         shallow_root_seeded: bool,
@@ -1050,6 +1104,7 @@ impl RichtextDiffCalculator {
             mode: Box::new(RichtextCalcMode::Crdt {
                 tracker: Box::new(RichtextTracker::new_with_unknown()),
                 styles: Vec::new(),
+                texts: TrackerTexts::default(),
                 start_vv: VersionVector::new(),
                 source_not_in_op_context: false,
                 shallow_root_seeded: false,
@@ -1163,6 +1218,7 @@ impl RichtextDiffCalculator {
         oplog: &OpLog,
         tracker: &mut RichtextTracker,
         styles: &mut Vec<(StyleOp, usize)>,
+        texts: &mut TrackerTexts,
         op: RichOp,
     ) {
         match &op.raw_op().content {
@@ -1171,8 +1227,7 @@ impl RichtextDiffCalculator {
                     unreachable!()
                 }
                 InnerListOp::InsertText {
-                    slice: _,
-                    unicode_start,
+                    slice,
                     unicode_len: len,
                     pos,
                 } => {
@@ -1180,7 +1235,7 @@ impl RichtextDiffCalculator {
                     tracker.insert(
                         op.id_full(),
                         pos,
-                        RichtextChunk::new_text(*unicode_start..*unicode_start + *len),
+                        RichtextChunk::new_text(texts.push(slice, *len)),
                     );
                 }
                 InnerListOp::Delete(del) => {
@@ -1498,11 +1553,12 @@ impl RichtextDiffCalculator {
         idx: ContainerIdx,
         oplog: &OpLog,
         vv: &VersionVector,
-    ) -> (RichtextTracker, Vec<(StyleOp, usize)>) {
+    ) -> (RichtextTracker, Vec<(StyleOp, usize)>, TrackerTexts) {
         struct RichtextRebuildVisitor<'a> {
             oplog: &'a OpLog,
             tracker: &'a mut RichtextTracker,
             styles: &'a mut Vec<(StyleOp, usize)>,
+            texts: &'a mut TrackerTexts,
         }
 
         impl RebuildOpVisitor for RichtextRebuildVisitor<'_> {
@@ -1512,6 +1568,7 @@ impl RichtextDiffCalculator {
                     self.oplog,
                     self.tracker,
                     self.styles,
+                    self.texts,
                     op,
                 );
             }
@@ -1519,6 +1576,7 @@ impl RichtextDiffCalculator {
 
         let mut tracker = RichtextTracker::new_with_unknown();
         let mut styles = Vec::new();
+        let mut texts = TrackerTexts::default();
         if !oplog.shallow_since_vv().is_empty() {
             Self::seed_tracker_from_shallow_root(idx, oplog, &mut tracker, &mut styles, vv);
         }
@@ -1527,10 +1585,11 @@ impl RichtextDiffCalculator {
             oplog,
             tracker: &mut tracker,
             styles: &mut styles,
+            texts: &mut texts,
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
-        (tracker, styles)
+        (tracker, styles, texts)
     }
 }
 
@@ -1559,6 +1618,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             RichtextCalcMode::Crdt {
                 tracker,
                 styles,
+                texts,
                 start_vv,
                 source_not_in_op_context,
                 shallow_root_seeded,
@@ -1567,6 +1627,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 if !vv.includes_vv(start_vv) || !tracker.all_vv().includes_vv(vv) {
                     **tracker = RichtextTracker::new_with_unknown();
                     styles.clear();
+                    texts.clear();
                     *start_vv = vv.clone();
                     *shallow_root_seeded = false;
                 }
@@ -1594,18 +1655,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     | InnerListOp::Set { .. } => {
                         unreachable!()
                     }
-                    InnerListOp::InsertText {
-                        slice: _,
-                        unicode_start,
-                        unicode_len: len,
-                        pos,
-                    } => {
-                        let s = oplog.arena.slice_by_unicode(
-                            *unicode_start as usize..(*unicode_start + *len) as usize,
-                        );
+                    InnerListOp::InsertText { slice, pos, .. } => {
                         diff.insert_value(
                             *pos as usize,
-                            RichtextStateChunk::new_text(s, op.id_full()),
+                            RichtextStateChunk::new_text(slice.clone(), op.id_full()),
                             (),
                         );
                     }
@@ -1662,6 +1715,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             RichtextCalcMode::Crdt {
                 tracker,
                 styles,
+                texts,
                 start_vv,
                 source_not_in_op_context: _,
                 shallow_root_seeded,
@@ -1674,13 +1728,15 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                         styles,
                         start_vv,
                     );
+                    // The seeded tracker replaced the old one and holds no text chunks.
+                    texts.clear();
                     *shallow_root_seeded = true;
                 }
 
                 if let Some(vv) = vv {
                     tracker.checkout(vv);
                 }
-                Self::apply_crdt_op_to_tracker(oplog, tracker, styles, op);
+                Self::apply_crdt_op_to_tracker(oplog, tracker, styles, texts, op);
             }
         }
     }
@@ -1692,29 +1748,33 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         info: DiffCalcVersionInfo,
         _: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
+        #[allow(clippy::too_many_arguments)]
         fn push_tracker_chunk(
             delta: &mut DeltaRope<RichtextStateChunk, ()>,
             idx: ContainerIdx,
             oplog: &OpLog,
             styles: &[(StyleOp, usize)],
+            texts: &TrackerTexts,
             value: RichtextChunk,
             id: ID,
             lamport: Option<Lamport>,
         ) {
             match value.value() {
                 RichtextChunkValue::Text(text) => {
-                    delta.push_insert(
-                        RichtextStateChunk::Text(
-                            // PERF: can be speedup by acquiring lock on arena
-                            TextChunk::new(
-                                oplog
-                                    .arena
-                                    .slice_by_unicode(text.start as usize..text.end as usize),
-                                IdFull::new(id.peer, id.counter, lamport.unwrap()),
-                            ),
-                        ),
-                        (),
-                    );
+                    let lamport = lamport.unwrap();
+                    texts.for_each_slice(text, |offset, bytes| {
+                        delta.push_insert(
+                            RichtextStateChunk::Text(TextChunk::new(
+                                bytes,
+                                IdFull::new(
+                                    id.peer,
+                                    id.counter + offset as Counter,
+                                    lamport + offset as Lamport,
+                                ),
+                            )),
+                            (),
+                        );
+                    });
                 }
                 RichtextChunkValue::StyleAnchor { id, anchor_type } => {
                     delta.push_insert(
@@ -1780,6 +1840,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             idx: ContainerIdx,
             oplog: &OpLog,
             styles: &[(StyleOp, usize)],
+            texts: &TrackerTexts,
             item: CrdtRopeDelta,
         ) {
             match item {
@@ -1790,7 +1851,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     chunk: value,
                     id,
                     lamport,
-                } => push_tracker_chunk(delta, idx, oplog, styles, value, id, lamport),
+                } => push_tracker_chunk(delta, idx, oplog, styles, texts, value, id, lamport),
                 CrdtRopeDelta::Delete(len) => {
                     delta.push_delete(len);
                 }
@@ -1805,6 +1866,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
             RichtextCalcMode::Crdt {
                 tracker,
                 styles,
+                texts,
                 source_not_in_op_context,
                 ..
             } => {
@@ -1846,15 +1908,23 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
                     let mut merged = info.from_vv.clone();
                     merged.merge(info.to_vv);
-                    let (mut full_tracker, full_styles) =
+                    let (mut full_tracker, full_styles, full_texts) =
                         Self::build_full_crdt_tracker(idx, oplog, &merged);
 
                     let mut delta = DeltaRope::new();
                     for item in full_tracker.diff(info.from_vv, info.to_vv) {
-                        push_tracker_delta_item(&mut delta, idx, oplog, &full_styles, item);
+                        push_tracker_delta_item(
+                            &mut delta,
+                            idx,
+                            oplog,
+                            &full_styles,
+                            &full_texts,
+                            item,
+                        );
                     }
                     **tracker = full_tracker;
                     *styles = full_styles;
+                    *texts = full_texts;
                     // `start_vv` is deliberately left as-is: the rebuild's
                     // real seed is even lower (the empty version, or the
                     // shallow root), so the reseed test in `start_tracking`
@@ -1877,7 +1947,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                             "the opaque below-base span leaked into a richtext diff"
                         );
                     }
-                    push_tracker_delta_item(&mut delta, idx, oplog, styles, item);
+                    push_tracker_delta_item(&mut delta, idx, oplog, styles, texts, item);
                 }
 
                 (InternalDiff::RichtextRaw(delta), DiffMode::Checkout)
@@ -1916,7 +1986,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         self.list.source_not_in_op_context = false;
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
-            *self.list.tracker = RichtextTracker::new_with_unknown();
+            *self.list.tracker =
+                ListTracker::new(RichtextTracker::new_with_unknown(), Default::default());
             self.list.start_vv = vv.clone();
         }
 
@@ -1943,7 +2014,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                 let op_id = op.id_full().idlp();
                 for i in 0..slice.atom_len() {
                     let id = op_id.inc(i as Counter);
-                    let value = oplog.arena.get_value(slice.0.start as usize + i).unwrap();
+                    let value = &slice.as_slice()[i];
 
                     self.inner.changed_elements.insert(
                         id.compact(),
@@ -2015,8 +2086,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             if let Some(vv) = vv {
                 self.list.tracker.checkout(vv);
             }
+            let ListTracker { tracker, values } = &mut *self.list.tracker;
             Self::apply_op_to_tracker(
-                &mut self.list.tracker,
+                tracker,
+                values,
                 &mut self.inner.move_id_to_elem_id,
                 oplog,
                 &op,
@@ -2184,6 +2257,7 @@ impl MovableListDiffCalculator {
 
     fn apply_op_to_tracker(
         tracker: &mut RichtextTracker,
+        values: &mut TrackerValues,
         move_id_to_elem_id: &mut FxHashMap<ID, IdLp>,
         oplog: &OpLog,
         op: &RichOp<'_>,
@@ -2193,7 +2267,7 @@ impl MovableListDiffCalculator {
         match &real_op.content {
             InnerContent::List(l) => match l {
                 InnerListOp::Insert { .. } | InnerListOp::Delete(_) => {
-                    ListDiffCalculator::apply_op_to_tracker(tracker, op);
+                    ListDiffCalculator::apply_op_to_tracker(tracker, values, op);
                 }
                 InnerListOp::Move { from, elem_id, to } => {
                     move_id_to_elem_id.insert(op.id(), *elem_id);
@@ -2228,6 +2302,7 @@ impl MovableListDiffCalculator {
         struct MovableListRebuildVisitor<'a> {
             oplog: &'a OpLog,
             tracker: &'a mut RichtextTracker,
+            values: &'a mut TrackerValues,
             move_id_to_elem_id: &'a mut FxHashMap<ID, IdLp>,
         }
 
@@ -2236,6 +2311,7 @@ impl MovableListDiffCalculator {
                 self.tracker.checkout(vv);
                 MovableListDiffCalculator::apply_op_to_tracker(
                     self.tracker,
+                    self.values,
                     self.move_id_to_elem_id,
                     self.oplog,
                     &op,
@@ -2245,15 +2321,17 @@ impl MovableListDiffCalculator {
         }
 
         let mut tracker = RichtextTracker::new_with_unknown();
+        let mut values = TrackerValues::default();
         let mut move_id_to_elem_id = FxHashMap::default();
         let mut visitor = MovableListRebuildVisitor {
             oplog,
             tracker: &mut tracker,
+            values: &mut values,
             move_id_to_elem_id: &mut move_id_to_elem_id,
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
-        *self.list.tracker = tracker;
+        *self.list.tracker = ListTracker::new(tracker, values);
         self.inner.move_id_to_elem_id = move_id_to_elem_id;
     }
 }

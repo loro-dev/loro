@@ -559,12 +559,7 @@ impl ContainerState for ListState {
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let mut arr = Vec::new();
                     match &value.values {
-                        either::Either::Left(range) => {
-                            for i in range.to_range() {
-                                let value = doc.arena.get_value(i).unwrap();
-                                arr.push(value);
-                            }
-                        }
+                        either::Either::Left(values) => arr.extend_from_slice(values.as_slice()),
                         either::Either::Right(v) => arr.push(v.clone()),
                     }
                     for arr in ArrayVec::from_many(
@@ -606,7 +601,7 @@ impl ContainerState for ListState {
                 }
                 crate::delta::DeltaItem::Insert { insert: value, .. } => {
                     let len = match &value.values {
-                        either::Either::Left(range) => range.to_range().len(),
+                        either::Either::Left(values) => values.len(),
                         either::Either::Right(_) => 1,
                     };
                     if cursor > projected {
@@ -631,12 +626,7 @@ impl ContainerState for ListState {
         Ok(())
     }
 
-    fn apply_diff(
-        &mut self,
-        diff: InternalDiff,
-        DiffApplyContext { doc, .. }: DiffApplyContext,
-    ) -> LoroResult<()> {
-        let doc = &doc.upgrade().unwrap();
+    fn apply_diff(&mut self, diff: InternalDiff, _: DiffApplyContext) -> LoroResult<()> {
         match diff {
             InternalDiff::ListRaw(delta) => {
                 let mut index = 0;
@@ -648,11 +638,8 @@ impl ContainerState for ListState {
                         crate::delta::DeltaItem::Insert { insert: value, .. } => {
                             let mut arr = Vec::new();
                             match &value.values {
-                                either::Either::Left(range) => {
-                                    for i in range.to_range() {
-                                        let value = doc.arena.get_value(i).unwrap();
-                                        arr.push(value);
-                                    }
+                                either::Either::Left(values) => {
+                                    arr.extend_from_slice(values.as_slice())
                                 }
                                 either::Either::Right(v) => arr.push(v.clone()),
                             }

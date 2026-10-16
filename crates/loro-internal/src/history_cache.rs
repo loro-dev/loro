@@ -986,10 +986,7 @@ impl MovableListHistoryCache {
                     let offset = id.counter - op.counter;
                     match &op.content {
                         InnerContent::List(InnerListOp::Insert { slice, .. }) => {
-                            let value = oplog
-                                .arena
-                                .get_value(slice.0.start as usize + offset as usize)
-                                .unwrap();
+                            let value = slice.as_slice()[offset as usize].clone();
                             Some(GroupedMapOpInfo {
                                 value,
                                 lamport: key.lamport,

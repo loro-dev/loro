@@ -6,6 +6,7 @@ fn init() {
 mod import_atomicity;
 mod op_count;
 mod replay_base;
+mod text_arena_growth;
 
 use crate::{op::ListSlice, LoroValue};
 

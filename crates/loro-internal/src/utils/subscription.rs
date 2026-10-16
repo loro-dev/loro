@@ -439,12 +439,17 @@ where
             inner
         };
 
+        // A panicking callback must not take the checked-out subscribers with
+        // it: the marker left in their place would make later emits on this
+        // thread queue forever and emits on other threads wait forever. The
+        // other subscribers still get the event, the map is put back, and the
+        // first panic is raised again at the end.
+        let mut panic = DeferredPanic::default();
         subscribers.retain(|_, subscriber| {
-            if subscriber.active.load(Ordering::Relaxed) {
-                f(&mut subscriber.callback)
-            } else {
-                true
+            if !subscriber.active.load(Ordering::Relaxed) {
+                return true;
             }
+            panic.run(|| f(&mut subscriber.callback)).unwrap_or(true)
         });
 
         let mut lock = self.0.lock();
@@ -476,6 +481,7 @@ where
         // Drop callbacks outside the lock; see the unsubscribe closure in `insert`.
         drop(lock);
         drop(removed);
+        panic.resume();
         Ok(())
     }
 
@@ -639,6 +645,31 @@ impl<EmitterKey, Callback, Payload> WeakSubscriberSetWithQueue<EmitterKey, Callb
     }
 }
 
+/// Runs steps that must all happen even if one of them panics, such as calling
+/// every subscriber and delivering every event, and raises the first panic
+/// once they are done. A subscriber is user code; its panic must not drop
+/// events or local updates meant for others.
+#[derive(Default)]
+pub(crate) struct DeferredPanic(Option<Box<dyn std::any::Any + Send + 'static>>);
+
+impl DeferredPanic {
+    pub fn run<R>(&mut self, f: impl FnOnce() -> R) -> Option<R> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(ans) => Some(ans),
+            Err(payload) => {
+                self.0.get_or_insert(payload);
+                None
+            }
+        }
+    }
+
+    pub fn resume(self) {
+        if let Some(payload) = self.0 {
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
 impl<EmitterKey, Callback, Payload> SubscriberSetWithQueue<EmitterKey, Callback, Payload>
 where
     EmitterKey: 'static + Ord + Clone + Debug + Send + Sync,
@@ -664,12 +695,17 @@ where
     }
 
     pub fn emit(&self, key: &EmitterKey, payload: Payload) {
+        let mut panic = DeferredPanic::default();
         let mut pending_events: SmallVec<[Payload; 1]> = SmallVec::new();
         pending_events.push(payload);
         while let Some(payload) = pending_events.pop() {
-            let result = self
-                .subscriber_set
-                .retain(key, &mut |callback| (callback)(&payload));
+            // A subscriber that panicked still had the payload delivered to the others.
+            let result = panic
+                .run(|| {
+                    self.subscriber_set
+                        .retain(key, &mut |callback| (callback)(&payload))
+                })
+                .unwrap_or(Ok(()));
             match result {
                 Ok(_) => {
                     let mut queue = self.queue.lock();
@@ -683,6 +719,7 @@ where
                 }
             }
         }
+        panic.resume();
     }
 }
 

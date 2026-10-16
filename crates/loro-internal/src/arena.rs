@@ -10,8 +10,7 @@ use crate::{
         ContainerID,
     },
     id::Counter,
-    op::{InnerContent, ListSlice, Op, RawOp, RawOpContent, SliceRange},
-    LoroValue,
+    op::{InnerContent, ListSlice, Op, RawOp, RawOpContent, ValueSlice},
 };
 use append_only_bytes::BytesSlice;
 use loro_common::{PeerID, ID};
@@ -86,7 +85,6 @@ struct InnerSharedArena {
     // mutex so container id/index/parent/depth updates cannot acquire locks in
     // inconsistent orders.
     containers: RwLock<ArenaContainers>,
-    values: Mutex<Vec<LoroValue>>,
     str: Arc<Mutex<StrArena>>,
 }
 
@@ -94,7 +92,6 @@ impl fmt::Debug for InnerSharedArena {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("InnerSharedArena")
             .field("containers", &"<Mutex<_>>")
-            .field("values", &"<Mutex<_>>")
             .field("str", &"<Arc<Mutex<_>>>")
             .finish()
     }
@@ -109,32 +106,21 @@ pub struct SharedArena {
 
 pub(crate) struct SharedArenaRollback {
     container_len: usize,
-    values_len: usize,
     str: StrArenaCheckpoint,
 }
 
 /// How far the arena reached when something that refers into it was built, e.g. a parsed
-/// change block: it can only refer to containers, values, and text allocated before.
+/// change block: it can only refer to containers and text allocated before.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct ArenaExtent {
     containers: usize,
-    values: usize,
     str_bytes: usize,
-}
-
-#[cfg(test)]
-impl ArenaExtent {
-    pub(crate) fn values_for_test(&self) -> usize {
-        self.values
-    }
 }
 
 impl SharedArenaRollback {
     /// Whether rolling back to this checkpoint keeps everything within `extent`.
     pub(crate) fn keeps(&self, extent: ArenaExtent) -> bool {
-        extent.containers <= self.container_len
-            && extent.values <= self.values_len
-            && extent.str_bytes <= self.str.bytes_len()
+        extent.containers <= self.container_len && extent.str_bytes <= self.str.bytes_len()
     }
 }
 
@@ -323,7 +309,6 @@ impl SharedArena {
                         creator_resolver: None,
                     }
                 }),
-                values: Mutex::new(self.inner.values.lock().clone()),
                 str: self.inner.str.clone(),
             }),
         }
@@ -333,7 +318,6 @@ impl SharedArena {
     pub(crate) fn extent(&self) -> ArenaExtent {
         ArenaExtent {
             containers: self.inner.containers.read().container_idx_to_id.len(),
-            values: self.inner.values.lock().len(),
             str_bytes: self.inner.str.lock().bytes_len(),
         }
     }
@@ -342,13 +326,8 @@ impl SharedArena {
         let containers = self.inner.containers.read();
         let container_len = containers.container_idx_to_id.len();
         drop(containers);
-        let values_len = self.inner.values.lock().len();
         let str = self.inner.str.lock().checkpoint();
-        SharedArenaRollback {
-            container_len,
-            values_len,
-            str,
-        }
+        SharedArenaRollback { container_len, str }
     }
 
     /// Call it through the op log's change store (`ChangeStore::rollback_arena` and friends),
@@ -361,8 +340,7 @@ impl SharedArena {
     /// What the failed import may have told the arena about those containers is dropped: the
     /// parent links of normal containers registered since the checkpoint, and links to them.
     /// The resolvers find the links again from the kept history or the state. Roots keep their
-    /// links, which their IDs determine. Values and text are truncated; only parsed changes
-    /// refer to them. See `context/failed-import-arena-indices.md`.
+    /// links, which their IDs determine. Text is truncated; only parsed changes refer to it. See `context/failed-import-arena-indices.md`.
     pub(crate) fn rollback(&self, checkpoint: SharedArenaRollback) {
         {
             let mut guard = self.inner.containers.write();
@@ -383,7 +361,6 @@ impl SharedArena {
             }
         }
 
-        self.inner.values.lock().truncate(checkpoint.values_len);
         self.inner.str.lock().rollback(checkpoint.str);
     }
 
@@ -452,21 +429,15 @@ impl SharedArena {
         text_lock.alloc(std::str::from_utf8(bytes).unwrap());
     }
 
+    /// Bytes held by the string arena; it only ever grows.
+    #[cfg(test)]
+    pub(crate) fn str_len_bytes(&self) -> usize {
+        self.inner.str.lock().len_bytes()
+    }
+
     #[inline]
     pub fn utf16_len(&self) -> usize {
         self.inner.str.lock().len_utf16()
-    }
-
-    #[inline]
-    pub fn alloc_value(&self, value: LoroValue) -> usize {
-        let mut values_lock = self.inner.values.lock();
-        _alloc_value(&mut values_lock, value)
-    }
-
-    #[inline]
-    pub fn alloc_values(&self, values: impl Iterator<Item = LoroValue>) -> std::ops::Range<usize> {
-        let mut values_lock = self.inner.values.lock();
-        _alloc_values(&mut values_lock, values)
     }
 
     #[inline]
@@ -657,32 +628,6 @@ impl SharedArena {
         f(self.inner.str.lock().slice_str_by_unicode(range))
     }
 
-    #[inline]
-    pub fn get_value(&self, idx: usize) -> Option<LoroValue> {
-        self.inner.values.lock().get(idx).cloned()
-    }
-
-    #[inline]
-    pub fn get_values(&self, range: Range<usize>) -> Vec<LoroValue> {
-        (self.inner.values.lock()[range]).to_vec()
-    }
-
-    /// Whether the values in two ranges are equal, without cloning them.
-    pub(crate) fn value_slices_eq(&self, a: Range<usize>, b: Range<usize>) -> bool {
-        let values = self.inner.values.lock();
-        match (values.get(a), values.get(b)) {
-            (Some(a), Some(b)) => a == b,
-            _ => false,
-        }
-    }
-
-    /// Borrow the values in `range` without cloning them (unlike
-    /// [`Self::get_values`], which clones into a fresh `Vec`).
-    #[inline]
-    pub fn with_values<R>(&self, range: Range<usize>, f: impl FnOnce(&[LoroValue]) -> R) -> R {
-        f(&self.inner.values.lock()[range])
-    }
-
     pub fn convert_single_op(
         &self,
         container: &ContainerID,
@@ -696,9 +641,7 @@ impl SharedArena {
     }
 
     pub fn can_import_snapshot(&self) -> bool {
-        let str_empty = self.inner.str.lock().is_empty();
-        let values_empty = self.inner.values.lock().is_empty();
-        str_empty && values_empty
+        self.inner.str.lock().is_empty()
     }
 
     fn inner_convert_op(
@@ -717,25 +660,21 @@ impl SharedArena {
             },
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
-                    ListSlice::RawData(values) => {
-                        let range = self.alloc_values(values.iter().cloned());
-                        Op {
-                            counter,
-                            container,
-                            content: crate::op::InnerContent::List(InnerListOp::Insert {
-                                slice: SliceRange::from(range.start as u32..range.end as u32),
-                                pos,
-                            }),
-                        }
-                    }
+                    ListSlice::RawData(values) => Op {
+                        counter,
+                        container,
+                        content: crate::op::InnerContent::List(InnerListOp::Insert {
+                            slice: ValueSlice::new(values.into_owned()),
+                            pos,
+                        }),
+                    },
                     ListSlice::RawStr { str, unicode_len } => {
-                        let (slice, info) = self.alloc_str_with_slice(&str);
+                        let (slice, _) = self.alloc_str_with_slice(&str);
                         Op {
                             counter,
                             container,
                             content: crate::op::InnerContent::List(InnerListOp::InsertText {
                                 slice,
-                                unicode_start: info.start as u32,
                                 unicode_len: unicode_len as u32,
                                 pos: pos as u32,
                             }),
@@ -901,24 +840,6 @@ impl SharedArena {
         }
         self.inner.containers.write().get_depth(container)
     }
-
-    pub(crate) fn iter_value_slice(
-        &self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = LoroValue> + '_ {
-        let values = self.inner.values.lock();
-        range
-            .into_iter()
-            .map(move |i| values.get(i).unwrap().clone())
-    }
-
-    #[allow(unused)]
-    pub(crate) fn log_all_values(&self) {
-        let values = self.inner.values.lock();
-        for (i, v) in values.iter().enumerate() {
-            loro_common::debug!("value {} {:?}", i, v);
-        }
-    }
 }
 
 fn _alloc_str_with_slice(
@@ -928,24 +849,6 @@ fn _alloc_str_with_slice(
     let start = text_lock.len_bytes();
     let ans = _alloc_str(text_lock, str);
     (text_lock.slice_bytes(start..), ans)
-}
-
-fn _alloc_values(
-    values_lock: &mut MutexGuard<'_, Vec<LoroValue>>,
-    values: impl Iterator<Item = LoroValue>,
-) -> Range<usize> {
-    values_lock.reserve(values.size_hint().0);
-    let start = values_lock.len();
-    for value in values {
-        values_lock.push(value);
-    }
-
-    start..values_lock.len()
-}
-
-fn _alloc_value(values_lock: &mut MutexGuard<'_, Vec<LoroValue>>, value: LoroValue) -> usize {
-    values_lock.push(value);
-    values_lock.len() - 1
 }
 
 fn _alloc_str(text_lock: &mut MutexGuard<'_, StrArena>, str: &str) -> StrAllocResult {

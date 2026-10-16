@@ -28,7 +28,7 @@ impl OpLog {
 
 pub(super) fn register_container_and_parent_link(arena: &SharedArena, change: &Change) {
     for op in change.ops.iter() {
-        op.content.visit_created_children(arena, &mut |c| {
+        op.content.visit_created_children(&mut |c| {
             let idx = arena.register_container(c);
             arena.set_parent(idx, Some(op.container));
         });
@@ -42,7 +42,7 @@ pub(super) fn register_container_and_parent_link(arena: &SharedArena, change: &C
 #[cfg(debug_assertions)]
 pub(super) fn assert_local_parent_links_registered(arena: &SharedArena, change: &Change) {
     for op in change.ops.iter() {
-        op.content.visit_created_children(arena, &mut |c| {
+        op.content.visit_created_children(&mut |c| {
             let parent = arena
                 .id_to_idx(c)
                 .and_then(|idx| arena.get_registered_parent(idx));
@@ -122,7 +122,7 @@ impl DocState {
     pub(super) fn ensure_containers_created_by_op(&mut self, op: &Op) {
         let mut to_ensure: SmallVec<[ContainerID; 2]> = SmallVec::new();
         op.content
-            .visit_created_children(&self.arena, &mut |c| to_ensure.push(c.clone()));
+            .visit_created_children(&mut |c| to_ensure.push(c.clone()));
 
         for id in to_ensure {
             self.ensure_container(&id);

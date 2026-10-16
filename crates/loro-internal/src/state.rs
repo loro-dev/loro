@@ -941,10 +941,10 @@ impl DocState {
                 for item in delta.iter() {
                     if let crate::delta::DeltaItem::Insert { insert, .. } = item {
                         match &insert.values {
-                            either::Either::Left(range) => {
-                                for value in self.arena.iter_value_slice(range.to_range()) {
+                            either::Either::Left(values) => {
+                                for value in values.as_slice() {
                                     if let LoroValue::Container(c) = value {
-                                        to_ensure.push(c);
+                                        to_ensure.push(c.clone());
                                     }
                                 }
                             }

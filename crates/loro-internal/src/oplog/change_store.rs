@@ -2570,15 +2570,14 @@ mod test {
             .import(&source.export(ExportMode::Snapshot).unwrap())
             .unwrap();
         // Once local history is parsed, repeated snapshots must not allocate
-        // another copy of any known strings or list values, even with Unicode.
+        // another copy of any known strings, even with Unicode. List values
+        // have no shared store: ops own them.
         target
             .oplog()
             .lock()
             .change_store
             .visit_all_changes(&mut |_| {});
         let text_before = target.oplog().lock().arena.utf16_len();
-        let value_count = |doc: &LoroDoc| doc.oplog().lock().arena.extent().values_for_test();
-        let values_before = value_count(&target);
         for i in 0..4 {
             let text = source.get_text("t");
             text.insert(text.len_unicode(), "Z", PosType::Unicode)
@@ -2592,7 +2591,6 @@ mod test {
                 target.oplog().lock().arena.utf16_len(),
                 text_before + i as usize + 1
             );
-            assert_eq!(value_count(&target), values_before + i as usize + 1);
         }
         assert_eq!(target.get_deep_value(), source.get_deep_value());
     }

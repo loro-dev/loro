@@ -412,7 +412,7 @@ fn op_eq(
     let exact = values == ImportedValues::Exact;
 
     match (&a.content, &b.content) {
-        (InnerContent::List(a), InnerContent::List(b)) => list_op_eq(a_arena, b_arena, exact, a, b),
+        (InnerContent::List(a), InnerContent::List(b)) => list_op_eq(exact, a, b),
         (InnerContent::Map(a), InnerContent::Map(b)) => {
             a.key == b.key
                 && a.value.is_some() == b.value.is_some()
@@ -441,13 +441,7 @@ fn op_eq(
     }
 }
 
-fn list_op_eq(
-    a_arena: &SharedArena,
-    b_arena: &SharedArena,
-    exact: bool,
-    a: &InnerListOp,
-    b: &InnerListOp,
-) -> bool {
+fn list_op_eq(exact: bool, a: &InnerListOp, b: &InnerListOp) -> bool {
     match (a, b) {
         (
             InnerListOp::Insert {
@@ -458,17 +452,7 @@ fn list_op_eq(
                 slice: b_slice,
                 pos: b_pos,
             },
-        ) => {
-            a_pos == b_pos
-                && (!exact
-                    || if std::ptr::eq(a_arena, b_arena) {
-                        a_arena.value_slices_eq(a_slice.to_range(), b_slice.to_range())
-                    } else {
-                        a_arena.with_values(a_slice.to_range(), |a| {
-                            b_arena.with_values(b_slice.to_range(), |b| a == b)
-                        })
-                    })
-        }
+        ) => a_pos == b_pos && (!exact || a_slice == b_slice),
         (
             InnerListOp::InsertText {
                 slice: a_slice,

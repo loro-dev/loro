@@ -83,13 +83,15 @@ use tracing::info;
 use super::block_meta_encode::decode_changes_header;
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
+use crate::container::list::list_op::InnerListOp;
 use crate::container::tree::tree_op;
 use crate::encoding::arena::{ContainerArena, PositionArena};
 use crate::encoding::value_register::ValueRegister;
 use crate::encoding::{
-    self, decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+    self, decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
+    IterableEncodedDeleteStartId,
 };
-use crate::op::Op;
+use crate::op::{InnerContent, Op};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EncodedBlock<'a> {
@@ -182,13 +184,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
             let cid = arena.get_container_id(op.container).unwrap();
             let cidx = registers.cid_register.register(&cid);
             let prop = get_op_prop(op, &mut registers);
-            let value_kind = encode_op(
-                op,
-                arena,
-                &mut del_starts,
-                &mut value_writer,
-                &mut registers,
-            );
+            let value_kind = encode_op(op, &mut del_starts, &mut value_writer, &mut registers);
             encoded_ops.push(EncodedOp {
                 container_index: cidx as u32,
                 prop,
@@ -660,6 +656,8 @@ pub fn decode_block(
             .map(|x| x.as_container_id(&decode_arena))
             .try_collect()
     })?;
+    // Text values are substrings of `values`, so its length bounds the text.
+    let mut buffers = DecodedBlockBuffers::new(values.len());
     let mut value_reader = ValueReader::new(&values);
     let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(&ops)?;
     let op_iter = encoded_ops_iters.ops;
@@ -749,7 +747,7 @@ pub fn decode_block(
             cid,
             value,
             &mut del_iter,
-            shared_arena,
+            &mut buffers,
             &decode_arena,
             &positions,
             prop,
@@ -779,6 +777,12 @@ pub fn decode_block(
             change_index += 1;
         }
     }
+    buffers.finish(changes.iter_mut().flat_map(|c| {
+        c.ops.iter_mut().filter_map(|op| match &mut op.content {
+            InnerContent::List(InnerListOp::Insert { slice, .. }) => Some(slice),
+            _ => None,
+        })
+    }));
     Ok(changes)
 }
 
@@ -896,7 +900,6 @@ mod test {
 
     #[test]
     fn tree_move_payload_is_rejected_without_panic() {
-        let arena = SharedArena::new();
         let value_arena = ValueDecodeArena {
             peers: &[1],
             keys: &[],
@@ -918,7 +921,7 @@ mod test {
                 &cid,
                 value,
                 &mut deletes,
-                &arena,
+                &mut DecodedBlockBuffers::new(0),
                 &value_arena,
                 &[],
                 0,

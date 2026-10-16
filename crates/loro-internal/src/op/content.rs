@@ -7,7 +7,6 @@ use rle::{HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    arena::SharedArena,
     container::{
         list::list_op::{InnerListOp, ListOp},
         map::MapSet,
@@ -26,13 +25,13 @@ pub enum InnerContent {
 }
 
 impl InnerContent {
-    pub fn visit_created_children(&self, arena: &SharedArena, f: &mut dyn FnMut(&ContainerID)) {
+    pub fn visit_created_children(&self, f: &mut dyn FnMut(&ContainerID)) {
         match self {
             InnerContent::List(l) => match l {
                 InnerListOp::Insert { slice, .. } => {
-                    for v in arena.iter_value_slice(slice.to_range()) {
+                    for v in slice.as_slice() {
                         if let LoroValue::Container(c) = v {
-                            f(&c);
+                            f(c);
                         }
                     }
                 }
@@ -288,7 +287,7 @@ mod tests {
             map::MapSet,
             tree::tree_op::TreeOp,
         },
-        op::{ListSlice, SliceRange},
+        op::{ListSlice, ValueSlice},
         InternalString, LoroValue, ID,
     };
 
@@ -357,11 +356,11 @@ mod tests {
     #[test]
     fn inner_content_lengths_storage_estimates_slices_and_merges_follow_inner_ops() {
         let mut left = InnerContent::List(InnerListOp::Insert {
-            slice: SliceRange(0..2),
+            slice: ValueSlice::new(vec![0_i64.into(), 1_i64.into()]),
             pos: 0,
         });
         let right = InnerContent::List(InnerListOp::Insert {
-            slice: SliceRange(2..4),
+            slice: ValueSlice::new(vec![2_i64.into(), 3_i64.into()]),
             pos: 2,
         });
         assert_eq!(left.content_len(), 2);
@@ -373,7 +372,7 @@ mod tests {
         let sliced = left.slice(1, 3);
         match sliced {
             InnerContent::List(InnerListOp::Insert { slice, pos }) => {
-                assert_eq!(slice, SliceRange(1..3));
+                assert_eq!(slice, ValueSlice::new(vec![1_i64.into(), 2_i64.into()]));
                 assert_eq!(pos, 1);
             }
             other => panic!("expected sliced list insert, got {other:?}"),
@@ -411,23 +410,18 @@ mod tests {
 
     #[test]
     fn visit_created_children_reports_containers_created_by_list_map_and_tree_content() {
-        let arena = SharedArena::new();
         let list_child = ContainerID::new_normal(ID::new(1, 1), ContainerType::List);
         let text_child = ContainerID::new_normal(ID::new(1, 2), ContainerType::Text);
-        let values = arena.alloc_values(
-            vec![
+        let list = InnerContent::List(InnerListOp::Insert {
+            slice: ValueSlice::new(vec![
                 LoroValue::Container(list_child.clone()),
                 "plain".into(),
                 LoroValue::Container(text_child.clone()),
-            ]
-            .into_iter(),
-        );
-        let list = InnerContent::List(InnerListOp::Insert {
-            slice: SliceRange(values.start as u32..values.end as u32),
+            ]),
             pos: 0,
         });
         let mut children = Vec::new();
-        list.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+        list.visit_created_children(&mut |id| children.push(id.clone()));
         assert_eq!(children, vec![list_child.clone(), text_child.clone()]);
 
         let map_child = ContainerID::new_normal(ID::new(2, 1), ContainerType::Map);
@@ -436,7 +430,7 @@ mod tests {
             value: Some(LoroValue::Container(map_child.clone())),
         });
         let mut children = Vec::new();
-        map.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+        map.visit_created_children(&mut |id| children.push(id.clone()));
         assert_eq!(children, vec![map_child]);
 
         let tree_target = TreeID::new(3, 7);
@@ -446,7 +440,7 @@ mod tests {
             position: FractionalIndex::default(),
         }));
         let mut children = Vec::new();
-        tree.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+        tree.visit_created_children(&mut |id| children.push(id.clone()));
         assert_eq!(children, vec![tree_target.associated_meta_container()]);
 
         for tree in [
@@ -461,7 +455,7 @@ mod tests {
         ] {
             let tree = InnerContent::Tree(Arc::new(tree));
             let mut children = Vec::new();
-            tree.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+            tree.visit_created_children(&mut |id| children.push(id.clone()));
             assert!(children.is_empty());
         }
 
@@ -470,7 +464,7 @@ mod tests {
             value: Box::new(OwnedValue::False),
         });
         let mut children = Vec::new();
-        future.visit_created_children(&arena, &mut |id| children.push(id.clone()));
+        future.visit_created_children(&mut |id| children.push(id.clone()));
         assert!(children.is_empty());
     }
 }

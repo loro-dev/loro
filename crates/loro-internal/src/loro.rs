@@ -54,12 +54,15 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
+    panic::AssertUnwindSafe,
     sync::{
         atomic::Ordering::{Acquire, Release},
         Arc,
     },
 };
 use tracing::{debug_span, info_span, instrument, warn};
+
+use crate::utils::subscription::DeferredPanic;
 
 impl Default for LoroDoc {
     fn default() -> Self {
@@ -126,10 +129,24 @@ impl LoroDoc {
         F: FnOnce() -> R,
     {
         let (options, guard) = self.implicit_commit_then_stop();
-        let result = f();
+        // `f` may call user code, e.g. subscribers of an import's events. If it
+        // panics, release the txn lock first, so the panic does not poison it.
+        let result = std::panic::catch_unwind(AssertUnwindSafe(f));
         drop(guard);
-        self.renew_txn_if_auto_commit(options);
-        result
+        match result {
+            Ok(result) => {
+                self.renew_txn_if_auto_commit(options);
+                result
+            }
+            Err(payload) => {
+                // A panic inside Loro may have poisoned another lock, which
+                // would make this panic too; keep the original panic.
+                let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    self.renew_txn_if_auto_commit(options)
+                }));
+                std::panic::resume_unwind(payload);
+            }
+        }
     }
 
     pub fn new() -> Self {
@@ -330,11 +347,32 @@ impl LoroDoc {
     ///   (except `origin`, which never carries across an empty commit).
     /// - When `preserve_on_empty` is false (explicit commits), commit options from an
     ///   empty transaction are swallowed and NOT carried over.
+    ///
+    /// A pre-commit callback that panics does not stop the commit; its panic is
+    /// raised after the txn lock is released, so the lock is not poisoned.
     #[instrument(skip_all)]
     fn commit_internal(
         &self,
         config: CommitOptions,
         preserve_on_empty: bool,
+    ) -> (
+        Option<CommitOptions>,
+        Option<LoroMutexGuard<'_, Option<Transaction>>>,
+    ) {
+        let mut callback_panic = None;
+        let ans = self.commit_internal_inner(config, preserve_on_empty, &mut callback_panic);
+        if let Some(payload) = callback_panic {
+            drop(ans);
+            std::panic::resume_unwind(payload);
+        }
+        ans
+    }
+
+    fn commit_internal_inner(
+        &self,
+        config: CommitOptions,
+        preserve_on_empty: bool,
+        callback_panic: &mut Option<crate::txn::PanicPayload>,
     ) -> (
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
@@ -370,7 +408,11 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let mut options = txn.commit().unwrap();
+            let (options, panic) = txn.commit_deferring_callback_panic();
+            if panic.is_some() {
+                *callback_panic = panic;
+            }
+            let mut options = options.unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit
@@ -999,9 +1041,11 @@ impl LoroDoc {
             let mut state = self.state.lock();
             state.take_events()
         };
+        let mut panic = DeferredPanic::default();
         for event in events {
-            self.observer.emit(event);
+            panic.run(|| self.observer.emit(event));
         }
+        panic.resume();
     }
 
     pub(crate) fn drop_pending_events(&self) -> Vec<DocDiff> {
