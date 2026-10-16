@@ -30,10 +30,13 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
 - `decode_op` (`encoding/outdated_encode_reordered.rs`) writes into a
   `DecodedBlockBuffers` that belongs to one `decode_block` call and is freed
   with the parsed changes. Text goes into one `AppendOnlyBytes`, sized by the
-  block's value column. List values are moved into one `Vec`. The ops get
-  provisional slices, and `finish` points them at the finished `Arc` at the end
-  of `decode_block`. A block's values are then read together, and adjacent
-  slices merge without copying.
+  block's value column. A single-value list insert is stored inline. The values
+  of larger inserts are moved into one `Vec`; those ops get provisional slices,
+  and `finish` points them at the finished `Arc` at the end of `decode_block`.
+  A block's values are then read together, and adjacent slices merge without
+  copying. The inline case matters for syncs that import one small change from
+  each of many peers: each peer's change is its own small block, and a shared
+  buffer per block cost about three allocations more than the old arena.
 - `InnerListOp::InsertText` has no arena position (`unicode_start` is gone).
   Op merging (`list_op.rs`) uses `BytesSlice::can_merge`. Two slices that are
   adjacent in one buffer are contiguous text.

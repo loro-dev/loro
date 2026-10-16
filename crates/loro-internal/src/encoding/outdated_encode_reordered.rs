@@ -248,10 +248,20 @@ impl DecodedBlockBuffers {
         bytes.slice(start..)
     }
 
-    /// The returned slice can be merged, but not read, before [`Self::finish`].
+    /// A multi-value slice can be merged, but not read, before [`Self::finish`].
     fn push_values(&mut self, list: LoroListValue) -> ValueSlice {
+        let list = list.into_arc();
+        if list.len() == 1 {
+            // Stored inline. A sync that imports one small change from each of
+            // many peers decodes many blocks with one value each, and a shared
+            // buffer would cost each block a few allocations.
+            let value =
+                Arc::try_unwrap(list).map_or_else(|list| list[0].clone(), |mut v| v.pop().unwrap());
+            return ValueSlice::one(value);
+        }
+
         let start = self.values.len();
-        match Arc::try_unwrap(list.into_arc()) {
+        match Arc::try_unwrap(list) {
             Ok(mut list) => self.values.append(&mut list),
             Err(list) => self.values.extend_from_slice(&list),
         }

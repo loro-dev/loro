@@ -436,7 +436,7 @@ enum Repr {
 impl ValueSlice {
     pub fn new(mut values: Vec<LoroValue>) -> Self {
         if values.len() == 1 {
-            return Self(Repr::One(values.pop().unwrap()));
+            return Self::one(values.pop().unwrap());
         }
 
         let end = u32::try_from(values.len()).expect("too many values in one list op");
@@ -445,6 +445,10 @@ impl ValueSlice {
             start: 0,
             end,
         })
+    }
+
+    pub(crate) fn one(value: LoroValue) -> Self {
+        Self(Repr::One(value))
     }
 
     /// A slice of `buffer` that is not filled yet. See
