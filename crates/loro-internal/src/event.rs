@@ -404,8 +404,9 @@ impl InternalDiff {
             InternalDiff::Map(m) => m.updated.is_empty(),
             InternalDiff::Tree(t) => t.is_empty(),
             InternalDiff::MovableList(t) => t.is_empty(),
+            // 0 is empty. A smaller nonzero delta such as 1e-17 is a real increment.
             #[cfg(feature = "counter")]
-            InternalDiff::Counter(c) => c.abs() < f64::EPSILON,
+            InternalDiff::Counter(c) => *c == 0.0,
             InternalDiff::Unknown => true,
         }
     }
@@ -493,8 +494,9 @@ impl Diff {
             Diff::Text(t) => t.is_empty(),
             Diff::Map(m) => m.updated.is_empty(),
             Diff::Tree(t) => t.diff.is_empty(),
+            // Same rule as `InternalDiff`: only an exact 0 is an empty counter diff.
             #[cfg(feature = "counter")]
-            Diff::Counter(c) => c.abs() < f64::EPSILON,
+            Diff::Counter(c) => *c == 0.0,
             Diff::Unknown => true,
         }
     }

@@ -907,9 +907,9 @@ the operation `len`. Length definitions:
 [`DeleteSpan::content_len`](../crates/loro-internal/src/container/list/list_op.rs#L124-L130).
 
 For a Counter delta `d`, the writer computes `a = abs(d)` and chooses tag 3
-I64 exactly when `a.fract() < f64::EPSILON && (a as i64) < (2 << 26)`; it then
-writes `d as i64`. Otherwise it chooses tag 4 F64. This is a one-sided
-fractional-part test, not a symmetric distance-to-nearest-integer test.
+I64 exactly when `a.fract() == 0.0 && (a as i64) < (2 << 26)`; it then
+writes `d as i64`. Otherwise it chooses tag 4 F64. A nonzero fraction such as
+`1e-17` stays F64. This is an exact fractional-part test, not a tolerance.
 
 The decoder retains support for tag 13 `TreeMove`, but the mode-4 writer uses
 tag 16 `RawTreeMove`. In the current change-block decoder, tag 13 cannot be
