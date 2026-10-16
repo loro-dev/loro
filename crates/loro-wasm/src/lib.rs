@@ -709,6 +709,38 @@ impl LoroDoc {
         self.doc.set_record_timestamp(auto_record);
     }
 
+    /// Maximum number of lazily loaded container values retained by handler reads.
+    /// The default is 2048.
+    #[wasm_bindgen(js_name = "getDecodedValueCacheLimit")]
+    pub fn decoded_value_cache_limit(&self) -> usize {
+        self.doc.decoded_value_cache_limit()
+    }
+
+    /// Set how many lazily loaded container values handler reads may cache.
+    ///
+    /// The default is 2048. A larger finite limit trades memory for faster repeated
+    /// reads of large imported snapshots. Zero disables this cache. Lowering the
+    /// limit immediately evicts excess cached values without losing local edits.
+    ///
+    /// This counts cached values, not bytes or all document state: modified
+    /// containers and materialized tree state are outside this bound. Bulk reads
+    /// such as `doc.toJSON()` do not populate this cache.
+    ///
+    /// The setting is local to this document, is copied independently by forks,
+    /// and is not encoded in snapshots or updates. `limit` must be a finite
+    /// integer between 0 and 4294967295 (inclusive); Infinity is not supported.
+    #[wasm_bindgen(js_name = "setDecodedValueCacheLimit")]
+    pub fn set_decoded_value_cache_limit(&self, limit: f64) -> JsResult<()> {
+        if !limit.is_finite() || limit < 0.0 || limit.fract() != 0.0 || limit > u32::MAX as f64 {
+            return Err(JsError::new(
+                "Decoded value cache limit must be a finite integer between 0 and 4294967295",
+            )
+            .into());
+        }
+        self.doc.set_decoded_value_cache_limit(limit as usize);
+        Ok(())
+    }
+
     /// If two continuous local changes are within (<=) the interval(**in seconds**), they will be merged into one change.
     ///
     /// The default value is 1_000 seconds.

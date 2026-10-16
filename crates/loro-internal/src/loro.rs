@@ -487,6 +487,14 @@ impl LoroDoc {
         self.config.set_record_timestamp(record);
     }
 
+    pub fn decoded_value_cache_limit(&self) -> usize {
+        self.config.decoded_value_cache_limit()
+    }
+
+    pub fn set_decoded_value_cache_limit(&self, limit: usize) {
+        self.state.lock().store.set_decoded_value_cache_limit(limit);
+    }
+
     /// Set the interval of mergeable changes, in seconds.
     ///
     /// If two continuous local changes are within the interval, they will be merged into one change.

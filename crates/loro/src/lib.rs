@@ -185,6 +185,28 @@ impl LoroDoc {
         self.doc.config()
     }
 
+    /// Maximum number of lazily loaded container values retained by handler reads.
+    /// The default is 2048.
+    pub fn decoded_value_cache_limit(&self) -> usize {
+        self.doc.decoded_value_cache_limit()
+    }
+
+    /// Set how many lazily loaded container values handler reads may cache.
+    ///
+    /// The default is 2048. A larger finite limit trades memory for faster repeated
+    /// reads of large imported snapshots. Zero disables this cache. Lowering the
+    /// limit immediately evicts excess cached values without losing local edits.
+    ///
+    /// This counts cached values, not bytes or all document state: modified
+    /// containers and materialized tree state are outside this bound. Bulk reads
+    /// such as [`Self::get_deep_value`] do not populate this cache.
+    ///
+    /// The setting is local to this document, is copied independently by forks,
+    /// and is not encoded in snapshots or updates.
+    pub fn set_decoded_value_cache_limit(&self, limit: usize) {
+        self.doc.set_decoded_value_cache_limit(limit);
+    }
+
     /// Get `Change` at the given id.
     ///
     /// `Change` is a grouped continuous operations that share the same id, timestamp, commit message.
