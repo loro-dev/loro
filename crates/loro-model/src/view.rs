@@ -24,6 +24,9 @@ pub enum Loc {
     /// A map field, resolved on every access, so replacing the field (locally
     /// or remotely) is observed instead of leaving a stale handle.
     Field(Arc<Loc>, Arc<str>),
+    /// A keyed vec item, with the same path semantics as `Field`, whose key
+    /// cannot be changed by reconciling a keyed value through this view.
+    KeyedItem(Arc<Loc>, Arc<str>),
 }
 
 impl Loc {
@@ -46,7 +49,7 @@ impl Loc {
                 }
                 Ok(Some(ValueOrContainer::Container(c.clone())))
             }
-            Loc::Field(parent, key) => match parent.resolve_map()? {
+            Loc::Field(parent, key) | Loc::KeyedItem(parent, key) => match parent.resolve_map()? {
                 Some(m) => Ok(m.get(key)),
                 None => Ok(None),
             },
@@ -75,7 +78,7 @@ impl Loc {
                 }
                 f(Slot::Container(c))
             }
-            Loc::Field(parent, key) => {
+            Loc::Field(parent, key) | Loc::KeyedItem(parent, key) => {
                 let m = parent.ensure_map()?;
                 f(Slot::MapKey(&m, key))
             }
@@ -98,7 +101,7 @@ impl Loc {
                 }
                 Ok(Some(ReadEntry::Container(c)))
             }
-            Loc::Field(parent, key) => match parent.resolve_in(r)? {
+            Loc::Field(parent, key) | Loc::KeyedItem(parent, key) => match parent.resolve_in(r)? {
                 None => Ok(None),
                 Some(ReadEntry::Container(m)) if m.container_type() == ContainerType::Map => {
                     Ok(r.map_get(m, key))
@@ -130,20 +133,27 @@ impl Loc {
     pub fn doc(&self) -> Option<LoroDoc> {
         match self {
             Loc::Container(_, doc) => doc.clone(),
-            Loc::Field(parent, _) => parent.doc(),
+            Loc::Field(parent, _) | Loc::KeyedItem(parent, _) => parent.doc(),
         }
     }
 
-    /// The container to subscribe to and, for a map field, the key to filter
-    /// on. Subscribes to the parent map for fields, so a field that is
-    /// replaced or created later is still observed.
-    fn subscription_target(&self) -> Result<(ContainerID, Option<Arc<str>>)> {
-        match self {
-            Loc::Container(c, _) => Ok((c.id(), None)),
-            Loc::Field(parent, key) => match parent.resolve_map()? {
-                Some(m) => Ok((m.id(), Some(key.clone()))),
-                None => Err(ModelError::new(ErrorKind::Missing)),
-            },
+    /// Subscribe at the concrete anchor and filter the complete field path.
+    /// Resolving just the immediate parent would pin the subscription to a
+    /// stale container after replacement, and cannot watch missing parents.
+    fn subscription_target(&self) -> (ContainerID, Vec<Arc<str>>) {
+        let mut keys = Vec::new();
+        let mut loc = self;
+        loop {
+            match loc {
+                Loc::Container(c, _) => {
+                    keys.reverse();
+                    return (c.id(), keys);
+                }
+                Loc::Field(parent, key) | Loc::KeyedItem(parent, key) => {
+                    keys.push(key.clone());
+                    loc = parent;
+                }
+            }
         }
     }
 }
@@ -161,6 +171,16 @@ pub trait View: Sized {
     /// Reconcile a plain value into this subtree, reusing containers and
     /// skipping unchanged values.
     fn update_from<T: ToLoro + ?Sized>(&self, value: &T) -> Result<()> {
+        if let Loc::KeyedItem(_, key) = self.loc() {
+            if let Some(found) = value.key() {
+                if found != key.as_ref() {
+                    return Err(ModelError::new(ErrorKind::KeyMismatch {
+                        expected: key.to_string(),
+                        found: found.to_string(),
+                    }));
+                }
+            }
+        }
         self.loc().with_slot(|slot| value.to_loro(slot))
     }
 
@@ -180,7 +200,7 @@ pub trait View: Sized {
         &self,
         callback: impl Fn(&loro::event::DiffEvent) + Send + Sync + 'static,
     ) -> Result<Subscription> {
-        let (target, key) = self.loc().subscription_target()?;
+        let (target, keys) = self.loc().subscription_target();
         let doc = self
             .loc()
             .doc()
@@ -188,7 +208,7 @@ pub trait View: Sized {
         Ok(doc.subscribe(
             &target.clone(),
             Arc::new(move |e| {
-                if touches(&e, &target, key.as_deref()) {
+                if touches(&e, &target, &keys) {
                     callback(&e);
                 }
             }),
@@ -223,18 +243,34 @@ pub trait View: Sized {
     }
 }
 
-fn touches(e: &loro::event::DiffEvent, target: &ContainerID, key: Option<&str>) -> bool {
-    let Some(key) = key else { return true };
+fn touches(e: &loro::event::DiffEvent, target: &ContainerID, keys: &[Arc<str>]) -> bool {
+    if keys.is_empty() {
+        return true;
+    }
     e.events.iter().any(|d| {
-        if d.target == target {
-            return match &d.diff {
-                loro::event::Diff::Map(m) => m.updated.contains_key(key),
-                _ => true,
-            };
-        }
-        d.path
+        // Each path segment names the child container and the index by which
+        // its parent reaches it. Start *after* the concrete anchor's segment.
+        let path = match d.path.iter().position(|(id, _)| id == target) {
+            Some(i) => &d.path[i + 1..],
+            None if d.target == target => &[],
+            None => return false,
+        };
+        if !path
             .iter()
-            .any(|(id, idx)| id == target && matches!(idx, Index::Key(k) if &**k == key))
+            .zip(keys)
+            .all(|((_, index), key)| matches!(index, Index::Key(k) if k.as_str() == key.as_ref()))
+        {
+            return false;
+        }
+        if path.len() >= keys.len() {
+            return true; // The watched container or one of its descendants.
+        }
+        // A change to an ancestor matters only when it updates the next edge
+        // of the watched path (including deleting or replacing that edge).
+        match &d.diff {
+            loro::event::Diff::Map(m) => m.updated.contains_key(keys[path.len()].as_ref()),
+            _ => true,
+        }
     })
 }
 
@@ -478,7 +514,10 @@ impl<T: LoroSchema> KeyedVec<T> {
         if !self.contains_key(key)? {
             return Ok(None);
         }
-        Ok(Some(T::View::from_loc(Loc::field(&self.items_loc(), key))))
+        Ok(Some(T::View::from_loc(Loc::KeyedItem(
+            Arc::new(self.items_loc()),
+            key.into(),
+        ))))
     }
 
     /// Visible keys in order.
@@ -505,11 +544,8 @@ impl<T: LoroSchema> KeyedVec<T> {
         if parts.items.get(&key).is_some() {
             return Err(ModelError::new(ErrorKind::DuplicateKey(key)));
         }
-        let visible = parts.visible();
-        let raw = match visible.get(index) {
-            Some((Some(raw), _)) => *raw,
-            _ => parts.order.len(),
-        };
+        let keys = parts.normalize_order()?;
+        let raw = index.min(keys.len());
         Slot::ListInsert(&parts.order, raw).set_value(key.as_str().into())?;
         value.to_loro(Slot::MapKey(&parts.items, &key))
     }
@@ -541,33 +577,13 @@ impl<T: LoroSchema> KeyedVec<T> {
     /// Move the element with this key to visible position `to`.
     pub fn move_to(&self, key: &str, to: usize) -> Result<()> {
         let parts = self.parts_mut()?;
-        let visible = parts.visible();
-        let Some(from_vis) = visible.iter().position(|(_, k)| k == key) else {
+        let keys = parts.normalize_order()?;
+        let Some(from) = keys.iter().position(|k| k == key) else {
             return Err(ModelError::new(ErrorKind::Missing).in_key(key));
         };
-        // Target: before the element that will be at visible `to` once the
-        // moved element is taken out. Unordered items have no raw index, so
-        // the anchor is the end of `order`.
-        let raw_anchor = visible
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != from_vis)
-            .nth(to)
-            .and_then(|(_, (raw, _))| *raw)
-            .unwrap_or(parts.order.len());
-        match visible[from_vis].0 {
-            // An unordered item gets its first order entry.
-            None => Slot::ListInsert(&parts.order, raw_anchor).set_value(key.into())?,
-            Some(raw_from) => {
-                let raw_to = if raw_from < raw_anchor {
-                    raw_anchor - 1
-                } else {
-                    raw_anchor
-                };
-                if raw_from != raw_to {
-                    parts.order.mov(raw_from, raw_to)?;
-                }
-            }
+        let to = to.min(keys.len() - 1);
+        if from != to {
+            parts.order.mov(from, to)?;
         }
         Ok(())
     }

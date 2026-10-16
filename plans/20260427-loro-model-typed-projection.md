@@ -1,6 +1,6 @@
 # Plan: Typed `loro_model` Layer with Projection and Reconcile
 
-Date: 2026-04-27, revised 2026-10-15
+Date: 2026-04-27, revised 2026-10-16
 Status: Draft. Phase 0 prototype done (`crates/loro-model`, `publish = false`).
 Related issue: <https://github.com/loro-dev/loro/issues/888>
 Compatibility stance: additive and opt-in; no changes to existing `loro` APIs.
@@ -203,6 +203,7 @@ pub trait View: Sized {
 pub enum Loc {
     Container(Container),        // roots, positional list elements
     Field(Arc<Loc>, Arc<str>),   // map field, resolved on each access
+    KeyedItem(Arc<Loc>, Arc<str>), // keyed vec item; rejects keyed DTO renames
 }
 ```
 
@@ -211,7 +212,10 @@ pub enum Loc {
   observed instead of leaving a stale handle.
 - Reads never create containers. Writes create missing parents as mergeable
   children.
-- `by_key` returns `Loc::Field(items, key)`: bound to the element's identity.
+- `by_key` returns `Loc::KeyedItem(items, key)`: bound to the element's identity.
+  Reconciling a keyed DTO with a different key (including through `edit`) returns
+  `KeyMismatch` before writing. Low-level `Slot` and handler access remain explicit
+  escape hatches, as does writing arbitrary unkeyed shapes through `update_from`.
 - A positional list element view is bound to the element container and returns
   `ErrorKind::Deleted` once that element is deleted.
 
@@ -264,6 +268,12 @@ Rules:
   writes that order back (test: `unordered_items_stay_visible`).
 - Keys must be strings (they are map keys). Generated views expose key fields as
   read-only, because the key is the element's identity.
+- `KeyedVec::insert` and `move_to` normalize `order` to the current visible order
+  before using positions: remove repeated/dead keys and append missing live keys.
+  Otherwise moving the first copy can expose another copy at its old position,
+  and unordered items cannot serve as insertion anchors. Normalization does not
+  read or rewrite item contents. Clean orders emit no repair ops; irregular orders
+  use the existing `reconcile_order` pass (`O(n log n)` bookkeeping).
 - Re-inserting a deleted key resurfaces the old mergeable child, then reconcile
   overwrites every known field. Fields unknown to this schema come back with it.
 
@@ -295,7 +305,9 @@ discarded.
 
 ### `read_as`
 
-- One `get_deep_value()` of the subtree, then conversion: `O(output size)`.
+- Reads through one `read_state` lock, with field-level conversion: `O(output size)`.
+  A struct's `read` override must handle `ReadEntry::Value` by calling `from_loro`;
+  calling `FromLoro::read` there dispatches to that same override and recurses.
 - Errors carry a path, built only on the error path:
   `todos[1].title: expected string, found I64(42)` (test: `errors_have_paths`).
 
@@ -305,11 +317,13 @@ discarded.
 carry new values and deltas, not old values. The revision splits the API into
 two methods:
 
-- `subscribe(cb)`: raw Loro events for this subtree, no old values. For a
-  scalar field it subscribes to the parent map and filters by key and by event
-  path, so edits to sibling fields do not fire (test:
-  `watch_filters_unrelated_fields`). Container subscriptions already cover
-  descendants (test: `subscription_on_a_container_covers_its_descendants`).
+- `subscribe(cb)`: raw Loro events for this subtree, no old values. Subscribe
+  to the concrete `Loc::Container` anchor and filter the complete field path,
+  including map diffs that replace or delete any ancestor edge. Do not bind to
+  the currently resolved immediate parent: replacing it would orphan the subscription.
+  Subscriptions can be created before intermediate maps exist. Event path segments
+  name the child container plus its index in its parent; match field names *after*
+  the anchor segment. Sibling edits do not fire; descendant edits do.
 - `watch::<T>(|old, new| ..)`: keeps only the last projected `T`, re-reads the
   subtree on each relevant event, and calls back only when the value changed.
   The old value costs `O(size of T)` for that one watch, not a model-wide cache.
@@ -360,7 +374,8 @@ Revised design:
 | `concurrent_init_merges_instead_of_dropping_a_subtree` / `baseline_regular_containers_lose_concurrent_init` | Need for mergeable children |
 | `unordered_items_stay_visible` | Keyed vec membership rule |
 | `errors_have_paths`, `unknown_fields_are_preserved`, `stale_dto_reverts_remote_edits_but_edit_does_not` | Error paths, forward compatibility, the stale-DTO hazard |
-| `convergence::multi_peer_convergence` | 3 peers, random view edits, `update_from` of mutated projections, and random syncs. Checks: every peer converges; projections have no duplicate keys; view key order equals projection order; `update_from` round-trips and is idempotent at every step. 100 seeds by default; 5000 seeds passed with `LORO_MODEL_SEEDS=5000 cargo test --release -p loro-model --test convergence` |
+| `convergence::multi_peer_convergence` | 3 peers, random view edits, `update_from` of mutated projections, and random syncs. Checks: every peer converges; projections have no duplicate keys; view key order equals projection order; each view insert/move reaches its requested visible position; `update_from` round-trips and is idempotent at every step. The revised suite passes its default 100 seeds. The earlier suite without the insert/move assertions passed 5000 release seeds. |
+| `regressions` | Plain map projection and malformed values without recursion; immutable keyed DTO identity; indexed edits after real concurrent creation and with repeated/dead/missing order entries; nested sibling filtering and descendant notifications; local/remote ancestor replacement, missing ancestors, checkout and deletion; unsubscription. |
 
 ### Benchmark (`cargo run --release -p loro-model --example model_bench`)
 
@@ -634,8 +649,8 @@ containers, with a benchmark.
 
 - Should `update_from` on a keyed vec with a non-string key type be a compile
   error (a `LoroKey` bound) rather than a runtime `Err`?
-- Should `order` be cleaned (repeats and dead keys removed) by view writes too,
-  or only by `update_from`? Today only `update_from` cleans it.
+- Indexed view writes now repair `order` before editing. Should `remove` also
+  normalize unrelated repeated/dead/missing keys, beyond removing its own key?
 - Should `watch` accept a custom comparator for `T` without `PartialEq`?
 - Positional `Vec<Struct>` (no key) is reconciled by index, so inserting at the
   front rewrites every element. Should derive warn when a `Vec` of structs has
@@ -666,3 +681,7 @@ containers, with a benchmark.
   views capture their `LoroDoc` instead of calling `ContainerTrait::doc()`.
 - 2026-10-15: `ToLoro::key()` returns `Option<&str>`: keys are map keys in the
   keyed vec layout, and borrowing avoids an allocation per element.
+- 2026-10-16: Indexed keyed-vec edits normalize the visible order first;
+  `KeyedItem` rejects keyed DTO identity changes. Subscriptions anchor at the
+  concrete container and filter the full logical path so ancestor replacements
+  do not orphan watches. Regression tests cover these outcomes, not only convergence.

@@ -5,6 +5,8 @@
 Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
 - `crates/loro`: public Rust API; avoid breaking downstream users.
+- `crates/loro-model`: unpublished typed-view prototype; see
+  [the design and regression rules](plans/20260427-loro-model-typed-projection.md).
 - `crates/loro-internal`: core CRDT logic. Read its
   [AGENTS.md](crates/loro-internal/AGENTS.md) before changing import/export,
   encoding, state, diff, checkout, or replay behavior.

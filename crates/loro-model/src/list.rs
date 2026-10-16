@@ -87,9 +87,13 @@ impl KeyedParts {
     /// Visible keys in order, as `(raw index in order, key)`. See the module
     /// docs; unordered live items come last, sorted, with no raw index.
     pub fn visible(&self) -> Vec<(Option<usize>, String)> {
+        self.visible_in(&raw_keys(&self.order))
+    }
+
+    fn visible_in(&self, order: &[LoroValue]) -> Vec<(Option<usize>, String)> {
         let mut live: FxHashSet<String> = self.items.keys().map(|k| k.to_string()).collect();
         let mut out = Vec::with_capacity(live.len());
-        for (i, v) in raw_keys(&self.order).iter().enumerate() {
+        for (i, v) in order.iter().enumerate() {
             let LoroValue::String(k) = v else {
                 continue;
             };
@@ -101,6 +105,26 @@ impl KeyedParts {
         rest.sort_unstable();
         out.extend(rest.into_iter().map(|k| (None, k)));
         out
+    }
+
+    /// Make raw positions agree with visible positions before an indexed edit.
+    /// Moving only the first occurrence of a repeated key can expose another
+    /// copy at the old position; unordered items also need order entries before
+    /// they can be used as insertion anchors. Preserve the current visible order.
+    pub(crate) fn normalize_order(&self) -> Result<Vec<String>> {
+        let raw = raw_keys(&self.order);
+        let keys: Vec<String> = self.visible_in(&raw).into_iter().map(|(_, k)| k).collect();
+        let canonical = raw.len() == keys.len()
+            && raw
+                .iter()
+                .zip(&keys)
+                .all(|(v, k)| matches!(v, LoroValue::String(s) if s.as_str() == k));
+        if !canonical {
+            let want: Vec<&str> = keys.iter().map(String::as_str).collect();
+            let index = want.iter().enumerate().map(|(i, &k)| (k, i)).collect();
+            reconcile_order(&self.order, &want, &index, &raw)?;
+        }
+        Ok(keys)
     }
 }
 

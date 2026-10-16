@@ -61,8 +61,11 @@ impl FromLoro for Project {
     }
 
     fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        if let ReadEntry::Value(v) = &e {
+            return Self::from_loro(v);
+        }
         let Some(m) = struct_map(&e)? else {
-            return FromLoro::read(r, e);
+            unreachable!("value entries are handled above");
         };
         Ok(Self {
             title: read_field_in(r, m, "title", String::read, String::from_missing)?,
@@ -146,8 +149,11 @@ impl FromLoro for Todo {
     }
 
     fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        if let ReadEntry::Value(v) = &e {
+            return Self::from_loro(v);
+        }
         let Some(m) = struct_map(&e)? else {
-            return FromLoro::read(r, e);
+            unreachable!("value entries are handled above");
         };
         Ok(Self {
             id: read_field_in(r, m, "id", String::read, String::from_missing)?,
@@ -233,8 +239,11 @@ impl FromLoro for TodoSummary {
     }
 
     fn read<'r>(r: &mut StateReader<'r>, e: ReadEntry<'r>) -> Result<Self> {
+        if let ReadEntry::Value(v) = &e {
+            return Self::from_loro(v);
+        }
         let Some(m) = struct_map(&e)? else {
-            return FromLoro::read(r, e);
+            unreachable!("value entries are handled above");
         };
         Ok(Self {
             id: read_field_in(r, m, "id", String::read, String::from_missing)?,

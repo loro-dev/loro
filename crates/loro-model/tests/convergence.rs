@@ -77,7 +77,14 @@ fn view_op(rng: &mut Rng, m: &ProjectModel) {
         1 => {
             if !todos.contains_key(&id).unwrap() {
                 let at = rng.below(todos.len().unwrap() + 1);
+                let mut expected = todos.keys().unwrap();
+                expected.insert(at, id.clone());
                 todos.insert(at, &todo(&id, "view")).unwrap();
+                assert_eq!(
+                    todos.keys().unwrap(),
+                    expected,
+                    "insert at visible position"
+                );
             }
         }
         2 => {
@@ -91,7 +98,13 @@ fn view_op(rng: &mut Rng, m: &ProjectModel) {
         _ => {
             let len = todos.len().unwrap();
             if todos.contains_key(&id).unwrap() {
-                todos.move_to(&id, rng.below(len)).unwrap();
+                let to = rng.below(len);
+                let mut expected = todos.keys().unwrap();
+                let from = expected.iter().position(|k| k == &id).unwrap();
+                let key = expected.remove(from);
+                expected.insert(to, key);
+                todos.move_to(&id, to).unwrap();
+                assert_eq!(todos.keys().unwrap(), expected, "move to visible position");
             }
         }
     }

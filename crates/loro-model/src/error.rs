@@ -23,6 +23,11 @@ pub enum ErrorKind {
     },
     /// The input value has two list elements with the same key.
     DuplicateKey(String),
+    /// Updating an existing keyed item cannot rename its identity.
+    KeyMismatch {
+        expected: String,
+        found: String,
+    },
     /// The view points at a container that has been deleted.
     Deleted,
     Loro(LoroError),
@@ -99,6 +104,12 @@ impl fmt::Display for ModelError {
             ErrorKind::Missing => write!(f, "{path}: missing"),
             ErrorKind::OutOfRange { target } => write!(f, "{path}: out of range for {target}"),
             ErrorKind::DuplicateKey(k) => write!(f, "{path}: duplicate key {k}"),
+            ErrorKind::KeyMismatch { expected, found } => {
+                write!(
+                    f,
+                    "{path}: cannot change item key from {expected} to {found}"
+                )
+            }
             ErrorKind::Deleted => write!(f, "{path}: container was deleted"),
             ErrorKind::Loro(e) => write!(f, "{path}: {e}"),
             ErrorKind::TextUpdateTimeout => write!(f, "{path}: text update timed out"),
