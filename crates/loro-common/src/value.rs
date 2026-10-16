@@ -1,9 +1,17 @@
-use std::{collections::HashMap, hash::Hash, ops::Index, sync::Arc};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    ops::Index,
+    sync::{Arc, OnceLock},
+};
 
 use arbitrary::Arbitrary;
 use enum_as_inner::EnumAsInner;
 use rustc_hash::FxHashMap;
-use serde::{de::VariantAccess, Deserialize, Serialize};
+use serde::{
+    de::{DeserializeSeed, VariantAccess},
+    Deserialize, Serialize,
+};
 
 use crate::ContainerID;
 
@@ -140,8 +148,8 @@ impl LoroListValue {
     }
 
     /// The shared list, without copying it.
-    pub fn into_arc(self) -> Arc<Vec<LoroValue>> {
-        self.0
+    pub fn into_arc(mut self) -> Arc<Vec<LoroValue>> {
+        std::mem::take(&mut self.0)
     }
 }
 
@@ -170,8 +178,8 @@ impl LoroStringValue {
 }
 
 impl LoroListValue {
-    pub fn unwrap(self) -> Vec<LoroValue> {
-        match Arc::try_unwrap(self.0) {
+    pub fn unwrap(mut self) -> Vec<LoroValue> {
+        match Arc::try_unwrap(std::mem::take(&mut self.0)) {
             Ok(v) => v,
             Err(arc) => (*arc).clone(),
         }
@@ -179,10 +187,66 @@ impl LoroListValue {
 }
 
 impl LoroMapValue {
-    pub fn unwrap(self) -> FxHashMap<String, LoroValue> {
-        match Arc::try_unwrap(self.0) {
+    pub fn unwrap(mut self) -> FxHashMap<String, LoroValue> {
+        match Arc::try_unwrap(std::mem::take(&mut self.0)) {
             Ok(v) => v,
             Err(arc) => (*arc).clone(),
+        }
+    }
+}
+
+// Detach children before dropping them so the last Arc never recursively frees
+// an arbitrarily deep value. Arc::into_inner also handles concurrent final drops:
+// unlike try_unwrap(...).ok(), exactly one caller takes the shared allocation.
+static EMPTY_LIST: OnceLock<Arc<Vec<LoroValue>>> = OnceLock::new();
+static EMPTY_MAP: OnceLock<Arc<FxHashMap<String, LoroValue>>> = OnceLock::new();
+
+fn take_children<T: Default>(arc: &mut Arc<T>, empty: &OnceLock<Arc<T>>) -> Option<T> {
+    if let Some(children) = Arc::get_mut(arc) {
+        Some(std::mem::take(children))
+    } else {
+        // Shared value drops are common; reuse an empty Arc instead of allocating.
+        Arc::into_inner(std::mem::replace(
+            arc,
+            empty.get_or_init(|| Arc::new(T::default())).clone(),
+        ))
+    }
+}
+
+fn drop_values(mut pending: Vec<LoroValue>) {
+    while let Some(mut value) = pending.pop() {
+        match &mut value {
+            LoroValue::List(list) if !list.is_empty() => {
+                if let Some(children) = take_children(&mut list.0, &EMPTY_LIST) {
+                    pending.extend(children);
+                }
+            }
+            LoroValue::Map(map) if !map.is_empty() => {
+                if let Some(children) = take_children(&mut map.0, &EMPTY_MAP) {
+                    pending.extend(children.into_values());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Drop for LoroListValue {
+    fn drop(&mut self) {
+        if !self.is_empty() {
+            if let Some(children) = take_children(&mut self.0, &EMPTY_LIST) {
+                drop_values(children);
+            }
+        }
+    }
+}
+
+impl Drop for LoroMapValue {
+    fn drop(&mut self) {
+        if !self.is_empty() {
+            if let Some(children) = take_children(&mut self.0, &EMPTY_MAP) {
+                drop_values(children.into_values().collect());
+            }
         }
     }
 }
@@ -597,45 +661,51 @@ impl From<ContainerID> for LoroValue {
 pub mod wasm {
     use js_sys::{Array, Object, Uint8Array};
     use rustc_hash::FxHashMap;
-    use wasm_bindgen::{__rt::IntoJsResult, JsCast, JsValue};
+    use wasm_bindgen::{JsCast, JsValue};
 
     use crate::{ContainerID, LoroError, LoroValue};
 
     pub fn convert(value: LoroValue) -> JsValue {
-        match value {
-            LoroValue::Null => JsValue::NULL,
-            LoroValue::Bool(b) => JsValue::from_bool(b),
-            LoroValue::Double(f) => JsValue::from_f64(f),
-            LoroValue::I64(i) => JsValue::from_f64(i as f64),
-            LoroValue::String(s) => JsValue::from_str(&s),
-            LoroValue::Binary(binary) => {
-                let binary = binary.unwrap();
-                let arr = Uint8Array::new_with_length(binary.len() as u32);
-                for (i, v) in binary.into_iter().enumerate() {
-                    arr.set_index(i as u32, v);
-                }
-                arr.into_js_result().unwrap()
-            }
-            LoroValue::List(list) => {
-                let list = list.unwrap();
-                let arr = Array::new_with_length(list.len() as u32);
-                for (i, v) in list.into_iter().enumerate() {
-                    arr.set(i as u32, convert(v));
-                }
-                arr.into_js_result().unwrap()
-            }
-            LoroValue::Map(m) => {
-                let m = m.unwrap();
-                let map = Object::new();
-                for (k, v) in m.into_iter() {
-                    let str: &str = &k;
-                    js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v)).unwrap();
-                }
+        try_convert(value).unwrap()
+    }
 
-                map.into_js_result().unwrap()
+    /// Convert nested values using heap storage rather than the WASM call stack.
+    pub fn try_convert(value: LoroValue) -> Result<JsValue, JsValue> {
+        let mut pending = vec![(&value, None::<(JsValue, JsValue)>)];
+        let mut result = JsValue::UNDEFINED;
+        while let Some((value, parent)) = pending.pop() {
+            let output: JsValue = match value {
+                LoroValue::Null => JsValue::NULL,
+                LoroValue::Bool(b) => JsValue::from_bool(*b),
+                LoroValue::Double(f) => JsValue::from_f64(*f),
+                LoroValue::I64(i) => JsValue::from_f64(*i as f64),
+                LoroValue::String(s) => JsValue::from_str(s),
+                LoroValue::Binary(binary) => Uint8Array::from(binary.as_slice()).into(),
+                LoroValue::Container(id) => JsValue::from(id),
+                LoroValue::List(list) => {
+                    let array: JsValue = Array::new_with_length(list.len() as u32).into();
+                    for (i, child) in list.iter().enumerate().rev() {
+                        pending.push((child, Some((array.clone(), JsValue::from_f64(i as f64)))));
+                    }
+                    array
+                }
+                LoroValue::Map(map) => {
+                    let object: JsValue = Object::new().into();
+                    let start = pending.len();
+                    for (key, child) in map.iter() {
+                        pending.push((child, Some((object.clone(), JsValue::from_str(key)))));
+                    }
+                    pending[start..].reverse();
+                    object
+                }
+            };
+            if let Some((parent, key)) = parent {
+                js_sys::Reflect::set(&parent, &key, &output)?;
+            } else {
+                result = output;
             }
-            LoroValue::Container(container_id) => JsValue::from(&container_id),
         }
+        Ok(result)
     }
 
     impl From<LoroValue> for JsValue {
@@ -778,8 +848,38 @@ impl<'de> Deserialize<'de> for LoroValue {
     where
         D: serde::Deserializer<'de>,
     {
+        LoroValueSeed {
+            remaining_depth: MAX_DEPTH,
+        }
+        .deserialize(deserializer)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LoroValueSeed {
+    remaining_depth: usize,
+}
+
+impl LoroValueSeed {
+    fn nested<E: serde::de::Error>(self) -> Result<Self, E> {
+        Ok(Self {
+            remaining_depth: self
+                .remaining_depth
+                .checked_sub(1)
+                .ok_or_else(|| E::custom("LoroValue nesting depth exceeds 128"))?,
+        })
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for LoroValueSeed {
+    type Value = LoroValue;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
         if deserializer.is_human_readable() {
-            deserializer.deserialize_any(LoroValueVisitor)
+            deserializer.deserialize_any(LoroValueVisitor(self))
         } else {
             deserializer.deserialize_enum(
                 "LoroValue",
@@ -794,13 +894,34 @@ impl<'de> Deserialize<'de> for LoroValue {
                     "Container",
                     "Binary",
                 ],
-                LoroValueEnumVisitor,
+                LoroValueEnumVisitor(self),
             )
         }
     }
 }
 
-struct LoroValueVisitor;
+struct LoroValueVisitor(LoroValueSeed);
+
+// Binary enum payloads contain a bare sequence/map, rather than another enum.
+struct LoroCollectionSeed {
+    seed: LoroValueSeed,
+    is_map: bool,
+}
+
+impl<'de> DeserializeSeed<'de> for LoroCollectionSeed {
+    type Value = LoroValue;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if self.is_map {
+            deserializer.deserialize_map(LoroValueVisitor(self.seed))
+        } else {
+            deserializer.deserialize_seq(LoroValueVisitor(self.seed))
+        }
+    }
+}
 
 impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     type Value = LoroValue;
@@ -893,8 +1014,9 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         A: serde::de::SeqAccess<'de>,
     {
+        let seed = self.0.nested()?;
         let mut list = Vec::new();
-        while let Some(value) = seq.next_element()? {
+        while let Some(value) = seq.next_element_seed(seed)? {
             list.push(value);
         }
         Ok(LoroValue::List(list.into()))
@@ -904,9 +1026,10 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         A: serde::de::MapAccess<'de>,
     {
+        let seed = self.0.nested()?;
         let mut ans: FxHashMap<String, _> = FxHashMap::default();
-        while let Some((key, value)) = map.next_entry::<String, _>()? {
-            ans.insert(key, value);
+        while let Some(key) = map.next_key::<String>()? {
+            ans.insert(key, map.next_value_seed(seed)?);
         }
 
         Ok(LoroValue::Map(ans.into()))
@@ -926,7 +1049,7 @@ enum LoroValueFields {
     Binary,
 }
 
-struct LoroValueEnumVisitor;
+struct LoroValueEnumVisitor(LoroValueSeed);
 impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
     type Value = LoroValue;
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -948,12 +1071,14 @@ impl<'de> serde::de::Visitor<'de> for LoroValueEnumVisitor {
             (LoroValueFields::String, v) => v
                 .newtype_variant()
                 .map(|x: String| LoroValue::String(x.into())),
-            (LoroValueFields::List, v) => v
-                .newtype_variant()
-                .map(|x: Vec<LoroValue>| LoroValue::List(x.into())),
-            (LoroValueFields::Map, v) => v
-                .newtype_variant()
-                .map(|x: FxHashMap<String, LoroValue>| LoroValue::Map(x.into())),
+            (LoroValueFields::List, v) => v.newtype_variant_seed(LoroCollectionSeed {
+                seed: self.0,
+                is_map: false,
+            }),
+            (LoroValueFields::Map, v) => v.newtype_variant_seed(LoroCollectionSeed {
+                seed: self.0,
+                is_map: true,
+            }),
             (LoroValueFields::Container, v) => v.newtype_variant().map(LoroValue::Container),
             (LoroValueFields::Binary, v) => v
                 .newtype_variant()
@@ -1018,5 +1143,78 @@ mod serde_json_impl {
                 LoroValue::Binary(b) => Value::Array(b.iter().copied().map(Value::from).collect()),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod stack_safety_tests {
+    use super::*;
+
+    fn nested(depth: usize) -> LoroValue {
+        let mut value = LoroValue::I64(0);
+        for i in 0..depth {
+            value = if i % 2 == 0 {
+                LoroValue::Map(vec![("a".into(), value)].into())
+            } else {
+                LoroValue::List(vec![value].into())
+            };
+        }
+        value
+    }
+
+    #[test]
+    fn into_arc_preserves_the_existing_list_allocation() {
+        let list = LoroListValue::from(vec![LoroValue::I64(42)]);
+        let allocation = Arc::as_ptr(&list.0);
+        let arc = list.into_arc();
+        assert_eq!(Arc::as_ptr(&arc), allocation);
+        assert_eq!(arc.as_slice(), &[LoroValue::I64(42)]);
+
+        let list = LoroListValue::from(vec![LoroValue::I64(7)]);
+        let shared = list.clone();
+        let arc = list.into_arc();
+        assert!(Arc::ptr_eq(&arc, &shared.into_arc()));
+    }
+
+    #[test]
+    fn drop_deep_values_with_shared_children_and_unwrap() {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let value = nested(100_000);
+                let shared = value.clone();
+                let wrapper = LoroListValue::from(vec![value]);
+                drop(wrapper.unwrap());
+                assert_eq!(shared.get_depth(), 100_000);
+                let wrapper = LoroMapValue::from(vec![("value".into(), shared)]);
+                drop(wrapper.unwrap());
+
+                let value = nested(20_000);
+                let clones: Vec<_> = (0..4).map(|_| value.clone()).collect();
+                std::thread::scope(|scope| {
+                    for clone in clones {
+                        scope.spawn(move || drop(clone));
+                    }
+                    drop(value);
+                });
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[cfg(feature = "serde_json")]
+    #[test]
+    fn serde_json_depth_limit_has_readable_error() {
+        // Deserialize from an already built JSON value to bypass serde_json's
+        // own text-parser recursion limit and exercise LoroValue's limit.
+        let mut value = serde_json::Value::Null;
+        for _ in 0..129 {
+            value = serde_json::Value::Array(vec![value]);
+        }
+        let error = LoroValue::deserialize(&value).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("LoroValue nesting depth exceeds 128"));
     }
 }

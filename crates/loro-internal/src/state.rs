@@ -44,6 +44,7 @@ mod movable_list_state;
 mod richtext_state;
 mod tree_state;
 mod unknown_state;
+mod value_decode;
 
 pub(crate) use self::movable_list_state::{IndexType, MovableListState};
 pub(crate) use container_store::GcStore;

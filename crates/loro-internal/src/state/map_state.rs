@@ -484,7 +484,7 @@ mod snapshot {
     use std::collections::BTreeMap;
 
     use loro_common::{InternalString, LoroValue};
-    use rustc_hash::{FxHashMap, FxHashSet};
+    use rustc_hash::FxHashSet;
     use serde_columnar::Itertools;
 
     use crate::{
@@ -534,13 +534,7 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
-            let (value, bytes) = postcard::take_from_bytes::<FxHashMap<String, LoroValue>>(bytes)
-                .map_err(|_| {
-                loro_common::LoroError::DecodeError(
-                    "Decode map value failed".to_string().into_boxed_str(),
-                )
-            })?;
-            Ok((LoroValue::Map(value.into()), bytes))
+            crate::state::value_decode::decode_collection(bytes, true)
         }
 
         fn decode_snapshot_fast(
@@ -621,13 +615,9 @@ mod snapshot {
         pub(crate) fn decode_value_as_btree_map(
             bytes: &[u8],
         ) -> loro_common::LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
-            let (value, bytes) = postcard::take_from_bytes::<BTreeMap<String, LoroValue>>(bytes)
-                .map_err(|_| {
-                    loro_common::LoroError::DecodeError(
-                        "Decode map value failed".to_string().into_boxed_str(),
-                    )
-                })?;
-            Ok((value, bytes))
+            let (value, bytes) = crate::state::value_decode::decode_collection(bytes, true)?;
+            let map = value.into_map().unwrap().unwrap().into_iter().collect();
+            Ok((map, bytes))
         }
     }
 
