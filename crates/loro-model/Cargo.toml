@@ -1,0 +1,13 @@
+[package]
+name = "loro-model"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Prototype of the typed model layer planned in plans/20260427-loro-model-typed-projection.md (issue #888)."
+
+[dependencies]
+loro = { path = "../loro" }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]

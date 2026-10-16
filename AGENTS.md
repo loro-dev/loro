@@ -5,6 +5,8 @@
 Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
 - `crates/loro`: public Rust API; avoid breaking downstream users.
+- `crates/loro-model`: unpublished typed-view prototype; see
+  [the design and regression rules](plans/20260427-loro-model-typed-projection.md).
 - `crates/loro-internal`: core CRDT logic. Read its
   [AGENTS.md](crates/loro-internal/AGENTS.md) before changing import/export,
   encoding, state, diff, checkout, or replay behavior.
@@ -64,6 +66,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/wasm-error-reporting.md](context/wasm-error-reporting.md).
 - WASM container id wrapper identity, lazy caching, and benchmark:
   [context/wasm-container-id-cache.md](context/wasm-container-id-cache.md).
+- Field-level reads under one lock (`LoroDoc::read_state`, `StateReader`), and why
+  not to call `ContainerTrait::doc()` from a subscriber:
+  [context/state-reader.md](context/state-reader.md).
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).

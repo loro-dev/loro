@@ -14,8 +14,9 @@ use crate::{
     LoroValue,
 };
 use append_only_bytes::BytesSlice;
-use loro_common::{PeerID, ID};
+use loro_common::{InternalString, MergeableMarkerDigest, PeerID, ID, MERGEABLE_MARKER_LEN};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::fmt;
 use std::{
     num::NonZeroU16,
@@ -47,6 +48,23 @@ pub(crate) enum CreatorOp {
     Corrupt,
 }
 
+/// The `(parent, key, kind)` a mergeable cid encodes, and the parent map value that activates
+/// it.
+#[derive(Debug)]
+pub(crate) struct MergeableEdge {
+    pub parent: ContainerIdx,
+    pub key: InternalString,
+    pub marker: [u8; MERGEABLE_MARKER_LEN],
+}
+
+impl MergeableEdge {
+    /// Whether `value`, read from the parent map at `key`, activates this child.
+    /// Equivalent to `parse_mergeable_marker(parent, key, value) == Some(kind)`.
+    pub fn is_activated_by(&self, value: &LoroValue) -> bool {
+        matches!(value, LoroValue::Binary(b) if b.as_slice() == self.marker)
+    }
+}
+
 #[derive(Default)]
 struct ArenaContainers {
     container_idx_to_id: Vec<ContainerID>,
@@ -64,6 +82,14 @@ struct ArenaContainers {
     /// `get_deep_value`, jsonpath, ...). Keeping it pre-filtered means those paths do
     /// not pay a per-mergeable `is_mergeable()` parse on every call.
     top_level_root_c_idx: Vec<ContainerIdx>,
+    /// Every registered cid for which `ContainerID::is_mergeable` holds, with its parsed edge.
+    /// Derived from the cid alone, so it never changes for an index and survives import
+    /// rollback. Lets hot paths (`is_deleted`, map reads, deep values) skip re-parsing the cid
+    /// string and re-hashing the marker. See `context/mergeable-containers.md`.
+    mergeable: FxHashMap<ContainerIdx, Option<Arc<MergeableEdge>>>,
+    /// Reverse of `mergeable`: parent index -> key -> children of each kind.
+    mergeable_children:
+        FxHashMap<ContainerIdx, FxHashMap<InternalString, SmallVec<[ContainerIdx; 1]>>>,
     /// Optional resolver used when querying parent for a container that has not been registered yet.
     /// If set, `get_parent` will try this resolver to lazily fetch and register the parent.
     ///
@@ -162,15 +188,20 @@ impl ArenaContainers {
         }
     }
 
+    fn alloc(&mut self, id: &ContainerID) -> ContainerIdx {
+        let idx = self.container_idx_to_id.len();
+        self.container_idx_to_id.push(id.clone());
+        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
+        self.container_id_to_idx.insert(id.clone(), idx);
+        idx
+    }
+
     fn register_container(&mut self, id: &ContainerID) -> ContainerIdx {
         if let Some(&idx) = self.container_id_to_idx.get(id) {
             return idx;
         }
 
-        let idx = self.container_idx_to_id.len();
-        self.container_idx_to_id.push(id.clone());
-        let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
-        self.container_id_to_idx.insert(id.clone(), idx);
+        let idx = self.alloc(id);
         // Resolve the cid's kind once. `is_mergeable` is non-trivial for mergeable names,
         // so we avoid calling it twice on the same id.
         let mergeable_parts = if id.is_root() {
@@ -184,7 +215,7 @@ impl ArenaContainers {
                 self.parents.insert(idx, None);
                 self.depth.push(NonZeroU16::new(1));
             }
-            (true, Some((parent_id, _key, _kind))) => {
+            (true, Some((parent_id, key, kind))) => {
                 // Mergeable Roots are retention roots AND logical children. Push to `root_c_idx`
                 // so shallow snapshot's `retain_keys` does not GC the loser of a concurrent-kind
                 // conflict (whose state is reachable only by its deterministic cid, not through
@@ -194,13 +225,62 @@ impl ArenaContainers {
                 self.push_root(idx, true);
                 self.depth.push(None);
                 let parent_idx = self.register_container(&parent_id);
-                self.set_parent(idx, Some(parent_idx));
+                let marker = MergeableMarkerDigest::new(&parent_id).marker_bytes(&key, kind);
+                self.link_mergeable(idx, parent_idx, key.into(), marker);
             }
             (false, _) => {
                 self.depth.push(None);
             }
         }
+        // `is_mergeable` validates less than `parse_mergeable`; record it on its own so callers
+        // that only ask "is this a mergeable cid" keep their answer.
+        if id.is_root() && !self.mergeable.contains_key(&idx) && id.is_mergeable() {
+            self.mergeable.insert(idx, None);
+        }
         idx
+    }
+
+    /// [`Self::register_container`] for `id = ContainerID::new_mergeable(parent, key, kind)`
+    /// when the caller already knows its parts, so the cid is not parsed again.
+    fn register_mergeable_child(
+        &mut self,
+        id: &ContainerID,
+        parent_idx: ContainerIdx,
+        key: &str,
+        marker: [u8; MERGEABLE_MARKER_LEN],
+    ) -> ContainerIdx {
+        if let Some(&idx) = self.container_id_to_idx.get(id) {
+            return idx;
+        }
+        let idx = self.alloc(id);
+        self.push_root(idx, true);
+        self.depth.push(None);
+        self.link_mergeable(idx, parent_idx, key.into(), marker);
+        idx
+    }
+
+    fn link_mergeable(
+        &mut self,
+        idx: ContainerIdx,
+        parent_idx: ContainerIdx,
+        key: InternalString,
+        marker: [u8; MERGEABLE_MARKER_LEN],
+    ) {
+        self.set_parent(idx, Some(parent_idx));
+        self.mergeable_children
+            .entry(parent_idx)
+            .or_default()
+            .entry(key.clone())
+            .or_default()
+            .push(idx);
+        self.mergeable.insert(
+            idx,
+            Some(Arc::new(MergeableEdge {
+                parent: parent_idx,
+                key,
+                marker,
+            })),
+        );
     }
 
     fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
@@ -317,6 +397,8 @@ impl SharedArena {
                         container_id_to_idx: containers.container_id_to_idx.clone(),
                         parents: containers.parents.clone(),
                         root_c_idx: containers.root_c_idx.clone(),
+                        mergeable: containers.mergeable.clone(),
+                        mergeable_children: containers.mergeable_children.clone(),
                         top_level_root_c_idx: containers.top_level_root_c_idx.clone(),
                         parent_resolver: containers.parent_resolver.clone(),
                         // It reads the source document's op log.
@@ -336,6 +418,10 @@ impl SharedArena {
             values: self.inner.values.lock().len(),
             str_bytes: self.inner.str.lock().bytes_len(),
         }
+    }
+
+    pub(crate) fn ptr_eq(&self, other: &SharedArena) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
@@ -422,6 +508,72 @@ impl SharedArena {
             .container_id_to_idx
             .get(id)
             .copied()
+    }
+
+    /// `Some` if the container's cid is mergeable (`ContainerID::is_mergeable`); the inner value
+    /// is its parsed edge, if the cid also parses.
+    pub(crate) fn mergeable_edge(&self, idx: ContainerIdx) -> Option<Option<Arc<MergeableEdge>>> {
+        self.inner.containers.read().mergeable.get(&idx).cloned()
+    }
+
+    /// The mergeable child that `value`, read from the map `parent_idx` at `key`, activates;
+    /// `None` if `value` is not its marker. Same answer as
+    /// `loro_common::parse_mergeable_marker`, but a registered child is found through the arena
+    /// instead of re-hashing the marker, and an unregistered one is registered without
+    /// re-parsing its cid.
+    pub(crate) fn mergeable_child_idx(
+        &self,
+        parent_idx: ContainerIdx,
+        key: &str,
+        value: &LoroValue,
+    ) -> Option<ContainerIdx> {
+        let kind = loro_common::mergeable_marker_kind(value)?;
+        let LoroValue::Binary(bytes) = value else {
+            unreachable!()
+        };
+        {
+            let containers = self.inner.containers.read();
+            let child = containers
+                .mergeable_children
+                .get(&parent_idx)
+                .and_then(|by_key| by_key.get(key))
+                .and_then(|children| children.iter().find(|c| c.get_type() == kind).copied());
+            if let Some(child) = child {
+                let Some(Some(edge)) = containers.mergeable.get(&child) else {
+                    unreachable!("a mergeable child is indexed with its edge")
+                };
+                return (bytes.as_slice() == edge.marker).then_some(child);
+            }
+        }
+        let parent_id = self.idx_to_id(parent_idx)?;
+        let marker = MergeableMarkerDigest::new(&parent_id).marker_bytes(key, kind);
+        if bytes.as_slice() != marker {
+            return None;
+        }
+        let id = ContainerID::new_mergeable(&parent_id, key, kind);
+        Some(
+            self.inner
+                .containers
+                .write()
+                .register_mergeable_child(&id, parent_idx, key, marker),
+        )
+    }
+
+    /// `loro_common::translate_mergeable_marker_value` for a value read from the map registered
+    /// as `parent_idx`, plus the child's index when it is a mergeable child.
+    pub(crate) fn translate_mergeable_marker(
+        &self,
+        parent_idx: ContainerIdx,
+        key: &str,
+        value: LoroValue,
+    ) -> (LoroValue, Option<ContainerIdx>) {
+        match self.mergeable_child_idx(parent_idx, key, &value) {
+            Some(idx) => (
+                LoroValue::Container(self.idx_to_id(idx).unwrap()),
+                Some(idx),
+            ),
+            None => (value, None),
+        }
     }
 
     #[inline]

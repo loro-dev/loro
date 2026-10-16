@@ -38,6 +38,7 @@ use pre_commit::{
     PreCommitCallbackPayload,
 };
 pub use rustc_hash::FxHashMap;
+pub use state::reader::{ReadEntry, StateReader};
 pub use state::DocState;
 pub use state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 use subscription::{LocalUpdateCallback, Observer, PeerIdUpdateCallback};

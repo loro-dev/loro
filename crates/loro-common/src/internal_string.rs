@@ -124,6 +124,14 @@ impl Drop for InternalStringData {
     }
 }
 
+/// Hash, Eq and Ord all delegate to `as_str`, so maps keyed by `InternalString` can be queried
+/// with a `&str` without interning it.
+impl std::borrow::Borrow<str> for InternalString {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl AsRef<str> for InternalString {
     fn as_ref(&self) -> &str {
         self.as_str()

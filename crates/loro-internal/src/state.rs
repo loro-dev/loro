@@ -1,4 +1,5 @@
 pub mod container_tree;
+pub mod reader;
 
 use crate::sync::{AtomicU64, Mutex, RwLock};
 #[cfg(test)]
@@ -1773,7 +1774,11 @@ impl DocState {
                 // Derive the active children straight from that value — re-fetching the
                 // `MapState` would force the snapshot-backed container to decode and break the
                 // lazy-value invariant for roots.
-                let mergeable_children = self.mergeable_children_from_value(&id, &map);
+                let mergeable_children: Vec<(String, ContainerID, ContainerIdx)> = self
+                    .mergeable_children_from_value(container, &map)
+                    .into_iter()
+                    .map(|(key, cid, idx)| (key.to_string(), cid, idx))
+                    .collect();
 
                 let map_mut = map.make_mut();
                 for (_key, value) in map_mut.iter_mut() {
@@ -1789,10 +1794,9 @@ impl DocState {
                 }
                 // Replace each marker with the nested deep value of its resolved child, keyed
                 // under the same logical key.
-                for (key, cid) in mergeable_children {
-                    let child_idx = self.arena.register_container(&cid);
+                for (key, cid, child_idx) in mergeable_children {
                     let new_value = self.get_container_deep_value_with_id(child_idx, Some(cid));
-                    map_mut.insert(key.to_string(), new_value);
+                    map_mut.insert(key, new_value);
                 }
 
                 LoroValue::Map(
@@ -1846,34 +1850,27 @@ impl DocState {
             LoroValue::Map(mut map) => {
                 // A map's mergeable children are encoded as compact binary markers in the map's
                 // own value table (loro-dev/loro#759), so they are already present in `map` here.
-                // Derive the active children straight from that value — re-fetching the
-                // `MapState` would force the snapshot-backed container to decode and break the
-                // lazy-value invariant for roots.
-                let mergeable_children = self
-                    .arena
-                    .idx_to_id(container)
-                    .map(|parent_id| self.mergeable_children_from_value(&parent_id, &map))
-                    .unwrap_or_default();
-
-                if mergeable_children.is_empty() && map.iter().all(|x| !x.1.is_container()) {
+                // Resolve them straight from that value — re-fetching the `MapState` would force
+                // the snapshot-backed container to decode and break the lazy-value invariant for
+                // roots.
+                if map.iter().all(|(_, v)| {
+                    !v.is_container() && loro_common::mergeable_marker_kind(v).is_none()
+                }) {
                     return LoroValue::Map(map);
                 }
 
                 let map_mut = map.make_mut();
-                for (_key, value) in map_mut.iter_mut() {
-                    if value.is_container() {
-                        let container = value.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let new_value = self.get_container_deep_value(container_idx);
-                        *value = new_value;
+                for (key, value) in map_mut.iter_mut() {
+                    if let LoroValue::Container(child) = value {
+                        let container_idx = self.arena.register_container(child);
+                        *value = self.get_container_deep_value(container_idx);
+                    } else if let Some(child_idx) =
+                        self.mergeable_child_of_value(container, key, value)
+                    {
+                        // Replace the marker with the nested deep value of its resolved child,
+                        // keyed under the same logical key.
+                        *value = self.get_container_deep_value(child_idx);
                     }
-                }
-                // Replace each marker with the nested deep value of its resolved child, keyed
-                // under the same logical key.
-                for (key, cid) in mergeable_children {
-                    let child_idx = self.arena.register_container(&cid);
-                    let new_value = self.get_container_deep_value(child_idx);
-                    map_mut.insert(key.to_string(), new_value);
                 }
                 LoroValue::Map(map)
             }
@@ -2238,15 +2235,10 @@ impl DocState {
                 // state. Pull them in so alive-container walks (notably shallow snapshot export)
                 // include mergeable cids and don't filter their KV out by `retain_keys`.
                 let mergeable_cids: Vec<ContainerID> = self
-                    .arena
-                    .idx_to_id(idx)
-                    .map(|parent_id| {
-                        self.mergeable_children_from_value(&parent_id, &map)
-                            .into_iter()
-                            .map(|(_key, cid)| cid)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                    .mergeable_children_from_value(idx, &map)
+                    .into_iter()
+                    .map(|(_key, cid, _idx)| cid)
+                    .collect();
                 for cid in mergeable_cids {
                     self.register_alive_child(idx, &cid, ans);
                 }
@@ -2381,7 +2373,7 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                if !self.contains_logical_child(parent_idx, &id) {
+                if !self.contains_logical_child(parent_idx, idx, &id) {
                     return false;
                 }
                 idx = parent_idx;
@@ -2402,7 +2394,7 @@ impl DocState {
         loop {
             let id = self.arena.idx_to_id(idx).unwrap();
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                let Some(prop) = self.get_logical_child_index(parent_idx, &id) else {
+                let Some(prop) = self.get_logical_child_index(parent_idx, idx, &id) else {
                     tracing::warn!("Missing in parent's children");
                     return None;
                 };

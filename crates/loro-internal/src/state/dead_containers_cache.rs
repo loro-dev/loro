@@ -61,11 +61,13 @@ impl DocState {
         // The parent that no longer holds the chain, if any.
         let (is_deleted, cut_at) = loop {
             let id = self.arena.idx_to_id(idx).unwrap();
-            if id.is_mergeable() {
+            // Cached `id.is_mergeable()`: the arena parses each cid once.
+            let is_mergeable = self.arena.mergeable_edge(idx).is_some();
+            if is_mergeable {
                 depends_on_mergeable_edge = true;
             }
             if let Some(parent_idx) = self.arena.get_parent(idx) {
-                if !self.contains_logical_child(parent_idx, &id) {
+                if !self.contains_logical_child(parent_idx, idx, &id) {
                     break (true, Some(parent_idx));
                 }
 
@@ -75,7 +77,7 @@ impl DocState {
                 // No parent in the arena: top-level Roots are always alive; anything else
                 // (including a mergeable Root whose parent edge was never wired) is treated
                 // as deleted. A later op can still attach it, so this is never cached.
-                break (!id.is_root() || id.is_mergeable(), None);
+                break (!id.is_root() || is_mergeable, None);
             }
         };
 

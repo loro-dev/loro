@@ -88,8 +88,10 @@ pub use loro_internal::jsonpath::SubscribeJsonPathCallback;
 
 #[cfg(feature = "counter")]
 mod counter;
+mod state_reader;
 #[cfg(feature = "counter")]
 pub use counter::LoroCounter;
+pub use state_reader::{ContainerRef, ReadEntry, StateReader};
 
 /// `LoroDoc` is the entry for the whole document.
 /// When it's dropped, all the associated [`Container`]s will be invalidated.

@@ -47,7 +47,7 @@ pub mod idx {
         pub(crate) const INDEX_MASK: u32 = !Self::TYPE_MASK;
 
         #[allow(unused)]
-        pub(crate) fn get_type(self) -> ContainerType {
+        pub fn get_type(self) -> ContainerType {
             let a = (self.0 & Self::TYPE_MASK) >> 27;
             if self.is_unknown() {
                 Self::parse_unknown_type(a)

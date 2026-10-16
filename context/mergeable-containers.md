@@ -1,6 +1,6 @@
 # Mergeable Container Context
 
-Verified against code 2026-09-29.
+Verified against code 2026-10-15.
 
 Mergeable containers let two peers independently create the same child container
 under a map key and converge to one deterministic container id. The source of
@@ -78,6 +78,32 @@ rewrites the marker.
   a new marker and resurfaces preserved state.
 - Detached map handlers cannot ensure mergeable children, because the
   deterministic child cid depends on the attached parent cid.
+
+## Arena Edge Cache (Hot Paths)
+
+Parsing a mergeable cid string and hashing a marker are both much slower than a
+map lookup, and liveness checks, map reads and deep values used to do them per
+op or per child. The arena now does them once per cid:
+
+- `ArenaContainers::register_container` records, for every cid where
+  `is_mergeable()` holds, its parsed `MergeableEdge` (parent index, key, and the
+  exact marker bytes that activate it) in `mergeable`, plus the reverse index
+  `mergeable_children` (parent index -> key -> child indices). `Some(None)`
+  marks a cid that `is_mergeable()` accepts but `parse_mergeable()` rejects, so
+  both answers are kept as before.
+- `SharedArena::mergeable_child_idx` is `parse_mergeable_marker` plus child
+  lookup: a registered child is found through the reverse index and checked by
+  comparing marker bytes; an unregistered one is digested once and registered
+  through `register_mergeable_child` without re-parsing its cid.
+- Users: `DocState::get_logical_child_index` (`is_deleted`, `get_reachable`,
+  `get_path`), `MapHandler::get`/`get_`, `get_container_deep_value(_with_id)`,
+  the alive-container walk, and `read_container_tree`.
+- The cache is a pure function of the cid and of indices, which are never
+  reused, so it needs no invalidation: import rollback keeps it (mergeable cids
+  are roots and keep their links), and `SharedArena::fork` clones it.
+- `MergeableMarkerDigest` (loro-common) is the table-driven, allocation-free
+  form of the marker CRC; `marker_digest_matches_reference_crc` pins it to the
+  original bitwise implementation, because the digest is part of stored data.
 
 ## Revert, Apply-Diff, Events, And Undo
 
