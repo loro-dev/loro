@@ -1514,6 +1514,127 @@ fn undo_list_move() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn undo_one_stops_at_noop_before_earlier_map_edit() -> LoroResult<()> {
+    for parent_container in [false, true] {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let list = doc.get_movable_list("list");
+        list.push(1)?;
+        list.push(2)?;
+        doc.commit();
+        let other = LoroDoc::new();
+        other.set_peer_id(2)?;
+        other.import_with(&doc.export(ExportMode::all_updates())?, "import")?;
+        let mut undo = UndoManager::new(&doc);
+        undo.add_exclude_origin_prefix("import");
+        let root = doc.get_map("root");
+        if parent_container {
+            root.insert_container("prior", LoroMap::new())?;
+        } else {
+            root.insert("prior", 42)?;
+        }
+        doc.commit();
+        let before = root.get_deep_value();
+        list.insert(0, 0)?;
+        doc.commit();
+        other.import_with(&doc.export(ExportMode::all_updates())?, "import")?;
+        other.get_movable_list("list").mov(0, 2)?;
+        other.commit();
+        doc.import_with(&other.export(ExportMode::all_updates())?, "import")?;
+
+        assert_eq!(undo.undo_count(), 2);
+        assert!(!undo.undo_one()?);
+        assert_eq!(undo.undo_count(), 1);
+        assert!(undo.can_undo());
+        assert!(!undo.can_redo());
+        assert_eq!(root.get_deep_value(), before);
+        assert_eq!(list.get_value().to_json_value(), json!([1, 2, 0]));
+
+        assert!(undo.undo_one()?);
+        assert!(root.get("prior").is_none());
+        assert!(undo.redo_one()?);
+        assert_eq!(root.get_deep_value(), before);
+    }
+    Ok(())
+}
+
+#[test]
+fn redo_one_stops_at_noop_before_earlier_map_edit() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_movable_list("list");
+    list.push(0)?;
+    list.push(1)?;
+    doc.commit();
+    let map = doc.get_map("map");
+    let mut undo = UndoManager::new(&doc);
+    undo.add_exclude_origin_prefix("import");
+    list.delete(0, 1)?;
+    doc.commit();
+    map.insert("second", 2)?;
+    doc.commit();
+    assert!(undo.undo_one()?);
+    assert!(undo.undo_one()?);
+    assert_eq!(undo.redo_count(), 2);
+
+    let other = LoroDoc::new();
+    other.set_peer_id(2)?;
+    other.import_with(&doc.export(ExportMode::all_updates())?, "import")?;
+    other.get_movable_list("list").delete(0, 1)?;
+    other.commit();
+    doc.import_with(&other.export(ExportMode::all_updates())?, "import")?;
+
+    assert!(!undo.redo_one()?);
+    assert_eq!(undo.redo_count(), 1);
+    assert!(undo.can_redo());
+    assert!(map.get("second").is_none());
+    assert_eq!(list.get_value().to_json_value(), json!([1]));
+    assert!(undo.redo_one()?);
+    assert_eq!(map.get_value().to_json_value(), json!({"second": 2}));
+    Ok(())
+}
+
+#[test]
+fn bounded_undo_redo_on_empty_history() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let mut undo = UndoManager::new(&doc);
+    assert!(!undo.undo_one()?);
+    assert!(!undo.redo_one()?);
+    assert_eq!(undo.undo_count(), 0);
+    assert_eq!(undo.redo_count(), 0);
+    Ok(())
+}
+
+#[test]
+fn undo_keeps_skipping_noops_for_compatibility() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let list = doc.get_movable_list("list");
+    list.push(1)?;
+    list.push(2)?;
+    doc.commit();
+    let other = LoroDoc::new();
+    other.set_peer_id(2)?;
+    other.import_with(&doc.export(ExportMode::all_updates())?, "import")?;
+    let mut undo = UndoManager::new(&doc);
+    undo.add_exclude_origin_prefix("import");
+    doc.get_map("map").insert("prior", 42)?;
+    doc.commit();
+    list.insert(0, 0)?;
+    doc.commit();
+    other.import_with(&doc.export(ExportMode::all_updates())?, "import")?;
+    other.get_movable_list("list").mov(0, 2)?;
+    other.commit();
+    doc.import_with(&other.export(ExportMode::all_updates())?, "import")?;
+
+    assert!(undo.undo()?);
+    assert_eq!(undo.undo_count(), 0);
+    assert!(doc.get_map("map").get("prior").is_none());
+    assert_eq!(list.get_value().to_json_value(), json!([1, 2, 0]));
+    Ok(())
+}
+
 #[ignore]
 #[test]
 fn undo_collab_list_move() -> LoroResult<()> {
