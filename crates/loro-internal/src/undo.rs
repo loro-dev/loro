@@ -18,6 +18,8 @@ use crate::{
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
+pub(crate) mod movable_list;
+
 /// A batch of diffs.
 ///
 /// You can use `loroDoc.apply_diff(diff)` to apply the diff to the document.
@@ -221,6 +223,7 @@ fn transform_cursor(
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
+    element_remap: Mutex<movable_list::ElementRemap>,
     inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
@@ -770,6 +773,7 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
+            element_remap: Mutex::new(FxHashMap::default()),
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
@@ -949,6 +953,7 @@ impl UndoManager {
                         });
                     },
                     &mut rejected_step,
+                    &mut self.element_remap.lock(),
                 ) {
                     Ok(c) => c,
                     // The step would recreate a container of an unknown type

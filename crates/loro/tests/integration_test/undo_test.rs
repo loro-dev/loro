@@ -1642,7 +1642,6 @@ fn undo_list_move() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[ignore]
 #[test]
 fn undo_collab_list_move() -> LoroResult<()> {
     let doc = LoroDoc::new();
@@ -1664,7 +1663,6 @@ fn undo_collab_list_move() -> LoroResult<()> {
     sync(&doc, &doc_b);
     assert_eq!(list.get_value().to_json_value(), json!(["1", "0", "2"]));
     undo.undo()?;
-    // FIXME: cannot infer move correctly for now
     assert_eq!(list.get_value().to_json_value(), json!(["0", "1", "2"]));
     Ok(())
 }

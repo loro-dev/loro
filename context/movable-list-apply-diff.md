@@ -1,13 +1,53 @@
 # Movable List `apply_diff` and Undo
 
-Verified against code 2026-09-28.
+Verified against code 2026-10-17.
 
 `MovableListHandler::apply_delta`
 (`crates/loro-internal/src/handler/movable_list_apply_delta.rs`) turns a list
 delta into local movable-list ops. `LoroDoc::apply_diff`, `revert_to`, and
-`UndoManager` undo/redo all reach it through `LoroDoc::_apply_diff` →
-`Handler::apply_diff`. Undo is only a diff: `LoroDoc::undo_internal` computes
-the inverse delta by checkout and replays it through this handler.
+`UndoManager` undo/redo reach the diff application loop through
+`LoroDoc::apply_diff_with_movable_undo`. Public `apply_diff` and `revert_to`
+still use value deltas. Undo has a private identity plan for lists that keep
+the same container lifetime, as described below.
+
+## Undo identities and anchors
+
+`src/undo/movable_list.rs` captures each continuous undo span's before/after
+elements during the checkouts already used to calculate its inverse. The
+capture includes element ids, position ids, value ids, and values, before
+positional transformation can lose them (loro-dev/loro#1185). It captures lists
+touched by the span, plus the full-state sources of revived list children.
+Other container types keep their existing inverse calculation and transformation.
+
+The private plan reverses spans newest first against the current list. It
+deletes inserted elements by identity wherever they moved, restores removed
+elements with fresh ids, and issues native moves/sets for surviving elements.
+`UndoManager::element_remap` links removed ids to their recreated ids so older
+steps, redo, and saved neighbour references can find them. A move/set whose
+element was remotely deleted does not recreate it. This does not change the
+manager's existing no-op skipping policy (the separate #1183).
+
+Position restoration prefers the nearest surviving original left neighbour;
+otherwise it uses the nearest surviving original right neighbour, then index
+zero. The left neighbour wins when the old neighbours cross. Restoration goes
+in original order, so restored runs anchor each other; right anchors exclude
+elements that the same inverse has yet to move. Remote insertions in the old
+gap follow the restored element. A removal already made ineffective by a
+concurrent move does not insert another copy.
+
+The planner uses an ordered model with fractional keys to avoid shifting or
+scanning the whole list per edit. Live element lookup uses the existing
+`MovableListState::get_index_of_elem` index. A trimmed public value delta is
+used by the existing whole-batch unknown-container preflight, but only the
+native plan is applied. Its unexpected application failure remains an
+invariant failure, rather than being logged as a successful partial undo.
+Lists whose parent changes their lifetime retain the existing child revival
+diff path. The saved full-state source, adjusted for earlier spans of the same
+undo group, supplies aliases for the cloned elements after that replay. This
+keeps older list steps and their anchors usable after a parent is recreated.
+An unaligned recreation retains the previous value-delta path instead of
+treating unmapped elements as remotely deleted. No public delta or persisted
+encoding changes.
 
 ## Contract
 
@@ -20,8 +60,9 @@ the inverse delta by checkout and replays it through this handler.
   id go to the new child.
 - An insert with `from_move` whose child still exists elsewhere in the list is
   skipped. Undo transforms can leave such inserts behind.
-- Scalars have no identity. Deleting and re-inserting a scalar is a delete and
-  a new insert, even when `is_move` is set.
+- Scalars in public value deltas have no identity. Deleting and re-inserting a
+  scalar through `apply_diff` is a delete and a new insert, even when `is_move`
+  is set. Undo's private plan preserves their identity.
 
 ## Algorithm
 
@@ -40,6 +81,13 @@ costs O(log n) plus the op itself.
 
 ## Pitfalls
 
+- Separate existing boundary (also reproduced on `3827945`): start with a
+  nested movable list `[7]`, record an earlier push of `8`, then group a push
+  of `9`, import an unrelated remote map edit, and delete the parent list
+  entry. Undoing the group restores an empty child instead of `[7, 8]`.
+  This is the generic composition of child revival across split spans, not
+  #1185's concurrent move/removal inversion. The identity repair keeps that
+  parent-revival application path; it does not rewrite group composition.
 - `undo_internal` logs and ignores an `Err` from `_apply_diff`, but a panic
   escapes, and in WASM a panic traps. Until 2026-09 this handler deferred all
   deletes and tracked moved slots with index arithmetic. The arithmetic
@@ -58,6 +106,10 @@ costs O(log n) plus the op itself.
 - `crates/loro/tests/movable_list_apply_diff.rs`: targeted cases, a seeded
   differential test against `LoroDoc::diff`, random deltas with undo/redo
   across every step, and a two-peer no-panic test.
+- `crates/loro/tests/movable_list_undo.rs`: #1185's two reproductions,
+  equal-valued identities, neighbour motion/deletion, remote deletion, child
+  identity, grouped spans, recreated ids/parents, repeated undo/redo, all 144 pairs of
+  four-element concurrent moves, convergence and snapshot/update round trips.
 - `crates/loro-wasm/tests/movable_list.test.ts`: the JS `applyDiff` cases.
 - `crates/loro/tests/perf_movable_list_apply_diff.rs` (ignored): 100k-element
   timings for `apply_diff` and undo.
