@@ -91,6 +91,11 @@ are documented in
   bundler smoke tests aligned with these expectations.
 - If package output or published behavior changes, add a changeset.
 
+`pnpm -C crates/loro-wasm test:declarations` checks a consumer of all five
+generated entrypoints with `strict: true` and `skipLibCheck: false`. It runs
+as part of the package tests after building. Keep this check separate from
+the tooling/test tsconfig, which skips checking dependency declarations.
+
 `LoroDoc.toContainerTree` constructs typed nested snapshots with fixed JS helpers. See
 [context/wasm-container-tree.md](../../context/wasm-container-tree.md) for identity, ownership,
 range and Mirror integration contracts.

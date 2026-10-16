@@ -420,7 +420,7 @@ extern "C" {
     pub type JsTravelChangeFunction;
     #[wasm_bindgen(typescript_type = "(string|number)[]")]
     pub type JsContainerPath;
-    #[wasm_bindgen(typescript_type = "(string) => boolean")]
+    #[wasm_bindgen(typescript_type = "(text: string) => boolean")]
     pub type JsTextIterCallback;
     #[wasm_bindgen(typescript_type = "Uint8Array[]")]
     pub type JsBinaryArray;
@@ -6588,7 +6588,7 @@ interface LoroDoc {
      * });
      * ```
      */
-    toJsonWithReplacer(replacer: (key: string | index, value: Value | Container) => Value | Container | undefined): Value;
+    toJsonWithReplacer(replacer: (key: string | number, value: Value | Container) => Value | Container | undefined): Value;
 
     /**
      * Calculate the differences between two frontiers
@@ -7918,7 +7918,7 @@ interface EphemeralStoreWasm<T extends Value = Value> {
     set(key: string, value: T): void;
     get(key: string): T | undefined;
     getAllStates(): Record<string, T>;
-    removeOutdated();
+    removeOutdated(): void;
     subscribeLocalUpdates(f: EphemeralLocalListener): () => void;
     subscribe(f: EphemeralListener): () => void;
 }
