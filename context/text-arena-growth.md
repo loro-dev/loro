@@ -62,7 +62,13 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
 - Do not reintroduce "slice an arena by an op's position". An op parsed from a
   block has no arena position.
 - Do not read a `ValueSlice` that `DecodedBlockBuffers::push_values` returned
-  before `finish` runs. It points into an empty placeholder.
+  before `finish` runs. It points into an empty placeholder. Ops are merged while
+  the block is decoded, so `ValueSlice::is_mergable` refuses any merge that
+  would read such a slice: only the slice before it in the same buffer may take
+  it. Blocks from older versions or from loro.js can hold adjacent inserts that
+  the current rules merge, such as a one-value insert (stored inline) followed by a
+  larger one. That case panicked in the loro.js MovableList differential suite
+  (`decode_block_with_unmerged_adjacent_list_inserts`).
 - `RichOpBlockIter` (`op.rs`) starts at the first op that overlaps the span, and
   clones only the ops it returns. It used to clone every op of the change from
   the first one. That was cheap while a list insert held a `u32` range, and it

@@ -510,6 +510,15 @@ impl ValueSlice {
         }
     }
 
+    /// Whether this is a slice from `pending` whose values are not decoded yet:
+    /// the placeholder buffer is empty, so its range lies past the buffer.
+    fn is_pending(&self) -> bool {
+        match &self.0 {
+            Repr::One(_) => false,
+            Repr::Shared { values, end, .. } => *end as usize > values.len(),
+        }
+    }
+
     /// Whether this slice ends its buffer and is the buffer's only owner.
     fn can_append(&self) -> bool {
         match &self.0 {
@@ -576,6 +585,10 @@ impl Mergable for ValueSlice {
 
         // Copy only this slice, not the whole shared buffer. The merged slice
         // owns its buffer, so later merges append to it.
+        assert!(
+            !self.is_pending() && !other.is_pending(),
+            "merging a list slice whose values are not decoded yet"
+        );
         let mut values = Vec::with_capacity((self.len() + other.len()).max(4));
         values.extend_from_slice(self.as_slice());
         values.extend_from_slice(other.as_slice());
@@ -585,12 +598,14 @@ impl Mergable for ValueSlice {
     /// Mergeable when the merge copies at most this slice's single value:
     /// `other` follows it in one buffer, or it can append to its buffer, or it
     /// is a single value.
+    /// While a block is decoded, a slice whose values are not decoded yet
+    /// (`is_pending`) only merges with the slice before it in the same buffer:
+    /// any other merge would have to read its values.
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        matches!(self.0, Repr::One(_))
-            || self.can_append()
+        (!other.is_pending() && (matches!(self.0, Repr::One(_)) || self.can_append()))
             || matches!(
                 (&self.0, &other.0),
                 (

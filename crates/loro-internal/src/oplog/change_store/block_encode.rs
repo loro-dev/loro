@@ -813,6 +813,46 @@ mod test {
         }
     }
 
+    /// Blocks written by older versions or by loro.js can hold adjacent list
+    /// inserts that the current rules merge while decoding. A one-value insert
+    /// followed by a larger one used to merge with a slice whose values were not
+    /// decoded yet, and panicked (loro-dev/loro#1197 CI, loro.js differential).
+    #[test]
+    fn decode_block_with_unmerged_adjacent_list_inserts() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_list("list").insert(0, "a").unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog.lock();
+        let mut changes = Vec::new();
+        oplog
+            .change_store()
+            .visit_all_changes(&mut |change| changes.push(change.clone()));
+        assert_eq!(changes.len(), 1);
+        let mut change = changes.pop().unwrap();
+        let first = change.ops.vec()[0].clone();
+        let mut second = first.clone();
+        second.counter = 1;
+        second.content = InnerContent::List(InnerListOp::Insert {
+            slice: crate::op::ValueSlice::new(vec!["b".into(), "c".into()]),
+            pos: 1,
+        });
+        // Bypass `RleVec::push`, which would merge the two ops.
+        change.ops.vec_mut().push(second);
+        let bytes = encode_block(&[change], &oplog.arena);
+
+        let decoded = decode_block(&bytes, &oplog.arena, None).unwrap();
+        let mut values = Vec::new();
+        for op in decoded[0].ops.iter() {
+            let InnerContent::List(InnerListOp::Insert { slice, .. }) = &op.content else {
+                unreachable!()
+            };
+            values.extend_from_slice(slice.as_slice());
+        }
+        assert_eq!(values, vec!["a".into(), "b".into(), "c".into()]);
+    }
+
     #[test]
     fn decode_block_rejects_corrupt_payload_without_panic() {
         let doc = LoroDoc::new_auto_commit();
