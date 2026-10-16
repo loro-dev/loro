@@ -1,8 +1,80 @@
-import { Cursor, LoroDoc, UndoManager } from "../bundler/index";
+import { Cursor, LoroDoc, LoroMap, UndoManager } from "../bundler/index";
 import { describe, expect, test } from "vitest";
 import { expectDefined } from "./helpers";
 
 describe("undo", () => {
+  test.each([false, true])(
+    "no-op undo preserves an earlier item (parent=%s)",
+    (parent) => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const list = doc.getMovableList("list");
+      list.insert(0, 1);
+      list.insert(1, 2);
+      doc.commit();
+      const remote = new LoroDoc();
+      remote.setPeerId(2);
+      remote.import(doc.export({ mode: "snapshot" }));
+      const undo = new UndoManager(doc, { mergeInterval: 0 });
+      const root = doc.getMap("root");
+      if (parent) {
+        root.setContainer("prior", new LoroMap()).set("value", 42);
+      } else {
+        root.set("prior", 42);
+      }
+      doc.commit();
+      list.insert(0, 0);
+      doc.commit();
+      remote.import(doc.export({ mode: "update" }));
+      remote.getMovableList("list").move(0, 2);
+      remote.commit();
+      doc.import(remote.export({ mode: "update" }));
+
+      const before = doc.toJSON();
+      expect(undo.undo()).toBe(false);
+      expect(doc.toJSON()).toEqual(before);
+      expect(undo.canUndo()).toBe(true);
+      expect(undo.canRedo()).toBe(false);
+      expect(undo.undo()).toBe(true);
+      expect(root.get("prior")).toBeUndefined();
+      expect(undo.redo()).toBe(true);
+      expect(doc.toJSON()).toEqual(before);
+    },
+  );
+
+  test("no-op redo preserves a later parent creation", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(1);
+    const list = doc.getMovableList("list");
+    list.insert(0, 1);
+    list.insert(1, 2);
+    doc.commit();
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    list.delete(0, 1);
+    doc.commit();
+    const root = doc.getMap("root");
+    root.setContainer("parent", new LoroMap());
+    doc.commit();
+    expect(undo.undo()).toBe(true);
+    expect(undo.undo()).toBe(true);
+    const remote = new LoroDoc();
+    remote.setPeerId(2);
+    remote.import(doc.export({ mode: "snapshot" }));
+    remote.getMovableList("list").move(0, 1);
+    remote.commit();
+    doc.import(remote.export({ mode: "update" }));
+
+    const before = doc.toJSON();
+    expect(undo.redo()).toBe(false);
+    expect(doc.toJSON()).toEqual(before);
+    expect(undo.canRedo()).toBe(true);
+    expect(undo.canUndo()).toBe(false);
+    expect(undo.redo()).toBe(true);
+    expect(root.get("parent")).toBeDefined();
+    expect(undo.undo()).toBe(true);
+    expect(doc.toJSON()).toEqual(before);
+  });
+
   test("basic text undo", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);

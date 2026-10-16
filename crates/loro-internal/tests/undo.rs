@@ -5,6 +5,56 @@ use loro_internal::{
 };
 
 #[test]
+fn consecutive_noops_consume_one_item_and_notify_once() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let pops = Arc::new(AtomicUsize::new(0));
+    let popped = pops.clone();
+    undo.set_on_pop(Some(Box::new(move |_, _, _| {
+        popped.fetch_add(1, Ordering::Relaxed);
+    })));
+    doc.get_map("map").insert("prior", 42).unwrap();
+    doc.commit_then_renew();
+    let text = doc.get_text("text");
+    text.insert(0, "a", PosType::Unicode).unwrap();
+    doc.commit_then_renew();
+    text.insert(1, "b", PosType::Unicode).unwrap();
+    doc.commit_then_renew();
+
+    let other = LoroDoc::from_snapshot(&doc.export(ExportMode::Snapshot).unwrap()).unwrap();
+    other.set_peer_id(2).unwrap();
+    other
+        .get_text("text")
+        .delete(0, 2, PosType::Unicode)
+        .unwrap();
+    doc.import(&other.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let before = doc.get_deep_value();
+    assert_eq!(undo.undo_count(), 3);
+    for remaining in [2, 1] {
+        assert!(!undo.undo().unwrap());
+        assert_eq!(undo.undo_count(), remaining);
+        assert_eq!(undo.redo_count(), 0);
+        assert_eq!(pops.load(Ordering::Relaxed), 3 - remaining);
+        assert_eq!(doc.get_deep_value(), before);
+    }
+    assert!(undo.undo().unwrap());
+    assert_eq!(pops.load(Ordering::Relaxed), 3);
+    assert!(!undo.can_undo());
+    assert!(!undo.undo().unwrap());
+    assert_eq!(pops.load(Ordering::Relaxed), 3);
+    assert!(undo.redo().unwrap());
+    assert_eq!(doc.get_deep_value(), before);
+}
+
+#[test]
 fn test_basic_undo_group_checkpoint() {
     let doc = LoroDoc::new();
     let undo_manager = UndoManager::new(&doc);
