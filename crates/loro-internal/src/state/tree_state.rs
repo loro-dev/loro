@@ -48,6 +48,22 @@ pub struct TreeState {
     children: TreeChildrenCache,
     fractional_index_config: TreeFractionalIndexConfigInner,
     peer_id: PeerID,
+    /// The run of siblings this peer is inserting one after another, so the next one
+    /// stays inside the run's index range (`NodeChildren::generate_fi_in_run`). Local:
+    /// it only shapes the indexes this peer generates, never what it imports.
+    run: Option<SiblingRun>,
+}
+
+/// Consecutive siblings this peer created or moved under `parent`, each right after the
+/// previous one. `anchor` is the first one's fractional index; the others are `anchor`
+/// followed by an index of their own, so the whole run sorts between `anchor` and the
+/// next index that does not start with it — never interleaved with another peer's run
+/// begun in the same gap.
+#[derive(Debug, Clone)]
+struct SiblingRun {
+    parent: TreeParentId,
+    last: TreeID,
+    anchor: FractionalIndex,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,6 +241,44 @@ impl NodeChildren {
                 .zip(positions)
                 .collect(),
         )
+    }
+
+    /// An index for a sibling at `pos`, right after a member of the run anchored at
+    /// `anchor`: `anchor` followed by an index between the left sibling's own suffix (none
+    /// when it is the anchor itself) and the right sibling's, when the right one is in the
+    /// run too. Every such index sorts after `anchor` and before any index that does not
+    /// start with it, so another peer's run begun in the same gap cannot land inside this
+    /// one. `None` when the left sibling is not in the run or shares its index with the
+    /// right one (the regular path rearranges those).
+    fn generate_fi_in_run<R: rand::Rng>(
+        &self,
+        pos: usize,
+        anchor: &FractionalIndex,
+        rng: &mut R,
+        jitter: u8,
+    ) -> Option<FractionalIndex> {
+        let left = &self.get_node_position_at(pos.checked_sub(1)?)?.position;
+        let right = self.get_node_position_at(pos).map(|x| &x.position);
+        if right == Some(left) {
+            return None;
+        }
+        let in_run = |index: &FractionalIndex| {
+            index
+                .as_bytes()
+                .strip_prefix(anchor.as_bytes())
+                .filter(|suffix| !suffix.is_empty())
+                .map(|suffix| FractionalIndex::from_bytes(suffix.to_vec()))
+        };
+        let lower = if left == anchor {
+            None
+        } else {
+            Some(in_run(left)?)
+        };
+        let upper = right.and_then(in_run);
+        let suffix = FractionalIndex::new_jitter(lower.as_ref(), upper.as_ref(), rng, jitter)?;
+        let mut bytes = anchor.as_bytes().to_vec();
+        bytes.extend_from_slice(suffix.as_bytes());
+        Some(FractionalIndex::from_bytes(bytes))
     }
 
     fn get_id_at(&self, pos: usize) -> Option<TreeID> {
@@ -667,6 +721,7 @@ impl TreeState {
                 rng: Box::new(rand::rngs::StdRng::seed_from_u64(0)),
             },
             peer_id,
+            run: None,
         }
     }
 
@@ -922,10 +977,41 @@ impl TreeState {
                         .or_default()
                         .generate_fi_at(index, target)
                 } else {
-                    self.children
-                        .entry(*parent)
-                        .or_default()
-                        .generate_fi_at_jitter(index, target, rng.as_mut(), *jitter)
+                    // A sibling placed right after the last one this peer placed continues
+                    // its run. Only with jitter: two runs begun in the same gap stay apart
+                    // only because their first indexes differ.
+                    let anchor = self.run.as_ref().and_then(|run| {
+                        let children = self.children.get(parent)?;
+                        (run.parent == *parent
+                            && index > 0
+                            && children.get_id_at(index - 1) == Some(run.last))
+                        .then(|| run.anchor.clone())
+                    });
+                    let children = self.children.entry(*parent).or_default();
+                    let in_run = anchor.as_ref().and_then(|anchor| {
+                        children.generate_fi_in_run(index, anchor, rng.as_mut(), *jitter)
+                    });
+                    let continued = in_run.is_some();
+                    let result = match in_run {
+                        Some(position) => FractionalIndexGenResult::Ok(position),
+                        None => {
+                            children.generate_fi_at_jitter(index, target, rng.as_mut(), *jitter)
+                        }
+                    };
+                    self.run = match (&result, continued) {
+                        (FractionalIndexGenResult::Ok(_), true) => Some(SiblingRun {
+                            parent: *parent,
+                            last: *target,
+                            anchor: anchor.unwrap(),
+                        }),
+                        (FractionalIndexGenResult::Ok(position), false) => Some(SiblingRun {
+                            parent: *parent,
+                            last: *target,
+                            anchor: position.clone(),
+                        }),
+                        _ => None,
+                    };
+                    result
                 }
             }
             TreeFractionalIndexConfigInner::MoveDisabled => match cfg {
