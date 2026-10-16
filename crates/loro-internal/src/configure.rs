@@ -4,8 +4,14 @@ use rustc_hash::FxHashSet;
 
 pub use crate::container::richtext::config::{StyleConfig, StyleConfigMap};
 use crate::LoroDoc;
-use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
+
+#[cfg(not(test))]
+pub(crate) const DEFAULT_DECODED_VALUE_CACHE_LIMIT: usize = 2048;
+// Keep eviction tests small without changing the production default.
+#[cfg(test)]
+pub(crate) const DEFAULT_DECODED_VALUE_CACHE_LIMIT: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct Configure {
@@ -15,6 +21,7 @@ pub struct Configure {
     pub(crate) editable_detached_mode: Arc<AtomicBool>,
     pub(crate) deleted_root_containers: Arc<Mutex<FxHashSet<ContainerID>>>,
     pub(crate) hide_empty_root_containers: Arc<AtomicBool>,
+    decoded_value_cache_limit: Arc<AtomicUsize>,
 }
 
 impl LoroDoc {
@@ -26,6 +33,7 @@ impl LoroDoc {
         self.set_record_timestamp(config.record_timestamp());
         self.set_change_merge_interval(config.merge_interval());
         self.set_detached_editing(config.detached_editing());
+        self.set_decoded_value_cache_limit(config.decoded_value_cache_limit());
     }
 }
 
@@ -38,6 +46,9 @@ impl Default for Configure {
             merge_interval_in_s: Arc::new(AtomicI64::new(1000)),
             deleted_root_containers: Arc::new(Mutex::new(Default::default())),
             hide_empty_root_containers: Arc::new(AtomicBool::new(false)),
+            decoded_value_cache_limit: Arc::new(AtomicUsize::new(
+                DEFAULT_DECODED_VALUE_CACHE_LIMIT,
+            )),
         }
     }
 }
@@ -65,11 +76,21 @@ impl Configure {
                 self.hide_empty_root_containers
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
+            decoded_value_cache_limit: Arc::new(AtomicUsize::new(self.decoded_value_cache_limit())),
         }
     }
 
     pub fn text_style_config(&self) -> &Arc<RwLock<StyleConfigMap>> {
         &self.text_style_config
+    }
+
+    pub(crate) fn decoded_value_cache_limit(&self) -> usize {
+        self.decoded_value_cache_limit.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_decoded_value_cache_limit(&self, limit: usize) {
+        self.decoded_value_cache_limit
+            .store(limit, Ordering::Relaxed);
     }
 
     pub fn record_timestamp(&self) -> bool {
@@ -196,6 +217,10 @@ mod tests {
         assert!(!config.record_timestamp());
         assert!(!config.detached_editing());
         assert_eq!(config.merge_interval(), 1000);
+        assert_eq!(
+            config.decoded_value_cache_limit(),
+            DEFAULT_DECODED_VALUE_CACHE_LIMIT
+        );
         assert!(!config.hide_empty_root_containers.load(Ordering::Relaxed));
         assert!(config.deleted_root_containers.lock().is_empty());
 
@@ -237,6 +262,7 @@ mod tests {
         config.set_record_timestamp(true);
         config.set_detached_editing(true);
         config.set_merge_interval(25);
+        config.set_decoded_value_cache_limit(8192);
         config.set_hide_empty_root_containers(true);
         config
             .deleted_root_containers
@@ -257,6 +283,7 @@ mod tests {
         assert!(forked.record_timestamp());
         assert!(forked.detached_editing());
         assert_eq!(forked.merge_interval(), 25);
+        assert_eq!(forked.decoded_value_cache_limit(), 8192);
         assert!(forked.hide_empty_root_containers.load(Ordering::Relaxed));
         assert_eq!(forked.deleted_root_containers.lock().len(), 1);
         assert_eq!(
@@ -272,6 +299,7 @@ mod tests {
         config.set_record_timestamp(false);
         config.set_detached_editing(false);
         config.set_merge_interval(99);
+        config.set_decoded_value_cache_limit(0);
         config.set_hide_empty_root_containers(false);
         config.deleted_root_containers.lock().clear();
         config
@@ -282,6 +310,7 @@ mod tests {
         assert!(forked.record_timestamp());
         assert!(forked.detached_editing());
         assert_eq!(forked.merge_interval(), 25);
+        assert_eq!(forked.decoded_value_cache_limit(), 8192);
         assert!(forked.hide_empty_root_containers.load(Ordering::Relaxed));
         assert_eq!(forked.deleted_root_containers.lock().len(), 1);
         assert!(forked

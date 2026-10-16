@@ -1,6 +1,6 @@
 //! Regression test for loro#1092: a container-by-container handle walk must
 //! retain bounded memory. The decoded-value cache in `InnerStore` is capped
-//! (`MAX_CACHED_CONTAINER_VALUES`), so retained memory after a walk is
+//! (2048 by default), so retained memory after a walk is
 //! O(cache bound), not O(containers ever read).
 //!
 //! Run: cargo test -p loro-internal --test handle_walk_memory -- --nocapture

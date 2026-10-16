@@ -105,6 +105,14 @@ impl ContainerStore {
         self.store.can_import_snapshot()
     }
 
+    pub(crate) fn set_decoded_value_cache_limit(&mut self, limit: usize) {
+        self.conf.set_decoded_value_cache_limit(limit);
+        self.store.trim_value_cache();
+        if let Some(root) = &self.shallow_root_store {
+            root.store.lock().trim_value_cache();
+        }
+    }
+
     pub fn get_container_mut(&mut self, idx: ContainerIdx) -> Option<&mut State> {
         self.store
             .get_mut(idx)
@@ -427,8 +435,8 @@ impl ContainerStore {
 mod test {
     use super::*;
     use crate::{
-        cursor::PosType, handler::HandlerTrait, state::TreeParentId, ContainerType, ListHandler,
-        LoroDoc, MapHandler, MovableListHandler,
+        configure::DEFAULT_DECODED_VALUE_CACHE_LIMIT, cursor::PosType, handler::HandlerTrait,
+        state::TreeParentId, ContainerType, ListHandler, LoroDoc, MapHandler, MovableListHandler,
     };
 
     fn decode_container_store(bytes: Bytes) -> ContainerStore {
@@ -507,7 +515,7 @@ mod test {
         // The cache is bounded (loro-dev/loro#1092): reading more containers
         // than the bound evicts older cached values, and re-reading an evicted
         // container transparently re-decodes it from the KV store.
-        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 2;
         let source = doc_with_many_child_maps(n);
         let bytes = export_container_store(&source);
         let mut store = decode_container_store(bytes);
@@ -523,7 +531,7 @@ mod test {
         }
 
         assert!(
-            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            store.store.cached_value_count_for_test() <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
             "cached decoded values must stay bounded, got {}",
             store.store.cached_value_count_for_test()
         );
@@ -823,11 +831,118 @@ mod test {
         doc
     }
 
+    /// Count the actual lazy-value misses before each handler read, rather than
+    /// relying on timings. A full walk above the limit otherwise decodes every
+    /// child again on the next walk (loro-dev/loro#1191).
+    fn walk_child_maps_and_count_decodes(doc: &LoroDoc, n: usize) -> usize {
+        let list = doc.get_list("list");
+        let mut decodes = 0;
+        for i in 0..n {
+            let id = list.get(i).unwrap().as_container().unwrap().clone();
+            let idx = doc.arena().register_container(&id);
+            if !doc
+                .app_state()
+                .lock()
+                .store
+                .store
+                .has_cached_value_for_test(idx)
+            {
+                decodes += 1;
+            }
+            assert_eq!(doc.get_map(id).get("key"), Some((i as i64).into()));
+        }
+        decodes
+    }
+
+    fn cached_value_count(doc: &LoroDoc) -> usize {
+        doc.app_state()
+            .lock()
+            .store
+            .store
+            .cached_value_count_for_test()
+    }
+
+    #[test]
+    fn repeated_handle_walks_respect_decoded_value_cache_limit() {
+        // Exercise the production-sized budget even in the unit-test build.
+        let limit = 2048;
+        for n in [limit / 2, limit * 2] {
+            let source = doc_with_many_child_maps(n);
+            let snapshot = source
+                .export(crate::encoding::ExportMode::Snapshot)
+                .unwrap();
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_decoded_value_cache_limit(limit);
+            doc.import(&snapshot).unwrap();
+
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), n);
+            let warm_decodes = if n > limit { n } else { 0 };
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), warm_decodes);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), warm_decodes);
+
+            // Include the root list in the budget. After one warm-up walk, no
+            // child needs decoding, even when the document exceeds the default.
+            doc.set_decoded_value_cache_limit(n + 1);
+            walk_child_maps_and_count_decodes(&doc, n);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), 0);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), 0);
+
+            // A short window is enough to check tiny limits; repeatedly
+            // decoding the large root list is deliberately expensive at zero.
+            let n = n.min(32);
+            doc.set_decoded_value_cache_limit(1);
+            assert!(cached_value_count(&doc) <= 1);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), n);
+            assert!(cached_value_count(&doc) <= 1);
+
+            doc.set_decoded_value_cache_limit(0);
+            assert_eq!(cached_value_count(&doc), 0);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), n);
+            assert_eq!(walk_child_maps_and_count_decodes(&doc, n), n);
+            assert_eq!(cached_value_count(&doc), 0);
+        }
+    }
+
+    #[test]
+    fn lowering_decoded_value_cache_limit_preserves_local_edits() {
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 2;
+        let source = doc_with_many_child_maps(n);
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let doc = LoroDoc::new_auto_commit();
+        // Setting the limit before import must also work.
+        doc.set_decoded_value_cache_limit(n + 1);
+        doc.import(&snapshot).unwrap();
+        walk_child_maps_and_count_decodes(&doc, n);
+
+        let id = doc
+            .get_list("list")
+            .get(0)
+            .unwrap()
+            .as_container()
+            .unwrap()
+            .clone();
+        let first = doc.get_map(id);
+        first.insert("edited", true).unwrap();
+        // This also exercises the stale queue entry left by lazy -> State.
+        doc.set_decoded_value_cache_limit(0);
+        assert_eq!(cached_value_count(&doc), 0);
+        assert_eq!(first.get("edited"), Some(true.into()));
+        walk_child_maps_and_count_decodes(&doc, n);
+
+        let restored = LoroDoc::new();
+        restored
+            .import(&doc.export(crate::encoding::ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+    }
+
     /// Regression test for loro-dev/loro#1092: walking an imported document
     /// container by container must not pin every decoded value in memory.
     #[test]
     fn handle_reads_bound_cached_container_values() {
-        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 4;
         let source = doc_with_many_child_maps(n);
         let bytes = export_container_store(&source);
         let mut store = decode_container_store(bytes);
@@ -844,7 +959,7 @@ mod test {
         }
 
         assert!(
-            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            store.store.cached_value_count_for_test() <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
             "cached decoded values must stay bounded, got {}",
             store.store.cached_value_count_for_test()
         );
@@ -854,7 +969,7 @@ mod test {
     /// eviction must return and preserve the correct values.
     #[test]
     fn evicted_containers_stay_readable_and_editable() {
-        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 4;
         let source = doc_with_many_child_maps(n);
         let snapshot = source
             .export(crate::encoding::ExportMode::Snapshot)
@@ -899,7 +1014,7 @@ mod test {
     /// evicted entries must still be re-created from the KV store there.
     #[test]
     fn evicted_entries_stay_readable_when_all_loaded() {
-        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 4;
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 4;
         let source = doc_with_many_child_maps(n);
         let bytes = export_container_store(&source);
         let mut store = decode_container_store(bytes);
@@ -917,7 +1032,7 @@ mod test {
         }
 
         assert!(
-            store.store.cached_value_count_for_test() <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+            store.store.cached_value_count_for_test() <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
             "cached decoded values must stay bounded, got {}",
             store.store.cached_value_count_for_test()
         );
@@ -943,7 +1058,7 @@ mod test {
     /// mutate, and snapshot round-trip.
     #[test]
     fn evicted_mergeable_child_and_tree_meta_survive_round_trip() {
-        let filler = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let filler = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 2;
         let source = LoroDoc::new_auto_commit();
         source
             .get_map("state")
@@ -987,7 +1102,7 @@ mod test {
             let mut state = doc.app_state().lock();
             assert!(
                 state.store.store.cached_value_count_for_test()
-                    <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+                    <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
                 "the walk must have evicted cached values, got {}",
                 state.store.store.cached_value_count_for_test()
             );
@@ -1030,7 +1145,7 @@ mod test {
     /// wedging the queue.
     #[test]
     fn stale_queue_entry_after_lazy_to_state_conversion() {
-        let n = inner_store::MAX_CACHED_CONTAINER_VALUES * 2;
+        let n = DEFAULT_DECODED_VALUE_CACHE_LIMIT * 2;
         let source = doc_with_many_child_maps(n);
         let snapshot = source
             .export(crate::encoding::ExportMode::Snapshot)
@@ -1055,7 +1170,7 @@ mod test {
             let mut state = doc.app_state().lock();
             assert!(
                 state.store.store.cached_value_count_for_test()
-                    <= inner_store::MAX_CACHED_CONTAINER_VALUES,
+                    <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
                 "cached decoded values must stay bounded, got {}",
                 state.store.store.cached_value_count_for_test()
             );
