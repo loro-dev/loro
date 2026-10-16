@@ -488,6 +488,7 @@ impl ChangeStore {
     pub(crate) fn decode_snapshot_for_updates(
         bytes: Bytes,
         oplog: &crate::OpLog,
+        values: super::ImportedValues,
     ) -> Result<Vec<Change>, LoroError> {
         let arena = SharedArena::new();
         let store = ChangeStore::new_mem(&arena, Arc::new(AtomicI64::new(0)));
@@ -521,11 +522,7 @@ impl ChangeStore {
         drop(inner);
         drop(external);
         changes.sort_unstable_by_key(|c| c.lamport);
-        let changes = oplog.check_and_trim_known_part_in_arena(
-            changes,
-            super::ImportedValues::Exact,
-            &arena,
-        )?;
+        let changes = oplog.check_and_trim_known_part_in_arena(changes, values, &arena)?;
         Ok(changes
             .into_iter()
             .map(|mut change| {
