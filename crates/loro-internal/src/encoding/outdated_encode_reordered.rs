@@ -223,7 +223,8 @@ pub(crate) struct DecodedBlockBuffers {
     text_capacity: usize,
     values: Vec<LoroValue>,
     /// What list slices point into until [`Self::finish`] gives them `values`.
-    pending_values: Arc<Vec<LoroValue>>,
+    /// Created with the first list value, so most blocks allocate nothing here.
+    pending_values: Option<Arc<Vec<LoroValue>>>,
 }
 
 impl DecodedBlockBuffers {
@@ -234,7 +235,7 @@ impl DecodedBlockBuffers {
             text: None,
             text_capacity,
             values: Vec::new(),
-            pending_values: Arc::new(Vec::new()),
+            pending_values: None,
         }
     }
 
@@ -254,14 +255,18 @@ impl DecodedBlockBuffers {
             Ok(mut list) => self.values.append(&mut list),
             Err(list) => self.values.extend_from_slice(&list),
         }
-        ValueSlice::pending(&self.pending_values, start..self.values.len())
+        let pending = self.pending_values.get_or_insert_with(Default::default);
+        ValueSlice::pending(pending, start..self.values.len())
     }
 
     /// Points the slices that [`Self::push_values`] returned at the values.
     pub fn finish<'a>(self, slices: impl Iterator<Item = &'a mut ValueSlice>) {
+        let Some(pending) = self.pending_values else {
+            return;
+        };
         let values = Arc::new(self.values);
         for slice in slices {
-            slice.replace_buffer(&self.pending_values, &values);
+            slice.replace_buffer(&pending, &values);
         }
     }
 }
