@@ -2152,6 +2152,9 @@ impl Default for LoroList {
 /// child's state remains addressable by its deterministic id. Calling the same
 /// `ensure_mergeable_*` method again writes the ref back and resurfaces the
 /// preserved child state.
+/// Undoing the key's deletion also restores this identity, provided the parent
+/// map keeps its identity. See [`UndoManager`] for the difference from regular
+/// child containers and for entity modeling recommendations.
 ///
 /// # Example
 /// ```
@@ -3977,10 +3980,35 @@ impl ValueOrContainer {
 ///
 /// Notes & pitfalls:
 /// - Local-only: undo/redo affects only local operations from the bound peer; it does not revert
-///   remote edits. For global rollback, use time travel (`checkout`/`revert_to`).
+///   remote operations. Restoring a deleted child can change which content is visible (see below).
+///   For global rollback, use time travel (`checkout`/`revert_to`).
 /// - Peer identity: keep the `peer_id` stable while an `UndoManager` is in use. Changing peer IDs
 ///   can disrupt undo grouping/semantics.
 /// - Grouping: you may want to tune the merge interval and exclude origins to group related edits.
+///
+/// # Undoing deletion of a map child
+///
+/// For a regular child created with [`LoroMap::insert_container`], undo reconstructs
+/// the deleted content in a **new container with a new ID**. Handles and IDs obtained
+/// before deletion still refer to the original child. Concurrent remote edits to that
+/// original child are not redirected to the reconstructed child, whether imported
+/// before or after undo. For example, if the deleted child held `{"base": 1}` and a
+/// remote peer adds `"remote": 2` to its original ID, the restored visible child holds
+/// only `{"base": 1}`. The remote operation still belongs to the original container.
+/// The undo manager's ID remapping is used for undo/redo, not for incoming CRDT operations.
+///
+/// For a mergeable child created with [`LoroMap::ensure_mergeable_map`] or another
+/// `ensure_mergeable_*` method, undoing the key's deletion restores the marker for the
+/// **same parent/key/type identity**. Retained state, including concurrent edits to
+/// that child, becomes visible again in either import order. This requires the parent
+/// map to keep its ID: reconstructing a regular ancestor also changes the IDs of its
+/// mergeable descendants.
+///
+/// Use mergeable children when the same map slot represents the same logical entity.
+/// Reusing that parent/key/type resurfaces retained state; it does not create an empty
+/// replacement. For distinct entity lifetimes, use distinct entity keys. If deletion
+/// must be undoable without changing identity, keep the entity's container attached
+/// and undo a visibility or `deleted` field instead of removing the container's map key.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct UndoManager(InnerUndoManager);

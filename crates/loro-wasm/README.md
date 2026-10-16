@@ -73,6 +73,34 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 > In this example, we demonstrate importing an entire Loro codebase into a Loro-powered 
 > version controller, preserving the complete Git DAG history while enabling fast version switching.
 
+## Undo and map child identity
+
+`UndoManager` selects changes made by the bound local peer. When undoing the
+deletion of a map key that held a container, the child's creation method matters:
+
+- A regular child created with `map.setContainer(key, new LoroMap())` is
+  reconstructed with a **new container ID**. Existing handles still address the
+  original child. Concurrent edits sent to the original ID remain there and do
+  not appear in the reconstructed child, whether imported before or after undo.
+- A mergeable child created with `map.ensureMergeableMap(key)` (or another
+  `ensureMergeable*` method) keeps the same parent/key/type identity when undo
+  restores the key. Retained state and concurrent edits become visible again.
+  The parent must keep its ID: if undo reconstructs a regular ancestor, its
+  mergeable descendants also get different IDs.
+
+For example, A deletes a regular child containing `{ base: 1 }` while B adds
+`remote: 2` to that child's original ID. A's undo restores a new child containing
+`{ base: 1 }`; B's edit still targets the hidden original child. Both replicas
+converge to this result. With a mergeable child under the same parent, undo
+restores the same ID and the visible result is `{ base: 1, remote: 2 }` in either
+import order. Undo's ID remapping does not redirect imported operations.
+
+Use mergeable children for a stable logical map slot. Reusing the same
+parent/key/type resurfaces retained state rather than creating an empty entity.
+Use distinct keys for distinct entity lifetimes. To make entity deletion
+undoable while keeping its identity and concurrent edits, retain the entity's
+container and undo a visibility or `deleted` field instead of deleting its map key.
+
 ## Debugging the Wasm build
 
 The standard build pipeline (`deno run -A ./scripts/build.ts dev|release`) now keeps DWARF debugging information through `wasm-bindgen` and emits two helper files alongside every `loro_wasm_bg.wasm` artifact:
