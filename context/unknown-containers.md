@@ -89,12 +89,17 @@ the loop aligns it against the new child.
 
 ## Undo
 
-An undo/redo step that would recreate an unknown container is rejected as a
+For legacy undo/redo, a step that would recreate an unknown container is rejected as a
 whole: `undo()` returns that `ArgErr`, the doc is unchanged, and the step is
 dropped (`UndoManager::perform` in `undo.rs`). The next call undoes the step
 before it. The other edits of a rejected step can't be undone any more. With a
 merge interval, the step is every edit merged into it (loro-crdt's default is
 1 s).
+
+Rust `undo_one()` and `redo_one()` return the same `ArgErr` but restore the item
+in its original transform row and preserve both stacks. Repeating the bounded
+call retries that item; invoking the legacy method explicitly can consume it
+under the policy above. See [undo atomicity](undo-atomicity.md).
 
 - The step's `before_diff` (which rebases the manager's other steps over this
   one) runs only once the step is accepted.

@@ -4012,6 +4012,33 @@ impl UndoManager {
         self.0.redo()
     }
 
+    /// Consume at most one undo stack item, even if its inverse is a no-op.
+    ///
+    /// Returns `true` if local operations were generated. Returns `false` for an
+    /// empty stack, a paused manager, or a consumed no-op. Use [`Self::can_undo`]
+    /// to check whether more undo history remains.
+    ///
+    /// Unlike [`Self::undo`], this does not skip no-op items to reach older edits.
+    /// Grouping and the merge interval still determine what one stack item contains.
+    /// Application errors leave the committed document and both history stacks
+    /// unchanged; pending user edits are checkpointed before attempting the step.
+    pub fn undo_one(&mut self) -> LoroResult<bool> {
+        self.0.undo_one()
+    }
+
+    /// Consume at most one redo stack item, even if its inverse is a no-op.
+    ///
+    /// Returns `true` if local operations were generated. Returns `false` for an
+    /// empty stack, a paused manager, or a consumed no-op. Use [`Self::can_redo`]
+    /// to check whether more redo history remains.
+    ///
+    /// Unlike [`Self::redo`], this does not skip no-op items to reach older edits.
+    /// Application errors leave the committed document and both history stacks
+    /// unchanged; pending user edits are checkpointed before attempting the step.
+    pub fn redo_one(&mut self) -> LoroResult<bool> {
+        self.0.redo_one()
+    }
+
     /// Record a new checkpoint.
     pub fn record_new_checkpoint(&mut self) -> LoroResult<()> {
         self.0.record_new_checkpoint()

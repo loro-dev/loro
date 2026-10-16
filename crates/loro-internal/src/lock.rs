@@ -44,6 +44,7 @@ pub struct LoroMutex<T> {
     lock: Mutex<T>,
     kind: u8,
     currently_locked_in_this_thread: Arc<ThreadLocal<Mutex<LockInfo>>>,
+    txn_gate: Arc<parking_lot::ReentrantMutex<()>>,
 }
 
 /// Internal per-thread lock information used for diagnostics and order checks.
@@ -79,6 +80,7 @@ impl Display for LockInfo {
 /// Use [`LoroLockGroup::new_lock`] to create locks of specific [`LockKind`].
 pub struct LoroLockGroup {
     g: Arc<ThreadLocal<Mutex<LockInfo>>>,
+    txn_gate: Arc<parking_lot::ReentrantMutex<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -103,7 +105,10 @@ impl LoroLockGroup {
     /// the same group still share the same ordering domain.
     pub fn new() -> Self {
         let g = Arc::new(ThreadLocal::new());
-        LoroLockGroup { g }
+        LoroLockGroup {
+            g,
+            txn_gate: Arc::new(parking_lot::ReentrantMutex::new(())),
+        }
     }
 
     /// Create a new lock associated with this group and [`LockKind`].
@@ -114,6 +119,7 @@ impl LoroLockGroup {
             lock: Mutex::new(value),
             currently_locked_in_this_thread: self.g.clone(),
             kind: kind as u8,
+            txn_gate: self.txn_gate.clone(),
         }
     }
 }
@@ -125,6 +131,14 @@ impl Default for LoroLockGroup {
 }
 
 impl<T> LoroMutex<T> {
+    /// Keep document writers out across a compound operation that releases and
+    /// reacquires the transaction lock. Reentrancy lets its own handlers use
+    /// their normal transaction locking path.
+    pub(crate) fn lock_exclusive(&self) -> parking_lot::ReentrantMutexGuard<'_, ()> {
+        debug_assert_eq!(self.kind, LockKind::Txn as u8);
+        self.txn_gate.lock()
+    }
+
     #[track_caller]
     /// Acquire the lock, enforcing strict increasing [`LockKind`] order.
     ///
@@ -137,6 +151,7 @@ impl<T> LoroMutex<T> {
     /// - If the current thread already holds a lock with kind `>= self.kind`.
     /// - If the guard is later dropped out of acquisition order.
     pub fn lock(&self) -> LoroMutexGuard<'_, T> {
+        let exclusive = (self.kind == LockKind::Txn as u8).then(|| self.txn_gate.lock());
         // Lock-order tracking is a debug-only deadlock-prevention aid. In release
         // builds it is compiled out entirely: per-op locking is on the hot path
         // (each local op takes the OpLog + DocState locks) and the per-thread
@@ -162,6 +177,7 @@ impl<T> LoroMutex<T> {
             *v.lock() = this;
             LoroMutexGuard {
                 guard,
+                _exclusive: exclusive,
                 _inner: LoroMutexGuardInner {
                     inner: self,
                     this,
@@ -175,6 +191,7 @@ impl<T> LoroMutex<T> {
             LoroMutexGuard {
                 guard,
                 _inner: LoroMutexGuardInner { inner: self },
+                _exclusive: exclusive,
             }
         }
     }
@@ -219,6 +236,7 @@ impl<T> LoroMutex<T> {
 pub struct LoroMutexGuard<'a, T> {
     guard: MutexGuard<'a, T>,
     _inner: LoroMutexGuardInner<'a, T>,
+    _exclusive: Option<parking_lot::ReentrantMutexGuard<'a, ()>>,
 }
 
 /// RAII helper that updates the per-thread lock info on drop.

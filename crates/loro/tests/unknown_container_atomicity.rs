@@ -86,6 +86,85 @@ fn undo_of_deleting_a_list_holding_unknown_fails_without_changes() {
 }
 
 #[test]
+fn bounded_undo_unknown_rejection_preserves_both_stacks_for_retry() {
+    let doc = forge(|doc| {
+        let list = doc
+            .get_map("m")
+            .insert_container("k", LoroList::new())
+            .unwrap();
+        edited_counter(list.insert_container(0, counter()).unwrap());
+        list.push(1).unwrap();
+    });
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    doc.get_text("t").insert(0, "a").unwrap();
+    doc.commit();
+    doc.get_text("t").insert(1, "b").unwrap();
+    doc.get_map("m").delete("k").unwrap();
+    doc.commit();
+    doc.get_text("t").insert(2, "c").unwrap();
+    doc.commit();
+    assert!(undo.undo_one().unwrap());
+    let before = state(&doc);
+    let stacks = (undo.undo_count(), undo.redo_count());
+    for _ in 0..2 {
+        assert!(is_unknown_err(&undo.undo_one().unwrap_err()));
+        assert_eq!(state(&doc), before);
+        assert_eq!((undo.undo_count(), undo.redo_count()), stacks);
+    }
+    // The separate legacy policy can consume the rejected item explicitly.
+    assert!(is_unknown_err(&undo.undo().unwrap_err()));
+    assert_eq!(undo.undo_count(), stacks.0 - 1);
+    assert!(undo.undo_one().unwrap());
+    assert_eq!(doc.get_text("t").to_string(), "b");
+}
+
+#[test]
+fn bounded_redo_unknown_rejection_preserves_both_stacks_for_retry() {
+    let doc = forge(|doc| {
+        let ml = doc.get_movable_list("ml");
+        edited_counter(ml.push_container(counter()).unwrap());
+        ml.push("x").unwrap();
+        ml.push("y").unwrap();
+    });
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let t = doc.get_text("t");
+    t.insert(0, "a").unwrap();
+    doc.commit();
+    t.insert(1, "b").unwrap();
+    doc.get_movable_list("ml").mov(0, 2).unwrap();
+    doc.commit();
+    t.insert(2, "c").unwrap();
+    doc.commit();
+    for _ in 0..3 {
+        assert!(undo.undo_one().unwrap());
+    }
+    let remote = doc.fork();
+    remote.set_peer_id(77).unwrap();
+    remote.get_movable_list("ml").delete(0, 1).unwrap();
+    remote.commit();
+    doc.import(
+        &remote
+            .export(loro::ExportMode::updates(&doc.oplog_vv()))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(undo.redo_one().unwrap());
+    let before = state(&doc);
+    let stacks = (undo.undo_count(), undo.redo_count());
+    for _ in 0..2 {
+        assert!(is_unknown_err(&undo.redo_one().unwrap_err()));
+        assert_eq!(state(&doc), before);
+        assert_eq!((undo.undo_count(), undo.redo_count()), stacks);
+    }
+    assert!(is_unknown_err(&undo.redo().unwrap_err()));
+    assert_eq!(undo.redo_count(), stacks.1 - 1);
+    assert!(undo.redo_one().unwrap());
+    assert_eq!(t.to_string(), "ac");
+}
+
+#[test]
 fn recreating_a_deleted_tree_node_with_unknown_meta_is_rejected_atomically() {
     let doc = forge(|doc| {
         let tree = doc.get_tree("tree");

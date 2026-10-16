@@ -422,6 +422,13 @@ impl Stack {
         self.push_with_merge(span, meta, false, None)
     }
 
+    fn restore_popped(&mut self, item: StackItem, remote_diff: &Arc<Mutex<DiffBatch>>) {
+        let last = self.stack.back_mut().unwrap();
+        debug_assert!(Arc::ptr_eq(&last.1, remote_diff));
+        last.0.push_back(item);
+        self.size += 1;
+    }
+
     pub fn push_with_merge(
         &mut self,
         span: CounterSpan,
@@ -832,6 +839,7 @@ impl UndoManager {
             |x| &mut x.undo_stack,
             |x| &mut x.redo_stack,
             UndoOrRedo::Undo,
+            true,
         )
     }
 
@@ -841,6 +849,37 @@ impl UndoManager {
             |x| &mut x.redo_stack,
             |x| &mut x.undo_stack,
             UndoOrRedo::Redo,
+            true,
+        )
+    }
+
+    /// Consume at most one undo stack item, including an item whose inverse is a no-op.
+    ///
+    /// Returns whether local operations were generated. A `false` result does not
+    /// imply that the undo stack is empty; see [`Self::can_undo`]. Unlike
+    /// [`Self::undo`], this does not skip no-op items to reach older edits.
+    #[instrument(skip_all)]
+    pub fn undo_one(&self) -> LoroResult<bool> {
+        self.perform(
+            |x| &mut x.undo_stack,
+            |x| &mut x.redo_stack,
+            UndoOrRedo::Undo,
+            false,
+        )
+    }
+
+    /// Consume at most one redo stack item, including an item whose inverse is a no-op.
+    ///
+    /// Returns whether local operations were generated. A `false` result does not
+    /// imply that the redo stack is empty; see [`Self::can_redo`]. Unlike
+    /// [`Self::redo`], this does not skip no-op items to reach older edits.
+    #[instrument(skip_all)]
+    pub fn redo_one(&self) -> LoroResult<bool> {
+        self.perform(
+            |x| &mut x.redo_stack,
+            |x| &mut x.undo_stack,
+            UndoOrRedo::Redo,
+            false,
         )
     }
 
@@ -849,11 +888,13 @@ impl UndoManager {
         get_stack: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
+        skip_noops: bool,
     ) -> LoroResult<bool> {
         if self.inner.lock().borrow().paused {
             return Ok(false);
         }
         let doc = &self.doc.clone();
+        let _exclusive = doc.txn.lock_exclusive();
         // When in the undo/redo loop, the new undo/redo stack item should restore the selection
         // to the state it was in before the item that was popped two steps ago from the stack.
         //
@@ -944,11 +985,10 @@ impl UndoManager {
                     &mut rejected_step,
                 ) {
                     Ok(c) => c,
-                    // The step would recreate a container of an unknown type
-                    // (the only `ArgErr` of `undo_internal`). Nothing was
-                    // applied; drop the step instead of retrying it forever or
-                    // undoing the next step in its place.
-                    Err(e @ LoroError::ArgErr(_)) => {
+                    // The legacy policy consumes prechecked unsupported steps.
+                    // Bounded calls instead use restore_popped below so an Err
+                    // preserves both stacks, including for this rejection.
+                    Err(e @ LoroError::ArgErr(_)) if rejected_step.is_some() && skip_noops => {
                         // Its changes stay in the doc: rebase the steps before
                         // it over them, like over remote changes
                         if let Some(mut changes) = rejected_step {
@@ -959,7 +999,8 @@ impl UndoManager {
                         return Err(e);
                     }
                     Err(e) => {
-                        get_stack(&mut self.inner.lock().borrow_mut()).push(span.span, span.meta);
+                        get_stack(&mut self.inner.lock().borrow_mut())
+                            .restore_popped(span, &remote_diff);
                         return Err(e);
                     }
                 };
@@ -1020,6 +1061,9 @@ impl UndoManager {
                 executed = true;
                 break;
             } else {
+                if !skip_noops {
+                    break;
+                }
                 // continue to pop the undo item as this undo is a no-op
                 top = get_stack(&mut self.inner.lock().borrow_mut()).pop();
                 continue;
