@@ -1,6 +1,6 @@
 # 重放基准与 critical version：Loro 历史图遍历算法的规格与证明骨架
 
-状态：草稿 v3，2026-09-01（新增多头回退：L13、公理 A6）。对应 `crates/loro-internal/src/dag.rs` 中的
+状态：草稿 v4，2026-10-14（新增撤回目标的认证：L14；v3 2026-09-01 新增多头回退：L13、公理 A6）。对应 `crates/loro-internal/src/dag.rs` 中的
 `_find_meet_and_mode`（含 PR #1058 与 tips 去重修复之后的版本）；多头回退 L13 的实现在
 `crates/loro-internal/src/oplog.rs`。
 
@@ -425,6 +425,12 @@ ancestry(B) 中的事件并发。Eg-walker 的理论最优是"发生在双方之
 
 1. **meet 恰好 critical**（场景①③的常规形状）：候选即答案，
    "找 meet"与"找合法起点"重合。
+   2026-10 起，**撤回**（R ⊂ L：撤销、或切回旧版本）的 meet = R 在
+   oplog 层另做一次认证（引理 L14，即角色互换的入场检查 L12）：被撤回
+   区域 L − R 的每个入场 change 若看全了 R，则 R critical，同样以
+   replay_base_is_critical 标记传给差量计算器。list/movable list 据此
+   在撤回时也信任未知段 tracker，只要该 tracker 从未删除过未知段的一部分
+   （见 L14 的计算器侧说明）；text 在撤回时仍然重建。
 2. **meet 不 critical，且走查探测到证据**（uncovered 死路，场景④）：
    回退到**并集图上最晚的单头 critical version**（已实现，2026-08-01）：
    复用主循环的聚合/对齐机件，从 L ∪ R 做一次单色下山扫描；
@@ -458,7 +464,7 @@ ancestry(B) 中的事件并发。Eg-walker 的理论最优是"发生在双方之
    全部会合、无死路，meet = {x,y}，但区域内有事件与 y 并发）：
    text/list 依赖下游守卫兜底——本类不受 2026-09 变更影响：L13 只在
    第 2 类（保守回退）触发，本类的 meet 基准永远不会被认证为
-   critical，守卫（base == from ∧ ¬source_not_in_op_context）仍是
+   critical（L14 只认证撤回中恰为 critical 的目标，不属本类），守卫（base == from ∧ ¬source_not_in_op_context）仍是
    唯一保障。Tree 的 Checkout 路径不再依赖基准，见 Q7。
 
 因此严格的安全陈述是**双层契约**：「(ans, mode) + 下游守卫」合起来
@@ -607,9 +613,36 @@ v。故只需扫描收紧新暴露的区间 [v_new, v_old)；跨切口的 change
 接线处退回单头扫描而不信任它。浅历史文档另要求 v* ⊇ 种子版本
 （`shallow_since_frontiers` 的 vv），否则同样退回。
 
+**L14（撤回目标的认证）** *撤回是反方向的导入：被撤回的区域若看全了
+目标，目标就是 critical。*
+设 R ⊂ L（撤销一个 span、或在线性历史上切回旧版本），meet = R。并集图
+ancestry(L) ∪ ancestry(R) = ancestry(L)，重放区域为 L − R。把 L12 的
+角色互换（旧 := R，新区 := L − R）：L − R 的每个入场 change 的父集版本
+覆盖 R ⟺ 区域内每个事件 ≥ R 的全部头 ⟺ R 在 ancestry(L) 中
+critical（D8b）。证明与 L12 相同；criticality 只与并集图有关，与重放的
+方向无关。
+实现：`OpLog::iter_from_replay_base_causally` 在 meet 基准恰为 R 且
+R ⊂ L 时调用 `OpLog::uncovered_entry_parents(R, R, L)`（L12 的版本向量
+形式），结果为空即置 replay_base_is_critical。只扫描 L − R 的
+change，即随后的重放本来就要遍历的区域，故不设预算；撤销最常见的形状
+（span 的首个 change 的 deps 恰为 R 的前沿）走 L12 的快路径，不碰版本
+向量。认证失败（区域内有 change 与 R 的某个头并发）时行为不变；浅历史
+文档照旧在钳制处撤销认证。
+计算器侧：tracker 把种子版本以下的一切视为一个无 id 的不透明未知段。
+撤回的目标 R ⊇ 基准，故撤回不会撤销任何基准以下的 op，未知段长度不变
+——除非重放区内的删除或移动切掉了它的一部分，撤回这样的 op 会让那部分
+以 Unknown 块重新出现，只能靠删除 op 记下的目标 id 去查。tracker 记录是否
+发生过这种删除（`Tracker::has_deleted_unknown`）：未发生时撤回由 tracker
+直接计算，每个被撤回或带回的项都是带自身 id 的重放 op，基准 critical
+保证它们之间的次序与完整重建一致；发生过则照旧重建。movable list 的元素
+阶段从 history cache 的 checkout index 读取两侧的位置与值，tracker 只
+提供列表差与 `move_id_to_elem_id`（每个重放的 move 都有记录），故同一
+论证成立。
+
 **依赖图**：
 S1 ← L4；S2 ← L5；S3 ← L9 ← {L3, L6, L7, L8}；T ← L10 ← L0；
 L13 ← {D8b}；L13(ii) 的"归零 ⟹ 单头扫描亦无解" ← {L11, A6}；
+L14 ← L12；
 S5b(C1) ← L3 + "无死路 ⟹ Max(C) 的每个成员被双侧到达"（未证，猜想）。
 
 **引理与现有测试的对应**（代码一致性的桥）：
@@ -619,6 +652,10 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
 `src/tests/replay_base.rs` 的定向单测钉 L13 及其接线：criss-cross 上
 多头基准命中最后同步点、单头扫描停在初始分岔、不相交历史归零、
 切口落在同一 change 内部（style 对之间）仍收敛。
+同文件的撤回单测钉 L14 及其接线：线性历史上的撤回目标被认证、与目标
+并发的撤回不被认证、一次创建大量 list 的撤销不重建 tracker、删除了未知段
+的撤回照旧重建、随机 list/movable list 编辑的逐步撤销与重做；
+`crates/loro/tests/undo_retreat.rs` 以新鲜副本为 oracle 做黑盒检验。
 
 ---
 
@@ -652,6 +689,9 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
   分叉后的每次导入仍付出 O(分歧量)（分岔点确为最晚 critical
   version，无状态的基准选择无法更好）。是否值得为这一形状缓存
   tracker，请维护者定夺。
+- **Q11**（新，2026-10）L14 之后，text 在撤回时仍然重建 tracker：
+  richtext 的未知段还承载 style 锚点，撤回经过 StyleStart/StyleEnd 的
+  情形需要单独的论证。是否把同样的放宽推广到 text，请维护者定夺。
 - **Q8**（已解决，2026-08-01：澄清而非改行为）深入推演后确认这是
   **刻意的双模式设计**：顶层返回值是**方向模式**（origin），其唯一消费者
   `DocState::apply_diff` 只用它做方向敏感的死容器缓存策略（Checkout 可能
