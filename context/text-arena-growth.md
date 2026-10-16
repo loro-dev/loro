@@ -31,8 +31,10 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
   `DecodedBlockBuffers` that belongs to one `decode_block` call and is freed
   with the parsed changes. Text goes into one `AppendOnlyBytes`, sized by the
   block's value column. A single-value list insert is stored inline. The values
-  of larger inserts are moved into one `Vec`; those ops get provisional slices,
-  and `finish` points them at the finished `Arc` at the end of `decode_block`.
+  of larger inserts are moved into one `Vec`; those ops get provisional slices.
+  `decode_block` collects the ops without merging them, `finish` points the
+  slices at the finished `Arc`, and only then are the ops pushed into their
+  changes, which merges them.
   A block's values are then read together, and adjacent slices merge without
   copying. The inline case matters for syncs that import one small change from
   each of many peers: each peer's change is its own small block, and a shared
@@ -43,10 +45,10 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
 - `InnerListOp::Insert` holds a `ValueSlice` (`op.rs`) instead of a values-arena
   range (`SliceRange` is gone, and so is the values arena). A single value is
   stored inline, which is the common local insert and needs no allocation.
-  Larger slices share an `Arc<Vec<LoroValue>>`. `is_mergable` only allows merges
-  that copy at most one value: adjacent in one buffer, appending to a buffer the
-  slice owns alone, or a single value. Merging copies only the slice, never the
-  whole shared buffer.
+  Larger slices share an `Arc<Vec<LoroValue>>`. `is_mergable` never copies a
+  shared buffer: the next slice is adjacent in the same buffer, this slice owns
+  the end of its buffer and appends to it, or this slice is a single value and
+  both are copied into a new buffer that later merges append to.
 - The trackers never address an arena. Rich-text chunks are ranges in
   `diff_calc/tracker_texts.rs:TrackerTexts`, and list chunks are ranges in
   `diff_calc/tracker_values.rs:TrackerValues` (bundled with its tracker as
@@ -66,21 +68,22 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
 
 - Do not reintroduce "slice an arena by an op's position". An op parsed from a
   block has no arena position.
-- Do not read a `ValueSlice` that `DecodedBlockBuffers::push_values` returned
-  before `finish` runs. It points into an empty placeholder. Ops are merged while
-  the block is decoded, so `ValueSlice::is_mergable` refuses any merge that
-  would read such a slice: only the slice before it in the same buffer may take
-  it. Blocks from older versions or from loro.js can hold adjacent inserts that
-  the current rules merge, such as a one-value insert (stored inline) followed by a
-  larger one. That case panicked in the loro.js MovableList differential suite
-  (`decode_block_with_unmerged_adjacent_list_inserts`).
+- Do not read or merge a `ValueSlice` that `DecodedBlockBuffers::push_values`
+  returned before `finish` runs. It points into an empty placeholder. Blocks from
+  older versions or from loro.js can hold adjacent inserts that the current
+  rules merge, such as a one-value insert (stored inline) followed by a larger
+  one. Merging them while decoding read the placeholder and panicked in the
+  loro.js MovableList differential suite
+  (`decode_block_with_unmerged_adjacent_list_inserts`), which is why ops are
+  pushed into their changes only after `finish`.
 - `RichOpBlockIter` (`op.rs`) starts at the first op that overlaps the span, and
   clones only the ops it returns. It used to clone every op of the change from
   the first one. That was cheap while a list insert held a `u32` range, and it
   made move-heavy movable-list diffs slow once the insert held a `ValueSlice`.
 - `OpLog::is_empty` used to treat "the arenas are empty" as "nothing was
   decoded". A doc that holds only pending changes now decodes nothing into the
-  arena. So `is_empty` also checks `pending_changes`. Without that check, a
+  arena. So `is_empty` checks the DAG and `pending_changes` instead (the state's
+  `can_import_snapshot` still checks the arena for local edits). Without that, a
   snapshot imported after a pending update replaced the op log and dropped the
   pending change. This already happened for map-only pending changes before
   this fix (`pending_map_change_survives_snapshot_import`).

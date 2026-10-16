@@ -492,31 +492,28 @@ impl ValueSlice {
         self.len() == 0
     }
 
-    /// Extends this slice by `other` if it follows this slice in the same buffer.
-    pub(crate) fn extend_if_adjacent(&mut self, other: &Self) -> bool {
-        match (&mut self.0, &other.0) {
+    /// Whether `other` follows this slice in the same buffer.
+    fn is_followed_by(&self, other: &Self) -> bool {
+        matches!(
+            (&self.0, &other.0),
             (
                 Repr::Shared { values, end, .. },
-                Repr::Shared {
-                    values: other_values,
-                    start: other_start,
-                    end: other_end,
-                },
-            ) if Arc::ptr_eq(values, other_values) && *end == *other_start => {
-                *end = *other_end;
-                true
-            }
-            _ => false,
-        }
+                Repr::Shared { values: other_values, start, .. },
+            ) if Arc::ptr_eq(values, other_values) && end == start
+        )
     }
 
-    /// Whether this is a slice from `pending` whose values are not decoded yet:
-    /// the placeholder buffer is empty, so its range lies past the buffer.
-    fn is_pending(&self) -> bool {
-        match &self.0 {
-            Repr::One(_) => false,
-            Repr::Shared { values, end, .. } => *end as usize > values.len(),
+    /// Extends this slice by `other` if it follows this slice in the same buffer.
+    pub(crate) fn extend_if_adjacent(&mut self, other: &Self) -> bool {
+        if !self.is_followed_by(other) {
+            return false;
         }
+        if let (Repr::Shared { end, .. }, Repr::Shared { end: other_end, .. }) =
+            (&mut self.0, &other.0)
+        {
+            *end = *other_end;
+        }
+        true
     }
 
     /// Whether this slice ends its buffer and is the buffer's only owner.
@@ -585,34 +582,22 @@ impl Mergable for ValueSlice {
 
         // Copy only this slice, not the whole shared buffer. The merged slice
         // owns its buffer, so later merges append to it.
-        assert!(
-            !self.is_pending() && !other.is_pending(),
-            "merging a list slice whose values are not decoded yet"
-        );
         let mut values = Vec::with_capacity((self.len() + other.len()).max(4));
         values.extend_from_slice(self.as_slice());
         values.extend_from_slice(other.as_slice());
         *self = Self::new(values);
     }
 
-    /// Mergeable when the merge copies at most this slice's single value:
-    /// `other` follows it in one buffer, or it can append to its buffer, or it
-    /// is a single value.
-    /// While a block is decoded, a slice whose values are not decoded yet
-    /// (`is_pending`) only merges with the slice before it in the same buffer:
-    /// any other merge would have to read its values.
+    /// Mergeable when the merge never copies this slice's shared buffer:
+    /// `other` follows it in one buffer (nothing is copied), this slice owns
+    /// the end of its buffer (`other` is appended to it), or this slice is a
+    /// single value (it and `other` are copied into a new buffer, which later
+    /// merges append to). Each value is copied once per op it is merged into.
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        (!other.is_pending() && (matches!(self.0, Repr::One(_)) || self.can_append()))
-            || matches!(
-                (&self.0, &other.0),
-                (
-                    Repr::Shared { values, end, .. },
-                    Repr::Shared { values: other_values, start, .. },
-                ) if Arc::ptr_eq(values, other_values) && end == start
-            )
+        self.is_followed_by(other) || self.can_append() || matches!(self.0, Repr::One(_))
     }
 }
 

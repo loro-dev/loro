@@ -248,7 +248,7 @@ impl DecodedBlockBuffers {
         bytes.slice(start..)
     }
 
-    /// A multi-value slice can be merged, but not read, before [`Self::finish`].
+    /// A multi-value slice can be neither read nor merged before [`Self::finish`].
     fn push_values(&mut self, list: LoroListValue) -> ValueSlice {
         let list = list.into_arc();
         if list.len() == 1 {
@@ -274,7 +274,10 @@ impl DecodedBlockBuffers {
         let Some(pending) = self.pending_values else {
             return;
         };
-        let values = Arc::new(self.values);
+        let mut values = self.values;
+        // The values live as long as any op slice of the block.
+        values.shrink_to_fit();
+        let values = Arc::new(values);
         for slice in slices {
             slice.replace_buffer(&pending, &values);
         }

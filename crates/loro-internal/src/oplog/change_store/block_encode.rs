@@ -726,6 +726,9 @@ pub fn decode_block(
     let mut counter = first_counter as Counter;
     let mut change_index = 0;
     let peer = header.peer;
+    // Ops are pushed into their changes, which merges them, only after
+    // `buffers.finish` has filled their list values.
+    let mut decoded_ops: Vec<(usize, Op)> = Vec::new();
     for op in op_iter {
         let EncodedOp {
             container_index,
@@ -761,11 +764,10 @@ pub fn decode_block(
             content,
         };
 
-        changes
-            .get_mut(change_index)
-            .ok_or(LoroError::DecodeDataCorruptionError)?
-            .ops
-            .push(op);
+        if change_index >= changes.len() {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        decoded_ops.push((change_index, op));
         counter = counter
             .checked_add(len as Counter)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
@@ -777,12 +779,17 @@ pub fn decode_block(
             change_index += 1;
         }
     }
-    buffers.finish(changes.iter_mut().flat_map(|c| {
-        c.ops.iter_mut().filter_map(|op| match &mut op.content {
-            InnerContent::List(InnerListOp::Insert { slice, .. }) => Some(slice),
-            _ => None,
-        })
-    }));
+    buffers.finish(
+        decoded_ops
+            .iter_mut()
+            .filter_map(|(_, op)| match &mut op.content {
+                InnerContent::List(InnerListOp::Insert { slice, .. }) => Some(slice),
+                _ => None,
+            }),
+    );
+    for (change_index, op) in decoded_ops {
+        changes[change_index].ops.push(op);
+    }
     Ok(changes)
 }
 

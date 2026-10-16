@@ -22,8 +22,15 @@ pub(super) struct TrackerValues {
 }
 
 impl TrackerValues {
+    pub fn clear(&mut self) {
+        self.starts.clear();
+        self.slices.clear();
+        self.len = 0;
+        self.hint.set(0);
+    }
+
     /// Records `values` and returns their range.
-    pub fn push(&mut self, values: &ValueSlice) -> Range<u32> {
+    pub fn push(&mut self, values: ValueSlice) -> Range<u32> {
         let start = self.len;
         let end = u32::try_from(values.len())
             .ok()
@@ -34,10 +41,10 @@ impl TrackerValues {
             if !self
                 .slices
                 .last_mut()
-                .is_some_and(|last| last.extend_if_adjacent(values))
+                .is_some_and(|last| last.extend_if_adjacent(&values))
             {
                 self.starts.push(start);
-                self.slices.push(values.clone());
+                self.slices.push(values);
             }
             self.len = end;
         }
@@ -105,8 +112,8 @@ mod test {
         let mut values = TrackerValues::default();
         let a = ValueSlice::new(vec![LoroValue::I64(1), LoroValue::I64(2)]);
         let b = ValueSlice::new((3..8).map(LoroValue::I64).collect());
-        assert_eq!(values.push(&a), 0..2);
-        assert_eq!(values.push(&b), 2..7);
+        assert_eq!(values.push(a), 0..2);
+        assert_eq!(values.push(b), 2..7);
 
         let mut got = Vec::new();
         values.for_each_slice(1..5, |offset, s| got.push((offset, s.as_slice().to_vec())));

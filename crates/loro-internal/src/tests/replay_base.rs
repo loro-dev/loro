@@ -13,12 +13,7 @@ use crate::loro::ExportMode;
 use crate::oplog::CriticalVersionSearch;
 use crate::{LoroDoc, VersionVector};
 
-fn exchange(a: &LoroDoc, b: &LoroDoc) {
-    let ua = a.export(ExportMode::updates(&b.oplog_vv())).unwrap();
-    let ub = b.export(ExportMode::updates(&a.oplog_vv())).unwrap();
-    a.import(&ub).unwrap();
-    b.import(&ua).unwrap();
-}
+use super::exchange;
 
 /// Two peers that edit concurrently and fully sync after every round.
 fn criss_cross(rounds: usize) -> (LoroDoc, LoroDoc) {

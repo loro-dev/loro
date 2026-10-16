@@ -298,7 +298,7 @@ impl OpLog {
     /// this op log wholesale.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.dag.is_empty() && self.pending_changes.is_empty() && self.arena.can_import_snapshot()
+        self.dag.is_empty() && self.pending_changes.is_empty()
     }
 
     /// This is the **only** place to update the `OpLog.changes`

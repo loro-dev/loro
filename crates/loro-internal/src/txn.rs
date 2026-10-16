@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     mem::take,
-    panic::AssertUnwindSafe,
     sync::{Arc, Weak},
 };
 
@@ -477,48 +476,41 @@ impl Transaction {
     }
 
     pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
-        let (ans, callback_panic) = self._commit();
-        if let Some(payload) = callback_panic {
-            std::panic::resume_unwind(payload);
-        }
+        let mut panic = DeferredPanic::default();
+        let ans = self._commit(&mut panic);
+        panic.resume();
         ans
     }
 
     /// [`Self::commit`] for a caller that holds the doc's txn lock: a panic of a
-    /// pre-commit callback is returned instead of raised, so that the caller can
-    /// raise it after releasing the lock.
-    pub(crate) fn commit_deferring_callback_panic(
+    /// pre-commit callback is put in `panic`, to be raised after the lock is
+    /// released.
+    pub(crate) fn commit_deferring_panic(
         mut self,
-    ) -> (
-        Result<Option<CommitOptions>, LoroError>,
-        Option<PanicPayload>,
-    ) {
-        self._commit()
+        panic: &mut DeferredPanic,
+    ) -> Result<Option<CommitOptions>, LoroError> {
+        self._commit(panic)
     }
 
     /// A pre-commit callback that panics is user code panicking in the middle
     /// of a commit: the change is already applied to the state and the op log
     /// holds it as uncommitted. The commit is finished as if the callback had
-    /// returned, and its panic is returned to be raised once no doc lock is held.
-    #[tracing::instrument(level = "debug", skip(self))]
-    fn _commit(
-        &mut self,
-    ) -> (
-        Result<Option<CommitOptions>, LoroError>,
-        Option<PanicPayload>,
-    ) {
+    /// returned, and its panic is put in `panic` to be raised once no doc lock
+    /// is held.
+    #[tracing::instrument(level = "debug", skip(self, panic))]
+    fn _commit(&mut self, panic: &mut DeferredPanic) -> Result<Option<CommitOptions>, LoroError> {
         if self.finished {
-            return (Ok(None), None);
+            return Ok(None);
         }
 
         let Some(doc) = self.doc.upgrade() else {
-            return (Ok(None), None);
+            return Ok(None);
         };
         self.finished = true;
         if self.local_ops.is_empty() {
             let mut state = doc.state.lock();
             state.abort_txn();
-            return (Ok(Some(self.take_options())), None);
+            return Ok(Some(self.take_options()));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
@@ -543,7 +535,7 @@ impl Transaction {
         }
 
         let modifier = ChangeModifier::default();
-        let callback_panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        panic.run(|| {
             doc.pre_commit_subs.emit(
                 &(),
                 PreCommitCallbackPayload {
@@ -552,8 +544,7 @@ impl Transaction {
                     modifier: modifier.clone(),
                 },
             )
-        }))
-        .err();
+        });
 
         let mut oplog = doc.oplog.lock();
         let mut state = doc.state.lock();
@@ -562,12 +553,9 @@ impl Transaction {
             state.abort_txn();
             drop(state);
             drop(oplog);
-            return (
-                Err(LoroError::internal(
-                    "missing uncommitted change while committing transaction",
-                )),
-                callback_panic,
-            );
+            return Err(LoroError::internal(
+                "missing uncommitted change while committing transaction",
+            ));
         };
         modifier.modify_change(&mut change);
         let diff = if state.is_recording() {
@@ -585,7 +573,7 @@ impl Transaction {
             state.abort_txn();
             drop(state);
             drop(oplog);
-            return (Err(err), callback_panic);
+            return Err(err);
         }
 
         state.commit_txn(
@@ -613,7 +601,7 @@ impl Transaction {
             assert!(!doc.txn.is_locked());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
-        (Ok(None), callback_panic)
+        Ok(None)
     }
 
     /// Mark the start of a batch that `LoroDoc` rolls back if it fails
@@ -905,20 +893,17 @@ impl Transaction {
     }
 }
 
-pub(crate) type PanicPayload = Box<dyn std::any::Any + Send + 'static>;
-
 impl Drop for Transaction {
     #[tracing::instrument(level = "debug", skip(self))]
     fn drop(&mut self) {
         if !self.finished {
             // TODO: should we abort here or commit here?
             // what if commit fails?
-            let (ans, callback_panic) = self._commit();
-            if let Some(payload) = callback_panic {
-                // Raising it while already unwinding would abort the process.
-                if !std::thread::panicking() {
-                    std::panic::resume_unwind(payload);
-                }
+            let mut panic = DeferredPanic::default();
+            let ans = self._commit(&mut panic);
+            // Raising it while already unwinding would abort the process.
+            if !std::thread::panicking() {
+                panic.resume();
             }
             ans.unwrap();
         }

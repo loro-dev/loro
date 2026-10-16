@@ -54,7 +54,6 @@ use std::{
     cmp::Ordering,
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
-    panic::AssertUnwindSafe,
     sync::{
         atomic::Ordering::{Acquire, Release},
         Arc,
@@ -131,22 +130,14 @@ impl LoroDoc {
         let (options, guard) = self.implicit_commit_then_stop();
         // `f` may call user code, e.g. subscribers of an import's events. If it
         // panics, release the txn lock first, so the panic does not poison it.
-        let result = std::panic::catch_unwind(AssertUnwindSafe(f));
+        // A panic inside Loro may have poisoned another lock, which makes the
+        // renewal panic too; `DeferredPanic` keeps the first one.
+        let mut panic = DeferredPanic::default();
+        let result = panic.run(f);
         drop(guard);
-        match result {
-            Ok(result) => {
-                self.renew_txn_if_auto_commit(options);
-                result
-            }
-            Err(payload) => {
-                // A panic inside Loro may have poisoned another lock, which
-                // would make this panic too; keep the original panic.
-                let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    self.renew_txn_if_auto_commit(options)
-                }));
-                std::panic::resume_unwind(payload);
-            }
-        }
+        panic.run(|| self.renew_txn_if_auto_commit(options));
+        panic.resume();
+        result.unwrap()
     }
 
     pub fn new() -> Self {
@@ -359,20 +350,21 @@ impl LoroDoc {
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
     ) {
-        let mut callback_panic = None;
-        let ans = self.commit_internal_inner(config, preserve_on_empty, &mut callback_panic);
-        if let Some(payload) = callback_panic {
-            drop(ans);
-            std::panic::resume_unwind(payload);
+        let mut panic = DeferredPanic::default();
+        let ans = self.commit_internal_inner(config, preserve_on_empty, &mut panic);
+        if !panic.has_panic() {
+            return ans;
         }
-        ans
+        drop(ans);
+        panic.resume();
+        unreachable!("resume raises the deferred panic")
     }
 
     fn commit_internal_inner(
         &self,
         config: CommitOptions,
         preserve_on_empty: bool,
-        callback_panic: &mut Option<crate::txn::PanicPayload>,
+        panic: &mut DeferredPanic,
     ) -> (
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
@@ -408,11 +400,7 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let (options, panic) = txn.commit_deferring_callback_panic();
-            if panic.is_some() {
-                *callback_panic = panic;
-            }
-            let mut options = options.unwrap();
+            let mut options = txn.commit_deferring_panic(panic).unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit

@@ -1,6 +1,7 @@
 //! Re-parsing a change block must not copy its text or list values into a
 //! doc-wide store again (zeronsh/zeron#905). See `context/text-arena-growth.md`.
 
+use super::exchange;
 use crate::{
     cursor::PosType, loro::ExportMode, op::InnerContent, version::Frontiers, LoroDoc, LoroValue,
     ToJson,
@@ -59,10 +60,7 @@ fn checkout_text_from_reparsed_blocks_matches_replay() {
         doc.commit_then_renew();
         doc.export(ExportMode::Snapshot).unwrap();
         if i % 4 == 3 {
-            a.import(&b.export(ExportMode::all_updates()).unwrap())
-                .unwrap();
-            b.import(&a.export(ExportMode::all_updates()).unwrap())
-                .unwrap();
+            exchange(&a, &b);
         }
         versions.push(doc.oplog_frontiers());
     }
@@ -164,10 +162,7 @@ fn checkout_list_values_from_reparsed_blocks_matches_replay() {
         doc.commit_then_renew();
         doc.export(ExportMode::Snapshot).unwrap();
         if i % 4 == 3 {
-            a.import(&b.export(ExportMode::all_updates()).unwrap())
-                .unwrap();
-            b.import(&a.export(ExportMode::all_updates()).unwrap())
-                .unwrap();
+            exchange(&a, &b);
         }
         versions.push(doc.oplog_frontiers());
     }

@@ -663,6 +663,10 @@ impl DeferredPanic {
         }
     }
 
+    pub fn has_panic(&self) -> bool {
+        self.0.is_some()
+    }
+
     pub fn resume(self) {
         if let Some(payload) = self.0 {
             std::panic::resume_unwind(payload);

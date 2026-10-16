@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use append_only_bytes::BytesSlice;
 
-use crate::container::richtext::{richtext_state::unicode_to_utf8_index, RichtextChunk};
+use crate::{
+    container::richtext::{richtext_state::unicode_to_utf8_index, RichtextChunk},
+    utils::string_slice::unicode_range_to_byte_range,
+};
 
 /// Non-ASCII op text is cut into pieces of at most this many bytes, so that
 /// finding a unicode offset inside a piece scans at most this many bytes.
@@ -111,10 +114,8 @@ impl TrackerTexts {
             } else if piece.len() == piece_len {
                 piece.slice_clone(from..to)
             } else {
-                let s = as_str(piece);
-                piece.slice_clone(
-                    unicode_to_utf8_index(s, from).unwrap()..unicode_to_utf8_index(s, to).unwrap(),
-                )
+                let (from, to) = unicode_range_to_byte_range(as_str(piece), from, to);
+                piece.slice_clone(from..to)
             };
 
             let offset = (cur - range.start) as usize;

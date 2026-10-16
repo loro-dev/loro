@@ -778,8 +778,38 @@ struct ListTracker {
 }
 
 impl ListTracker {
-    fn new(tracker: RichtextTracker, values: TrackerValues) -> Self {
-        Self { tracker, values }
+    /// Reseeds the tracker; the value table keeps its capacity.
+    fn reset(&mut self) {
+        self.tracker = RichtextTracker::new_with_unknown();
+        self.values.clear();
+    }
+
+    #[inline(never)]
+    fn apply_op(&mut self, op: &crate::op::RichOp<'_>) {
+        match &op.op().content {
+            crate::op::InnerContent::List(l) => match l {
+                InnerListOp::Insert { slice, pos } => {
+                    // Record only what the tracker has not applied yet: a
+                    // checkout can replay ops the tracker already has.
+                    let values = &mut self.values;
+                    self.tracker
+                        .insert_with(op.id_full(), *pos, slice.len(), |skip| {
+                            RichtextChunk::new_text(values.push(slice.slice(skip, slice.len())))
+                        });
+                }
+                InnerListOp::Delete(del) => {
+                    self.tracker.delete(
+                        op.id_start(),
+                        del.id_start,
+                        del.start() as usize,
+                        del.atom_len(),
+                        del.is_reversed(),
+                    );
+                }
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -813,69 +843,27 @@ impl ListDiffCalculator {
         self.source_not_in_op_context = true;
     }
 
-    #[inline(never)]
-    fn apply_op_to_tracker(
-        tracker: &mut RichtextTracker,
-        values: &mut TrackerValues,
-        op: &crate::op::RichOp<'_>,
-    ) {
-        match &op.op().content {
-            crate::op::InnerContent::List(l) => match l {
-                InnerListOp::Insert { slice, pos } => {
-                    // Record only what the tracker has not applied yet: a
-                    // checkout can replay ops the tracker already has.
-                    tracker.insert_with(op.id_full(), *pos, slice.len(), |skip| {
-                        let range = if skip == 0 {
-                            values.push(slice)
-                        } else {
-                            values.push(&slice.slice(skip, slice.len()))
-                        };
-                        RichtextChunk::new_text(range)
-                    });
-                }
-                InnerListOp::Delete(del) => {
-                    tracker.delete(
-                        op.id_start(),
-                        del.id_start,
-                        del.start() as usize,
-                        del.atom_len(),
-                        del.is_reversed(),
-                    );
-                }
-                _ => unreachable!(),
-            },
-            _ => unreachable!(),
-        }
-    }
-
     #[cold]
     #[inline(never)]
-    fn build_full_tracker(
-        idx: ContainerIdx,
-        oplog: &OpLog,
-        vv: &VersionVector,
-    ) -> (RichtextTracker, TrackerValues) {
+    fn build_full_tracker(idx: ContainerIdx, oplog: &OpLog, vv: &VersionVector) -> ListTracker {
         struct ListRebuildVisitor<'a> {
-            tracker: &'a mut RichtextTracker,
-            values: &'a mut TrackerValues,
+            tracker: &'a mut ListTracker,
         }
 
         impl RebuildOpVisitor for ListRebuildVisitor<'_> {
             fn visit(&mut self, vv: &VersionVector, op: RichOp<'_>) {
                 self.tracker.checkout(vv);
-                ListDiffCalculator::apply_op_to_tracker(self.tracker, self.values, &op);
+                self.tracker.apply_op(&op);
             }
         }
 
-        let mut tracker = RichtextTracker::new_with_unknown();
-        let mut values = TrackerValues::default();
+        let mut tracker = ListTracker::default();
         let mut visitor = ListRebuildVisitor {
             tracker: &mut tracker,
-            values: &mut values,
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
-        (tracker, values)
+        tracker
     }
 }
 
@@ -908,8 +896,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
         self.source_not_in_op_context = false;
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
-            *self.tracker =
-                ListTracker::new(RichtextTracker::new_with_unknown(), Default::default());
+            self.tracker.reset();
             self.start_vv = vv.clone();
         }
 
@@ -926,8 +913,7 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             self.tracker.checkout(vv);
         }
 
-        let ListTracker { tracker, values } = &mut *self.tracker;
-        Self::apply_op_to_tracker(tracker, values, &op);
+        self.tracker.apply_op(&op);
     }
 
     fn finish_this_round(&mut self) {}
@@ -962,9 +948,9 @@ impl DiffCalculatorTrait for ListDiffCalculator {
             FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
-            let (mut full_tracker, full_values) = Self::build_full_tracker(idx, oplog, &merged);
+            let mut full_tracker = Self::build_full_tracker(idx, oplog, &merged);
             let diff_items = full_tracker.diff(info.from_vv, info.to_vv).collect_vec();
-            *self.tracker = ListTracker::new(full_tracker, full_values);
+            *self.tracker = full_tracker;
             diff_items
         } else {
             self.tracker.diff(info.from_vv, info.to_vv).collect_vec()
@@ -2013,8 +1999,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
     fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         self.list.source_not_in_op_context = false;
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
-            *self.list.tracker =
-                ListTracker::new(RichtextTracker::new_with_unknown(), Default::default());
+            self.list.tracker.reset();
             self.list.start_vv = vv.clone();
         }
 
@@ -2039,9 +2024,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         match l {
             InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
-                for i in 0..slice.atom_len() {
+                for (i, value) in slice.as_slice().iter().enumerate() {
                     let id = op_id.inc(i as Counter);
-                    let value = &slice.as_slice()[i];
 
                     self.inner.changed_elements.insert(
                         id.compact(),
@@ -2113,10 +2097,8 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             if let Some(vv) = vv {
                 self.list.tracker.checkout(vv);
             }
-            let ListTracker { tracker, values } = &mut *self.list.tracker;
             Self::apply_op_to_tracker(
-                tracker,
-                values,
+                &mut self.list.tracker,
                 &mut self.inner.move_id_to_elem_id,
                 oplog,
                 &op,
@@ -2283,8 +2265,7 @@ impl MovableListDiffCalculator {
     }
 
     fn apply_op_to_tracker(
-        tracker: &mut RichtextTracker,
-        values: &mut TrackerValues,
+        tracker: &mut ListTracker,
         move_id_to_elem_id: &mut FxHashMap<ID, IdLp>,
         oplog: &OpLog,
         op: &RichOp<'_>,
@@ -2293,9 +2274,7 @@ impl MovableListDiffCalculator {
         let real_op = op.op();
         match &real_op.content {
             InnerContent::List(l) => match l {
-                InnerListOp::Insert { .. } | InnerListOp::Delete(_) => {
-                    ListDiffCalculator::apply_op_to_tracker(tracker, values, op);
-                }
+                InnerListOp::Insert { .. } | InnerListOp::Delete(_) => tracker.apply_op(op),
                 InnerListOp::Move { from, elem_id, to } => {
                     move_id_to_elem_id.insert(op.id(), *elem_id);
                     if !tracker.current_vv().includes_id(op.id()) {
@@ -2328,8 +2307,7 @@ impl MovableListDiffCalculator {
     fn rebuild_full_tracker(&mut self, idx: ContainerIdx, oplog: &OpLog, vv: &VersionVector) {
         struct MovableListRebuildVisitor<'a> {
             oplog: &'a OpLog,
-            tracker: &'a mut RichtextTracker,
-            values: &'a mut TrackerValues,
+            tracker: &'a mut ListTracker,
             move_id_to_elem_id: &'a mut FxHashMap<ID, IdLp>,
         }
 
@@ -2338,7 +2316,6 @@ impl MovableListDiffCalculator {
                 self.tracker.checkout(vv);
                 MovableListDiffCalculator::apply_op_to_tracker(
                     self.tracker,
-                    self.values,
                     self.move_id_to_elem_id,
                     self.oplog,
                     &op,
@@ -2347,18 +2324,16 @@ impl MovableListDiffCalculator {
             }
         }
 
-        let mut tracker = RichtextTracker::new_with_unknown();
-        let mut values = TrackerValues::default();
+        let mut tracker = ListTracker::default();
         let mut move_id_to_elem_id = FxHashMap::default();
         let mut visitor = MovableListRebuildVisitor {
             oplog,
             tracker: &mut tracker,
-            values: &mut values,
             move_id_to_elem_id: &mut move_id_to_elem_id,
         };
         replay_container_ops_from_empty(idx, oplog, vv, &mut visitor);
 
-        *self.list.tracker = ListTracker::new(tracker, values);
+        *self.list.tracker = tracker;
         self.inner.move_id_to_elem_id = move_id_to_elem_id;
     }
 }

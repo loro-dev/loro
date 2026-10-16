@@ -91,32 +91,14 @@ impl Tracker {
         &self.current_vv
     }
 
-    pub(crate) fn insert(&mut self, mut op_id: IdFull, mut pos: usize, mut content: RichtextChunk) {
-        // trace!(
-        //     "TrackerInsert op_id = {:#?}, pos = {:#?}, content = {:#?}",
-        //     op_id,
-        //     &pos,
-        //     &content
-        // );
-        // tracing::span!(tracing::Level::INFO, "TrackerInsert");
-        if let ControlFlow::Break(_) =
-            self.skip_applied(op_id.id(), content.len(), |applied_counter_end| {
-                // the op is partially included, need to slice the content
-                let start = (applied_counter_end - op_id.counter) as usize;
-                op_id.lamport += (applied_counter_end - op_id.counter) as Lamport;
-                op_id.counter = applied_counter_end;
-                pos += start;
-                content = content.slice(start..);
-            })
-        {
-            return;
-        }
-
-        // {
-        //     tracing::span!(tracing::Level::INFO, "before insert {} pos={}", op_id, pos);
-        //     debug_log::debug_dbg!(&self);
-        // }
-        self._insert(pos, content, op_id);
+    pub(crate) fn insert(&mut self, op_id: IdFull, pos: usize, content: RichtextChunk) {
+        self.insert_with(op_id, pos, content.len(), |skip| {
+            if skip == 0 {
+                content
+            } else {
+                content.slice(skip..)
+            }
+        });
     }
 
     /// [`Self::insert`] for an op of `len` atoms whose content is built by
