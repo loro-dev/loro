@@ -798,6 +798,13 @@ impl std::ops::DerefMut for ListTracker {
 }
 
 impl ListDiffCalculator {
+    /// Test-only: how many values the value table holds, to pin that
+    /// re-replayed inserts do not grow it.
+    #[cfg(test)]
+    pub(crate) fn tracked_values_len(&self) -> usize {
+        self.tracker.values.len()
+    }
+
     pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
         self.tracker.get_target_id_latest_index_at_new_version(id)
     }
@@ -815,11 +822,16 @@ impl ListDiffCalculator {
         match &op.op().content {
             crate::op::InnerContent::List(l) => match l {
                 InnerListOp::Insert { slice, pos } => {
-                    tracker.insert(
-                        op.id_full(),
-                        *pos,
-                        RichtextChunk::new_text(values.push(slice)),
-                    );
+                    // Record only what the tracker has not applied yet: a
+                    // checkout can replay ops the tracker already has.
+                    tracker.insert_with(op.id_full(), *pos, slice.len(), |skip| {
+                        let range = if skip == 0 {
+                            values.push(slice)
+                        } else {
+                            values.push(&slice.slice(skip, slice.len()))
+                        };
+                        RichtextChunk::new_text(range)
+                    });
                 }
                 InnerListOp::Delete(del) => {
                     tracker.delete(
@@ -868,6 +880,11 @@ impl ListDiffCalculator {
 }
 
 impl MovableListDiffCalculator {
+    #[cfg(test)]
+    pub(crate) fn tracked_values_len(&self) -> usize {
+        self.list.tracked_values_len()
+    }
+
     pub(crate) fn get_id_latest_pos(&self, id: ID) -> Option<crate::cursor::AbsolutePosition> {
         self.list
             .tracker
@@ -1122,6 +1139,16 @@ impl RichtextDiffCalculator {
         }
     }
 
+    /// Test-only: how many chars the text table holds, to pin that
+    /// re-replayed inserts do not grow it.
+    #[cfg(test)]
+    pub(crate) fn tracked_text_len(&self) -> usize {
+        match &*self.mode {
+            RichtextCalcMode::Crdt { texts, .. } => texts.len(),
+            RichtextCalcMode::Linear { .. } => unreachable!(),
+        }
+    }
+
     /// Test-only: the ids of the style table's entries, to pin that
     /// re-replayed style ops do not grow the table.
     #[cfg(test)]
@@ -1232,11 +1259,11 @@ impl RichtextDiffCalculator {
                     pos,
                 } => {
                     let pos = Self::shallow_clamped_tracker_pos(oplog, tracker, *pos as usize);
-                    tracker.insert(
-                        op.id_full(),
-                        pos,
-                        RichtextChunk::new_text(texts.push(slice, *len)),
-                    );
+                    // Record only what the tracker has not applied yet: a
+                    // checkout can replay ops the tracker already has.
+                    tracker.insert_with(op.id_full(), pos, *len as usize, |skip| {
+                        RichtextChunk::new_text(texts.push_from(slice, *len, skip))
+                    });
                 }
                 InnerListOp::Delete(del) => {
                     let is_shallow = !oplog.shallow_since_vv().is_empty();

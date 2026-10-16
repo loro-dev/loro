@@ -119,6 +119,34 @@ impl Tracker {
         self._insert(pos, content, op_id);
     }
 
+    /// [`Self::insert`] for an op of `len` atoms whose content is built by
+    /// `content(skip)` for the part after its first `skip` atoms, which the
+    /// tracker has not applied yet. `content` is not called when the whole op
+    /// was applied. A caller that records the content elsewhere (the diff
+    /// calculators' text and value tables) then records each atom once,
+    /// however often a checkout replays the op.
+    pub(crate) fn insert_with(
+        &mut self,
+        mut op_id: IdFull,
+        mut pos: usize,
+        len: usize,
+        content: impl FnOnce(usize) -> RichtextChunk,
+    ) {
+        let mut skip = 0;
+        if let ControlFlow::Break(_) = self.skip_applied(op_id.id(), len, |applied_counter_end| {
+            skip = (applied_counter_end - op_id.counter) as usize;
+        }) {
+            return;
+        }
+
+        op_id.lamport += skip as Lamport;
+        op_id.counter += skip as Counter;
+        pos += skip;
+        let content = content(skip);
+        debug_assert_eq!(content.len(), len - skip);
+        self._insert(pos, content, op_id);
+    }
+
     fn _insert(&mut self, pos: usize, content: RichtextChunk, op_id: IdFull) {
         self._insert_inner(pos, content, op_id, true);
     }
@@ -734,6 +762,27 @@ mod test {
         let v = vv!(1 => 2, 2 => 2);
         t.checkout(&v);
         assert_eq!(&t.applied_vv, &v);
+        assert_eq!(t.rope.len(), 4);
+    }
+
+    /// A re-replayed op whose prefix the tracker has gets content built only
+    /// for the rest; a fully applied one gets none built.
+    #[test]
+    fn insert_with_builds_content_only_for_the_unapplied_suffix() {
+        let mut t = Tracker::new();
+        t.insert(IdFull::new(1, 0, 0), 0, RichtextChunk::new_text(0..2));
+
+        let mut skipped = None;
+        t.insert_with(IdFull::new(1, 0, 0), 0, 4, |skip| {
+            skipped = Some(skip);
+            RichtextChunk::new_text(10..12)
+        });
+        assert_eq!(skipped, Some(2));
+        assert_eq!(t.rope.len(), 4);
+
+        t.insert_with(IdFull::new(1, 0, 0), 0, 4, |_| {
+            panic!("a fully applied op must not build content")
+        });
         assert_eq!(t.rope.len(), 4);
     }
 

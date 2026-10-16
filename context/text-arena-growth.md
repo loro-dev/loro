@@ -53,6 +53,11 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
   `ListTracker`). Both are per-calculator tables of the ops' own slices. They
   live and are reset with their tracker, like `styles`. Long non-ASCII op texts
   are cut into pieces, so a lookup scans at most `MAX_PIECE_BYTES`.
+- A table records an insert through `Tracker::insert_with`, which builds the
+  content only for the part of the op the tracker has not applied
+  (`skip_applied`). A checkout that replays ops the persisted tracker already
+  has used to record them again on every step, growing the tables and using up
+  their `u32` index space (`persisted_walks_record_each_*_once`).
 - Local text ops (`SharedArena::convert_raw_op`) and JSON text imports still
   allocate in the string arena. That cost is linear in the text written or
   imported.

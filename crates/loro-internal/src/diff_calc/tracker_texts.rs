@@ -29,6 +29,26 @@ impl TrackerTexts {
         self.len = 0;
     }
 
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Records the chars of `text` (`unicode_len` of them) after the first
+    /// `skip`, and returns their range.
+    pub fn push_from(&mut self, text: &BytesSlice, unicode_len: u32, skip: usize) -> Range<u32> {
+        if skip == 0 {
+            return self.push(text, unicode_len);
+        }
+
+        let byte = if text.len() == unicode_len as usize {
+            skip
+        } else {
+            unicode_to_utf8_index(as_str(text), skip).expect("skip is within the op text")
+        };
+        self.push(&text.slice_clone(byte..), unicode_len - skip as u32)
+    }
+
     /// Records the `unicode_len` chars of `text` and returns their range.
     pub fn push(&mut self, text: &BytesSlice, unicode_len: u32) -> Range<u32> {
         let start = self.len;
@@ -156,5 +176,19 @@ mod test {
             vec![(0, "lo".to_string()), (2, "文字".to_string())]
         );
         assert!(collect(&texts, 4..4).is_empty());
+    }
+
+    #[test]
+    fn push_from_records_only_the_suffix() {
+        let mut texts = TrackerTexts::default();
+        let ascii = BytesSlice::from_bytes("abcd".as_bytes());
+        assert_eq!(texts.push_from(&ascii, 4, 1), 0..3);
+        let wide = BytesSlice::from_bytes("文字😀x".as_bytes());
+        assert_eq!(texts.push_from(&wide, 4, 2), 3..5);
+        assert_eq!(
+            collect(&texts, 0..5),
+            vec![(0, "bcd".to_string()), (3, "😀x".to_string())]
+        );
+        assert_eq!(texts.push_from(&ascii, 4, 0), 5..9);
     }
 }

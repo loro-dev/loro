@@ -44,6 +44,11 @@ impl TrackerValues {
         start..end
     }
 
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
     fn entry_end(&self, i: usize) -> u32 {
         self.starts.get(i + 1).copied().unwrap_or(self.len)
     }
