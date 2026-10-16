@@ -2831,6 +2831,7 @@ export class LoroTree<
 > extends LoroContainer {
   readonly _nodes = new Map<string, TreeNodeRecord>();
   readonly _children = new Map<string, OrderedIndex<TreeNodeRecord>>();
+  _moves: import("./tree-moves").TreeMoves | undefined;
   _fractionalIndexEnabled = true;
 
   kind(): "Tree" {
@@ -3167,6 +3168,7 @@ export class LoroTree<
   _reset(): void {
     this._nodes.clear();
     this._children.clear();
+    this._moves = undefined;
   }
 
   private _childrenIndex(parent: CodecId | undefined): OrderedIndex<TreeNodeRecord> {
