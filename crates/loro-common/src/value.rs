@@ -509,45 +509,52 @@ impl TryFrom<LoroValue> for ContainerID {
 
 impl Hash for LoroValue {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        std::mem::discriminant(self).hash(state);
-        match self {
-            LoroValue::Null => {}
-            LoroValue::Bool(v) => {
-                state.write_u8(*v as u8);
-            }
-            LoroValue::Double(v) => {
-                let normalized = if v.is_nan() {
-                    f64::NAN
-                } else if *v == 0.0 {
-                    0.0
-                } else {
-                    *v
-                };
-                state.write_u64(normalized.to_bits());
-            }
-            LoroValue::I64(v) => {
-                state.write_i64(*v);
-            }
-            LoroValue::Binary(v) => {
-                v.hash(state);
-            }
-            LoroValue::String(v) => {
-                v.hash(state);
-            }
-            LoroValue::List(v) => {
-                v.hash(state);
-            }
-            LoroValue::Map(v) => {
-                state.write_usize(v.len());
-                let mut entries: Vec<_> = v.iter().collect();
-                entries.sort_unstable_by_key(|(k, _)| *k);
-                for (k, v) in entries {
-                    k.hash(state);
-                    v.hash(state);
+        enum Task<'a> {
+            Value(&'a LoroValue),
+            Entry(&'a str, &'a LoroValue),
+        }
+        let mut pending = vec![Task::Value(self)];
+        while let Some(task) = pending.pop() {
+            let value = match task {
+                Task::Value(value) => value,
+                Task::Entry(key, value) => {
+                    key.hash(state);
+                    value
                 }
-            }
-            LoroValue::Container(v) => {
-                v.hash(state);
+            };
+            std::mem::discriminant(value).hash(state);
+            match value {
+                LoroValue::Null => {}
+                LoroValue::Bool(v) => state.write_u8(*v as u8),
+                LoroValue::Double(v) => {
+                    let normalized = if v.is_nan() {
+                        f64::NAN
+                    } else if *v == 0.0 {
+                        0.0
+                    } else {
+                        *v
+                    };
+                    state.write_u64(normalized.to_bits());
+                }
+                LoroValue::I64(v) => state.write_i64(*v),
+                LoroValue::Binary(v) => v.hash(state),
+                LoroValue::String(v) => v.hash(state),
+                LoroValue::Container(v) => v.hash(state),
+                LoroValue::List(v) => {
+                    state.write_usize(v.len());
+                    pending.extend(v.iter().rev().map(Task::Value));
+                }
+                LoroValue::Map(v) => {
+                    state.write_usize(v.len());
+                    let mut entries: Vec<_> = v.iter().collect();
+                    entries.sort_unstable_by_key(|(key, _)| *key);
+                    pending.extend(
+                        entries
+                            .into_iter()
+                            .rev()
+                            .map(|(key, value)| Task::Entry(key, value)),
+                    );
+                }
             }
         }
     }
@@ -1174,6 +1181,37 @@ mod stack_safety_tests {
         let shared = list.clone();
         let arc = list.into_arc();
         assert!(Arc::ptr_eq(&arc, &shared.into_arc()));
+    }
+
+    #[test]
+    fn iterative_hash_keeps_list_prefixes_and_float_equality() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
+        let list = LoroValue::List(vec![true.into(), 42.into(), "value".into()].into());
+        let mut expected = DefaultHasher::new();
+        std::mem::discriminant(&list).hash(&mut expected);
+        list.as_list().unwrap().hash(&mut expected);
+        let hash = |value: &LoroValue| {
+            let mut hasher = DefaultHasher::new();
+            value.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&list), expected.finish());
+        assert_eq!(hash(&(-0.0).into()), hash(&0.0.into()));
+        assert_eq!(
+            hash(&f64::NAN.into()),
+            hash(&f64::from_bits(0x7ff8000000000001).into())
+        );
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || {
+                let value = nested(100_000);
+                assert_eq!(hash(&value), hash(&value.clone()));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

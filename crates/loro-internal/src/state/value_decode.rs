@@ -72,11 +72,20 @@ impl Frame {
 
 /// Read a bare postcard map/list followed by the remaining state metadata.
 pub(super) fn decode_collection(mut bytes: &[u8], is_map: bool) -> LoroResult<(LoroValue, &[u8])> {
-    let mut stack = vec![Frame::new(read(&mut bytes)?, is_map)];
+    let root = Frame::new(read(&mut bytes)?, is_map);
+    decode(bytes, Some(root))
+}
+
+/// Read one enum-tagged value embedded in an internal binary field.
+pub(super) fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+    decode(bytes, None)
+}
+
+fn decode(mut bytes: &[u8], root: Option<Frame>) -> LoroResult<(LoroValue, &[u8])> {
+    let mut stack: Vec<_> = root.into_iter().collect();
     loop {
-        let frame = stack.last_mut().unwrap();
-        if frame.left == 0 {
-            let value = stack.pop().unwrap().into_value();
+        if let Some(frame) = stack.pop_if(|frame| frame.left == 0) {
+            let value = frame.into_value();
             if let Some(parent) = stack.last_mut() {
                 parent.push(value);
                 continue;
@@ -84,8 +93,10 @@ pub(super) fn decode_collection(mut bytes: &[u8], is_map: bool) -> LoroResult<(L
             return Ok((value, bytes));
         }
 
-        if matches!(frame.collection, Collection::Map(_)) {
-            frame.key = Some(read(&mut bytes)?);
+        if let Some(frame) = stack.last_mut() {
+            if matches!(frame.collection, Collection::Map(_)) {
+                frame.key = Some(read(&mut bytes)?);
+            }
         }
         let value = match read::<Header>(&mut bytes)? {
             Header::Null => LoroValue::Null,
@@ -104,8 +115,80 @@ pub(super) fn decode_collection(mut bytes: &[u8], is_map: bool) -> LoroResult<(L
                 continue;
             }
         };
-        frame.push(value);
+        if let Some(frame) = stack.last_mut() {
+            frame.push(value);
+        } else {
+            return Ok((value, bytes));
+        }
     }
+}
+
+/// Write the same postcard enum layout without recursing through child values.
+pub(super) fn encode_value<W: std::io::Write>(
+    value: &LoroValue,
+    mut writer: W,
+) -> postcard::Result<()> {
+    enum Task<'a> {
+        Value(&'a LoroValue),
+        Key(&'a str),
+    }
+    let mut pending = vec![Task::Value(value)];
+    while let Some(task) = pending.pop() {
+        let value = match task {
+            Task::Value(value) => value,
+            Task::Key(key) => {
+                postcard::to_io(key, &mut writer)?;
+                continue;
+            }
+        };
+        let tag: u32 = match value {
+            LoroValue::Null => 0,
+            LoroValue::Bool(_) => 1,
+            LoroValue::Double(_) => 2,
+            LoroValue::I64(_) => 3,
+            LoroValue::String(_) => 4,
+            LoroValue::List(_) => 5,
+            LoroValue::Map(_) => 6,
+            LoroValue::Container(_) => 7,
+            LoroValue::Binary(_) => 8,
+        };
+        postcard::to_io(&tag, &mut writer)?;
+        match value {
+            LoroValue::Null => {}
+            LoroValue::Bool(v) => {
+                postcard::to_io(v, &mut writer)?;
+            }
+            LoroValue::Double(v) => {
+                postcard::to_io(v, &mut writer)?;
+            }
+            LoroValue::I64(v) => {
+                postcard::to_io(v, &mut writer)?;
+            }
+            LoroValue::String(v) => {
+                postcard::to_io(&**v, &mut writer)?;
+            }
+            LoroValue::Container(v) => {
+                postcard::to_io(v, &mut writer)?;
+            }
+            LoroValue::Binary(v) => {
+                postcard::to_io(&**v, &mut writer)?;
+            }
+            LoroValue::List(v) => {
+                postcard::to_io(&v.len(), &mut writer)?;
+                pending.extend(v.iter().rev().map(Task::Value));
+            }
+            LoroValue::Map(v) => {
+                postcard::to_io(&v.len(), &mut writer)?;
+                let start = pending.len();
+                for (key, value) in v.iter() {
+                    pending.push(Task::Key(key));
+                    pending.push(Task::Value(value));
+                }
+                pending[start..].reverse();
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -127,6 +210,15 @@ mod tests {
             LoroValue::List(vec![1.into(), LoroValue::List(vec![].into())].into()),
             LoroValue::Map(vec![("key".into(), "value".into())].into()),
         ];
+        for value in &values {
+            let mut encoded = Vec::new();
+            encode_value(value, &mut encoded).unwrap();
+            assert_eq!(encoded, postcard::to_stdvec(value).unwrap());
+            encoded.extend([99, 100]);
+            let (decoded, rest) = decode_value(&encoded).unwrap();
+            assert_eq!(&decoded, value);
+            assert_eq!(rest, &[99, 100]);
+        }
         let mut bytes = postcard::to_stdvec(&values).unwrap();
         bytes.extend([99, 100]);
         let (decoded, rest) = decode_collection(&bytes, false).unwrap();

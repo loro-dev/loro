@@ -21,7 +21,7 @@ The general `Deserialize for LoroValue` in `loro-common/src/value.rs` uses a
 `DeserializeSeed` budget of 128 collection levels, shared down both map and list
 children. This protects non-snapshot serde callers without relying on the
 format's own limit. Binary snapshot reads use the iterative reader above and
-therefore continue supporting deeper existing values. Postcard represents custom
+therefore continue supporting deeper existing values, including rich-text mark values. Postcard represents custom
 serde errors as `SerdeDeCustom`; formats such as JSON retain the depth message.
 
 `LoroMapValue` and `LoroListValue` detach owned children and drop them using a
@@ -51,3 +51,29 @@ snapshot serializer. Tests read them on a 1 MiB native stack and in the packaged
 WASM build, walk the leaves iteratively, and actually free the values/documents.
 They also check state/oplog frontiers and lazy snapshot re-export. The fixture
 avoids requiring a large producer stack in the regression test itself.
+
+Rich-text `EncodedText::decode` in `state/richtext_state.rs` reads the unchanged
+three-field outer sequence and three-field `EncodedMark` sequences directly.
+Spans retain their existing columnar strategies; only each mark value goes
+through `value_decode::decode_value`. Both first state access and
+`redact_dead_style_values` use this path. `EncodedText::encode` uses the matching
+iterative value writer, so rewriting a dead style does not recursively serialize
+another, still-live deep style. A unit test compares the complete output bytes
+with the original serde-columnar serializer.
+
+The 20,000-level mark regression also exercises binary op export and rich-text
+style checks. `encoding/value.rs::ValueWriter::write_value_content` now uses
+heap tasks, retaining the original key-register traversal order. `LoroValue::hash`
+also uses heap tasks because style sets hash the full value when the decoded
+text state is materialized. It keeps list length prefixes, sorted map keys,
+normalized NaNs/zero and the existing scalar hashes. Neither change relaxes the
+external serde depth budget.
+
+`crates/loro/tests/deep_mark_snapshot.rs` constructs and exports marks at depths
+129, 200 and 20,000 entirely on a 1 MiB stack, then reads snapshot, shallow and
+state-only round trips. Each source includes both a live deep mark and a deep
+mark whose text was deleted, forcing shallow redaction to decode both and
+rewrite the retained live value. It also covers remote binary updates, verifies
+the leaf and state/oplog frontiers, and edits/exports an unrelated map after
+reads. WASM `deep-mark.test.ts` covers 129-level marks and verifies that a rejected
+object JSON import still leaves its target usable.
