@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.17.0
+
+### Minor Changes
+
+- 4f60d92: Return decode errors when fallible history operations first read an unreadable change block, preserving document state instead of panicking during lazy DAG loading.
+
+  Keep attached imports atomic even after all DAG headers have been loaded: unparsed change-block bodies still require rollback protection. Share the existing version snapshot between rollback journals to avoid two extra copies of the version vector. Legacy infallible range readers continue skipping only the damaged block while recording the failure.
+
+  `state_vv` / `version`, JSON update export, cursor lookup, `apply_diff` rollback, shallow imports, and `fork_at` return `DecodeError` instead of panicking or wrapping the failure as `Unknown`. `state_vv` and `export_json_updates` now return `LoroResult`. `try_state_vv`, `try_export_json_updates`, and `try_get_cursor_pos` report the same failure. `CannotFindRelativePosition` is `#[non_exhaustive]` and gains `HistoryUnreadable`. `LoroEncodeError` gains `DecodeError`.
+
+  Rust compatibility: `ChangeTravelError` gains `HistoryUnreadable(LoroError)` and is now `#[non_exhaustive]`; downstream exhaustive matches must add a wildcard arm. `FrontiersNotIncluded` changes from a unit struct to a struct with a private field plus a same-named constant. Construction via that constant still compiles, but an exhaustive `match` of `Err(FrontiersNotIncluded)` does not (`E0004`): the `history_error: Some(_)` pattern cannot be written from another crate (`E0451`) because the field is private. Downstream must use `Err(_)`. An unreadable-history error is not equal to the `FrontiersNotIncluded` constant.
+
+### Patch Changes
+
+- a02843a: Fix quadratic local tree moves when interleaved with queries or failed edits on deleted containers by releasing the revivable deletion cache's table on invalidation.
+- a02843a: Preserve the full text style configuration, including the default for previously unused style keys, when calling `fork()` or `forkAt()`.
+- ca372b4: Reduce known-history comparison costs for snapshot-loaded documents while preserving peer-id reuse detection. Snapshot updates allocate only new history in the document arena and avoid cloning discarded changes.
+
+  Avoid unnecessary rollback scopes for detached Text imports while retaining validation of pending movable-list operations.
+
+  Keep import rollback decisions consistent across concurrent attach/detach, and fall back to ordinary history parsing when a cold-block comparison is ineligible.
+
+- 089a4e6: Stop the document's arenas from growing every time a change block is parsed again after an export. Streaming text with frequent exports made the string arena grow quadratically until offsets overflowed past 4 GiB and the export panicked (`append-only-bytes` `start <= end`), poisoning the document. List values grew the same way. Parsed blocks now keep their text and list values in buffers freed with them.
+
+  Keep pending changes when a snapshot is imported into a document that holds only pending changes; they were dropped before.
+
+- 3827945: Fix a 1.16.4 regression where history relayed through JSON was rejected with `UsedOpID`, without letting binary import treat those conversions as identical.
+
+  Binary `import`, `import_with`, fast updates, fast snapshots, and `import_batch` stay exact: overlapping op ids must be structurally identical, including finite doubles, large integers, binary versus a list, non-finite doubles versus null, marker strings versus containers, and unknown payloads. JSON import, and `import_with_history_mode` / `import_batch_with_history_mode` with `ImportHistoryMode::JsonLossy`, tolerate the conversions JSON is known to introduce: I64/I64 or I64/Double that match as f64 when at least one integer is outside `[-2^53, 2^53]`; binary versus a same-length list of byte numbers; non-finite doubles versus null; a container-marker string versus any Container; unknown payloads skipped. Finite doubles still use `==`. The receiver keeps its existing prefix values.
+
+  Finite doubles round-trip because `serde_json`'s `float_roundtrip` feature is enabled on the normal dependency. Counter deltas are integer-encoded only when the fraction is exactly 0, and a nonzero delta is applied on import even when it is smaller than `f64::EPSILON`. The JSON format is otherwise unchanged, and this does not restore values a JSON importer already dropped. Callers must opt in before a binary blob that carries those degraded values will import.
+
 ## 1.16.4
 
 ### Patch Changes
