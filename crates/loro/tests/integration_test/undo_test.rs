@@ -11,6 +11,138 @@ use loro_internal::{configure::StyleConfig, id::ID, loro::CommitOptions};
 use serde_json::json;
 use tracing::{debug_span, info_span};
 
+mod noop_history_boundaries {
+    use super::*;
+
+    fn send(from: &LoroDoc, to: &LoroDoc) -> LoroResult<()> {
+        to.import_with(&from.export(ExportMode::all_updates())?, "import")?;
+        Ok(())
+    }
+
+    fn pair() -> LoroResult<(LoroDoc, LoroDoc)> {
+        let a = LoroDoc::new();
+        a.set_peer_id(1)?;
+        a.get_movable_list("list").insert(0, 1)?;
+        a.get_movable_list("list").insert(1, 2)?;
+        a.commit();
+        let b = LoroDoc::new();
+        b.set_peer_id(2)?;
+        send(&a, &b)?;
+        Ok((a, b))
+    }
+
+    fn undo_keeps_earlier_item(parent: bool) -> LoroResult<()> {
+        let (a, b) = pair()?;
+        let mut undo = UndoManager::new(&a);
+        undo.set_merge_interval(0);
+        undo.add_exclude_origin_prefix("import");
+        if parent {
+            let child = a
+                .get_map("root")
+                .insert_container("prior", LoroMap::new())?;
+            child.insert("value", 42)?;
+        } else {
+            a.get_map("root").insert("prior", 42)?;
+        }
+        a.commit();
+        a.get_movable_list("list").insert(0, 0)?;
+        a.commit();
+        send(&a, &b)?;
+        // Identity-aware undo follows moved insertions. A remote deletion is
+        // still a genuine no-op and must consume only this history item.
+        b.get_movable_list("list").delete(0, 1)?;
+        b.commit();
+        send(&b, &a)?;
+
+        let before = a.get_deep_value();
+        let version = a.oplog_vv();
+        assert_eq!(undo.undo_count(), 2);
+        let changed = undo.undo()?;
+        assert_eq!(
+            a.get_deep_value(),
+            before,
+            "undo crossed into the earlier item"
+        );
+        assert!(!changed);
+        assert_eq!(a.oplog_vv(), version);
+        assert_eq!(undo.undo_count(), 1);
+        assert!(undo.can_undo());
+        assert_eq!(undo.redo_count(), 0);
+        assert_eq!(
+            a.get_movable_list("list").get_value().to_json_value(),
+            json!([1, 2])
+        );
+
+        // The earlier edit remains available and can still be undone and redone.
+        assert!(undo.undo()?);
+        assert!(a.get_map("root").get("prior").is_none());
+        assert!(!undo.can_undo());
+        assert!(undo.redo()?);
+        assert_eq!(a.get_deep_value(), before);
+        send(&a, &b)?;
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+        Ok(())
+    }
+
+    #[test]
+    fn undo_noop_keeps_earlier_map_edit() -> LoroResult<()> {
+        undo_keeps_earlier_item(false)
+    }
+
+    #[test]
+    fn undo_noop_keeps_earlier_parent_creation() -> LoroResult<()> {
+        undo_keeps_earlier_item(true)
+    }
+
+    #[test]
+    fn redo_noop_keeps_later_parent_creation() -> LoroResult<()> {
+        let (a, b) = pair()?;
+        let mut undo = UndoManager::new(&a);
+        undo.set_merge_interval(0);
+        undo.add_exclude_origin_prefix("import");
+        a.get_movable_list("list").mov(0, 1)?;
+        a.commit();
+        a.get_map("root")
+            .insert_container("parent", LoroMap::new())?;
+        a.commit();
+        assert!(undo.undo()?);
+        assert!(undo.undo()?);
+        assert_eq!(undo.redo_count(), 2);
+
+        send(&a, &b)?;
+        // The next redo moves the same identity. Deleting it remotely leaves
+        // that redo ineffective without touching the later parent creation.
+        b.get_movable_list("list").delete(0, 1)?;
+        b.commit();
+        send(&b, &a)?;
+        let before = a.get_deep_value();
+        let version = a.oplog_vv();
+        let changed = undo.redo()?;
+        assert_eq!(
+            a.get_deep_value(),
+            before,
+            "redo crossed into the later item"
+        );
+        assert!(!changed);
+        assert_eq!(a.oplog_vv(), version);
+        assert_eq!(undo.redo_count(), 1);
+        assert!(undo.can_redo());
+        assert_eq!(undo.undo_count(), 0);
+        assert_eq!(
+            a.get_movable_list("list").get_value().to_json_value(),
+            json!([2])
+        );
+        assert!(undo.redo()?);
+        assert!(a.get_map("root").get("parent").is_some());
+        assert!(!undo.can_redo());
+        assert!(undo.undo()?);
+        assert_eq!(a.get_deep_value(), before);
+        send(&a, &b)?;
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+        Ok(())
+    }
+}
+
 #[test]
 fn basic_list_undo_insertion() -> Result<(), LoroError> {
     let doc = LoroDoc::new();
@@ -766,12 +898,19 @@ fn undo_text_collab_delete() -> LoroResult<()> {
     sync(&doc_a, &doc_b);
     doc_a.get_text("text").insert(0, "123!")?;
     undo.record_new_checkpoint()?;
-    for _ in 0..3 {
+    for round in 0..3 {
         assert_eq!(doc_a.get_text("text").to_string(), "123!A jumped");
         undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A jumped");
         undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "A ");
+        if round == 0 {
+            // The remotely deleted "fox " consumes its own no-op item once.
+            assert_eq!(undo.undo_count(), 2);
+            assert!(!undo.undo()?);
+            assert_eq!(doc_a.get_text("text").to_string(), "A ");
+            assert_eq!(undo.undo_count(), 1);
+        }
         undo.undo()?;
         assert_eq!(doc_a.get_text("text").to_string(), "");
         undo.redo()?;
@@ -1101,28 +1240,9 @@ fn undo_sub_sub_container() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// ┌────┐
-/// │"B" │
-/// └────┘
-///   ▲
-/// ┌─┴───────┐
-/// │bold "B" │
-/// └─────────┘
-///   ▲                Concurrent
-///   │                  Delete
-/// ┌─┴────────┐        ┌──────┐
-/// │"Hello B" │◀───────│ "B"  │
-/// └──────────┘        └──────┘
-///   ▲                     ▲
-///   │                     │
-/// ┌─┴──┐                  │
-/// │Undo│──────────────────┘
-/// └────┘
-///   ▲
-///   │
-/// ┌─┴──┐
-/// │Undo│
-/// └────┘
+/// Insert "B", mark it bold, then prepend "Hello ". After a remote deletion
+/// of "Hello ", the first undo consumes its no-op insertion. The next two
+/// calls remove the bold mark and "B", respectively.
 #[test]
 fn test_remote_merge_transform() -> LoroResult<()> {
     let doc_a = LoroDoc::new();
@@ -1146,7 +1266,7 @@ fn test_remote_merge_transform() -> LoroResult<()> {
     // Sync doc_a to doc_b
     sync(&doc_a, &doc_b);
 
-    // Concurrently delete "B" in doc_b
+    // Delete "Hello " in doc_b, making its insertion's inverse a no-op.
     let text_b = doc_b.get_text("text");
     text_b.delete(0, 6)?;
     sync(&doc_a, &doc_b);
@@ -1159,7 +1279,14 @@ fn test_remote_merge_transform() -> LoroResult<()> {
         ])
     );
 
-    undo_a.undo()?;
+    assert_eq!(undo_a.undo_count(), 3);
+    assert!(!undo_a.undo()?);
+    assert_eq!(undo_a.undo_count(), 2);
+    assert_eq!(
+        text_a.get_richtext_value().to_json_value(),
+        json!([{"insert": "B", "attributes": {"bold": true}}])
+    );
+    assert!(undo_a.undo()?);
     assert_eq!(
         text_a.get_richtext_value().to_json_value(),
         json!([
@@ -1216,7 +1343,12 @@ fn undo_tree_move() -> LoroResult<()> {
     undo.redo()?;
     assert_eq!(tree_a.get_value(), latest_value);
     // b
-    undo2.undo()?;
+    let before = tree_b.get_value();
+    // B's move lost the cycle resolution; consume it without deleting its root.
+    assert!(!undo2.undo()?);
+    assert_eq!(tree_b.get_value(), before);
+    assert_eq!(undo2.undo_count(), 1);
+    assert!(undo2.undo()?);
     let b_value = tree_b.get_value().as_list().unwrap().clone();
     assert_eq!(b_value.len(), 0);
     undo.undo()?;
@@ -1514,7 +1646,6 @@ fn undo_list_move() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[ignore]
 #[test]
 fn undo_collab_list_move() -> LoroResult<()> {
     let doc = LoroDoc::new();
@@ -1536,7 +1667,6 @@ fn undo_collab_list_move() -> LoroResult<()> {
     sync(&doc, &doc_b);
     assert_eq!(list.get_value().to_json_value(), json!(["1", "0", "2"]));
     undo.undo()?;
-    // FIXME: cannot infer move correctly for now
     assert_eq!(list.get_value().to_json_value(), json!(["0", "1", "2"]));
     Ok(())
 }

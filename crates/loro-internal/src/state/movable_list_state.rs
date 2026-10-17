@@ -884,7 +884,7 @@ impl MovableListState {
     /// Get the user index of elem
     ///
     /// If we cannot find the list item in the list, we will return None.
-    fn get_index_of_elem(&self, elem_id: CompactIdLp) -> Option<usize> {
+    pub(crate) fn get_index_of_elem(&self, elem_id: CompactIdLp) -> Option<usize> {
         let elem = self.inner.elements().get(&elem_id)?;
         self.inner.get_list_item_index(elem.pos, IndexType::ForUser)
     }

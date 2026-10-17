@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-09-30 (after #1134, #1152, #1153; third review of #1142; #1154).
+Verified against code 2026-10-17 (including identity-aware MovableList undo, #1185).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -101,15 +101,20 @@ merge interval, the step is every edit merged into it (loro-crdt's default is
 - The rejected step's own changes stay in the doc, so `undo_internal_with`
   returns them and `perform` composes them into the remote diff of the step's
   row: the steps before it are rebased over them like over remote changes.
-  That includes the limits of rebasing: if the rejected step moved an element
-  an earlier step inserted, undoing the earlier step finds nothing to do and
-  falls through to the step before it, exactly as after the same move by a
-  remote peer (`undo_after_a_rejected_move_matches_a_remote_move`).
+  MovableList insertion undo follows the inserted element's identity even if
+  a rejected step or a remote peer moved it
+  (`undo_after_a_rejected_move_matches_a_remote_move`).
+- A MovableList move undo/redo whose element was remotely deleted is a no-op
+  for that element; it does not try to recreate an unknown child. Other edits
+  of that accepted step can still apply
+  (`redo_move_of_deleted_unknown_does_not_recreate_it`).
 - Applying the rest of a rejected step would mean dropping the unknown inserts
   from the diff, and a wrongly predicted MovableList move would then delete an
   existing unknown element for good.
 - `ArgErr` is the rejection signal: `undo_internal` returns no other `ArgErr`.
-  Other `_apply_diff` errors of an accepted step are still only logged.
+  Other ordinary `_apply_diff` errors of an accepted step are still only
+  logged. The private MovableList identity plan fails fast on an unexpected
+  application error; see [movable-list-apply-diff.md](movable-list-apply-diff.md).
 
 `crates/loro/tests/unknown_container_twin_oracle.rs` checks undo against a twin
 with known containers, and that undoing everything leaves exactly the edits of
