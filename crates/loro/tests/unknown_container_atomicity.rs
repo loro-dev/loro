@@ -71,10 +71,19 @@ fn undo_of_deleting_a_list_holding_unknown_fails_without_changes() {
     assert_eq!(state(&doc).0, serde_json::json!({"m": {}, "t": "ab"}));
     // The mixed step would recreate U: rejected as a whole and dropped
     let before = state(&doc);
+    let redo_before = undo.redo_count();
+    let events = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let captured = events.clone();
+    let _sub = doc.subscribe_root(std::sync::Arc::new(move |_| {
+        captured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }));
     let err = undo.undo().unwrap_err();
     assert!(is_unknown_err(&err), "{err:?}");
     assert_eq!(state(&doc), before);
     assert_eq!(undo.undo_count(), 1);
+    assert_eq!(undo.redo_count(), redo_before);
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    assert_eq!(events.load(std::sync::atomic::Ordering::Relaxed), 0);
     // The next undo undoes the step before it, not two steps at once; the
     // text edit of the dropped step stays
     assert!(undo.undo().unwrap());
