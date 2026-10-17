@@ -18,6 +18,19 @@ returns `false`, generates no opposite-stack entry, and leaves other items for
 later calls. Callers must check `can_undo` / `can_redo` to decide whether history
 remains. The public Rust and WASM wrappers share this implementation.
 
+`loro-js/src/runtime/undo.ts`: `UndoManager.undo` and `redo` also consume one
+item. Their result is whether `#invert` produced an opposite-stack item, not
+whether an item was popped. An empty inverse returns `false` while preserving
+pop callbacks, tracked-range cleanup and the remaining history.
+
+`LoroDoc._subscribeUndo` in `loro-js/src/runtime/document.ts` also delivers
+local commits with empty state diffs to the manager, while public state
+subscriptions remain silent. Without this notification, a local MovableList
+insertion and deletion grouped into one item is never recorded, and undo
+instead consumes an earlier item. This is the `insert/delete undo (one peer)`
+differential profile, seed 2, step 33; changing the boolean return alone does
+not fix it. The subscription cleanup removes both listeners.
+
 This boundary rule does not change MovableList identity/anchor transformation,
 grouping, or error handling. In particular, it does not force an inverse that
 has become empty to delete a remotely moved element.
@@ -31,3 +44,6 @@ Regressions:
   `consecutive_noops_consume_one_item_and_notify_once` covers multiple no-ops
   and one pop callback per item.
 - `crates/loro-wasm/tests/undo.test.ts` covers the exposed JS methods.
+- `loro-js/tests/undo-noop.test.ts` covers no-op undo and redo return values,
+  unchanged versions/frontiers, pop callbacks, subsequent parent history and
+  notification cleanup when the manager is destroyed.
