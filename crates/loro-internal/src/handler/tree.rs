@@ -238,39 +238,31 @@ impl HandlerTrait for TreeHandler {
                 let new_inner = create_handler(a, self_id);
                 let ans = new_inner.into_tree().unwrap();
 
-                fn attach_nodes(
-                    source: &TreeHandler,
-                    target: &TreeHandler,
-                    txn: &mut Transaction,
-                    parent: TreeParentId,
-                    nodes: Vec<TreeNodeWithChildren>,
-                ) -> LoroResult<()> {
-                    for node in nodes {
-                        let real_id = target.create_with_txn(
-                            txn,
-                            parent,
-                            node.index,
-                            FiIfNotConfigured::UseJitterZero,
-                        )?;
-                        source.get_meta(node.id)?.attach(
-                            txn,
-                            target.inner.try_attached_state()?,
-                            real_id.associated_meta_container(),
-                        )?;
-                        attach_nodes(
-                            source,
-                            target,
-                            txn,
-                            TreeParentId::Node(real_id),
-                            node.children,
-                        )?;
-                    }
-
-                    Ok(())
+                let mut pending = self
+                    .get_all_hierarchy_nodes_under(TreeParentId::Root)
+                    .into_iter()
+                    .rev()
+                    .map(|node| (TreeParentId::Root, node))
+                    .collect::<Vec<_>>();
+                while let Some((parent, mut node)) = pending.pop() {
+                    let real_id = ans.create_with_txn(
+                        txn,
+                        parent,
+                        node.index,
+                        FiIfNotConfigured::UseJitterZero,
+                    )?;
+                    self.get_meta(node.id)?.attach(
+                        txn,
+                        ans.inner.try_attached_state()?,
+                        real_id.associated_meta_container(),
+                    )?;
+                    pending.extend(
+                        std::mem::take(&mut node.children)
+                            .into_iter()
+                            .rev()
+                            .map(|child| (TreeParentId::Node(real_id), child)),
+                    );
                 }
-
-                let tree_nodes = self.get_all_hierarchy_nodes_under(TreeParentId::Root);
-                attach_nodes(self, &ans, txn, TreeParentId::Root, tree_nodes)?;
                 Ok(ans)
             }
         }

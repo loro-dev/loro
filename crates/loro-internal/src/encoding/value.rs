@@ -1012,37 +1012,57 @@ impl ValueWriter {
         value: &LoroValue,
         registers: &mut dyn ValueEncodeRegister,
     ) -> (LoroValueKind, usize) {
-        match value {
-            LoroValue::Null => (LoroValueKind::Null, 0),
-            LoroValue::Bool(true) => (LoroValueKind::True, 0),
-            LoroValue::Bool(false) => (LoroValueKind::False, 0),
-            LoroValue::I64(value) => (LoroValueKind::I64, self.write_i64(*value)),
-            LoroValue::Double(value) => (LoroValueKind::F64, self.write_f64(*value)),
-            LoroValue::String(value) => (LoroValueKind::Str, self.write_str(value)),
-            LoroValue::List(value) => {
-                let mut len = self.write_usize(value.len());
-                for value in value.iter() {
-                    let l = self.write_value_type_and_content(value, registers);
-                    len += l;
-                }
-                (LoroValueKind::List, len)
-            }
-            LoroValue::Map(value) => {
-                let mut len = self.write_usize(value.len());
-                for (key, value) in value.iter() {
-                    let key_idx = registers.key_mut().register(&key.as_str().into());
-                    len += self.write_usize(key_idx);
-                    let l = self.write_value_type_and_content(value, registers);
-                    len += l;
-                }
-                (LoroValueKind::Map, len)
-            }
-            LoroValue::Binary(value) => (LoroValueKind::Binary, self.write_binary(value)),
-            LoroValue::Container(c) => (
-                LoroValueKind::ContainerType,
-                self.write_u8(c.container_type().to_u8()),
-            ),
+        enum Task<'a> {
+            Value(&'a LoroValue, bool),
+            Key(&'a str),
         }
+        let start = self.buffer.len();
+        let mut pending = vec![Task::Value(value, false)];
+        while let Some(task) = pending.pop() {
+            let (value, with_kind) = match task {
+                Task::Value(value, with_kind) => (value, with_kind),
+                Task::Key(key) => {
+                    let key_idx = registers.key_mut().register(&key.into());
+                    self.write_usize(key_idx);
+                    continue;
+                }
+            };
+            if with_kind {
+                self.write_u8(get_loro_value_kind(value).to_u8());
+            }
+            match value {
+                LoroValue::Null | LoroValue::Bool(_) => {}
+                LoroValue::I64(v) => {
+                    self.write_i64(*v);
+                }
+                LoroValue::Double(v) => {
+                    self.write_f64(*v);
+                }
+                LoroValue::String(v) => {
+                    self.write_str(v);
+                }
+                LoroValue::Binary(v) => {
+                    self.write_binary(v);
+                }
+                LoroValue::Container(c) => {
+                    self.write_u8(c.container_type().to_u8());
+                }
+                LoroValue::List(list) => {
+                    self.write_usize(list.len());
+                    pending.extend(list.iter().rev().map(|value| Task::Value(value, true)));
+                }
+                LoroValue::Map(map) => {
+                    self.write_usize(map.len());
+                    let start = pending.len();
+                    for (key, value) in map.iter() {
+                        pending.push(Task::Key(key));
+                        pending.push(Task::Value(value, true));
+                    }
+                    pending[start..].reverse();
+                }
+            }
+        }
+        (get_loro_value_kind(value), self.buffer.len() - start)
     }
 
     pub fn write_i64(&mut self, value: i64) -> usize {
