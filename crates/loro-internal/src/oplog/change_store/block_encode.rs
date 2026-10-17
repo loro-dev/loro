@@ -83,13 +83,15 @@ use tracing::info;
 use super::block_meta_encode::decode_changes_header;
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
+use crate::container::list::list_op::InnerListOp;
 use crate::container::tree::tree_op;
 use crate::encoding::arena::{ContainerArena, PositionArena};
 use crate::encoding::value_register::ValueRegister;
 use crate::encoding::{
-    self, decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+    self, decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
+    IterableEncodedDeleteStartId,
 };
-use crate::op::Op;
+use crate::op::{InnerContent, Op};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EncodedBlock<'a> {
@@ -182,13 +184,7 @@ pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
             let cid = arena.get_container_id(op.container).unwrap();
             let cidx = registers.cid_register.register(&cid);
             let prop = get_op_prop(op, &mut registers);
-            let value_kind = encode_op(
-                op,
-                arena,
-                &mut del_starts,
-                &mut value_writer,
-                &mut registers,
-            );
+            let value_kind = encode_op(op, &mut del_starts, &mut value_writer, &mut registers);
             encoded_ops.push(EncodedOp {
                 container_index: cidx as u32,
                 prop,
@@ -660,6 +656,8 @@ pub fn decode_block(
             .map(|x| x.as_container_id(&decode_arena))
             .try_collect()
     })?;
+    // Text values are substrings of `values`, so its length bounds the text.
+    let mut buffers = DecodedBlockBuffers::new(values.len());
     let mut value_reader = ValueReader::new(&values);
     let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(&ops)?;
     let op_iter = encoded_ops_iters.ops;
@@ -728,6 +726,9 @@ pub fn decode_block(
     let mut counter = first_counter as Counter;
     let mut change_index = 0;
     let peer = header.peer;
+    // Ops are pushed into their changes, which merges them, only after
+    // `buffers.finish` has filled their list values.
+    let mut decoded_ops: Vec<(usize, Op)> = Vec::new();
     for op in op_iter {
         let EncodedOp {
             container_index,
@@ -749,7 +750,7 @@ pub fn decode_block(
             cid,
             value,
             &mut del_iter,
-            shared_arena,
+            &mut buffers,
             &decode_arena,
             &positions,
             prop,
@@ -763,11 +764,10 @@ pub fn decode_block(
             content,
         };
 
-        changes
-            .get_mut(change_index)
-            .ok_or(LoroError::DecodeDataCorruptionError)?
-            .ops
-            .push(op);
+        if change_index >= changes.len() {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        decoded_ops.push((change_index, op));
         counter = counter
             .checked_add(len as Counter)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
@@ -778,6 +778,17 @@ pub fn decode_block(
         if counter >= *next_counter {
             change_index += 1;
         }
+    }
+    buffers.finish(
+        decoded_ops
+            .iter_mut()
+            .filter_map(|(_, op)| match &mut op.content {
+                InnerContent::List(InnerListOp::Insert { slice, .. }) => Some(slice),
+                _ => None,
+            }),
+    );
+    for (change_index, op) in decoded_ops {
+        changes[change_index].ops.push(op);
     }
     Ok(changes)
 }
@@ -807,6 +818,46 @@ mod test {
             }
             assert!(decode_block_range(&bytes).is_err());
         }
+    }
+
+    /// Blocks written by older versions or by loro.js can hold adjacent list
+    /// inserts that the current rules merge while decoding. A one-value insert
+    /// followed by a larger one used to merge with a slice whose values were not
+    /// decoded yet, and panicked (loro-dev/loro#1197 CI, loro.js differential).
+    #[test]
+    fn decode_block_with_unmerged_adjacent_list_inserts() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_list("list").insert(0, "a").unwrap();
+        doc.commit_then_renew();
+
+        let oplog = doc.oplog.lock();
+        let mut changes = Vec::new();
+        oplog
+            .change_store()
+            .visit_all_changes(&mut |change| changes.push(change.clone()));
+        assert_eq!(changes.len(), 1);
+        let mut change = changes.pop().unwrap();
+        let first = change.ops.vec()[0].clone();
+        let mut second = first.clone();
+        second.counter = 1;
+        second.content = InnerContent::List(InnerListOp::Insert {
+            slice: crate::op::ValueSlice::new(vec!["b".into(), "c".into()]),
+            pos: 1,
+        });
+        // Bypass `RleVec::push`, which would merge the two ops.
+        change.ops.vec_mut().push(second);
+        let bytes = encode_block(&[change], &oplog.arena);
+
+        let decoded = decode_block(&bytes, &oplog.arena, None).unwrap();
+        let mut values = Vec::new();
+        for op in decoded[0].ops.iter() {
+            let InnerContent::List(InnerListOp::Insert { slice, .. }) = &op.content else {
+                unreachable!()
+            };
+            values.extend_from_slice(slice.as_slice());
+        }
+        assert_eq!(values, vec!["a".into(), "b".into(), "c".into()]);
     }
 
     #[test]
@@ -894,9 +945,70 @@ mod test {
         }
     }
 
+    /// A list insert with several values and an out-of-range position must be
+    /// rejected. The error message formats the op, which read its values before
+    /// the block's value buffer was filled, and panicked under the op log lock
+    /// (loro-dev/loro#1197 review).
+    #[test]
+    fn invalid_position_of_multi_value_list_insert_is_rejected() {
+        for kind in [ContainerType::List, ContainerType::MovableList] {
+            let value_arena = ValueDecodeArena {
+                peers: &[1],
+                keys: &[],
+            };
+            let result = decode_op(
+                &ContainerID::new_root("list", kind),
+                Value::LoroValue(vec![1_i64, 2].into()),
+                &mut std::iter::empty(),
+                &mut DecodedBlockBuffers::new(0),
+                &value_arena,
+                &[],
+                -1,
+                ID::new(1, 0),
+            );
+            assert!(matches!(result, Err(LoroError::DecodeError(_))));
+        }
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let list = doc.get_list("list");
+        list.push(1).unwrap();
+        list.push(2).unwrap();
+        doc.commit_then_renew();
+        let block = {
+            let oplog = doc.oplog.lock();
+            let mut changes = Vec::new();
+            oplog
+                .change_store()
+                .visit_all_changes(&mut |change| changes.push(change.clone()));
+            let InnerContent::List(InnerListOp::Insert { slice, pos }) =
+                &mut changes[0].ops.vec_mut()[0].content
+            else {
+                unreachable!()
+            };
+            assert_eq!(slice.len(), 2);
+            *pos = usize::MAX;
+            encode_block(&changes, &oplog.arena)
+        };
+        let update = encoding::encode_with(encoding::EncodeMode::FastUpdates, &mut |ans| {
+            leb128::write::unsigned(ans, block.len() as u64).unwrap();
+            ans.extend_from_slice(&block);
+            Ok(())
+        })
+        .unwrap();
+
+        let target = LoroDoc::new_auto_commit();
+        assert!(target.import(&update).is_err());
+        target.get_list("list").push(3).unwrap();
+        target.commit_then_renew();
+        assert_eq!(
+            crate::ToJson::to_json(&target.get_deep_value()),
+            r#"{"list":[3]}"#
+        );
+    }
+
     #[test]
     fn tree_move_payload_is_rejected_without_panic() {
-        let arena = SharedArena::new();
         let value_arena = ValueDecodeArena {
             peers: &[1],
             keys: &[],
@@ -918,7 +1030,7 @@ mod test {
                 &cid,
                 value,
                 &mut deletes,
-                &arena,
+                &mut DecodedBlockBuffers::new(0),
                 &value_arena,
                 &[],
                 0,

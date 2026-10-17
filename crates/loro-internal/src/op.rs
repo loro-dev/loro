@@ -12,7 +12,7 @@ use enum_as_inner::EnumAsInner;
 use loro_common::{CompactIdLp, ContainerType, CounterSpan, IdFull, IdLp, IdSpan};
 use rle::{HasIndex, HasLength, Mergable, Sliceable};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, ops::Range};
+use std::{borrow::Cow, sync::Arc};
 
 mod content;
 pub use content::*;
@@ -289,10 +289,15 @@ impl<'a> RichOp<'a> {
         change: BlockChangeRef,
         span: CounterSpan,
     ) -> RichOpBlockIter {
+        // Start at the first op that reaches into `span`.
+        let op_index = change
+            .ops
+            .vec()
+            .partition_point(|op| op.counter + op.atom_len() as Counter <= span.start);
         RichOpBlockIter {
             change,
             span,
-            op_index: 0,
+            op_index,
         }
     }
 
@@ -366,14 +371,18 @@ impl Iterator for RichOpBlockIter {
     type Item = RichOp<'static>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let op = self.change.ops.get(self.op_index)?.clone();
+        // Clone only the ops that are returned: cloning a list insert clones its
+        // values' handle.
+        let (op, op_slice_start, op_slice_end) = loop {
+            let op = self.change.ops.get(self.op_index)?;
+            self.op_index += 1;
+            let op_slice_start = (self.span.start - op.counter).clamp(0, op.atom_len() as i32);
+            let op_slice_end = (self.span.end - op.counter).clamp(0, op.atom_len() as i32);
+            if op_slice_start != op_slice_end {
+                break (op.clone(), op_slice_start, op_slice_end);
+            }
+        };
         let op_offset_in_change = op.counter - self.change.id.counter;
-        let op_slice_start = (self.span.start - op.counter).clamp(0, op.atom_len() as i32);
-        let op_slice_end = (self.span.end - op.counter).clamp(0, op.atom_len() as i32);
-        self.op_index += 1;
-        if op_slice_start == op_slice_end {
-            return self.next();
-        }
 
         Some(RichOp {
             op: Cow::Owned(op),
@@ -405,85 +414,203 @@ impl<'a> ListSlice<'a> {
     }
 }
 
-#[repr(transparent)]
-#[derive(PartialEq, Eq, Debug, Clone, Serialize)]
-pub struct SliceRange(pub Range<u32>);
+/// The values of a list insert op.
+///
+/// The op owns them. They used to be a range in the doc-wide values arena,
+/// which never frees, so every parse of a change block appended its values to it
+/// again (`context/text-arena-growth.md`).
+#[derive(Clone)]
+pub struct ValueSlice(Repr);
 
-const UNKNOWN_START: u32 = u32::MAX / 2;
-impl SliceRange {
-    #[inline(always)]
-    pub fn is_unknown(&self) -> bool {
-        self.0.start == UNKNOWN_START
+#[derive(Clone)]
+enum Repr {
+    /// A single value, as most local inserts have. It needs no allocation.
+    One(LoroValue),
+    Shared {
+        values: Arc<Vec<LoroValue>>,
+        start: u32,
+        end: u32,
+    },
+}
+
+impl ValueSlice {
+    pub fn new(mut values: Vec<LoroValue>) -> Self {
+        if values.len() == 1 {
+            return Self::one(values.pop().unwrap());
+        }
+
+        let end = u32::try_from(values.len()).expect("too many values in one list op");
+        Self(Repr::Shared {
+            values: Arc::new(values),
+            start: 0,
+            end,
+        })
     }
 
-    #[inline(always)]
-    pub fn new_unknown(size: u32) -> Self {
-        Self(UNKNOWN_START..UNKNOWN_START + size)
+    pub(crate) fn one(value: LoroValue) -> Self {
+        Self(Repr::One(value))
     }
 
-    #[inline(always)]
-    pub fn new(range: Range<u32>) -> Self {
-        Self(range)
+    /// A slice of `buffer` that is not filled yet. See
+    /// `DecodedBlockBuffers::push_values`.
+    pub(crate) fn pending(buffer: &Arc<Vec<LoroValue>>, range: std::ops::Range<usize>) -> Self {
+        let end = u32::try_from(range.end).expect("too many values in one change block");
+        Self(Repr::Shared {
+            values: buffer.clone(),
+            start: range.start as u32,
+            end,
+        })
     }
 
-    #[inline(always)]
-    pub fn to_range(&self) -> Range<usize> {
-        self.0.start as usize..self.0.end as usize
+    /// Points this slice at `to` if it points at `from`.
+    pub(crate) fn replace_buffer(&mut self, from: &Arc<Vec<LoroValue>>, to: &Arc<Vec<LoroValue>>) {
+        if let Repr::Shared { values, .. } = &mut self.0 {
+            if Arc::ptr_eq(values, from) {
+                *values = to.clone();
+            }
+        }
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[LoroValue] {
+        match &self.0 {
+            Repr::One(value) => std::slice::from_ref(value),
+            Repr::Shared { values, start, end } => &values[*start as usize..*end as usize],
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        match &self.0 {
+            Repr::One(_) => 1,
+            Repr::Shared { start, end, .. } => (end - start) as usize,
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Whether `other` follows this slice in the same buffer.
+    fn is_followed_by(&self, other: &Self) -> bool {
+        matches!(
+            (&self.0, &other.0),
+            (
+                Repr::Shared { values, end, .. },
+                Repr::Shared { values: other_values, start, .. },
+            ) if Arc::ptr_eq(values, other_values) && end == start
+        )
+    }
+
+    /// Extends this slice by `other` if it follows this slice in the same buffer.
+    pub(crate) fn extend_if_adjacent(&mut self, other: &Self) -> bool {
+        if !self.is_followed_by(other) {
+            return false;
+        }
+        if let (Repr::Shared { end, .. }, Repr::Shared { end: other_end, .. }) =
+            (&mut self.0, &other.0)
+        {
+            *end = *other_end;
+        }
+        true
+    }
+
+    /// Whether this slice ends its buffer and is the buffer's only owner.
+    fn can_append(&self) -> bool {
+        match &self.0 {
+            Repr::One(_) => false,
+            Repr::Shared { values, end, .. } => {
+                *end as usize == values.len()
+                    && Arc::strong_count(values) == 1
+                    && Arc::weak_count(values) == 0
+            }
+        }
     }
 }
 
-impl From<Range<u32>> for SliceRange {
-    fn from(a: Range<u32>) -> Self {
-        SliceRange(a)
+impl PartialEq for ValueSlice {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_slice() == other.as_slice()
     }
 }
 
-impl HasLength for SliceRange {
+impl Eq for ValueSlice {}
+
+impl std::fmt::Debug for ValueSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            // A slice from `DecodedBlockBuffers::push_values` before `finish`:
+            // its values are not decoded yet. Decoding formats ops in errors
+            // (`check_positions`), so this must not read them.
+            Repr::Shared { values, start, end } if *end as usize > values.len() => f
+                .debug_struct("ValueSlice")
+                .field("pending", &(*start..*end))
+                .finish(),
+            _ => f.debug_tuple("ValueSlice").field(&self.as_slice()).finish(),
+        }
+    }
+}
+
+impl HasLength for ValueSlice {
     fn content_len(&self) -> usize {
-        self.0.len()
+        self.len()
     }
 }
 
-impl Sliceable for SliceRange {
+impl Sliceable for ValueSlice {
     fn slice(&self, from: usize, to: usize) -> Self {
-        if self.is_unknown() {
-            Self::new_unknown((to - from) as u32)
-        } else {
-            SliceRange(self.0.start + from as u32..self.0.start + to as u32)
+        assert!(from <= to && to <= self.len());
+        match &self.0 {
+            Repr::One(_) if from == 0 && to == 1 => self.clone(),
+            Repr::One(_) => Self::new(Vec::new()),
+            Repr::Shared { values, start, .. } => Self(Repr::Shared {
+                values: values.clone(),
+                start: start + from as u32,
+                end: start + to as u32,
+            }),
         }
     }
 }
 
-impl Mergable for SliceRange {
+impl Mergable for ValueSlice {
     fn merge(&mut self, other: &Self, _: &()) {
-        if self.is_unknown() {
-            self.0.end += other.0.end - other.0.start;
-        } else {
-            self.0.end = other.0.end;
+        if self.extend_if_adjacent(other) {
+            return;
         }
+
+        if self.can_append() {
+            let Repr::Shared { values, end, .. } = &mut self.0 else {
+                unreachable!()
+            };
+            let values = Arc::get_mut(values).unwrap();
+            values.extend_from_slice(other.as_slice());
+            *end = u32::try_from(values.len()).expect("too many values in one list op");
+            return;
+        }
+
+        // Copy only this slice, not the whole shared buffer. The merged slice
+        // owns its buffer, so later merges append to it.
+        let mut values = Vec::with_capacity((self.len() + other.len()).max(4));
+        values.extend_from_slice(self.as_slice());
+        values.extend_from_slice(other.as_slice());
+        *self = Self::new(values);
     }
 
+    /// Mergeable when the merge never copies this slice's shared buffer:
+    /// `other` follows it in one buffer (nothing is copied), this slice owns
+    /// the end of its buffer (`other` is appended to it), or this slice is a
+    /// single value (it and `other` are copied into a new buffer, which later
+    /// merges append to). Each value is copied once per op it is merged into.
     fn is_mergable(&self, other: &Self, _conf: &()) -> bool
     where
         Self: Sized,
     {
-        (self.is_unknown() && other.is_unknown()) || self.0.end == other.0.start
+        self.is_followed_by(other) || self.can_append() || matches!(self.0, Repr::One(_))
     }
 }
 
 impl ListSlice<'_> {
-    #[inline(always)]
-    pub fn unknown_range(len: usize) -> SliceRange {
-        let start = UNKNOWN_START;
-        let end = len as u32 + UNKNOWN_START;
-        SliceRange(start..end)
-    }
-
-    #[inline(always)]
-    pub fn is_unknown(range: &SliceRange) -> bool {
-        range.is_unknown()
-    }
-
     pub fn to_static(&self) -> ListSlice<'static> {
         match self {
             ListSlice::RawData(x) => ListSlice::RawData(Cow::Owned(x.to_vec())),
@@ -533,7 +660,7 @@ impl Mergable for ListSlice<'_> {
 
 #[derive(Debug, Clone)]
 pub struct SliceWithId {
-    pub values: Either<SliceRange, LoroValue>,
+    pub values: Either<ValueSlice, LoroValue>,
     /// This field is no-none when diff calculating movable list that need to handle_unknown
     pub elem_id: Option<CompactIdLp>,
     pub id: IdFull,
@@ -554,14 +681,15 @@ impl DeltaValue for SliceWithId {
         }
 
         match (&mut self.values, &other.values) {
-            (Either::Left(left_range), Either::Left(right_range))
-                if left_range.0.end == right_range.0.start =>
-            {
-                left_range.0.end = right_range.0.end;
-                Ok(())
+            (Either::Left(left), Either::Left(right)) => {
+                if left.extend_if_adjacent(right) {
+                    Ok(())
+                } else {
+                    Err(other)
+                }
             }
             _ => {
-                // If one is SliceRange and the other is LoroValue, we can't merge
+                // Values in different buffers, or a ValueSlice and a LoroValue
                 Err(other)
             }
         }

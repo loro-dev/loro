@@ -13,12 +13,7 @@ use crate::loro::ExportMode;
 use crate::oplog::CriticalVersionSearch;
 use crate::{LoroDoc, VersionVector};
 
-fn exchange(a: &LoroDoc, b: &LoroDoc) {
-    let ua = a.export(ExportMode::updates(&b.oplog_vv())).unwrap();
-    let ub = b.export(ExportMode::updates(&a.oplog_vv())).unwrap();
-    a.import(&ub).unwrap();
-    b.import(&ua).unwrap();
-}
+use super::exchange;
 
 /// Two peers that edit concurrently and fully sync after every round.
 fn criss_cross(rounds: usize) -> (LoroDoc, LoroDoc) {
@@ -580,4 +575,149 @@ fn criss_cross_sync_never_rebuilds_the_list_tracker() {
         rebuilds, 0,
         "concurrent list imports must not rebuild the tracker"
     );
+}
+
+/// What a forward walk through half-synced versions of two concurrent
+/// branches does to one container's diff calculator: the stops, and the doc.
+fn half_synced_walk(
+    rounds: usize,
+    edit: impl Fn(&LoroDoc, usize),
+) -> (LoroDoc, Vec<crate::version::Frontiers>) {
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new_auto_commit();
+    b.set_peer_id(2).unwrap();
+    let mut stops = vec![a.oplog_frontiers()];
+    for round in 0..rounds {
+        for d in [&a, &b] {
+            edit(d, round);
+            d.commit_then_renew();
+        }
+        // `{A_i}` is not critical (B_i is concurrent), so the step to
+        // `{A_i, B_i}` replays from the previous sync point and re-applies
+        // A_i's ops to a tracker that already has them.
+        stops.push(a.oplog_frontiers());
+        exchange(&a, &b);
+        stops.push(a.oplog_frontiers());
+    }
+    (a, stops)
+}
+
+/// Walks `stops` with one persisted calculator, returns the calculator's
+/// table size for `idx`, and checks the doc's checkouts against forks.
+fn walk_and_measure(
+    doc: &LoroDoc,
+    stops: &[crate::version::Frontiers],
+    idx: crate::container::idx::ContainerIdx,
+    table_len: impl Fn(&crate::diff_calc::ContainerDiffCalculator) -> usize,
+) -> usize {
+    use crate::diff_calc::{DiffCalculator, FULL_TRACKER_REBUILD_COUNT};
+
+    let len = {
+        let oplog = doc.oplog().lock();
+        let mut calc = DiffCalculator::new(true);
+        let rebuilds_before = FULL_TRACKER_REBUILD_COUNT.with(|c| c.get());
+        for w in stops.windows(2) {
+            let before = oplog.dag.frontiers_to_vv(&w[0]).unwrap();
+            let after = oplog.dag.frontiers_to_vv(&w[1]).unwrap();
+            calc.calc_diff_internal(&oplog, &before, &w[0], &after, &w[1], None);
+        }
+        assert_eq!(
+            FULL_TRACKER_REBUILD_COUNT.with(|c| c.get()) - rebuilds_before,
+            0,
+            "a rebuild would reset the table and mask the growth"
+        );
+        let depth = oplog.arena.get_depth(idx);
+        let (_, c) = calc.get_or_create_calc(idx, depth);
+        table_len(c)
+    };
+
+    for stop in stops {
+        doc.checkout(stop).unwrap();
+        assert_eq!(
+            doc.get_deep_value(),
+            doc.fork_at(stop).unwrap().get_deep_value()
+        );
+    }
+    doc.checkout_to_latest();
+    len
+}
+
+/// The diff calculators' text and value tables record what the tracker
+/// applies. A re-replayed insert, which the tracker skips, must not be
+/// recorded again (it kept growing the tables and using up their `u32`
+/// index space on every forward checkout). The applied prefix of a partly
+/// re-replayed op is covered by `insert_with_builds_content_only_for_the_unapplied_suffix`.
+/// See `context/text-arena-growth.md`.
+#[test]
+fn persisted_walks_record_each_text_char_once() {
+    use crate::cursor::PosType;
+    use crate::diff_calc::ContainerDiffCalculator;
+    use crate::handler::HandlerTrait;
+
+    let rounds = 50;
+    let (doc, stops) = half_synced_walk(rounds, |d, round| {
+        let t = d.get_text("t");
+        t.insert(
+            0,
+            if round % 2 == 0 { "ab" } else { "文😀" },
+            PosType::Unicode,
+        )
+        .unwrap();
+    });
+    let idx = doc.get_text("t").idx();
+    let len = walk_and_measure(&doc, &stops, idx, |c| {
+        let ContainerDiffCalculator::Richtext(text) = c else {
+            panic!("expected a richtext calculator");
+        };
+        text.tracked_text_len()
+    });
+    assert_eq!(len, 2 * 2 * rounds);
+}
+
+#[test]
+fn persisted_walks_record_each_list_value_once() {
+    use crate::diff_calc::ContainerDiffCalculator;
+    use crate::handler::HandlerTrait;
+
+    let rounds = 50;
+    let (doc, stops) = half_synced_walk(rounds, |d, round| {
+        let l = d.get_list("l");
+        l.insert(0, round as i64).unwrap();
+        l.insert(0, format!("v{round}")).unwrap();
+    });
+    let idx = doc.get_list("l").idx();
+    let len = walk_and_measure(&doc, &stops, idx, |c| {
+        let ContainerDiffCalculator::List(list) = c else {
+            panic!("expected a list calculator");
+        };
+        list.tracked_values_len()
+    });
+    assert_eq!(len, 2 * 2 * rounds);
+}
+
+/// The movable-list calculator rebuilds its tracker on these steps (base !=
+/// from), which replaces the table; this pins that it still holds one copy.
+#[test]
+fn persisted_walks_record_each_movable_list_value_once() {
+    use crate::diff_calc::ContainerDiffCalculator;
+    use crate::handler::HandlerTrait;
+
+    let rounds = 50;
+    let (doc, stops) = half_synced_walk(rounds, |d, round| {
+        let l = d.get_movable_list("m");
+        l.insert(0, round as i64).unwrap();
+        l.insert(0, format!("v{round}")).unwrap();
+        if l.len() > 2 {
+            l.mov(0, l.len() - 1).unwrap();
+        }
+    });
+    let idx = doc.get_movable_list("m").idx();
+    let len = walk_and_measure(&doc, &stops, idx, |c| {
+        let ContainerDiffCalculator::MovableList(list) = c else {
+            panic!("expected a movable list calculator");
+        };
+        list.tracked_values_len()
+    });
+    assert_eq!(len, 2 * 2 * rounds);
 }

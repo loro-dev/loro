@@ -50,6 +50,10 @@ impl PendingChanges {
         })
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+
     /// Number of changes parked under `[peer][counter]`, or `None` if nothing is.
     fn slot_len(&self, peer: PeerID, counter: Counter) -> Option<usize> {
         Some(self.changes.get(&peer)?.get(&counter)?.len())
@@ -432,6 +436,28 @@ mod test {
         // snapshot will be converted to updates
         b.import(&update1).unwrap();
         assert_eq!(a.get_deep_value(), b.get_deep_value());
+    }
+
+    /// A doc holding only pending changes is not empty: a snapshot import must
+    /// not replace its op log and drop them. Map ops leave the arena untouched,
+    /// which the emptiness check used to rely on.
+    #[test]
+    fn pending_map_change_survives_snapshot_import() {
+        let a = LoroDoc::new_auto_commit();
+        a.set_peer_id(1).unwrap();
+        let map = a.get_map("m");
+        map.insert("x", 1).unwrap();
+        let snapshot = a.export(ExportMode::Snapshot).unwrap();
+        let version1 = a.oplog_vv();
+        map.insert("y", 2).unwrap();
+        let update = a.export(ExportMode::updates(&version1)).unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        assert!(b.import(&update).unwrap().pending.is_some());
+        let status = b.import(&snapshot).unwrap();
+        assert!(status.pending.is_none());
+        assert_eq!(a.get_deep_value(), b.get_deep_value());
+        assert_eq!(a.oplog_vv(), b.oplog_vv());
     }
 
     #[test]

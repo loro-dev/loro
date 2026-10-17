@@ -8,7 +8,7 @@ use crate::{
         richtext::TextStyleInfoFlag,
         tree::tree_op::TreeOp,
     },
-    op::{FutureInnerContent, InnerContent, Op, SliceRange},
+    op::{FutureInnerContent, InnerContent, Op, ValueSlice},
     oplog::BlockChangeRef,
     version::Frontiers,
     OpLog, VersionVector,
@@ -308,8 +308,7 @@ pub(crate) fn encode_change(
             ContainerType::List => match content {
                 InnerContent::List(list) => JsonOpContent::List(match list {
                     InnerListOp::Insert { slice, pos } => {
-                        let mut values =
-                            arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                        let mut values = slice.as_slice().to_vec();
                         values.iter_mut().for_each(|x| {
                             if let LoroValue::Container(id) = x {
                                 if id.is_normal() {
@@ -340,8 +339,7 @@ pub(crate) fn encode_change(
             ContainerType::MovableList => match content {
                 InnerContent::List(list) => JsonOpContent::MovableList(match list {
                     InnerListOp::Insert { slice, pos } => {
-                        let mut values =
-                            arena.get_values(slice.0.start as usize..slice.0.end as usize);
+                        let mut values = slice.as_slice().to_vec();
                         values.iter_mut().for_each(|x| {
                             if let LoroValue::Container(id) = x {
                                 if id.is_normal() {
@@ -400,7 +398,6 @@ pub(crate) fn encode_change(
                 InnerContent::List(list) => JsonOpContent::Text(match list {
                     InnerListOp::InsertText {
                         slice,
-                        unicode_start: _,
                         unicode_len: _,
                         pos,
                     } => {
@@ -577,7 +574,7 @@ fn decode_changes(json: JsonSchema, arena: &SharedArena) -> LoroResult<Vec<Chang
         for op in json_ops {
             let next_counter = validate_json_op_counter(expected_counter, &op)?;
             let op = decode_op(op, arena, &peers)?;
-            validate_json_op_created_container_ids(id.peer, &op, arena)?;
+            validate_json_op_created_container_ids(id.peer, &op)?;
             ops.push(op);
             expected_counter = next_counter;
         }
@@ -672,17 +669,13 @@ fn validate_json_op_counter(expected_counter: Counter, op: &json::JsonOp) -> Lor
         .ok_or_else(|| LoroError::DecodeError("invalid json op counter: counter overflow".into()))
 }
 
-fn validate_json_op_created_container_ids(
-    peer: PeerID,
-    op: &Op,
-    arena: &SharedArena,
-) -> LoroResult<()> {
+fn validate_json_op_created_container_ids(peer: PeerID, op: &Op) -> LoroResult<()> {
     match &op.content {
         InnerContent::List(list) => match list {
             InnerListOp::Insert { slice, .. } => {
-                for (offset, value) in arena.iter_value_slice(slice.to_range()).enumerate() {
+                for (offset, value) in slice.as_slice().iter().enumerate() {
                     let LoroValue::Container(id) = value else {
-                        validate_json_value_has_no_container_refs(&value)?;
+                        validate_json_value_has_no_container_refs(value)?;
                         continue;
                     };
                     let offset = Counter::try_from(offset).map_err(|_| {
@@ -693,7 +686,7 @@ fn validate_json_op_created_container_ids(
                     let counter = op.counter.checked_add(offset).ok_or_else(|| {
                         LoroError::DecodeError("invalid json container id: counter overflow".into())
                     })?;
-                    validate_json_created_container_id(&id, ID::new(peer, counter))?;
+                    validate_json_created_container_id(id, ID::new(peer, counter))?;
                 }
             }
             InnerListOp::Set { value, .. } => {
@@ -800,7 +793,6 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     let (slice, result) = arena.alloc_str_with_slice(&text);
                     InnerContent::List(InnerListOp::InsertText {
                         slice,
-                        unicode_start: result.start as u32,
                         unicode_len: (result.end - result.start) as u32,
                         pos,
                     })
@@ -854,9 +846,8 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                             }
                         }
                     }
-                    let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
-                        slice: SliceRange::new(range.start as u32..range.end as u32),
+                        slice: ValueSlice::new(values),
                         pos: pos as usize,
                     })
                 }
@@ -891,9 +882,8 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                             }
                         }
                     }
-                    let range = arena.alloc_values(values.iter().cloned());
                     InnerContent::List(InnerListOp::Insert {
-                        slice: SliceRange::new(range.start as u32..range.end as u32),
+                        slice: ValueSlice::new(values),
                         pos: pos as usize,
                     })
                 }

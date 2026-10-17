@@ -294,9 +294,11 @@ impl OpLog {
         timestamp
     }
 
+    /// No history, not even pending changes: a snapshot import may replace
+    /// this op log wholesale.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.dag.is_empty() && self.arena.can_import_snapshot()
+        self.dag.is_empty() && self.pending_changes.is_empty()
     }
 
     /// This is the **only** place to update the `OpLog.changes`
@@ -1613,22 +1615,9 @@ pub(crate) fn local_op_to_remote(
     match &op.content {
         crate::op::InnerContent::List(list) => match list {
             list_op::InnerListOp::Insert { slice, pos } => match container.container_type() {
-                loro_common::ContainerType::Text => {
-                    let str = arena
-                        .slice_str_by_unicode_range(slice.0.start as usize..slice.0.end as usize);
-                    contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                        slice: ListSlice::RawStr {
-                            unicode_len: str.chars().count(),
-                            str: Cow::Owned(str),
-                        },
-                        pos: *pos,
-                    }));
-                }
                 loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
                     contents.push(RawOpContent::List(list_op::ListOp::Insert {
-                        slice: ListSlice::RawData(Cow::Owned(
-                            arena.get_values(slice.0.start as usize..slice.0.end as usize),
-                        )),
+                        slice: ListSlice::RawData(Cow::Owned(slice.as_slice().to_vec())),
                         pos: *pos,
                     }))
                 }
@@ -1637,7 +1626,6 @@ pub(crate) fn local_op_to_remote(
             list_op::InnerListOp::InsertText {
                 slice,
                 unicode_len: len,
-                unicode_start: _,
                 pos,
             } => match container.container_type() {
                 loro_common::ContainerType::Text => {

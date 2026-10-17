@@ -26,6 +26,12 @@ over graceful degradation.
 - `src/arena.rs`: container IDs, indices, and parent links. How a parent is
   found in a lazily loaded document, and the locking rules:
   [../../context/arena-parent-links.md](../../context/arena-parent-links.md).
+  Parsed change blocks keep text and list values out of doc-wide arenas; the
+  trackers use `diff_calc/tracker_texts.rs` and `tracker_values.rs`:
+  [../../context/text-arena-growth.md](../../context/text-arena-growth.md).
+- `src/utils/subscription.rs`, `src/subscription.rs`, `src/txn.rs` commit:
+  user callbacks that panic must not poison locks or drop events:
+  [../../context/callback-panics.md](../../context/callback-panics.md).
 - `src/state.rs` and `src/state/`: materialized document state, container stores,
   diff application, checkout/replay, deep value, dead-container tracking, and
   mergeable container visibility. Read `src/state/AGENTS.md` and

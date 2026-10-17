@@ -464,9 +464,7 @@ fn op_eq(
     }
 
     match (&a.content, &b.content) {
-        (InnerContent::List(a), InnerContent::List(b)) => {
-            list_op_eq(a_arena, b_arena, values, a, b)
-        }
+        (InnerContent::List(a), InnerContent::List(b)) => list_op_eq(values, a, b),
         (InnerContent::Map(a), InnerContent::Map(b)) => {
             a.key == b.key
                 && match (&a.value, &b.value) {
@@ -507,36 +505,7 @@ fn op_eq(
     }
 }
 
-fn value_ranges_eq(
-    a_arena: &SharedArena,
-    b_arena: &SharedArena,
-    values: ImportedValues,
-    a: std::ops::Range<usize>,
-    b: std::ops::Range<usize>,
-) -> bool {
-    let eq = |left: &LoroValue, right: &LoroValue| values.eq(left, right);
-    if std::ptr::eq(a_arena, b_arena) {
-        a_arena.value_slices_eq(a, b, eq)
-    } else {
-        a_arena.with_values(a, |a_values| {
-            b_arena.with_values(b, |b_values| {
-                a_values.len() == b_values.len()
-                    && a_values
-                        .iter()
-                        .zip(b_values.iter())
-                        .all(|(left, right)| eq(left, right))
-            })
-        })
-    }
-}
-
-fn list_op_eq(
-    a_arena: &SharedArena,
-    b_arena: &SharedArena,
-    values: ImportedValues,
-    a: &InnerListOp,
-    b: &InnerListOp,
-) -> bool {
+fn list_op_eq(values: ImportedValues, a: &InnerListOp, b: &InnerListOp) -> bool {
     match (a, b) {
         (
             InnerListOp::Insert {
@@ -548,14 +517,10 @@ fn list_op_eq(
                 pos: b_pos,
             },
         ) => {
+            let (a_values, b_values) = (a_slice.as_slice(), b_slice.as_slice());
             a_pos == b_pos
-                && value_ranges_eq(
-                    a_arena,
-                    b_arena,
-                    values,
-                    a_slice.to_range(),
-                    b_slice.to_range(),
-                )
+                && a_values.len() == b_values.len()
+                && a_values.iter().zip(b_values).all(|(a, b)| values.eq(a, b))
         }
         (
             InnerListOp::InsertText {

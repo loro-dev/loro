@@ -855,7 +855,6 @@ impl ContainerState for RichtextState {
                 list_op::InnerListOp::InsertText {
                     slice,
                     unicode_len: _,
-                    unicode_start: _,
                     pos,
                 } => {
                     self.state.get_mut().insert_at_entity_index(

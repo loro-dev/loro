@@ -145,22 +145,19 @@ fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining
                 used
             }
             crate::op::InnerContent::List(list) => match list {
-                InnerListOp::Insert { slice, .. } => oplog.arena.with_values(
-                    slice.0.start as usize..slice.0.end as usize,
-                    |values| {
-                        let mut used = 0usize;
-                        for value in values {
-                            used = used.saturating_add(value_bytes_capped(
-                                value,
-                                after_fixed.saturating_sub(used),
-                            ));
-                            if used > after_fixed {
-                                break;
-                            }
+                InnerListOp::Insert { slice, .. } => {
+                    let mut used = 0usize;
+                    for value in slice.as_slice() {
+                        used = used.saturating_add(value_bytes_capped(
+                            value,
+                            after_fixed.saturating_sub(used),
+                        ));
+                        if used > after_fixed {
+                            break;
                         }
-                        used
-                    },
-                ),
+                    }
+                    used
+                }
                 InnerListOp::InsertText { slice, .. } => slice.len(),
                 InnerListOp::Set { value, .. } => value_bytes_capped(value, after_fixed),
                 InnerListOp::StyleStart { key, value, .. } => {

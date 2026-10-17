@@ -57,8 +57,8 @@ is per atom range, not per change:
   so `deps_at` is canonical. Lamport and timestamp are not compared: the import
   recomputes lamports from deps, and a merged change keeps only its first timestamp.
 - **Ops** are cut at every op boundary of either side and compared by meaning
-  (`op_eq`): list insert values through the arena (offsets differ), text by bytes
-  (`unicode_start` is an arena offset), and a one-atom delete ignores the sign of
+  (`op_eq`): list insert values element by element (each op owns its
+  `ValueSlice`), text by bytes, and a one-atom delete ignores the sign of
   `signed_len`, because slicing a reversed delete down to one atom yields `-1`
   where a forward one yields `1`.
 - **Value payloads** use the caller's `ImportedValues` mode. `Exact` is the
@@ -218,7 +218,7 @@ universal ratio.
 - `crates/loro/tests/contracts/counter.rs`: encoding `1e-17` and importing the
   binary update yields `1e-17`, not `0`.
 - `oplog::change_store::test`: identical blocks stay lazy, dirty caches shadow
-  old KV bytes, repeated snapshots allocate only new text/list values, and
+  old KV bytes, repeated snapshots allocate only new text in the string arena, and
   `merged_cold_text_overlap_is_accepted_without_parsing_the_known_block` proves
   that an equal merged overlap stays cold before a successful import.
 - `block_encode::test::cold_text_reader_errors_fall_back_without_recording_parse_failures`:

@@ -138,6 +138,11 @@ impl LoroListValue {
     pub fn make_mut(&mut self) -> &mut Vec<LoroValue> {
         Arc::make_mut(&mut self.0)
     }
+
+    /// The shared list, without copying it.
+    pub fn into_arc(self) -> Arc<Vec<LoroValue>> {
+        self.0
+    }
 }
 
 impl LoroMapValue {

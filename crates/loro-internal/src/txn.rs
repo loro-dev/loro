@@ -12,6 +12,7 @@ use rle::{HasLength, Mergable, RleVec, Sliceable};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use crate::utils::subscription::DeferredPanic;
 use crate::{
     change::{Change, Lamport, Timestamp},
     container::{
@@ -72,20 +73,22 @@ impl crate::LoroDoc {
             let mut state = state.lock();
             let events = state.take_events();
             drop(state);
+            // A panicking subscriber must not drop the other events, nor the
+            // local update of this commit, which apps send to their peers.
+            let mut panic = DeferredPanic::default();
             for event in events {
-                obs.emit(event);
+                panic.run(|| obs.emit(event));
             }
 
-            if id_span.atom_len() == 0 {
-                return;
-            }
-
-            if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
-                if !local_update_subs.inner().is_empty() {
-                    let bytes = { export_fast_updates_in_range(&oplog.lock(), &[id_span]) };
-                    local_update_subs.emit(&(), bytes);
+            if id_span.atom_len() != 0 {
+                if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
+                    if !local_update_subs.inner().is_empty() {
+                        let bytes = { export_fast_updates_in_range(&oplog.lock(), &[id_span]) };
+                        panic.run(|| local_update_subs.emit(&(), bytes));
+                    }
                 }
             }
+            panic.resume();
         }));
 
         Ok(txn)
@@ -473,11 +476,29 @@ impl Transaction {
     }
 
     pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
-        self._commit()
+        let mut panic = DeferredPanic::default();
+        let ans = self._commit(&mut panic);
+        panic.resume();
+        ans
     }
 
-    #[tracing::instrument(level = "debug", skip(self))]
-    fn _commit(&mut self) -> Result<Option<CommitOptions>, LoroError> {
+    /// [`Self::commit`] for a caller that holds the doc's txn lock: a panic of a
+    /// pre-commit callback is put in `panic`, to be raised after the lock is
+    /// released.
+    pub(crate) fn commit_deferring_panic(
+        mut self,
+        panic: &mut DeferredPanic,
+    ) -> Result<Option<CommitOptions>, LoroError> {
+        self._commit(panic)
+    }
+
+    /// A pre-commit callback that panics is user code panicking in the middle
+    /// of a commit: the change is already applied to the state and the op log
+    /// holds it as uncommitted. The commit is finished as if the callback had
+    /// returned, and its panic is put in `panic` to be raised once no doc lock
+    /// is held.
+    #[tracing::instrument(level = "debug", skip(self, panic))]
+    fn _commit(&mut self, panic: &mut DeferredPanic) -> Result<Option<CommitOptions>, LoroError> {
         if self.finished {
             return Ok(None);
         }
@@ -514,14 +535,16 @@ impl Transaction {
         }
 
         let modifier = ChangeModifier::default();
-        doc.pre_commit_subs.emit(
-            &(),
-            PreCommitCallbackPayload {
-                change_meta,
-                origin: self.origin.to_string(),
-                modifier: modifier.clone(),
-            },
-        );
+        panic.run(|| {
+            doc.pre_commit_subs.emit(
+                &(),
+                PreCommitCallbackPayload {
+                    change_meta,
+                    origin: self.origin.to_string(),
+                    modifier: modifier.clone(),
+                },
+            )
+        });
 
         let mut oplog = doc.oplog.lock();
         let mut state = doc.state.lock();
@@ -876,7 +899,13 @@ impl Drop for Transaction {
         if !self.finished {
             // TODO: should we abort here or commit here?
             // what if commit fails?
-            self._commit().unwrap();
+            let mut panic = DeferredPanic::default();
+            let ans = self._commit(&mut panic);
+            // Raising it while already unwinding would abort the process.
+            if !std::thread::panicking() {
+                panic.resume();
+            }
+            ans.unwrap();
         }
     }
 }
@@ -1015,11 +1044,10 @@ fn change_to_diff(
                     let mut index = pos;
                     for op in ops_for_hint.iter() {
                         let (range, _) = op.content.as_list().unwrap().as_insert().unwrap();
-                        let values = doc
-                            .arena
-                            .get_values(range.to_range())
-                            .into_iter()
-                            .map(|v| ValueOrHandler::from_value(v, &doc));
+                        let values = range
+                            .as_slice()
+                            .iter()
+                            .map(|v| ValueOrHandler::from_value(v.clone(), &doc));
                         let len = values.len();
                         ans.push(TxnContainerDiff {
                             idx: container_idx,

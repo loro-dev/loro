@@ -6,8 +6,21 @@ fn init() {
 mod import_atomicity;
 mod op_count;
 mod replay_base;
+mod text_arena_growth;
 
 use crate::{op::ListSlice, LoroValue};
+
+/// Two-way sync of two docs.
+pub(crate) fn exchange(a: &crate::LoroDoc, b: &crate::LoroDoc) {
+    let ua = a
+        .export(crate::loro::ExportMode::updates(&b.oplog_vv()))
+        .unwrap();
+    let ub = b
+        .export(crate::loro::ExportMode::updates(&a.oplog_vv()))
+        .unwrap();
+    a.import(&ub).unwrap();
+    b.import(&ua).unwrap();
+}
 
 pub const PROPTEST_FACTOR_10: usize = 1;
 pub const PROPTEST_FACTOR_1: usize = 0;

@@ -80,6 +80,10 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Unknown container types (newer-version containers): never created locally,
   `apply_diff`/undo pre-check, events, test forging:
   [context/unknown-containers.md](context/unknown-containers.md).
+- Why parsed change blocks keep text and list values out of doc-wide arenas
+  (`ValueSlice`, tracker tables): [context/text-arena-growth.md](context/text-arena-growth.md).
+- User callbacks that panic (subscribers, pre-commit, local updates): no poisoned
+  locks, lost events or hangs: [context/callback-panics.md](context/callback-panics.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 
 ## Commands

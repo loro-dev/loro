@@ -10,7 +10,7 @@ use crate::{
     container::richtext::richtext_state::unicode_to_utf8_index,
     container::richtext::tracker::UNKNOWN_SPAN_LEN,
     container::richtext::TextStyleInfoFlag,
-    op::{ListSlice, SliceRange},
+    op::{ListSlice, ValueSlice},
     InternalString,
 };
 
@@ -47,14 +47,13 @@ pub enum ListOp<'a> {
 pub enum InnerListOp {
     // TODO: this is only used for list now? We should rename it to InsertList
     Insert {
-        slice: SliceRange,
+        slice: ValueSlice,
         pos: usize,
     },
     // Note: len may not equal to slice.len() because for text len is unicode len while the slice
     // is utf8 bytes.
     InsertText {
         slice: BytesSlice,
-        unicode_start: u32,
         unicode_len: u32,
         pos: u32,
     },
@@ -129,13 +128,6 @@ impl InnerListOp {
                 signed_len: len,
             },
         })
-    }
-
-    pub fn new_insert(slice: Range<u32>, pos: usize) -> Self {
-        Self::Insert {
-            slice: SliceRange(slice),
-            pos,
-        }
     }
 
     pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
@@ -564,7 +556,6 @@ impl Mergable for InnerListOp {
             }
             (
                 InnerListOp::InsertText {
-                    unicode_start,
                     slice,
                     pos,
                     unicode_len: len,
@@ -572,14 +563,9 @@ impl Mergable for InnerListOp {
                 InnerListOp::InsertText {
                     slice: other_slice,
                     pos: other_pos,
-                    unicode_start: other_unicode_start,
                     unicode_len: _,
                 },
-            ) => {
-                pos + len == *other_pos
-                    && slice.can_merge(other_slice)
-                    && unicode_start + len == *other_unicode_start
-            }
+            ) => pos + len == *other_pos && slice.can_merge(other_slice),
             _ => false,
         }
     }
@@ -645,7 +631,6 @@ impl Sliceable for InnerListOp {
             },
             InnerListOp::InsertText {
                 slice,
-                unicode_start,
                 unicode_len,
                 pos,
             } => InnerListOp::InsertText {
@@ -673,7 +658,6 @@ impl Sliceable for InnerListOp {
 
                     slice.slice(from_byte, to_byte)
                 },
-                unicode_start: *unicode_start + from as u32,
                 unicode_len: (to - from) as u32,
                 pos: *pos + from as u32,
             },
@@ -811,7 +795,6 @@ mod test {
         let slice = BytesSlice::from_bytes(text.as_bytes());
         let mut op = InnerListOp::InsertText {
             slice,
-            unicode_start: 0,
             unicode_len: TEXT_LEN as u32,
             pos: 0,
         };

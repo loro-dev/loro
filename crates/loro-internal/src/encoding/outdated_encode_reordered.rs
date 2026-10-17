@@ -1,20 +1,20 @@
+use append_only_bytes::{AppendOnlyBytes, BytesSlice};
 pub(crate) use encode::{encode_op, get_op_prop};
 use fractional_index::FractionalIndex;
 use loro_common::{
-    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, IdLp, LoroError, LoroResult,
-    TreeID, ID,
+    ContainerID, ContainerType, Counter, HasCounterSpan, HasIdSpan, IdLp, LoroError, LoroListValue,
+    LoroResult, LoroValue, TreeID, ID,
 };
 use serde_columnar::{columnar, ColumnarError};
 use std::sync::Arc;
 
 use crate::version::VersionRange;
 use crate::{
-    arena::SharedArena,
     change::{Change, Lamport},
     container::{
         list::list_op::DeleteSpanWithId, richtext::TextStyleInfoFlag, tree::tree_op::TreeOp,
     },
-    op::{FutureInnerContent, SliceRange},
+    op::{FutureInnerContent, ValueSlice},
     OpLog,
 };
 
@@ -89,7 +89,6 @@ mod encode {
     use loro_common::ContainerType;
 
     use crate::{
-        arena::SharedArena,
         encoding::value::{MarkStart, Value, ValueEncodeRegister, ValueKind, ValueWriter},
         op::{FutureInnerContent, Op},
     };
@@ -129,7 +128,6 @@ mod encode {
     #[inline]
     pub(crate) fn encode_op<'p, 'a: 'p>(
         op: &'a Op,
-        arena: &SharedArena,
         delete_start: &mut Vec<EncodedDeleteStartId>,
         value_writer: &mut ValueWriter,
         registers: &mut dyn ValueEncodeRegister,
@@ -141,8 +139,7 @@ mod encode {
                         op.container.get_type(),
                         ContainerType::List | ContainerType::MovableList
                     ));
-                    let value = arena.get_values(slice.0.start as usize..slice.0.end as usize);
-                    Value::LoroValue(value.into())
+                    Value::LoroValue(slice.as_slice().to_vec().into())
                 }
                 crate::container::list::list_op::InnerListOp::InsertText { slice, .. } => {
                     Value::Str(std::str::from_utf8(slice.as_bytes()).unwrap())
@@ -214,12 +211,85 @@ mod encode {
     }
 }
 
+/// The text and list values of the ops decoded from one change block.
+///
+/// They are dropped with those ops. Decoding into the doc's arenas instead,
+/// which are never freed, made them grow by a block's whole content every time
+/// the block was parsed again after an export (`context/text-arena-growth.md`).
+/// Each kind goes into one buffer, so a block's values are read together and
+/// adjacent slices merge without copying.
+pub(crate) struct DecodedBlockBuffers {
+    text: Option<AppendOnlyBytes>,
+    text_capacity: usize,
+    values: Vec<LoroValue>,
+    /// What list slices point into until [`Self::finish`] gives them `values`.
+    /// Created with the first list value, so most blocks allocate nothing here.
+    pending_values: Option<Arc<Vec<LoroValue>>>,
+}
+
+impl DecodedBlockBuffers {
+    /// `text_capacity` should bound the decoded text, so that all of its
+    /// slices share one buffer.
+    pub fn new(text_capacity: usize) -> Self {
+        Self {
+            text: None,
+            text_capacity,
+            values: Vec::new(),
+            pending_values: None,
+        }
+    }
+
+    fn push_text(&mut self, s: &str) -> BytesSlice {
+        let bytes = self
+            .text
+            .get_or_insert_with(|| AppendOnlyBytes::with_capacity(self.text_capacity.max(s.len())));
+        let start = bytes.len();
+        bytes.push_str(s);
+        bytes.slice(start..)
+    }
+
+    /// A multi-value slice can be neither read nor merged before [`Self::finish`].
+    fn push_values(&mut self, list: LoroListValue) -> ValueSlice {
+        let list = list.into_arc();
+        if list.len() == 1 {
+            // Stored inline. A sync that imports one small change from each of
+            // many peers decodes many blocks with one value each, and a shared
+            // buffer would cost each block a few allocations.
+            let value =
+                Arc::try_unwrap(list).map_or_else(|list| list[0].clone(), |mut v| v.pop().unwrap());
+            return ValueSlice::one(value);
+        }
+
+        let start = self.values.len();
+        match Arc::try_unwrap(list) {
+            Ok(mut list) => self.values.append(&mut list),
+            Err(list) => self.values.extend_from_slice(&list),
+        }
+        let pending = self.pending_values.get_or_insert_with(Default::default);
+        ValueSlice::pending(pending, start..self.values.len())
+    }
+
+    /// Points the slices that [`Self::push_values`] returned at the values.
+    pub fn finish<'a>(self, slices: impl Iterator<Item = &'a mut ValueSlice>) {
+        let Some(pending) = self.pending_values else {
+            return;
+        };
+        let mut values = self.values;
+        // The values live as long as any op slice of the block.
+        values.shrink_to_fit();
+        let values = Arc::new(values);
+        for slice in slices {
+            slice.replace_buffer(&pending, &values);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_op(
     cid: &ContainerID,
     value: Value<'_>,
     del_iter: &mut impl Iterator<Item = Result<EncodedDeleteStartId, ColumnarError>>,
-    shared_arena: &SharedArena,
+    buffers: &mut DecodedBlockBuffers,
     arenas: &dyn ValueDecodedArenasTrait,
     positions: &[Vec<u8>],
     prop: i32,
@@ -228,12 +298,11 @@ pub(crate) fn decode_op(
     let content = match cid.container_type() {
         ContainerType::Text => match value {
             Value::Str(s) => {
-                let (slice, result) = shared_arena.alloc_str_with_slice(s);
+                let unicode_len = s.chars().count();
                 crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::InsertText {
-                        slice,
-                        unicode_start: result.start as u32,
-                        unicode_len: (result.end - result.start) as u32,
+                        slice: buffers.push_text(s),
+                        unicode_len: unicode_len as u32,
                         pos: prop as u32,
                     },
                 )
@@ -299,10 +368,9 @@ pub(crate) fn decode_op(
                     let list = arr
                         .into_list()
                         .map_err(|_| LoroError::DecodeDataCorruptionError)?;
-                    let range = shared_arena.alloc_values(list.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
-                            slice: SliceRange::new(range.start as u32..range.end as u32),
+                            slice: buffers.push_values(list),
                             pos,
                         },
                     )
@@ -395,10 +463,9 @@ pub(crate) fn decode_op(
                     let list = arr
                         .into_list()
                         .map_err(|_| LoroError::DecodeDataCorruptionError)?;
-                    let range = shared_arena.alloc_values(list.iter().cloned());
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
-                            slice: SliceRange::new(range.start as u32..range.end as u32),
+                            slice: buffers.push_values(list),
                             pos,
                         },
                     )

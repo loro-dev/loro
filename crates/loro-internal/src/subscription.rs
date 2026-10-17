@@ -3,8 +3,9 @@ use super::{
     event::{DiffEvent, DocDiff},
 };
 use crate::{
-    container::idx::ContainerIdx, utils::subscription::SubscriberSet, ContainerDiff, LoroDoc,
-    Subscription,
+    container::idx::ContainerIdx,
+    utils::subscription::{DeferredPanic, SubscriberSet},
+    ContainerDiff, LoroDoc, Subscription,
 };
 use loro_common::{ContainerID, ID};
 use rustc_hash::FxHashMap;
@@ -77,18 +78,21 @@ impl Observer {
     }
 
     pub(crate) fn emit(&self, doc_diff: DocDiff) {
-        let success = self.emit_inner(doc_diff);
+        let mut panic = DeferredPanic::default();
+        let success = self.emit_inner(doc_diff, &mut panic);
         if success {
             let mut e = self.inner.queue.lock().pop_front();
             while let Some(event) = e {
-                self.emit_inner(event);
+                self.emit_inner(event, &mut panic);
                 e = self.inner.queue.lock().pop_front();
             }
         }
+        panic.resume();
     }
 
     // When emitting changes, we need to make sure that the observer is not locked.
-    fn emit_inner(&self, doc_diff: DocDiff) -> bool {
+    /// A subscriber that panics does not stop the others; its panic is put in `panic`.
+    fn emit_inner(&self, doc_diff: DocDiff, panic: &mut DeferredPanic) -> bool {
         let inner = &self.inner;
         let mut container_events_map: FxHashMap<ContainerIdx, SmallVec<[&ContainerDiff; 1]>> =
             Default::default();
@@ -119,31 +123,37 @@ impl Observer {
         }
 
         for (container_idx, container_diffs) in container_events_map {
+            panic.run(|| {
+                inner
+                    .subscriber_set
+                    .retain(&Some(container_idx), &mut |callback| {
+                        (callback)(DiffEvent {
+                            current_target: Some(
+                                self.arena.get_container_id(container_idx).unwrap(),
+                            ),
+                            events: &container_diffs,
+                            event_meta: &doc_diff,
+                        });
+                        true
+                    })
+                    .unwrap()
+            });
+        }
+
+        let events: Vec<_> = doc_diff.diff.iter().collect();
+        panic.run(|| {
             inner
                 .subscriber_set
-                .retain(&Some(container_idx), &mut |callback| {
+                .retain(&None, &mut |callback| {
                     (callback)(DiffEvent {
-                        current_target: Some(self.arena.get_container_id(container_idx).unwrap()),
-                        events: &container_diffs,
+                        current_target: None,
+                        events: &events,
                         event_meta: &doc_diff,
                     });
                     true
                 })
-                .unwrap();
-        }
-
-        let events: Vec<_> = doc_diff.diff.iter().collect();
-        inner
-            .subscriber_set
-            .retain(&None, &mut |callback| {
-                (callback)(DiffEvent {
-                    current_target: None,
-                    events: &events,
-                    event_meta: &doc_diff,
-                });
-                true
-            })
-            .unwrap();
+                .unwrap()
+        });
 
         true
     }

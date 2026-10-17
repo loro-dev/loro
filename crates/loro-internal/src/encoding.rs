@@ -6,7 +6,8 @@ mod shallow_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
-    decode_op, encode_op, get_op_prop, EncodedDeleteStartId, IterableEncodedDeleteStartId,
+    decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
+    IterableEncodedDeleteStartId,
 };
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
@@ -447,7 +448,7 @@ pub(crate) fn export_state_only_snapshot(
     })
 }
 
-fn encode_with(
+pub(crate) fn encode_with(
     mode: EncodeMode,
     f: &mut dyn FnMut(&mut Vec<u8>) -> Result<(), LoroEncodeError>,
 ) -> Result<Vec<u8>, LoroEncodeError> {

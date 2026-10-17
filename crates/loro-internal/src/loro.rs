@@ -61,6 +61,8 @@ use std::{
 };
 use tracing::{debug_span, info_span, instrument, warn};
 
+use crate::utils::subscription::DeferredPanic;
+
 impl Default for LoroDoc {
     fn default() -> Self {
         Self::new()
@@ -126,10 +128,16 @@ impl LoroDoc {
         F: FnOnce() -> R,
     {
         let (options, guard) = self.implicit_commit_then_stop();
-        let result = f();
+        // `f` may call user code, e.g. subscribers of an import's events. If it
+        // panics, release the txn lock first, so the panic does not poison it.
+        // A panic inside Loro may have poisoned another lock, which makes the
+        // renewal panic too; `DeferredPanic` keeps the first one.
+        let mut panic = DeferredPanic::default();
+        let result = panic.run(f);
         drop(guard);
-        self.renew_txn_if_auto_commit(options);
-        result
+        panic.run(|| self.renew_txn_if_auto_commit(options));
+        panic.resume();
+        result.unwrap()
     }
 
     pub fn new() -> Self {
@@ -330,11 +338,33 @@ impl LoroDoc {
     ///   (except `origin`, which never carries across an empty commit).
     /// - When `preserve_on_empty` is false (explicit commits), commit options from an
     ///   empty transaction are swallowed and NOT carried over.
+    ///
+    /// A pre-commit callback that panics does not stop the commit; its panic is
+    /// raised after the txn lock is released, so the lock is not poisoned.
     #[instrument(skip_all)]
     fn commit_internal(
         &self,
         config: CommitOptions,
         preserve_on_empty: bool,
+    ) -> (
+        Option<CommitOptions>,
+        Option<LoroMutexGuard<'_, Option<Transaction>>>,
+    ) {
+        let mut panic = DeferredPanic::default();
+        let ans = self.commit_internal_inner(config, preserve_on_empty, &mut panic);
+        if !panic.has_panic() {
+            return ans;
+        }
+        drop(ans);
+        panic.resume();
+        unreachable!("resume raises the deferred panic")
+    }
+
+    fn commit_internal_inner(
+        &self,
+        config: CommitOptions,
+        preserve_on_empty: bool,
+        panic: &mut DeferredPanic,
     ) -> (
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
@@ -370,7 +400,7 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let mut options = txn.commit().unwrap();
+            let mut options = txn.commit_deferring_panic(panic).unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit
@@ -1016,9 +1046,11 @@ impl LoroDoc {
             let mut state = self.state.lock();
             state.take_events()
         };
+        let mut panic = DeferredPanic::default();
         for event in events {
-            self.observer.emit(event);
+            panic.run(|| self.observer.emit(event));
         }
+        panic.resume();
     }
 
     pub(crate) fn drop_pending_events(&self) -> Vec<DocDiff> {
