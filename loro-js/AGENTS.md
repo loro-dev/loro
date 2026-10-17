@@ -5,6 +5,8 @@ the same binary and JSON data as Rust (`loro-crdt`) and give the same results.
 
 ## Context
 
+- Undo/redo no-op return values and item boundaries:
+  [context/undo-history-boundaries.md](../context/undo-history-boundaries.md).
 - Index structures, complexity contracts, and benchmarks:
   [context/loro-js-performance.md](../context/loro-js-performance.md).
 - Randomized Text comparison with Rust (build the nodejs WASM package first):
