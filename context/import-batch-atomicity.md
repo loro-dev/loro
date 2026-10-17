@@ -1,12 +1,23 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-10-01.
+Verified against code 2026-10-17.
 
-`LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) does not import blobs the
-way `import` does. It stops the auto-commit txn, keeps the txn mutex for the whole
-critical section, force-detaches with `set_detached(true)`, feeds every blob into the
-`OpLog` only, and reattaches with a **single** `_checkout_to_latest_without_commit` at
-the end. That is why a batch of N blobs costs one state apply instead of N.
+`LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) stops the auto-commit txn,
+keeps the txn mutex for the whole critical section, force-detaches with
+`set_detached(true)`, and reattaches with a **single**
+`_checkout_to_latest_without_commit` at the end. Usually every blob updates only the
+`OpLog`, so a batch of N blobs costs one state apply instead of N.
+
+For an empty, attached document, the first full snapshot after mode sorting uses
+the same `decode_snapshot` as standalone `import` (loro-dev/loro#1193). Its state
+stays lazy; only the following updates need checkout. Pre-existing pending changes,
+non-empty state/history, explicitly detached documents, and shallow snapshots keep
+the ordinary path. The snapshot installs a new DAG, so the suffix rollback journal
+begins **after** snapshot decoding. `BatchImportGuard::snapshot_checkpoint` keeps the
+pre-snapshot arena checkpoint: if the closing validation/checkout fails, the guard
+resets both state and history to empty, including the snapshot, and clears the diff
+calculator. Container indices remain valid for existing handles. Snapshot events
+stay queued until the closing checkout succeeds; per-blob imports do not emit them.
 
 ## The invariant
 
@@ -27,10 +38,11 @@ Two exits used to break it, both fixed in `BatchImportGuard`:
 
 ## Why a batch-wide rollback scope
 
-`DocState` is untouched while the batch runs, so if the closing checkout fails the state
-is still at its pre-batch version and the `OpLog` is the only thing that moved. Undoing
-the `OpLog` therefore makes the two agree again, which is what lets the doc stay
-attached. `import_batch` opens `OpLog::begin_import_rollback` before the loop and
+Outside the snapshot bootstrap above, `DocState` is untouched while the batch runs,
+so if the closing checkout fails the state is still at its pre-batch version and the
+`OpLog` is the only thing that moved. Undoing the `OpLog` therefore makes the two
+agree again, which is what lets the doc stay attached. `import_batch` opens
+`OpLog::begin_import_rollback` before importing the history-only blobs and
 `BatchImportGuard::finish` either commits it or rolls the whole batch back and returns
 the state-apply error. Before that checkout, `finish` also validates the movable-list element references
 of every blob in the batch ([movable-list-op-validation.md](movable-list-op-validation.md)).
@@ -100,8 +112,9 @@ Standalone detached imports do not apply state, so preflight uses
 requires a rollback scope. Text/List/Tree state validation still opens a scope
 when attached. An applied Text or scalar update can unlock a pre-existing bad
 MovableList pending change, so preflight includes pending `Move`/`Set` ops when
-`applies_to_dag` is true. The batch-wide scope remains unconditional and is not
-replaced or nested by this optimization. Regression:
+`applies_to_dag` is true. The batch's history journal (the suffix journal after
+snapshot bootstrap) remains unconditional and is not replaced or nested by this
+optimization. Regression:
 `detached_text_import_that_unlocks_invalid_movable_list_ops_rolls_back`.
 
 `import_changes_and_apply_delta_to_state_if_needed` reads the detached flag once
@@ -116,9 +129,38 @@ Under `cfg(test)`, preflight forces rollback only for
 `crates/examples/examples/import_batch_perf.rs` is the ad-hoc probe for these shapes
 (not part of CI; run it on two revisions and compare).
 
+### Snapshot bootstrap measurement (#1193)
+
+`crates/examples/examples/import_batch_snapshot.rs` builds an equivalent synthetic
+editor workload: 1,108 paragraph blocks, nested node/attribute maps and child lists,
+2,216 marked texts, 12,189 containers total, and a 381,467-byte snapshot. Run with
+`cargo run -p examples --release --example import_batch_snapshot`. Each shape has
+two warmups and 12 samples alternating batch and split imports into fresh docs;
+state, frontiers and history versions are checked outside the timed region.
+
+Native Rust timings on Apple M5 Pro, comparing main `3827945f` with this fix:
+
+| Shape | Main batch (ms) | Fixed batch (ms) | Fixed split (ms) |
+| --- | ---: | ---: | ---: |
+| Snapshot + 1 update, import only | 68.270 | 0.782 | 0.545 |
+| Snapshot + 20 updates, import only | 147.777 | 1.169 | 1.044 |
+| Snapshot + 1 update, import + deep read | 87.120 | 10.665 | 9.986 |
+| Snapshot + 20 updates, import + deep read | 83.922 | 11.274 | 10.625 |
+
+These are local medians under concurrent machine load, not the issue author's
+document or browser measurements. The deterministic lazy-state regression below
+pins the mechanism independently of timing.
+
 ## Tests
 
 - `crates/loro-internal/src/tests/import_atomicity.rs`:
+  `import_batch_snapshot_keeps_untouched_state_lazy` (fails before #1193),
+  `import_batch_snapshot_checkout_failure_resets_state_and_history` (also checks
+  event silence and existing handles),
+  `import_batch_snapshot_preserves_preexisting_pending_changes`,
+  `import_batch_snapshot_panic_keeps_prefix_attached`,
+  `import_batch_snapshot_into_detached_empty_doc_only_updates_history`,
+  `corrupt_snapshot_batch_preserves_empty_handles`,
   `import_batch_with_unappliable_update_stays_attached_and_rolls_back` (also pins that
   batch-parked pendings do not survive the rollback),
   `import_batch_panic_leaves_doc_attached` (uses the `panic_at_batch_import_blob_for_test`
@@ -127,7 +169,11 @@ Under `cfg(test)`, preflight forces rollback only for
   `failed_import_batch_trims_only_its_own_entry_from_a_shared_pending_slot`,
   `failed_import_reparks_only_preexisting_pending_changes`.
 - `crates/loro/tests/contracts/sync_import.rs`:
+  `snapshot_batch_matches_split_import_with_overlapping_and_concurrent_updates`
+  (1/20 updates, reversed order, duplicates, concurrent peer, snapshot roundtrip),
   `import_batch_failure_leaves_doc_attached_and_unchanged`.
+- `crates/loro-wasm/tests/import_batch_snapshot.test.ts`: JS batch/split equivalence
+  and a rejected suffix update that rolls back the bootstrap without events.
 - `crates/loro-internal/src/oplog/pending_changes.rs`: the `import_batch_*` regressions
   that assert the doc is attached after a batch.
 

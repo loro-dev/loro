@@ -9,6 +9,77 @@ fn deep_json(doc: &LoroDoc) -> Value {
     doc.get_deep_value().to_json_value()
 }
 
+#[test]
+fn snapshot_batch_matches_split_import_with_overlapping_and_concurrent_updates() -> LoroResult<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    let blocks = source.get_list("blocks");
+    let block = blocks.push_container(loro::LoroMap::new())?;
+    block.insert("nodeName", "paragraph")?;
+    block.insert_container("attributes", loro::LoroMap::new())?;
+    let children = block.insert_container("children", LoroList::new())?;
+    let text = children.push_container(LoroText::new())?;
+    text.insert(0, "rich text")?;
+    text.mark(0..4, "bold", true)?;
+    source.commit();
+    let snapshot = source.export(ExportMode::Snapshot)?;
+    let mut updates = Vec::new();
+    for i in 0..20 {
+        let vv = source.oplog_vv();
+        text.insert(0, &format!("edit{i} "))?;
+        source.commit();
+        updates.push(source.export(ExportMode::updates(&vv))?);
+    }
+    let concurrent = LoroDoc::new();
+    concurrent.set_peer_id(2)?;
+    concurrent.import(&snapshot)?;
+    nested_inline_text(&concurrent).insert(0, "concurrent ")?;
+    concurrent.commit();
+    for n in [1, 20] {
+        for overlap in [false, true] {
+            let mut blobs = updates[..n].to_vec();
+            blobs.reverse();
+            if overlap {
+                blobs.push(concurrent.export(ExportMode::all_updates())?);
+                blobs.push(updates[0].clone());
+            }
+            let split = LoroDoc::new();
+            split.import(&snapshot)?;
+            split.import_batch(&blobs)?;
+            blobs.push(snapshot.clone());
+            let batch = LoroDoc::new();
+            let status = batch.import_batch(&blobs)?;
+            assert!(status.pending.is_none());
+            assert!(!batch.is_detached());
+            assert_eq!(batch.oplog_vv(), split.oplog_vv());
+            assert_eq!(batch.state_frontiers(), split.state_frontiers());
+            assert_eq!(deep_json(&batch), deep_json(&split));
+            assert_eq!(
+                nested_inline_text(&batch).to_delta(),
+                nested_inline_text(&split).to_delta()
+            );
+            let roundtrip = LoroDoc::new();
+            roundtrip.import(&batch.export(ExportMode::Snapshot)?)?;
+            assert_eq!(deep_json(&roundtrip), deep_json(&split));
+        }
+    }
+    Ok(())
+}
+
+fn nested_inline_text(doc: &LoroDoc) -> LoroText {
+    let block = doc
+        .get_list("blocks")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap();
+    let block = loro::LoroMap::try_from_container(block).unwrap();
+    let children =
+        LoroList::try_from_container(block.get("children").unwrap().into_container().unwrap())
+            .unwrap();
+    LoroText::try_from_container(children.get(0).unwrap().into_container().unwrap()).unwrap()
+}
+
 fn nested_body(doc: &LoroDoc) -> LoroText {
     LoroText::try_from_container(
         doc.get_map("root")
