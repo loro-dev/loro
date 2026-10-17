@@ -12,8 +12,9 @@ the same container lifetime, as described below.
 
 ## Undo identities and anchors
 
-`src/undo/movable_list.rs` captures each continuous undo span's before/after
-elements during the checkouts already used to calculate its inverse. The
+`src/undo/movable_list.rs` derives affected element ids from the span's ops;
+delete position ids resolve to their original insertion or move. It captures
+those elements during the checkouts already used to calculate its inverse. The
 capture includes element ids, position ids, value ids, and values, before
 positional transformation can lose them (loro-dev/loro#1185). It captures lists
 touched by the span, plus the full-state sources of revived list children.
@@ -39,12 +40,29 @@ anchor, restoration goes immediately before it, after any new prefix.
 A removal already made ineffective by a
 concurrent move does not insert another copy.
 
-The planner uses an ordered model with fractional keys to avoid shifting or
-scanning the whole list per edit. Live element lookup uses the existing
-`MovableListState::get_index_of_elem` index. A trimmed public value delta is
-used by the existing whole-batch unknown-container preflight, but only the
-native plan is applied. Its unexpected application failure remains an
-invariant failure, rather than being logged as a successful partial undo.
+Before snapshots also capture the nearest original neighbours. Their survival
+is checked by id in the current state. If a remote deletion removed a
+candidate, `complete_anchors` extends only that search in the historical view,
+doubling the number of candidates until it finds the nearest survivor. It
+does not copy a live-id table or unrelated list values. The ordered model
+contains only affected elements and these anchors. Insert/move/set use indexed
+lookups; deletion positions older than a shallow root retain the full-state
+fallback because their original operations have been trimmed. A full child
+revival necessarily retains its full-state source.
+
+`NativePreflight` records actual child creations/removals for the existing
+whole-batch unknown-container check. Its private list entry advertises
+creations, not a public positional delta; native edits are applied separately.
+No native edit runs before the whole batch passes that check. The transaction
+guard remains held from capture/preparation through all native edits, which
+use the handlers' `*_with_txn` methods. A waiting writer cannot invalidate an
+element or anchor in the former unlock/relock window. Stale-plan errors are
+returned as `LoroError`, without an `expect` or successful partial-undo log.
+
+A remotely revived original can coexist with its undo-created replacement.
+Several historical ids may therefore resolve to one current alias. Placement
+is classified per original entry; a missing move/set without an insertion
+value is skipped, never unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
 diff path. The saved full-state source, adjusted for earlier spans of the same
 undo group, supplies aliases for the cloned elements after that replay. This
@@ -117,3 +135,13 @@ costs O(log n) plus the op itself.
 - `crates/loro-wasm/tests/movable_list.test.ts`: the JS `applyDiff` cases.
 - `crates/loro/tests/perf_movable_list_apply_diff.rs` (ignored): 100k-element
   timings for `apply_diff` and undo.
+- `crates/loro/tests/movable_list_undo_random.rs`: three peers, scalar/map
+  values, random sync/undo/redo, convergence and snapshot/update round trips;
+  `LORO_UNDO_RANDOM_SEEDS=1500` runs the extended corpus, including 203/1340.
+- `crates/loro/tests/movable_list_undo_concurrent.rs`: a writer joins the
+  transaction wait queue during undo's historical checkout; the same manager
+  and document remain usable. `LORO_UNDO_CONCURRENT_ROUNDS=3000` extends it.
+- `undo::movable_list::tests::one_move_keeps_snapshot_and_model_sizes_bounded`
+  bounds captured/model elements independently of list length.
+- `crates/loro/tests/movable_list_undo_perf.rs`: optimized 10k/100k-element
+  single-move undo+redo medians and explicit performance budgets.

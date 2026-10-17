@@ -8,8 +8,9 @@ for (const [name, engine] of [
   ["loro.js", js],
   ["Rust", rust],
 ] as const) {
-  describe.skipIf(engine === undefined)(`${name} MovableList undo identities`, () => {
-    const { LoroDoc, UndoManager, LoroText, LoroMovableList } = engine!;
+  if (engine === undefined) continue;
+  describe(`${name} MovableList undo identities`, () => {
+    const { LoroDoc, UndoManager, LoroText, LoroMovableList, LoroMap } = engine;
     const pair = (values: number[]) => {
       const a = new LoroDoc();
       a.setPeerId(1);
@@ -62,6 +63,44 @@ for (const [name, engine] of [
         value: 0,
       });
     });
+
+    test.each(["scalar", "map"] as const)(
+      "undo keeps a revived original and its recreated %s replacement distinct",
+      (kind) => {
+        const { a, b, list, remote } = pair([-1, 1]);
+        if (kind === "scalar") list.insert(1, 0);
+        else list.insertContainer(1, new LoroMap()).set("value", 7);
+        a.commit();
+        sync(a, b);
+        const undo = new UndoManager(a, { mergeInterval: 0 });
+        list.delete(1, 1);
+        a.commit();
+        expect(undo.undo()).toBe(true);
+        remote.move(1, 0);
+        b.commit();
+        sync(a, b);
+        const before = list.toJSON();
+        list.delete(2, 1);
+        a.commit();
+        // Old Rust panicked in planning and trapped the WASM instance here.
+        expect(undo.undo()).toBe(true);
+        expect(list.toJSON()).toEqual(before);
+        sync(a, b);
+        if (kind === "map") {
+          (remote.get(0) as js.LoroMap).set("remote", true);
+          b.commit();
+          sync(a, b);
+        }
+        expect(list.toJSON()).toEqual(
+          kind === "map"
+            ? [{ value: 7, remote: true }, -1, { value: 7 }, 1]
+            : [0, -1, 0, 1],
+        );
+        list.push("usable");
+        a.commit();
+        sync(a, b);
+      },
+    );
 
     test("concurrent moves preserve identity even for equal scalar values", () => {
       const { a, b, undo, list, remote } = pair([7, 7, 7]);

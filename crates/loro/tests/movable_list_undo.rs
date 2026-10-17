@@ -50,6 +50,99 @@ fn converge(a: &LoroDoc, b: &LoroDoc) {
 }
 
 #[test]
+fn undo_recreated_element_after_original_is_remotely_revived() {
+    let (a, b) = pair(&[-1, 0, 1]);
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    // This concurrent move revives the original identity, while undo has
+    // already created a replacement and saved an alias to it.
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+    assert_eq!(list(&a), json!([0, -1, 0, 1]));
+    a.get_movable_list("list").delete(2, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(list(&a), json!([0, -1, 0, 1]));
+    converge(&a, &b);
+}
+
+#[test]
+fn revived_original_and_recreated_map_keep_distinct_contents() {
+    let (a, b) = pair(&[-1, 1]);
+    let child = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    child.insert("value", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+    let before = state(&a);
+    a.get_movable_list("list").delete(2, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), before);
+    assert_eq!(
+        a.get_movable_list("list")
+            .get(0)
+            .unwrap()
+            .into_container()
+            .unwrap()
+            .id(),
+        child.id()
+    );
+    b.get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap()
+        .insert("remote", true)
+        .unwrap();
+    b.commit();
+    converge(&a, &b);
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"value":7,"remote":true}, -1, {"value":7}, 1]})
+    );
+}
+
+#[test]
+fn removal_searches_past_deleted_neighbours_without_losing_a_moved_anchor() {
+    let (a, b) = pair(&(0..64).collect::<Vec<_>>());
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(32, 1).unwrap();
+    a.commit();
+    let remote = b.get_movable_list("list");
+    remote.delete(17, 31).unwrap();
+    remote.mov(16, remote.len() - 1).unwrap();
+    remote.insert(0, 999).unwrap();
+    b.commit();
+    converge(&a, &b);
+    let before = list(&a);
+    let mut restored = before.as_array().unwrap().clone();
+    restored.push(json!(32));
+    for _ in 0..3 {
+        assert!(u.undo().unwrap());
+        assert_eq!(list(&a), Value::Array(restored.clone()));
+        converge(&a, &b);
+        assert!(u.redo().unwrap());
+        assert_eq!(list(&a), before);
+        converge(&a, &b);
+    }
+}
+
+#[test]
 fn undo_same_element_concurrent_move() {
     let (a, b) = pair(&[0, 1, 2, 3]);
     let mut u = undo(&a);
