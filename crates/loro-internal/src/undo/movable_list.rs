@@ -384,7 +384,6 @@ pub(crate) fn capture_revivals(
             .iter()
             .all(|item| matches!(item, loro_delta::DeltaItem::Replace { delete: 0, .. }))
         {
-            let snapshot = Snapshot::capture(doc, cid);
             let inserted: usize = delta
                 .iter()
                 .map(|item| match item {
@@ -392,8 +391,19 @@ pub(crate) fn capture_revivals(
                     _ => unreachable!(),
                 })
                 .sum();
-            if inserted == snapshot.elements.len() {
-                revivals.insert(cid.clone(), (span_index, snapshot));
+            // An insert-only delta can also restore just the first element
+            // of a large live list. Check its length before taking a full
+            // child-revival snapshot, not after cloning unrelated values.
+            let matches_full_state = {
+                let mut state = doc.state.lock();
+                doc.arena.id_to_idx(cid).is_some_and(|idx| {
+                    state.with_state(idx, |s| {
+                        s.as_movable_list_state().unwrap().len() == inserted
+                    })
+                })
+            };
+            if matches_full_state {
+                revivals.insert(cid.clone(), (span_index, Snapshot::capture(doc, cid)));
             }
         }
     }
@@ -414,8 +424,8 @@ fn remap_value(value: &LoroValue, containers: &FxHashMap<ContainerID, ContainerI
     }
 }
 
-// The ordered model avoids scanning/shifting the live list for each edit. Only
-// snapshots and the final public delta are linear in the list's length.
+// The ordered model contains only affected elements and their anchors. Relative
+// keys avoid shifting the rest of the list while planning each identity edit.
 struct Model {
     order: BTreeMap<FractionalIndex, Element>,
     keys: FxHashMap<CompactIdLp, FractionalIndex>,
@@ -847,8 +857,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn one_move_keeps_snapshot_and_model_sizes_bounded() {
-        for n in [1_000, 10_000] {
+    fn small_edits_keep_snapshot_and_model_sizes_bounded() {
+        for (n, remove) in [
+            (1_000, false),
+            (10_000, false),
+            (1_000, true),
+            (10_000, true),
+        ] {
             let doc = LoroDoc::new_auto_commit();
             let list = doc.get_movable_list("list");
             for i in 0..n {
@@ -856,7 +871,11 @@ mod tests {
             }
             doc.commit_then_renew();
             let undo = crate::UndoManager::new(&doc);
-            list.mov(0, n as usize - 1).unwrap();
+            if remove {
+                list.delete(0, 1).unwrap();
+            } else {
+                list.mov(0, n as usize - 1).unwrap();
+            }
             doc.commit_then_renew();
             CAPTURE_STATS.with(|stats| stats.set((0, 0)));
             assert!(undo.undo().unwrap());

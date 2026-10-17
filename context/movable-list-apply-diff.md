@@ -141,7 +141,8 @@ costs O(log n) plus the op itself.
 - `crates/loro/tests/movable_list_undo_concurrent.rs`: a writer joins the
   transaction wait queue during undo's historical checkout; the same manager
   and document remain usable. `LORO_UNDO_CONCURRENT_ROUNDS=3000` extends it.
-- `undo::movable_list::tests::one_move_keeps_snapshot_and_model_sizes_bounded`
-  bounds captured/model elements independently of list length.
+- `undo::movable_list::tests::small_edits_keep_snapshot_and_model_sizes_bounded`
+  bounds captured/model elements independently of list length, for moves and
+  front removals. Revival detection checks length before capturing full state.
 - `crates/loro/tests/movable_list_undo_perf.rs`: optimized 10k/100k-element
   single-move undo+redo medians and explicit performance budgets.
