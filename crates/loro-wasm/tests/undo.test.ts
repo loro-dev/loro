@@ -26,7 +26,7 @@ describe("undo", () => {
       list.insert(0, 0);
       doc.commit();
       remote.import(doc.export({ mode: "update" }));
-      remote.getMovableList("list").move(0, 2);
+      remote.getMovableList("list").delete(0, 1);
       remote.commit();
       doc.import(remote.export({ mode: "update" }));
 
@@ -50,7 +50,7 @@ describe("undo", () => {
     list.insert(1, 2);
     doc.commit();
     const undo = new UndoManager(doc, { mergeInterval: 0 });
-    list.delete(0, 1);
+    list.move(0, 1);
     doc.commit();
     const root = doc.getMap("root");
     root.setContainer("parent", new LoroMap());
@@ -60,7 +60,7 @@ describe("undo", () => {
     const remote = new LoroDoc();
     remote.setPeerId(2);
     remote.import(doc.export({ mode: "snapshot" }));
-    remote.getMovableList("list").move(0, 1);
+    remote.getMovableList("list").delete(0, 1);
     remote.commit();
     doc.import(remote.export({ mode: "update" }));
 

@@ -51,7 +51,7 @@ test("no-op redo returns false and preserves the later parent item", () => {
     mergeInterval: 0,
     onPop: (isUndo) => popped.push(isUndo),
   });
-  list.delete(0, 1);
+  list.move(0, 1);
   doc.commit();
   const root = doc.getMap("root");
   root.setContainer("parent", new LoroMap());
@@ -62,7 +62,8 @@ test("no-op redo returns false and preserves the later parent item", () => {
   const remote = new LoroDoc();
   remote.setPeerId(2);
   remote.import(doc.export({ mode: "snapshot" }));
-  remote.getMovableList("list").move(0, 1);
+  // Redo moves a missing identity; a moved insertion is a real delete now.
+  remote.getMovableList("list").delete(0, 1);
   remote.commit();
   doc.import(remote.export({ mode: "update" }));
   const before = doc.toJSON();

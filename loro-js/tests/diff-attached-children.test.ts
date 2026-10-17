@@ -558,7 +558,7 @@ describe("diff and revertTo for containers attached by the range", () => {
     }
   });
 
-  test("undo keeps a later move from an excluded origin", () => {
+  test("undo replays the tracked move by identity after an excluded move", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
     const list = doc.getMovableList("l");
@@ -574,9 +574,9 @@ describe("diff and revertTo for containers attached by the range", () => {
     doc.commit();
     list.move(2, 1);
     doc.commit({ origin: "system" });
-    // As in Rust: the excluded move keeps X in place.
+    // As in Rust #1209: the inverse moves X itself back, preserving its ID.
     undo.undo();
-    expect(doc.toJSON()).toEqual({ l: ["A", "X", "B"] });
+    expect(doc.toJSON()).toEqual({ l: ["X", "A", "B"] });
   });
 
   test("redo restores moves mixed with inserts in their original order", () => {
@@ -763,7 +763,7 @@ describe("diff and revertTo for containers attached by the range", () => {
     }
   });
 
-  test("undo keeps a move's slot when its old neighbor changed afterwards", () => {
+  test("undo follows a move's surviving original right neighbour", () => {
     const build = () => {
       const doc = new LoroDoc();
       doc.setPeerId(1);
@@ -780,19 +780,19 @@ describe("diff and revertTo for containers attached by the range", () => {
       doc.commit();
       return { doc, list, undo };
     };
-    // The old successor B is moved away by an excluded edit: A stays, as in Rust.
+    // No original left neighbour: A follows the surviving right anchor B.
     const moved = build();
     moved.list.move(0, 3);
     moved.doc.commit({ origin: "system" });
     moved.undo.undo();
-    expect(moved.doc.toJSON()).toEqual({ l: ["A", "C", "D", "B"] });
+    expect(moved.doc.toJSON()).toEqual({ l: ["C", "D", "A", "B"] });
 
-    // Something is inserted before the old successor: A goes back to the front.
+    // The new prefix has no old identity; A still goes immediately before B.
     const inserted = build();
     inserted.list.insert(0, "new");
     inserted.doc.commit({ origin: "system" });
     inserted.undo.undo();
-    expect(inserted.doc.toJSON()).toEqual({ l: ["A", "new", "B", "C", "D"] });
+    expect(inserted.doc.toJSON()).toEqual({ l: ["new", "A", "B", "C", "D"] });
   });
 
   test("undo keeps only the tracked ranges its stacks can still use", () => {

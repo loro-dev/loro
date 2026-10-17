@@ -48,7 +48,9 @@ mod noop_history_boundaries {
         a.get_movable_list("list").insert(0, 0)?;
         a.commit();
         send(&a, &b)?;
-        b.get_movable_list("list").mov(0, 2)?;
+        // Identity-aware undo follows moved insertions. A remote deletion is
+        // still a genuine no-op and must consume only this history item.
+        b.get_movable_list("list").delete(0, 1)?;
         b.commit();
         send(&b, &a)?;
 
@@ -68,7 +70,7 @@ mod noop_history_boundaries {
         assert_eq!(undo.redo_count(), 0);
         assert_eq!(
             a.get_movable_list("list").get_value().to_json_value(),
-            json!([1, 2, 0])
+            json!([1, 2])
         );
 
         // The earlier edit remains available and can still be undone and redone.
@@ -98,7 +100,7 @@ mod noop_history_boundaries {
         let mut undo = UndoManager::new(&a);
         undo.set_merge_interval(0);
         undo.add_exclude_origin_prefix("import");
-        a.get_movable_list("list").delete(0, 1)?;
+        a.get_movable_list("list").mov(0, 1)?;
         a.commit();
         a.get_map("root")
             .insert_container("parent", LoroMap::new())?;
@@ -108,7 +110,9 @@ mod noop_history_boundaries {
         assert_eq!(undo.redo_count(), 2);
 
         send(&a, &b)?;
-        b.get_movable_list("list").mov(0, 1)?;
+        // The next redo moves the same identity. Deleting it remotely leaves
+        // that redo ineffective without touching the later parent creation.
+        b.get_movable_list("list").delete(0, 1)?;
         b.commit();
         send(&b, &a)?;
         let before = a.get_deep_value();
@@ -126,7 +130,7 @@ mod noop_history_boundaries {
         assert_eq!(undo.undo_count(), 0);
         assert_eq!(
             a.get_movable_list("list").get_value().to_json_value(),
-            json!([2, 1])
+            json!([2])
         );
         assert!(undo.redo()?);
         assert!(a.get_map("root").get("parent").is_some());

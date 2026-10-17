@@ -24,15 +24,19 @@ deletes inserted elements by identity wherever they moved, restores removed
 elements with fresh ids, and issues native moves/sets for surviving elements.
 `UndoManager::element_remap` links removed ids to their recreated ids so older
 steps, redo, and saved neighbour references can find them. A move/set whose
-element was remotely deleted does not recreate it. This does not change the
-manager's existing no-op skipping policy (the separate #1183).
+element was remotely deleted does not recreate it. A consumed no-op returns
+`false` and leaves other items for later calls, following #1202's
+[history boundary rule](undo-history-boundaries.md). Undoing an insertion
+whose element moved remotely is now a real identity delete, not a no-op.
 
 Position restoration prefers the nearest surviving original left neighbour;
 otherwise it uses the nearest surviving original right neighbour, then index
 zero. The left neighbour wins when the old neighbours cross. Restoration goes
 in original order, so restored runs anchor each other; right anchors exclude
-elements that the same inverse has yet to move. Remote insertions in the old
-gap follow the restored element. A removal already made ineffective by a
+elements that the same inverse has yet to move. With a surviving left anchor,
+remote insertions in that gap follow the restored element. With only a right
+anchor, restoration goes immediately before it, after any new prefix.
+A removal already made ineffective by a
 concurrent move does not insert another copy.
 
 The planner uses an ordered model with fractional keys to avoid shifting or

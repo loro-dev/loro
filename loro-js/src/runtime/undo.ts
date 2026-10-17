@@ -1,4 +1,5 @@
 import type { LoroDoc } from "./document";
+import { MovableListUndoState } from "./movable-list-undo";
 import type {
   CounterSpan,
   LoroEventBatch,
@@ -78,6 +79,7 @@ export class UndoManager {
   readonly #redo = new UndoDeque<UndoItem>();
   readonly #excludeOriginPrefixes = new Set<string>();
   readonly #remoteTargets = new Set<string>();
+  readonly #movableLists = new MovableListUndoState();
   #mergeInterval: number;
   #maxUndoSteps: number;
   #onPush: UndoConfig["onPush"];
@@ -204,6 +206,7 @@ export class UndoManager {
     this.#redo.clear();
     this.#remoteTargets.clear();
     this.#tracked.clear();
+    this.#movableLists.clear();
   }
 
   clearUndo(): void {
@@ -305,7 +308,12 @@ export class UndoManager {
     const before = this.#doc.frontiers();
     this.#applying = true;
     try {
-      this.#doc._undoIdSpan(item.peer, item.range, (id) => this.#isTracked(id));
+      this.#doc._undoIdSpan(
+        item.peer,
+        item.range,
+        (id) => this.#isTracked(id),
+        this.#movableLists,
+      );
       this.#doc.commit({ origin: isUndo ? "undo" : "redo" });
       const after = this.#doc.frontiers();
       const spans = this.#doc.findIdSpansBetween(before, after).forward;
