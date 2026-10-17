@@ -4050,6 +4050,10 @@ impl UndoManager {
     /// has become a no-op is consumed and returns `Ok(false)` without undoing
     /// earlier items. Use [`Self::can_undo`] to check whether history remains.
     ///
+    /// An application error rolls back the inverse and preserves the item for
+    /// retry, without emitting events or changing either stack. Pending user
+    /// edits are checkpointed before the attempt.
+    ///
     /// Returns `Err(LoroError::ArgErr)` without changing the doc if the step
     /// would have to recreate a container of a type unknown to this version
     /// (written by a newer Loro). That step is dropped and its edits stay; the
@@ -4064,6 +4068,9 @@ impl UndoManager {
     /// Consumes at most one history item, including a no-op. Returns whether
     /// local operations were generated; `Ok(false)` does not imply the redo
     /// stack is empty. See [`Self::can_redo`].
+    ///
+    /// Application errors roll back and preserve the item for retry, as in
+    /// [`Self::undo`].
     ///
     /// Fails like [`UndoManager::undo`] on steps that would recreate a
     /// container of an unknown type.

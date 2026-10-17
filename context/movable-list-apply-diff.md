@@ -110,8 +110,10 @@ costs O(log n) plus the op itself.
   This is the generic composition of child revival across split spans, not
   #1185's concurrent move/removal inversion. The identity repair keeps that
   parent-revival application path; it does not rewrite group composition.
-- `undo_internal` logs and ignores an `Err` from `_apply_diff`, but a panic
-  escapes, and in WASM a panic traps. Until 2026-09 this handler deferred all
+- `undo_internal` rolls back application errors and returns them; the failed
+  item and both identity maps are preserved for retry
+  ([undo-atomicity.md](undo-atomicity.md)). A panic on an internal invariant
+  still escapes, and in WASM a panic traps. Until 2026-09 this handler deferred all
   deletes and tracked moved slots with index arithmetic. The arithmetic
   underflowed or produced out-of-range `mov` calls behind an `unwrap()`: a
   swap of two children lost one of them, and undo/redo could panic with
