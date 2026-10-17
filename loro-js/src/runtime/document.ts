@@ -101,6 +101,7 @@ import {
   parseMergeableMarker,
 } from "./mergeable";
 import { OrderedIndex } from "./ordered-index";
+import { MovableListUndoState } from "./movable-list-undo";
 import type { SequenceIdRun } from "./sequence-index";
 import type {
   Change,
@@ -313,6 +314,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #changeMergeInterval = 1000n;
   #nextCommitOptions: CommitOptions = {};
   #subscribers = new Set<(event: LoroEventBatch) => void>();
+  #localNoopCommitSubscribers = new Set<(event: LoroEventBatch) => void>();
   #localUpdateSubscribers = new Set<(bytes: Uint8Array) => void>();
   #containerSubscribers = new Map<string, Set<(event: LoroEventBatch) => void>>();
   #firstCommitSubscribers = new Set<(event: { peer: PeerID }) => void>();
@@ -3241,6 +3243,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return () => this.#subscribers.delete(listener);
   }
 
+  /** Undo history includes local commits whose operations cancel in the state diff. */
+  _subscribeUndo(listener: (event: LoroEventBatch) => void): Subscription {
+    const unsubscribe = this.subscribe(listener);
+    this.#localNoopCommitSubscribers.add(listener);
+    return () => {
+      unsubscribe();
+      this.#localNoopCommitSubscribers.delete(listener);
+    };
+  }
+
   subscribeLocalUpdates(listener: (bytes: Uint8Array) => void): Subscription {
     this.#localUpdateSubscribers.add(listener);
     return () => this.#localUpdateSubscribers.delete(listener);
@@ -3518,6 +3530,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     peer: PeerID,
     range: CounterSpan,
     isTracked: (id: CodecId) => boolean = (id) => id.peer === this.#peer,
+    movableUndo = new MovableListUndoState(),
   ): void {
     this.#commit({}, true);
     this.#materializeDeferredHistory();
@@ -3552,130 +3565,135 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       }
     }
     if (movableLists.size > 0) {
-      this.#undoMovableLists(parsedPeer, range, movableLists, tracked);
+      this.#undoMovableLists(parsedPeer, range, movableLists, movableUndo);
     }
     for (const { record, operation } of operations) {
       this.#undoOperation(record, operation, parsedPeer, range, tracked);
     }
   }
 
-  /**
-   * Undoes MovableList changes the way Rust's `undo_internal` does: apply the
-   * inverse diff of the span, transformed over what changed since, through
-   * `apply_delta`. Undoing a move or set therefore reinserts the old value as a
-   * new element, and moves a child container back.
-   */
+  /** Replays the same identity edits and neighbour anchors as Rust #1185. */
   #undoMovableLists(
     peer: bigint,
     range: CounterSpan,
     lists: ReadonlySet<LoroMovableList>,
-    isTracked: (id: CodecId) => boolean,
+    undo: MovableListUndoState,
   ): void {
-    const first = this.#recordContaining({ peer, counter: range.start });
-    if (first === undefined) return;
-    const deps =
-      range.start > first.change.id.counter
-        ? [{ peer, counter: range.start - 1 }]
-        : first.change.dependencies;
-    const spanEnd: Frontiers = [
-      { peer: peer.toString() as PeerID, counter: range.end - 1 },
-    ];
-    const inverse = new Map(this.diff(spanEnd, deps.map(formatOpId), false));
-    // Rust transforms the inverse only over changes this UndoManager did not
-    // make (its remote diff), so a list's inverse is transformed only when such
-    // a change touched that list.
-    const spanEndVersion = this.#versionForExistingFrontiers(spanEnd);
-    const untrackedLists = new Set<string>();
-    for (const { change } of this.#recordsInVersionRange(
-      spanEndVersion,
-      this.#historyVersion(),
-    )) {
+    const spans: {
+      start: number;
+      end: number;
+      deps: readonly CodecId[];
+      lists: Set<ContainerID>;
+    }[] = [];
+    const records = this.#historyByPeer.get(peer) ?? [];
+    for (
+      let i = Math.max(0, lowerBoundHistory(records, range.start + 1) - 1);
+      i < records.length;
+      i += 1
+    ) {
+      const { change } = records[i]!;
+      if (change.id.counter >= range.end) break;
+      const start = Math.max(range.start, change.id.counter);
+      const end = Math.min(range.end, change.id.counter + changeLength(change));
+      if (start >= end) continue;
+      const deps =
+        start > change.id.counter ? [{ peer, counter: start - 1 }] : change.dependencies;
+      let span = spans.at(-1);
+      if (
+        span === undefined ||
+        span.end !== start ||
+        deps.length !== 1 ||
+        deps[0]!.peer !== peer ||
+        deps[0]!.counter !== start - 1
+      ) {
+        span = { start, end, deps, lists: new Set() };
+        spans.push(span);
+      } else span.end = end;
       for (const operation of change.operations) {
-        const first = { peer: change.id.peer, counter: operation.counter };
-        const last = { ...first, counter: operation.counter + operation.length - 1 };
-        if (!isTracked(first) || !isTracked(last)) {
-          untrackedLists.add(this.#containerKey(operation.container));
+        if (operation.counter >= end || operation.counter + operation.length <= start)
+          continue;
+        const id = formatContainerId(operation.container);
+        const container = this.#containers.get(id);
+        if (container instanceof LoroMovableList && lists.has(container))
+          span.lists.add(id);
+      }
+    }
+    for (const span of spans.reverse()) {
+      const beforeVersion = this.#causalVersionAt(span.deps);
+      const endpoint = { peer, counter: span.end - 1 };
+      const afterVersion = this.#causalVersionAt([endpoint]);
+      const beforeIncludes = (id: CodecId): boolean =>
+        id.counter < (beforeVersion.get(id.peer) ?? 0);
+      const afterIncludes = (id: CodecId): boolean =>
+        id.counter < (afterVersion.get(id.peer) ?? 0);
+      const pairs = [...span.lists].flatMap((id) => {
+        const source = this.#containers.get(id) as LoroMovableList;
+        let list = source;
+        while (undo.containers.has(list.id))
+          list = undo.containers.get(list.id) as LoroMovableList;
+        if (this._isContainerDeleted(list)) return [];
+        this._ensureContainerHydrated(source);
+        if (this.#snapshotSequences.get(source.id)?.kind === "hydrated") {
+          this.#completeSnapshotSequence(
+            source,
+            source.id,
+            this.#checkoutVersion ?? this.#historyVersion(),
+          );
+        }
+        return [
+          {
+            list,
+            before: source._state.undoSnapshotAt(beforeIncludes),
+            after: source._state.undoSnapshotAt(afterIncludes),
+          },
+        ];
+      });
+      // Child copies still receive their historical full state from the
+      // inverse, rather than copying a child's later or hidden edits.
+      const needsChildren = pairs.some(({ before, after }) => {
+        const later = new Map(after.map((e) => [`${e.id.lamport}@${e.id.peer}`, e]));
+        return before.some(
+          (e) =>
+            e.value instanceof LoroContainer &&
+            (later.get(`${e.id.lamport}@${e.id.peer}`)?.valueWriter.lamport !==
+              e.valueWriter.lamport ||
+              later.get(`${e.id.lamport}@${e.id.peer}`)?.valueWriter.peer !==
+                e.valueWriter.peer),
+        );
+      });
+      const inverse = new Map(
+        needsChildren
+          ? this.diff([formatOpId(endpoint)], span.deps.map(formatOpId), false)
+          : [],
+      );
+      const remap = new Map(undo.containers);
+      for (const { list, before, after } of pairs) {
+        undo.apply(list, before, after, (position, value, set) => {
+          if (value instanceof LoroContainer) {
+            const child = createContainer(value.kind()) as Container;
+            const attached = set
+              ? list.setContainer(position, child)
+              : list.insertContainer(position, child);
+            remap.set(value.id, attached);
+          } else if (set) list.set(position, cloneRuntimeValue(value));
+          else list.insert(position, cloneRuntimeValue(value));
+        });
+      }
+      for (const [id, diff] of inverse) {
+        const child = remap.get(id);
+        if (child === undefined || child === undo.containers.get(id)) continue;
+        this.#applyContainerDiff(child, diff, remap, new Map());
+        const source = this.#containers.get(id);
+        if (source instanceof LoroMovableList && child instanceof LoroMovableList) {
+          undo.recordRecreatedList(
+            source._state.undoSnapshotAt(beforeIncludes),
+            child,
+            remap,
+          );
         }
       }
+      for (const [id, child] of remap) undo.containers.set(id, child);
     }
-    const since = new Map(
-      [...lists].some((list) => untrackedLists.has(list.id))
-        ? this.diff(spanEnd, this.frontiers(), false)
-        : [],
-    );
-    const remap = new Map<ContainerID, Container>();
-    for (const list of lists) {
-      if (this._isContainerDeleted(list)) continue;
-      const undo = inverse.get(list.id);
-      if (undo?.type !== "list") continue;
-      const later = untrackedLists.has(list.id) ? since.get(list.id) : undefined;
-      const delta =
-        later?.type === "list" ? transformListDelta(undo.diff, later.diff) : undo.diff;
-      this.#applyContainerDiff(
-        list,
-        { type: "list", diff: this.#withoutLiveChildInserts(list, delta, remap) },
-        remap,
-        new Map(),
-      );
-    }
-    // Reinserted child containers get their whole state from the inverse diff.
-    for (const [id, diff] of inverse) {
-      const child = remap.get(id);
-      if (child !== undefined) this.#applyContainerDiff(child, diff, remap, new Map());
-    }
-  }
-
-  /**
-   * Rust's `apply_delta` skips a `from_move` insert whose child still exists
-   * elsewhere in the list; undo transforms leave such inserts behind when a
-   * later change moved the child (context/movable-list-apply-diff.md). loro.js
-   * deltas carry no `from_move`, so for undo an inserted child that is still
-   * visible outside the delta's deleted ranges is dropped instead.
-   */
-  #withoutLiveChildInserts(
-    list: LoroMovableList,
-    delta: readonly Delta<unknown[]>[],
-    remap: ReadonlyMap<ContainerID, Container>,
-  ): Delta<unknown[]>[] {
-    const deleted: { readonly start: number; readonly end: number }[] = [];
-    let index = 0;
-    for (const item of delta) {
-      if ("retain" in item) index += item.retain;
-      else if ("delete" in item) {
-        deleted.push({ start: index, end: index + item.delete });
-        index += item.delete;
-      }
-    }
-    const live = (value: unknown): boolean => {
-      let id = diffContainerId(value);
-      let child = id === undefined ? undefined : this.#containers.get(id);
-      for (
-        let hops = 0;
-        child === undefined && id !== undefined && hops < 64;
-        hops += 1
-      ) {
-        id = remap.get(id)?.id;
-        child = id === undefined ? undefined : this.#containers.get(id);
-      }
-      if (child === undefined || child.parent() !== list) return false;
-      const binding = child._parentLink?.binding ?? recoverParentBinding(child, list);
-      if (binding?.kind !== "movable" || binding.element.value !== child) return false;
-      const position = list._state.indexOf(binding.element);
-      return (
-        position !== undefined &&
-        !deleted.some(({ start, end }) => position >= start && position < end)
-      );
-    };
-    const output: Delta<unknown[]>[] = [];
-    for (const item of delta) {
-      if (!("insert" in item)) {
-        output.push(item);
-        continue;
-      }
-      const kept = item.insert.filter((value) => !live(value));
-      if (kept.length > 0) output.push({ ...item, insert: kept });
-    }
-    return output;
   }
 
   _transformUndoCursors(cursors: readonly Cursor[]): Cursor[] {
@@ -3701,8 +3719,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     operation: DecodedOperation,
     peer: bigint,
     range: CounterSpan,
-    // Only the old MovableList move undo read this; MovableList undo now
-    // applies Rust's inverse diff (#undoMovableLists).
+    // MovableList changes use the separate identity replay above.
     _isTracked: (id: CodecId) => boolean,
   ): void {
     const container = this.#containers.get(formatContainerId(operation.container));
@@ -8834,7 +8851,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       diff,
       path: containerPath(this.#containers.get(target)!),
     }));
-    if (events.length === 0) return;
     const base = {
       by,
       ...(origin === undefined ? {} : { origin }),
@@ -8842,6 +8858,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       from: from.map(formatOpId),
       to: to.map(formatOpId),
     } satisfies LoroEventBatch;
+    if (events.length === 0) {
+      if (by === "local") {
+        for (const listener of this.#localNoopCommitSubscribers) listener(base);
+      }
+      return;
+    }
     for (const listener of this.#subscribers) listener(base);
     const relevantByTarget = new Map<string, LoroEvent[]>();
     for (const event of events) {
@@ -9150,68 +9172,6 @@ function movableTransitionOp(
     default:
       throw new Error(`${content.type} is not a movable-list operation`);
   }
-}
-
-/**
- * Transforms list delta `delta` to apply after `over` (both start from the same
- * list). At an equal position `delta`'s inserts go first, like Rust's
- * `transform(.., left_priority = true)` in undo.
- */
-function transformListDelta(
-  delta: readonly Delta<unknown[]>[],
-  over: readonly Delta<unknown[]>[],
-): Delta<unknown[]>[] {
-  type Part =
-    | { readonly kind: "retain" | "delete"; length: number }
-    | { readonly kind: "insert"; values: unknown[] };
-  const parts = (items: readonly Delta<unknown[]>[]): Part[] =>
-    items.map((item) =>
-      "insert" in item
-        ? { kind: "insert", values: [...item.insert] }
-        : "delete" in item
-          ? { kind: "delete", length: item.delete }
-          : { kind: "retain", length: item.retain },
-    );
-  const left = parts(delta);
-  const right = parts(over);
-  const output: Delta<unknown[]>[] = [];
-  const push = (item: Delta<unknown[]>): void => {
-    const last = output.at(-1);
-    if (last !== undefined && "retain" in last && "retain" in item) {
-      output[output.length - 1] = { retain: last.retain + item.retain };
-    } else if (last !== undefined && "delete" in last && "delete" in item) {
-      output[output.length - 1] = { delete: last.delete + item.delete };
-    } else {
-      output.push(item);
-    }
-  };
-  while (left.length > 0 || right.length > 0) {
-    const a = left[0];
-    const b = right[0];
-    if (a?.kind === "insert") {
-      push({ insert: a.values });
-      left.shift();
-      continue;
-    }
-    if (b?.kind === "insert") {
-      push({ retain: b.values.length });
-      right.shift();
-      continue;
-    }
-    if (a === undefined) break;
-    const length = Math.min(a.length, b?.length ?? Number.POSITIVE_INFINITY);
-    if (b === undefined || b.kind === "retain") {
-      push(a.kind === "delete" ? { delete: length } : { retain: length });
-    }
-    a.length -= length;
-    if (a.length === 0) left.shift();
-    if (b !== undefined) {
-      b.length -= length;
-      if (b.length === 0) right.shift();
-    }
-  }
-  while (output.length > 0 && "retain" in output.at(-1)!) output.pop();
-  return output;
 }
 
 /** Element IDs of each MovableList in a shallow root store, built on first use. */

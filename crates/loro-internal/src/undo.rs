@@ -18,6 +18,10 @@ use crate::{
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
 
+#[cfg(test)]
+mod atomicity_tests;
+pub(crate) mod movable_list;
+
 /// A batch of diffs.
 ///
 /// You can use `loroDoc.apply_diff(diff)` to apply the diff to the document.
@@ -221,6 +225,7 @@ fn transform_cursor(
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
+    element_remap: Mutex<movable_list::ElementRemap>,
     inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
@@ -420,6 +425,16 @@ impl Stack {
 
     pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta) {
         self.push_with_merge(span, meta, false, None)
+    }
+
+    fn restore_popped(&mut self, item: StackItem, remote_diff: &Arc<Mutex<DiffBatch>>) {
+        let last = self.stack.back_mut().unwrap();
+        assert!(
+            Arc::ptr_eq(&last.1, remote_diff),
+            "failed undo lost its remote-diff row"
+        );
+        last.0.push_back(item);
+        self.size += 1;
     }
 
     pub fn push_with_merge(
@@ -770,6 +785,7 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
+            element_remap: Mutex::new(FxHashMap::default()),
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
@@ -826,6 +842,9 @@ impl UndoManager {
         Ok(())
     }
 
+    /// Consume at most one undo item, even if its transformed inverse is a no-op.
+    /// Returns whether local operations were generated; use `can_undo` to check
+    /// whether history remains after a `false` result.
     #[instrument(skip_all)]
     pub fn undo(&self) -> LoroResult<bool> {
         self.perform(
@@ -835,6 +854,8 @@ impl UndoManager {
         )
     }
 
+    /// Consume at most one redo item, including a no-op. A `false` result means
+    /// no local operations were generated, not necessarily an empty redo stack.
     #[instrument(skip_all)]
     pub fn redo(&self) -> LoroResult<bool> {
         self.perform(
@@ -854,6 +875,7 @@ impl UndoManager {
             return Ok(false);
         }
         let doc = &self.doc.clone();
+        let _exclusive = doc.txn.lock_exclusive();
         // When in the undo/redo loop, the new undo/redo stack item should restore the selection
         // to the state it was in before the item that was popped two steps ago from the stack.
         //
@@ -909,7 +931,7 @@ impl UndoManager {
         // rather than using the current selection directly.
         self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
-        let mut top = {
+        let top = {
             let lock = self.inner.lock();
             let mut inner = lock.borrow_mut();
             inner.processing_undo = true;
@@ -920,7 +942,9 @@ impl UndoManager {
         };
 
         let mut executed = false;
-        while let Some((mut span, remote_diff)) = top {
+        // A no-op still consumes this item. Never cross its history boundary
+        // to undo/redo an unrelated edit in the same call.
+        if let Some((mut span, remote_diff)) = top {
             let mut next_push_selection = None;
             {
                 let inner = self.inner.clone();
@@ -942,13 +966,13 @@ impl UndoManager {
                         });
                     },
                     &mut rejected_step,
+                    &mut self.element_remap.lock(),
                 ) {
                     Ok(c) => c,
-                    // The step would recreate a container of an unknown type
-                    // (the only `ArgErr` of `undo_internal`). Nothing was
-                    // applied; drop the step instead of retrying it forever or
-                    // undoing the next step in its place.
-                    Err(e @ LoroError::ArgErr(_)) => {
+                    // Keep the documented unknown-container policy: consume a
+                    // prechecked unsupported step and rebase older history.
+                    // Application errors, including other ArgErrs, are retried.
+                    Err(e @ LoroError::ArgErr(_)) if rejected_step.is_some() => {
                         // Its changes stay in the doc: rebase the steps before
                         // it over them, like over remote changes
                         if let Some(mut changes) = rejected_step {
@@ -959,7 +983,8 @@ impl UndoManager {
                         return Err(e);
                     }
                     Err(e) => {
-                        get_stack(&mut self.inner.lock().borrow_mut()).push(span.span, span.meta);
+                        get_stack(&mut self.inner.lock().borrow_mut())
+                            .restore_popped(span, &remote_diff);
                         return Err(e);
                     }
                 };
@@ -1018,11 +1043,6 @@ impl UndoManager {
                     .push(CounterSpan::new(end_counter, new_counter), meta);
                 inner.borrow_mut().next_counter = Some(new_counter);
                 executed = true;
-                break;
-            } else {
-                // continue to pop the undo item as this undo is a no-op
-                top = get_stack(&mut self.inner.lock().borrow_mut()).pop();
-                continue;
             }
         }
 

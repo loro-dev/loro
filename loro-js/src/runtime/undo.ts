@@ -1,4 +1,5 @@
 import type { LoroDoc } from "./document";
+import { MovableListUndoState } from "./movable-list-undo";
 import type {
   CounterSpan,
   LoroEventBatch,
@@ -78,6 +79,7 @@ export class UndoManager {
   readonly #redo = new UndoDeque<UndoItem>();
   readonly #excludeOriginPrefixes = new Set<string>();
   readonly #remoteTargets = new Set<string>();
+  readonly #movableLists = new MovableListUndoState();
   #mergeInterval: number;
   #maxUndoSteps: number;
   #onPush: UndoConfig["onPush"];
@@ -103,41 +105,45 @@ export class UndoManager {
     for (const prefix of config.excludeOriginPrefixes ?? []) {
       this.#excludeOriginPrefixes.add(prefix);
     }
-    this.#unsubscribe = doc.subscribe((event) => this.#record(event));
+    this.#unsubscribe = doc._subscribeUndo((event) => this.#record(event));
   }
 
   free(): void {
     this.destroy();
   }
 
+  /** Consumes one item; returns false for a no-op even if undo history remains. */
   undo(): boolean {
     if (this.#paused) return false;
     const item = this.#undo.pop();
     if (item === undefined) return false;
+    let redo: UndoItem | undefined;
     try {
-      const redo = this.#invert(item, true);
+      redo = this.#invert(item, true);
       if (redo !== undefined) this.#redo.push(redo);
     } catch (error) {
       this.#undo.push(item);
       throw error;
     }
     this.#pruneTracked();
-    return true;
+    return redo !== undefined;
   }
 
+  /** Consumes one item; returns false for a no-op even if redo history remains. */
   redo(): boolean {
     if (this.#paused) return false;
     const item = this.#redo.pop();
     if (item === undefined) return false;
+    let undo: UndoItem | undefined;
     try {
-      const undo = this.#invert(item, false);
+      undo = this.#invert(item, false);
       if (undo !== undefined) this.#pushUndo(undo, false);
     } catch (error) {
       this.#redo.push(item);
       throw error;
     }
     this.#pruneTracked();
-    return true;
+    return undo !== undefined;
   }
 
   peer(): PeerID {
@@ -200,6 +206,7 @@ export class UndoManager {
     this.#redo.clear();
     this.#remoteTargets.clear();
     this.#tracked.clear();
+    this.#movableLists.clear();
   }
 
   clearUndo(): void {
@@ -301,7 +308,12 @@ export class UndoManager {
     const before = this.#doc.frontiers();
     this.#applying = true;
     try {
-      this.#doc._undoIdSpan(item.peer, item.range, (id) => this.#isTracked(id));
+      this.#doc._undoIdSpan(
+        item.peer,
+        item.range,
+        (id) => this.#isTracked(id),
+        this.#movableLists,
+      );
       this.#doc.commit({ origin: isUndo ? "undo" : "redo" });
       const after = this.#doc.frontiers();
       const spans = this.#doc.findIdSpansBetween(before, after).forward;

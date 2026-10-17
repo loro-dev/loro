@@ -7,6 +7,10 @@ over graceful degradation.
 
 ## Internal Map
 
+- `src/undo.rs`: one recorded item per undo/redo call, including no-ops:
+  [../../context/undo-history-boundaries.md](../../context/undo-history-boundaries.md).
+- Undo transaction rollback and writer gate:
+  [../../context/undo-atomicity.md](../../context/undo-atomicity.md).
 - `src/loro.rs`: document-level orchestration for commit, import/export,
   checkout, barriers, state/oplog coordination, and event emission.
   `apply_diff`/`revert_to` roll a failed batch back:
@@ -40,7 +44,7 @@ over graceful degradation.
 - `src/handler.rs`: typed container handlers, local operation creation, and
   `MapHandler::ensure_mergeable_*`.
   `src/handler/movable_list_apply_delta.rs` applies movable-list diffs for
-  `apply_diff` and undo:
+  `apply_diff`; `src/undo/movable_list.rs` preserves undo identities/anchors:
   [../../context/movable-list-apply-diff.md](../../context/movable-list-apply-diff.md).
 - `src/diff_calc/`: diff calculation when moving between versions. The tree
   calculator's cache transitions:

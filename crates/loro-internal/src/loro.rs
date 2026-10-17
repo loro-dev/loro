@@ -43,6 +43,35 @@ use crate::{
     txn::Transaction,
 };
 use either::Either;
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FAIL_APPLY_DIFF_AFTER_HANDLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static RUN_APPLY_DIFF_HOOK_AFTER_NATIVE_PLAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static FAIL_APPLY_DIFF_WITH_ARG_ERR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static AFTER_APPLY_DIFF_HANDLER: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn after_apply_diff_handler() -> LoroResult<()> {
+    AFTER_APPLY_DIFF_HANDLER.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+    if FAIL_APPLY_DIFF_AFTER_HANDLER.with(|flag| flag.replace(false)) {
+        if FAIL_APPLY_DIFF_WITH_ARG_ERR.with(|flag| flag.replace(false)) {
+            return Err(LoroError::ArgErr("injected application error".into()));
+        }
+        Err(LoroError::OutOfBound {
+            pos: usize::MAX,
+            len: 0,
+            info: "injected apply failure".into(),
+        })
+    } else {
+        Ok(())
+    }
+}
 use loro_common::{
     ContainerID, ContainerType, HasCounterSpan, HasIdSpan, HasLamportSpan, IdSpan, LoroEncodeError,
     LoroResult, LoroValue, ID,
@@ -1374,9 +1403,8 @@ impl LoroDoc {
     /// further when it's needed. The time complexity is O(n + m), n is the ops in the id_span, m is the
     /// distance from id_span to the current latest version.
     ///
-    /// Returns `Err(LoroError::ArgErr)` without changing the doc when the step
-    /// would recreate a container of an unknown type; no other error of this
-    /// method is an `ArgErr`.
+    /// Returns application errors after rolling back the inverse. Recreating
+    /// an unknown container is rejected before application with an `ArgErr`.
     #[instrument(level = "info", skip_all)]
     pub fn undo_internal(
         &self,
@@ -1391,6 +1419,7 @@ impl LoroDoc {
             post_transform_base,
             before_diff,
             &mut None,
+            &mut Default::default(),
         )
     }
 
@@ -1405,12 +1434,14 @@ impl LoroDoc {
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
         rejected_step: &mut Option<DiffBatch>,
+        element_remap: &mut crate::undo::movable_list::ElementRemap,
     ) -> LoroResult<CommitWhenDrop<'_>> {
+        let _exclusive = self.txn.lock_exclusive();
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
 
-        let (options, txn) = self.implicit_commit_then_stop();
+        let (options, mut txn) = self.implicit_commit_then_stop();
         if !self.oplog().lock().vv().includes_id(id_span.id_last()) {
             self.renew_txn_if_auto_commit(options);
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
@@ -1424,25 +1455,87 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().split_span_based_on_deps(id_span);
+        let (span_scopes, all_scopes) = match crate::undo::movable_list::scopes(self, &spans) {
+            Ok(scopes) => scopes,
+            Err(error) => {
+                if was_recording {
+                    self.state.lock().start_recording();
+                }
+                drop(txn);
+                self.renew_txn_if_auto_commit(options);
+                return Err(error);
+            }
+        };
+        let inverse_lists = std::cell::RefCell::new(Vec::new());
+        let revived_lists = std::cell::RefCell::new(Default::default());
         let calc_diff = |from: &Frontiers, to: &Frontiers| {
             self._checkout_without_emitting(from, false, false).unwrap();
+            let inverse_index = spans
+                .iter()
+                .position(|(span, deps)| Frontiers::from_id(span.id_last()) == *from && deps == to);
+            let after_lists: Vec<_> = inverse_index.map_or_else(Vec::new, |i| {
+                span_scopes[i]
+                    .iter()
+                    .map(|(cid, scope)| {
+                        (
+                            cid.clone(),
+                            crate::undo::movable_list::Snapshot::capture_span(
+                                self,
+                                cid,
+                                scope,
+                                &all_scopes[cid],
+                                false,
+                            ),
+                        )
+                    })
+                    .collect()
+            });
             {
                 let mut state = self.state.lock();
                 state.start_recording();
                 state.set_record_changes_only(true);
             }
             self._checkout_without_emitting(to, false, false).unwrap();
+            for (cid, after) in after_lists {
+                let i = inverse_index.unwrap();
+                let before = crate::undo::movable_list::Snapshot::capture_span(
+                    self,
+                    &cid,
+                    &span_scopes[i][&cid],
+                    &all_scopes[&cid],
+                    true,
+                );
+                inverse_lists
+                    .borrow_mut()
+                    .push(crate::undo::movable_list::Inverse {
+                        span_index: inverse_index.unwrap(),
+                        cid,
+                        before,
+                        after,
+                        before_frontiers: to.clone(),
+                    });
+            }
             let mut state = self.state.lock();
             state.set_record_changes_only(false);
             let e = state.take_events();
             state.stop_and_clear_recording();
             // Applied to this doc, which kept the state of re-activated mergeable children.
-            DiffBatch::from_changes(e)
+            let diff = DiffBatch::from_changes(e);
+            drop(state);
+            if let Some(i) = inverse_index {
+                crate::undo::movable_list::capture_revivals(
+                    self,
+                    &diff,
+                    i,
+                    &mut revived_lists.borrow_mut(),
+                );
+            }
+            diff
         };
         // `before_diff` rebases the undo manager's other steps over this one,
         // so it only runs once the step is accepted
         let mut last_event_a = None;
-        let diff = crate::undo::undo(
+        let mut diff = crate::undo::undo(
             spans.clone(),
             match post_transform_base {
                 Some(d) => Either::Right(d),
@@ -1454,10 +1547,33 @@ impl LoroDoc {
 
         self._checkout_without_emitting(&latest_frontiers, false, false)?;
         self.set_detached(false);
+        let mut inverse_lists = inverse_lists.take();
+        crate::undo::movable_list::complete_anchors(
+            self,
+            &mut inverse_lists,
+            &latest_frontiers,
+            &all_scopes,
+            element_remap,
+            container_remap,
+        )?;
+        let mut movable_plans = crate::undo::movable_list::prepare(
+            self,
+            &mut diff,
+            inverse_lists,
+            revived_lists.take(),
+            container_remap,
+            element_remap,
+        );
         // A step that would recreate an unknown container is rejected as a
         // whole, before anything is applied
         let rejected = self
-            .check_apply_diff_creates_no_unknown_container(&diff, None, container_remap, true)
+            .check_apply_diff_creates_no_unknown_container(
+                &diff,
+                None,
+                container_remap,
+                true,
+                &movable_plans,
+            )
             .err();
         if rejected.is_some() {
             let mut changes = DiffBatch::default();
@@ -1467,26 +1583,77 @@ impl LoroDoc {
             self._checkout_without_emitting(&latest_frontiers, false, false)?;
             self.set_detached(false);
             *rejected_step = Some(changes);
-        } else if let Some(event_a) = &last_event_a {
-            before_diff(event_a);
         }
 
         if was_recording {
             self.state.lock().start_recording();
         }
+        // Native identity edits must use the same transaction lock that
+        // protected capture/preparation. Releasing it here lets a waiting
+        // writer delete elements or anchors before the plan uses them.
+        let remap_before = container_remap.clone();
+        let elements_before = element_remap.clone();
+        let mut undo_scope = None;
+        let native_result: LoroResult<()> = (|| {
+            if rejected.is_some() {
+                return Ok(());
+            }
+            *txn = Some(self.txn()?);
+            let transaction = txn
+                .as_mut()
+                .ok_or_else(|| LoroError::TransactionError("undo transaction is missing".into()))?;
+            // Keep the capture/preparation guard held while marking the scope
+            // and applying native plans. Ordinary handlers later reuse this
+            // same transaction and scope after the guard is released.
+            undo_scope = Some(
+                self.begin_apply_diff_scope_with_txn(transaction)
+                    .expect("undo must own its rollback scope"),
+            );
+            let ids: Vec<_> = diff
+                .order
+                .iter()
+                .filter(|id| movable_plans.get(*id).is_some_and(|p| p.is_native()))
+                .cloned()
+                .collect();
+            for cid in ids {
+                let Some(plan) = movable_plans.remove(&cid) else {
+                    continue;
+                };
+                let (id, _) = resolve_container_remap(cid.clone(), container_remap);
+                let list = self
+                    .get_handler(id)
+                    .and_then(|h| h.into_movable_list().ok())
+                    .ok_or_else(|| {
+                        LoroError::NotFoundError("MovableList undo container disappeared".into())
+                    })?;
+                plan.apply_with_txn(&list, transaction, container_remap, element_remap)?;
+                #[cfg(test)]
+                if RUN_APPLY_DIFF_HOOK_AFTER_NATIVE_PLAN.with(|flag| flag.replace(false)) {
+                    after_apply_diff_handler()?;
+                }
+                diff.cid_to_events.remove(&cid);
+            }
+            diff.order.retain(|id| diff.cid_to_events.contains_key(id));
+            Ok(())
+        })();
         drop(txn);
         self.start_auto_commit();
-        if rejected.is_none() {
-            // Try applying the diff, but ignore the error if it happens.
-            // MovableList's undo behavior is too tricky to handle in a collaborative env
-            // so in edge cases this may be an Error
-            if let Err(e) = self._apply_diff(diff, container_remap, true, false) {
-                debug_assert!(
-                    !crate::handler::is_unknown_container_creation_err(&e),
-                    "the unknown container check missed {e:?}"
-                );
-                warn!("Undo Failed {:?}", e);
+        let applied = native_result.and_then(|()| {
+            if rejected.is_none() {
+                self.apply_diff_with_movable_undo(
+                    diff,
+                    container_remap,
+                    true,
+                    false,
+                    &mut movable_plans,
+                    element_remap,
+                )
+            } else {
+                Ok(())
             }
+        });
+        if let Some(scope) = undo_scope {
+            self.finish_undo_rollback(scope, applied.is_ok());
         }
 
         if let Some(options) = options {
@@ -1494,6 +1661,14 @@ impl LoroDoc {
         }
         if let Some(e) = rejected {
             return Err(e);
+        }
+        if let Err(e) = applied {
+            *container_remap = remap_before;
+            *element_remap = elements_before;
+            return Err(e);
+        }
+        if let Some(event_a) = &last_event_a {
+            before_diff(event_a);
         }
         Ok(CommitWhenDrop {
             doc: self,
@@ -1617,8 +1792,8 @@ impl LoroDoc {
         self.apply_diff_all_or_nothing(diff, &mut Default::default(), true, align)
     }
 
-    /// [`Self::_apply_diff`], rolled back when it fails (loro-dev/loro#1154). Undo uses
-    /// `_apply_diff` directly and keeps what applied. See `context/apply-diff-atomicity.md`.
+    /// [`Self::_apply_diff`], rolled back when it fails (loro-dev/loro#1154).
+    /// Undo uses the same scope with its identity plans; see `context/undo-atomicity.md`.
     pub(crate) fn apply_diff_all_or_nothing(
         &self,
         diff: DiffBatch,
@@ -1655,14 +1830,31 @@ impl LoroDoc {
         result
     }
 
+    /// Undo owns the writer gate and a fresh transaction. Losing its rollback
+    /// scope or failing to restore state is an invariant failure, not a normal
+    /// error that callers could safely retry on a partly changed document.
+    fn finish_undo_rollback(&self, scope: u64, succeeded: bool) {
+        if succeeded {
+            self.end_apply_diff_scope(scope);
+        } else {
+            assert!(
+                self.txn
+                    .lock()
+                    .as_ref()
+                    .is_some_and(|txn| txn.rollback_scope_is_intact(scope)),
+                "undo lost its exclusive rollback scope"
+            );
+            self.rollback_apply_diff_scope(scope)
+                .expect("undo rollback must restore the document");
+        }
+    }
+
     /// Marks where the batch starts in the transaction it will run in.
     ///
     /// Returns `None`, and the batch runs without a rollback, when there is no transaction
     /// to run it in (the batch then fails before it applies anything) or another thread's
     /// batch runs in it.
     fn begin_apply_diff_scope(&self) -> Option<u64> {
-        static NEXT_SCOPE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
         let mut guard = self.txn.lock();
         if guard.is_none() && !cfg!(target_arch = "wasm32") && self.can_edit() {
             // Like the handlers' `with_txn`, which the batch's first op would call
@@ -1670,7 +1862,12 @@ impl LoroDoc {
             self.start_auto_commit();
             guard = self.txn.lock();
         }
-        let txn = guard.as_mut()?;
+        self.begin_apply_diff_scope_with_txn(guard.as_mut()?)
+    }
+
+    /// Also used by undo while it holds the preparation transaction guard.
+    fn begin_apply_diff_scope_with_txn(&self, txn: &mut Transaction) -> Option<u64> {
+        static NEXT_SCOPE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         if txn.has_rollback_scope() {
             return None;
         }
@@ -1826,6 +2023,25 @@ impl LoroDoc {
         skip_unreachable: bool,
         align_revived_mergeable: bool,
     ) -> LoroResult<()> {
+        self.apply_diff_with_movable_undo(
+            diff,
+            container_remap,
+            skip_unreachable,
+            align_revived_mergeable,
+            &mut Default::default(),
+            &mut Default::default(),
+        )
+    }
+
+    fn apply_diff_with_movable_undo(
+        &self,
+        diff: DiffBatch,
+        container_remap: &mut FxHashMap<ContainerID, ContainerID>,
+        skip_unreachable: bool,
+        align_revived_mergeable: bool,
+        movable_plans: &mut FxHashMap<ContainerID, crate::undo::movable_list::Plan>,
+        element_remap: &mut crate::undo::movable_list::ElementRemap,
+    ) -> LoroResult<()> {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
@@ -1840,14 +2056,13 @@ impl LoroDoc {
             } else {
                 FullStatePlan::default()
             };
-        // Undo applies its diff without a rollback (`apply_diff` and
-        // `revert_to` roll back a failed batch), so reject the diff before
-        // touching the doc if it needs an unknown container.
+        // Reject unsupported container recreation before touching the doc.
         let predicted_skips = self.check_apply_diff_creates_no_unknown_container(
             &diff,
             align_revived_mergeable.then_some(&plan),
             container_remap,
             skip_unreachable,
+            movable_plans,
         )?;
 
         let mut ans: LoroResult<()> = Ok(());
@@ -1936,7 +2151,18 @@ impl LoroDoc {
                 );
                 diff
             };
-            if let Err(e) = h.apply_diff(diff, container_remap, &mut full_state_targets) {
+            let result = if let Some(movable) = movable_plans.remove(&batch_id) {
+                let Handler::MovableList(list) = &h else {
+                    unreachable!()
+                };
+                movable.apply(list, diff, container_remap, element_remap)
+            } else {
+                h.apply_diff(diff, container_remap, &mut full_state_targets)
+            };
+            // Fault injection after real operations exercises rollback.
+            #[cfg(test)]
+            let result = result.and_then(|()| after_apply_diff_handler());
+            if let Err(e) = result {
                 debug_assert!(
                     !crate::handler::is_unknown_container_creation_err(&e),
                     "the unknown container check missed {e:?} in {batch_id}"
@@ -2110,6 +2336,7 @@ impl LoroDoc {
         plan: Option<&FullStatePlan>,
         container_remap: &FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
+        movable_plans: &FxHashMap<ContainerID, crate::undo::movable_list::Plan>,
     ) -> LoroResult<FxHashSet<ContainerID>> {
         let mut predicted_skips = FxHashSet::default();
         if !diff.iter().any(|(_, d)| diff_has_unknown_value(d)) {
@@ -2183,6 +2410,13 @@ impl LoroDoc {
                     }
                 }
                 crate::event::Diff::List(delta) => {
+                    if let Some(native) = movable_plans.get(id).and_then(|p| p.preflight()) {
+                        fresh.extend(native.creates.iter().cloned());
+                        for child in &native.removes {
+                            removed.entry(child.clone()).or_insert(i);
+                        }
+                        continue;
+                    }
                     let values: FxHashSet<ContainerID> = inserted_container_ids(delta)
                         .map(|c| resolve_container_remap(c, container_remap).0)
                         .collect();
@@ -2267,6 +2501,14 @@ impl LoroDoc {
                     .values()
                     .filter_map(|v| v.value.as_ref().and_then(diff_value_container_id))
                     .find(|c| c.is_unknown() && !c.is_mergeable()),
+                crate::event::Diff::List(delta)
+                    if movable_plans.get(id).and_then(|p| p.preflight()).is_some() =>
+                {
+                    let _ = delta;
+                    movable_plans[id]
+                        .preflight()
+                        .and_then(|p| p.creates.iter().find(|c| c.is_unknown()).cloned())
+                }
                 crate::event::Diff::List(delta) => match &handler {
                     // Only an existing MovableList can move an element instead
                     // of creating it

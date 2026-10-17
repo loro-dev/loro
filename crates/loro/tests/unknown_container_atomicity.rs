@@ -71,10 +71,19 @@ fn undo_of_deleting_a_list_holding_unknown_fails_without_changes() {
     assert_eq!(state(&doc).0, serde_json::json!({"m": {}, "t": "ab"}));
     // The mixed step would recreate U: rejected as a whole and dropped
     let before = state(&doc);
+    let redo_before = undo.redo_count();
+    let events = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let captured = events.clone();
+    let _sub = doc.subscribe_root(std::sync::Arc::new(move |_| {
+        captured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }));
     let err = undo.undo().unwrap_err();
     assert!(is_unknown_err(&err), "{err:?}");
     assert_eq!(state(&doc), before);
     assert_eq!(undo.undo_count(), 1);
+    assert_eq!(undo.redo_count(), redo_before);
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    assert_eq!(events.load(std::sync::atomic::Ordering::Relaxed), 0);
     // The next undo undoes the step before it, not two steps at once; the
     // text edit of the dropped step stays
     assert!(undo.undo().unwrap());
@@ -751,10 +760,10 @@ fn undo_after_a_rejected_step_with_remote_edits() {
     assert_eq!(t.to_string(), "23R");
 }
 
-/// Redo mirrors undo: a rejected redo step (its U was deleted remotely) must
-/// not make the next redo miss its edit. Used to leave "a" instead of "ac".
+/// Redoing a move of a remotely deleted U must leave it deleted while restoring
+/// the same step's text edit, and keep subsequent redo steps correctly rebased.
 #[test]
-fn redo_after_a_rejected_redo_step() {
+fn redo_move_of_deleted_unknown_does_not_recreate_it() {
     let doc = forge(|doc| {
         let ml = doc.get_movable_list("ml");
         edited_counter(ml.push_container(counter()).unwrap());
@@ -787,9 +796,17 @@ fn redo_after_a_rejected_redo_step() {
 
     assert!(undo.redo().unwrap());
     assert_eq!(t.to_string(), "a");
-    assert_rejected_atomically(&doc, |_| undo.redo());
+    // Identity-aware move undo/redo leaves a remotely deleted element absent.
+    // It no longer tries to recreate U from the positional insert, so the text
+    // edit in this same step can be redone without creating an unknown child.
     assert!(undo.redo().unwrap());
-    assert_eq!(t.to_string(), "ac");
+    assert_eq!(t.to_string(), "ab");
+    assert_eq!(
+        loro::ToJson::to_json_value(&doc.get_movable_list("ml").get_value()),
+        serde_json::json!(["x", "y"])
+    );
+    assert!(undo.redo().unwrap());
+    assert_eq!(t.to_string(), "abc");
 }
 
 // Reproductions from the third review of #1142.

@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-09-30 (after #1134, #1152, #1153; third review of #1142; #1154).
+Verified against code 2026-10-17 (including identity-aware MovableList undo, #1185).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -26,11 +26,11 @@ All of these return `LoroError::ArgErr` built by
 
 `_apply_diff` keeps applying the rest of a batch after an error. `apply_diff`
 and `revert_to` now roll a failed batch back
-([apply-diff-atomicity.md](apply-diff-atomicity.md), #1154), but undo/redo
-calls `_apply_diff` without a rollback and keeps what applied. So an unknown
-container has to be found before the first entry is applied; for `apply_diff`
-the check is also the cheaper rejection and keeps its debug assertions on the
-loop. The loop changes its own inputs as it runs, so the check predicts that
+([apply-diff-atomicity.md](apply-diff-atomicity.md), #1154). Undo/redo use the
+same rollback scope around ordinary diffs and native
+MovableList plans ([undo-atomicity.md](undo-atomicity.md), #1186). The unknown
+container preflight remains the cheaper rejection and keeps the debug assertions
+on the loop. The loop changes its own inputs as it runs, so the check predicts that
 from the whole batch:
 
 - *fresh*: container values of Map/List diffs, the metas of created or moved
@@ -101,15 +101,22 @@ merge interval, the step is every edit merged into it (loro-crdt's default is
 - The rejected step's own changes stay in the doc, so `undo_internal_with`
   returns them and `perform` composes them into the remote diff of the step's
   row: the steps before it are rebased over them like over remote changes.
-  That includes the limits of rebasing: if the rejected step moved an element
-  an earlier step inserted, undoing the earlier step finds nothing to do and
-  falls through to the step before it, exactly as after the same move by a
-  remote peer (`undo_after_a_rejected_move_matches_a_remote_move`).
+  MovableList insertion undo follows the inserted element's identity even if
+  a rejected step or a remote peer moved it
+  (`undo_after_a_rejected_move_matches_a_remote_move`).
+- A MovableList move undo/redo whose element was remotely deleted is a no-op
+  for that element; it does not try to recreate an unknown child. Other edits
+  of that accepted step can still apply
+  (`redo_move_of_deleted_unknown_does_not_recreate_it`).
 - Applying the rest of a rejected step would mean dropping the unknown inserts
   from the diff, and a wrongly predicted MovableList move would then delete an
   existing unknown element for good.
-- `ArgErr` is the rejection signal: `undo_internal` returns no other `ArgErr`.
-  Other `_apply_diff` errors of an accepted step are still only logged.
+- Only a prechecked rejection (`rejected_step` is set) consumes the item.
+  An application-time `ArgErr`, like other ordinary handler errors, is rolled
+  back and restores the item in its original remote-diff row for retry. This
+  policy is shared by `undo()` and `redo()`; there are no separate bounded APIs.
+  Native MovableList plan errors also use this rollback path; see
+  [movable-list-apply-diff.md](movable-list-apply-diff.md).
 
 `crates/loro/tests/unknown_container_twin_oracle.rs` checks undo against a twin
 with known containers, and that undoing everything leaves exactly the edits of

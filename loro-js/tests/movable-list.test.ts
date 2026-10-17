@@ -364,7 +364,7 @@ describe("MovableList versions, undo and diffs", () => {
     expect(p1.toJSON()).toEqual({ list: ["v2", "x"] });
   });
 
-  test("undo of a move or set reinserts the old value, like Rust", () => {
+  test("undo of a move or set preserves the element identity, like Rust", () => {
     const d = doc(1);
     const undo = new UndoManager(d, { mergeInterval: 0 });
     const list = d.getMovableList("list");

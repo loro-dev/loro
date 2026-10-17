@@ -48,3 +48,4 @@ fn size_of() {
     println!("ContainerID {}", std::mem::size_of::<ContainerID>());
     println!("InternalString {}", std::mem::size_of::<InternalString>());
 }
+mod undo_atomicity;

@@ -1,6 +1,6 @@
 # loro.js MovableList: Rust-Compatible Model
 
-Verified against code 2026-09-30.
+Verified against code 2026-10-17.
 
 `loro-js/` must converge with the Rust implementation and read and write its
 encoding. This article states the Rust MovableList semantics that loro.js must
@@ -195,19 +195,27 @@ elements right to left, then place each insert after its predecessor, and turn
 a reinserted child container into a `move`, following the container remap
 chain.
 
-Undo follows Rust's `undo_internal` for the MovableList containers of an undo
-item (`#undoMovableLists`). A is the inverse diff from the span's last op back
-to its dependencies, B is the change since the span, and A transformed over B
-(A's inserts first, like `transform(.., left_priority = true)`) is applied with
-`apply_delta`. Undoing a `move`/`set` therefore inserts the old value as a new
-element and deletes the current one, and a child container moves back. Other
-containers keep loro.js's op-based undo. Rust's B is its remote diff, the
-changes the UndoManager did not make; loro.js transforms a list's inverse only
-when such an untracked change touched that list (the UndoManager's
-`isTracked`), and then over everything since, which is approximate. An insert
-of a child that is still visible outside the delta's deleted ranges is dropped,
-Rust's rule for `from_move` inserts that transforms leave behind
-(`#withoutLiveChildInserts`).
+MovableList undo follows Rust's identity replay from #1209
+(`document.ts:#undoMovableLists`, `movable-list-undo.ts`). Each continuous
+causal span has before/after snapshots of element ids, position writers,
+value writers, and values (`MovableListState.undoSnapshotAt`). Spans are
+reversed newest first. A move/set writes a native move/set for the same
+surviving element; undoing an insertion deletes that identity wherever it
+moved. A remotely deleted move/set target stays deleted. Equal scalar values
+are never used to infer which identity moved.
+
+Removal undo creates a fresh element and records an id alias private to the
+UndoManager, so older history and redo can find it. Placement prefers the
+nearest surviving original left neighbour, then the nearest surviving
+original right neighbour, then the start. Elements still to be moved by the
+same inverse are excluded as right anchors. Recreated children receive their
+historical contents through the existing inverse diff and container remap.
+Other container types keep their existing undo path; public `applyDiff` and
+`revertTo` still use value deltas.
+
+`tests/movable-list-undo.test.ts` runs identity, anchor, deletion, and redo
+regressions on both engines. The differential move/set undo profile checks
+versions and writers as well as values; it has no known-divergence exemption.
 
 ## Validation and import atomicity
 
