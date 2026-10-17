@@ -448,7 +448,7 @@ pub(crate) fn export_state_only_snapshot(
     })
 }
 
-fn encode_with(
+pub(crate) fn encode_with(
     mode: EncodeMode,
     f: &mut dyn FnMut(&mut Vec<u8>) -> Result<(), LoroEncodeError>,
 ) -> Result<Vec<u8>, LoroEncodeError> {

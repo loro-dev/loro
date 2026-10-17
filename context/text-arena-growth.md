@@ -75,7 +75,11 @@ pushes grew the values arena the same way (500 pushes, about 125,000 copies).
   one. Merging them while decoding read the placeholder and panicked in the
   loro.js MovableList differential suite
   (`decode_block_with_unmerged_adjacent_list_inserts`), which is why ops are
-  pushed into their changes only after `finish`.
+  pushed into their changes only after `finish`. Its `Debug` prints the pending
+  range instead of values, because decoding formats ops in errors
+  (`check_positions`): a multi-value insert with a bad position used to panic
+  there instead of returning `Err`
+  (`invalid_position_of_multi_value_list_insert_is_rejected`).
 - `RichOpBlockIter` (`op.rs`) starts at the first op that overlaps the span, and
   clones only the ops it returns. It used to clone every op of the change from
   the first one. That was cheap while a list insert held a `u32` range, and it

@@ -539,7 +539,16 @@ impl Eq for ValueSlice {}
 
 impl std::fmt::Debug for ValueSlice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ValueSlice").field(&self.as_slice()).finish()
+        match &self.0 {
+            // A slice from `DecodedBlockBuffers::push_values` before `finish`:
+            // its values are not decoded yet. Decoding formats ops in errors
+            // (`check_positions`), so this must not read them.
+            Repr::Shared { values, start, end } if *end as usize > values.len() => f
+                .debug_struct("ValueSlice")
+                .field("pending", &(*start..*end))
+                .finish(),
+            _ => f.debug_tuple("ValueSlice").field(&self.as_slice()).finish(),
+        }
     }
 }
 
