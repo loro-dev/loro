@@ -793,13 +793,7 @@ mod snapshot {
             w.write_all(&id_bytes).unwrap();
         }
         fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
-            let (value, bytes) = postcard::take_from_bytes(bytes).map_err(|_| {
-                loro_common::LoroError::DecodeError(
-                    "Decode list value failed".to_string().into_boxed_str(),
-                )
-            })?;
-            let value: Vec<LoroValue> = value;
-            Ok((LoroValue::List(value.into()), bytes))
+            crate::state::value_decode::decode_collection(bytes, false)
         }
 
         fn decode_snapshot_fast(

@@ -1303,6 +1303,72 @@ mod snapshot {
         marks: Vec<EncodedMark>,
     }
 
+    impl EncodedText {
+        // The columnar derives encode the outer struct and each mark as
+        // three-element postcard sequences. Only the nested value field needs
+        // a dedicated codec; spans still use the existing columnar strategies.
+        fn decode(mut bytes: &[u8]) -> LoroResult<Self> {
+            fn take<'a, T: serde::Deserialize<'a>>(bytes: &mut &'a [u8]) -> LoroResult<T> {
+                let (value, rest) = postcard::take_from_bytes(bytes).map_err(|err| {
+                    state_decode_error(format!("Decode richtext fields failed: {err}"))
+                })?;
+                *bytes = rest;
+                Ok(value)
+            }
+            if take::<usize>(&mut bytes)? != 3 {
+                return Err(state_decode_error(
+                    "Decode richtext fields failed: invalid field count",
+                ));
+            }
+            let spans: serde_columnar::ColumnarVec<'_, EncodedTextSpan, Vec<EncodedTextSpan>> =
+                take(&mut bytes)?;
+            let keys = take(&mut bytes)?;
+            let count = take::<usize>(&mut bytes)?;
+            let mut marks = Vec::new();
+            for _ in 0..count {
+                if take::<usize>(&mut bytes)? != 3 {
+                    return Err(state_decode_error(
+                        "Decode richtext mark failed: invalid field count",
+                    ));
+                }
+                let key_idx = take(&mut bytes)?;
+                let (value, rest) = crate::state::value_decode::decode_value(bytes)?;
+                bytes = rest;
+                let info = take(&mut bytes)?;
+                marks.push(EncodedMark {
+                    key_idx,
+                    value,
+                    info,
+                });
+            }
+            if !bytes.is_empty() {
+                return Err(state_decode_error(
+                    "Decode richtext fields failed: trailing bytes",
+                ));
+            }
+            Ok(Self {
+                spans: spans.into_vec(),
+                keys,
+                marks,
+            })
+        }
+
+        fn encode(&self) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            postcard::to_io(&3usize, &mut bytes).unwrap();
+            postcard::to_io(&serde_columnar::ColumnarVec::new(&self.spans), &mut bytes).unwrap();
+            postcard::to_io(&self.keys, &mut bytes).unwrap();
+            postcard::to_io(&self.marks.len(), &mut bytes).unwrap();
+            for mark in &self.marks {
+                postcard::to_io(&3usize, &mut bytes).unwrap();
+                postcard::to_io(&mark.key_idx, &mut bytes).unwrap();
+                crate::state::value_decode::encode_value(&mark.value, &mut bytes).unwrap();
+                postcard::to_io(&mark.info, &mut bytes).unwrap();
+            }
+            bytes
+        }
+    }
+
     /// Nulls out the values of style-anchor pairs that no longer enclose any text
     /// ("dead" pairs) in an encoded richtext state payload (the bytes produced by
     /// `RichtextState::encode_snapshot_fast`).
@@ -1333,7 +1399,7 @@ mod snapshot {
             .map_err(|_| state_decode_error(format!("{CTX}: invalid text value")))?;
         let peers = decode_peer_table(&mut rest, CTX)?;
         let prefix_len = payload.len() - rest.len();
-        let encoded = serde_columnar::from_bytes::<EncodedText>(rest)
+        let encoded = EncodedText::decode(rest)
             .map_err(|err| state_decode_error(format!("{CTX}: invalid spans: {err}")))?;
         if encoded.marks.is_empty() {
             return Ok(None);
@@ -1423,9 +1489,7 @@ mod snapshot {
 
         let mut out = Vec::with_capacity(payload.len());
         out.extend_from_slice(&payload[..prefix_len]);
-        out.extend_from_slice(
-            &serde_columnar::to_vec(&EncodedText { spans, keys, marks }).unwrap(),
-        );
+        out.extend_from_slice(&EncodedText { spans, keys, marks }.encode());
         Ok(Some((out, redacted)))
     }
 
@@ -1513,12 +1577,12 @@ mod snapshot {
                 w.write_all(&peer.to_le_bytes()).unwrap();
             }
 
-            let bytes = serde_columnar::to_vec(&EncodedText {
+            let bytes = EncodedText {
                 spans,
                 keys: keys.unwrap_vec(),
                 marks,
-            })
-            .unwrap();
+            }
+            .encode();
             w.write_all(&bytes).unwrap();
         }
 
@@ -1548,7 +1612,7 @@ mod snapshot {
                 state_decode_error("Decode richtext state failed: value is not a string")
             })?;
             let mut s = StrSlice::new_from_str(&string);
-            let iters = serde_columnar::from_bytes::<EncodedText>(bytes).map_err(|err| {
+            let iters = EncodedText::decode(bytes).map_err(|err| {
                 state_decode_error(format!(
                     "Decode richtext state failed: invalid spans: {err}"
                 ))
@@ -1656,6 +1720,35 @@ mod snapshot {
         use crate::container::idx::ContainerIdx;
 
         use super::*;
+
+        #[test]
+        fn iterative_mark_codec_matches_the_original_columnar_bytes() {
+            let encoded = EncodedText {
+                spans: vec![span(0, 0), span(2, 5), span(1, -1)],
+                keys: vec!["hl".into(), "x".into()],
+                marks: vec![
+                    mark(LoroValue::Null, richtext::ExpandType::After),
+                    mark(
+                        LoroValue::List(
+                            vec![
+                                LoroValue::Binary(vec![0, 255].into()),
+                                LoroValue::Map(vec![("a".into(), 42.into())].into()),
+                            ]
+                            .into(),
+                        ),
+                        richtext::ExpandType::Before,
+                    ),
+                ],
+            };
+            let old = serde_columnar::to_vec(&encoded).unwrap();
+            assert_eq!(encoded.encode(), old);
+            let decoded = EncodedText::decode(&old).unwrap();
+            assert_eq!(decoded.encode(), old);
+            assert_eq!(decoded.marks[1].value, encoded.marks[1].value);
+            for len in 0..old.len() {
+                assert!(EncodedText::decode(&old[..len]).is_err());
+            }
+        }
 
         #[test]
         fn richtext_fast_snapshot_rejects_corrupt_state_metadata() {
