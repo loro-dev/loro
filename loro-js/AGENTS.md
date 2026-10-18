@@ -5,6 +5,8 @@ the same binary and JSON data as Rust (`loro-crdt`) and give the same results.
 
 ## Context
 
+- Concurrent tree moves, skipped cycles, replay, checkout, and undo:
+  [context/loro-js-tree-moves.md](../context/loro-js-tree-moves.md).
 - Index structures, complexity contracts, and benchmarks:
   [context/loro-js-performance.md](../context/loro-js-performance.md).
 - Randomized Text comparison with Rust (build the nodejs WASM package first):
