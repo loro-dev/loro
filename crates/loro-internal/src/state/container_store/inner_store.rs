@@ -13,31 +13,12 @@ use std::collections::VecDeque;
 
 use super::ContainerWrapper;
 
-/// Upper bound on how many lazy containers keep their decoded value cached in
-/// memory for the read paths (`map_get`, `list_get`, text reads, ...).
-///
-/// Reading a container through a handler decodes its value into the wrapper
-/// once so repeated reads of the same container are cheap. Without a bound, a
-/// container-by-container walk over an imported document pins O(containers
-/// ever read) of memory until the doc is dropped — about 4 KB per container,
-/// which traps wasm32 at the 4 GiB limit around one million containers
-/// (loro-dev/loro#1092). Evicted wrappers are re-created from the KV store on
-/// the next read, so eviction only costs a re-decode. The queue is a
-/// second-chance FIFO: a container whose cached value is hit again survives
-/// one eviction pass, which keeps ancestors hot during deep walks.
-#[cfg(not(test))]
-const MAX_CACHED_CONTAINER_VALUES: usize = 2048;
-/// Tests use a small bound so exercising eviction does not require building
-/// thousands of containers.
-#[cfg(test)]
-pub(super) const MAX_CACHED_CONTAINER_VALUES: usize = 16;
-
 /// The invariants about this struct:
 ///
 /// - `kv` is either the same or older than `store`.
 /// - `store` is a cache over `kv`: every container in `kv` is either present in
 ///   `store` or was evicted from it by the bounded decoded-value cache
-///   ([`MAX_CACHED_CONTAINER_VALUES`]). Evicted entries are re-created from
+///   (see `Configure::decoded_value_cache_limit`). Evicted entries are re-created from
 ///   `kv` on the next access, so lookups must always fall back to `kv` on a
 ///   `store` miss, regardless of `load_state`.
 /// - `load_state == AllLoaded` means every `kv` entry was materialized into
@@ -53,7 +34,7 @@ pub(crate) struct InnerStore {
     config: Configure,
     /// FIFO (with a second-chance bit on each wrapper) of containers whose
     /// decoded value is currently cached in `store`. Bounded by
-    /// [`MAX_CACHED_CONTAINER_VALUES`]. Entries may be stale (the wrapper was
+    /// `Configure::decoded_value_cache_limit()`. Entries may be stale (the wrapper was
     /// dropped or materialized into a full state); eviction skips those.
     value_cache_queue: VecDeque<ContainerIdx>,
     /// True once the value cache has evicted at least one wrapper since the
@@ -242,7 +223,7 @@ impl InnerStore {
 
     /// Track a wrapper whose read may have populated the decoded-value cache,
     /// and evict the oldest cached values once the cache exceeds
-    /// [`MAX_CACHED_CONTAINER_VALUES`].
+    /// the configured limit (2048 by default).
     ///
     /// Eviction drops the whole wrapper from `store`; the wrapper is a pure
     /// cache over the KV bytes (`ContainerWrapper::is_evictable_cached_value`
@@ -263,7 +244,14 @@ impl InnerStore {
             .unwrap()
             .mark_value_cache_referenced();
 
-        while self.value_cache_queue.len() > MAX_CACHED_CONTAINER_VALUES {
+        self.trim_value_cache();
+    }
+
+    /// Second-chance FIFO: hot ancestors survive an eviction pass during deep
+    /// walks. Only flushed lazy wrappers are evictable; dirty state stays pinned.
+    pub(super) fn trim_value_cache(&mut self) {
+        let limit = self.config.decoded_value_cache_limit();
+        while self.value_cache_queue.len() > limit {
             let Some(victim) = self.value_cache_queue.pop_front() else {
                 break;
             };
@@ -668,7 +656,7 @@ impl InnerStore {
     }
 
     /// Number of wrappers currently holding an evictable cached decoded value.
-    /// Must stay bounded by [`MAX_CACHED_CONTAINER_VALUES`] no matter how many
+    /// Must stay bounded by the configured limit no matter how many
     /// containers have been read (loro-dev/loro#1092).
     #[cfg(test)]
     pub(super) fn cached_value_count_for_test(&self) -> usize {
