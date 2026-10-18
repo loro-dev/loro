@@ -5721,6 +5721,11 @@ impl UndoManager {
 
     /// Undo the last operation.
     ///
+    /// Consumes at most one history item, as defined by grouping and the merge
+    /// interval. Returns whether local operations were generated. A no-op item
+    /// is consumed and returns false without undoing earlier items. Use
+    /// `canUndo()` to check whether history remains.
+    ///
     /// Throws without changing the doc if the step would have to recreate a
     /// container of a type unknown to this version (created by a newer
     /// loro-crdt). That step, with every edit merged into it, is dropped and its
@@ -5732,6 +5737,10 @@ impl UndoManager {
     }
 
     /// Redo the last undone operation.
+    ///
+    /// Consumes at most one history item, including a no-op. Returns whether
+    /// local operations were generated. A false result does not imply that the
+    /// redo stack is empty; use `canRedo()` to check for remaining history.
     ///
     /// Throws like `undo` on steps that would recreate a container of an
     /// unknown type.

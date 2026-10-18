@@ -312,6 +312,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   #changeMergeInterval = 1000n;
   #nextCommitOptions: CommitOptions = {};
   #subscribers = new Set<(event: LoroEventBatch) => void>();
+  #localNoopCommitSubscribers = new Set<(event: LoroEventBatch) => void>();
   #localUpdateSubscribers = new Set<(bytes: Uint8Array) => void>();
   #containerSubscribers = new Map<string, Set<(event: LoroEventBatch) => void>>();
   #firstCommitSubscribers = new Set<(event: { peer: PeerID }) => void>();
@@ -3196,6 +3197,16 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
   subscribe(listener: (event: LoroEventBatch) => void): Subscription {
     this.#subscribers.add(listener);
     return () => this.#subscribers.delete(listener);
+  }
+
+  /** Undo history includes local commits whose operations cancel in the state diff. */
+  _subscribeUndo(listener: (event: LoroEventBatch) => void): Subscription {
+    const unsubscribe = this.subscribe(listener);
+    this.#localNoopCommitSubscribers.add(listener);
+    return () => {
+      unsubscribe();
+      this.#localNoopCommitSubscribers.delete(listener);
+    };
   }
 
   subscribeLocalUpdates(listener: (bytes: Uint8Array) => void): Subscription {
@@ -8704,7 +8715,6 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       diff,
       path: containerPath(this.#containers.get(target)!),
     }));
-    if (events.length === 0) return;
     const base = {
       by,
       ...(origin === undefined ? {} : { origin }),
@@ -8712,6 +8722,12 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       from: from.map(formatOpId),
       to: to.map(formatOpId),
     } satisfies LoroEventBatch;
+    if (events.length === 0) {
+      if (by === "local") {
+        for (const listener of this.#localNoopCommitSubscribers) listener(base);
+      }
+      return;
+    }
     for (const listener of this.#subscribers) listener(base);
     const relevantByTarget = new Map<string, LoroEvent[]>();
     for (const event of events) {

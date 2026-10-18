@@ -4045,6 +4045,11 @@ impl UndoManager {
 
     /// Undo the last change made by the peer.
     ///
+    /// Consumes at most one history item, as defined by grouping and the merge
+    /// interval. Returns whether local operations were generated. An item that
+    /// has become a no-op is consumed and returns `Ok(false)` without undoing
+    /// earlier items. Use [`Self::can_undo`] to check whether history remains.
+    ///
     /// Returns `Err(LoroError::ArgErr)` without changing the doc if the step
     /// would have to recreate a container of a type unknown to this version
     /// (written by a newer Loro). That step is dropped and its edits stay; the
@@ -4055,6 +4060,10 @@ impl UndoManager {
     }
 
     /// Redo the last change made by the peer.
+    ///
+    /// Consumes at most one history item, including a no-op. Returns whether
+    /// local operations were generated; `Ok(false)` does not imply the redo
+    /// stack is empty. See [`Self::can_redo`].
     ///
     /// Fails like [`UndoManager::undo`] on steps that would recreate a
     /// container of an unknown type.
