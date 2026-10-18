@@ -5,7 +5,7 @@ pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 use crate::sync::{AtomicBool, AtomicUsize};
 pub(crate) use crate::LoroDocInner;
 use crate::{
-    arena::SharedArena,
+    arena::{SharedArena, SharedArenaRollback},
     change::{Change, Timestamp},
     configure::{Configure, DefaultRandom, SecureRandomGenerator, StyleConfig},
     container::{
@@ -676,10 +676,21 @@ impl LoroDoc {
         origin: InternalString,
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
+        let result = self.import_without_emitting(bytes, origin, values);
+        self.emit_events();
+        result
+    }
+
+    fn import_without_emitting(
+        &self,
+        bytes: &[u8],
+        origin: InternalString,
+        values: ImportedValues,
+    ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
         let parsed = parse_header_and_body(bytes, true)?;
         loro_common::info!("Importing with mode={:?}", &parsed.mode);
-        let result = match parsed.mode {
+        match parsed.mode {
             EncodeMode::OutdatedRle => {
                 if self.state.lock().is_in_txn() {
                     return Err(LoroError::ImportWhenInTxn);
@@ -733,11 +744,7 @@ impl LoroDoc {
             EncodeMode::Auto => {
                 unreachable!()
             }
-        };
-
-        self.emit_events();
-
-        result
+        }
     }
 
     #[tracing::instrument(skip_all)]
@@ -2459,16 +2466,33 @@ impl LoroDoc {
         // owns that cleanup and the blob loop runs inside `catch_unwind` so it also
         // runs before a panic is re-raised.
         let was_attached = !self.is_detached();
+        // A full snapshot can initialize state lazily, just as in `import`.
+        // Pending-only history must not be replaced by the snapshot, either.
+        // Keep the pre-snapshot arena checkpoint so a failed closing checkout
+        // can discard the snapshot's state as well as the following updates.
+        let snapshot_checkpoint = if was_attached
+            && meta_arr[0].0.mode == encoding::EncodedBlobMode::Snapshot
+        {
+            let oplog = self.oplog.lock();
+            let mut state = self.state.lock();
+            (oplog.is_empty() && oplog.pending_changes.is_empty() && state.can_import_snapshot())
+                .then(|| BatchSnapshotRollback {
+                    arena: oplog.arena.checkpoint_for_rollback(),
+                    empty_containers: state.store.iter_all_container_ids().collect(),
+                })
+        } else {
+            None
+        };
         self.set_detached(true);
         {
             let mut oplog = self.oplog.lock();
             oplog.batch_importing = true;
-            // The batch only touches the `OpLog` (we are detached), so a rollback
+            // The history-only path touches just the `OpLog`, so a rollback
             // scope spanning the whole batch lets `BatchImportGuard::finish` restore
             // the pre-batch version if the closing reattach cannot apply the imported
             // changes to `DocState`. Without it the doc would be left detached at a
             // version it can never check out.
-            if was_attached {
+            if was_attached && snapshot_checkpoint.is_none() {
                 oplog.begin_import_rollback();
             }
         }
@@ -2478,20 +2502,48 @@ impl LoroDoc {
             was_attached,
             txn: Some(txn),
             options,
+            snapshot_checkpoint,
             #[cfg(debug_assertions)]
             finished: false,
         };
 
         // Catch here rather than in a `Drop`: releasing a mutex guard while a panic is
         // in flight poisons that mutex, so the reattach has to happen after unwinding
-        // has stopped. Under `panic = "abort"` (e.g. wasm) nothing is caught and the
-        // process dies with the document untouched.
+        // has stopped. Under `panic = "abort"` (e.g. wasm) a genuine panic still
+        // terminates execution; only returned errors can be recovered there.
         let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut err = None;
-            for (_meta, data) in meta_arr {
+            for (index, (_meta, data)) in meta_arr.into_iter().enumerate() {
                 #[cfg(test)]
                 take_panic_at_batch_import_blob_for_test();
-                match guard.doc._import_with(data, Default::default(), values) {
+                let result = if let Some(checkpoint) =
+                    guard.snapshot_checkpoint.as_ref().filter(|_| index == 0)
+                {
+                    // Do not emit the snapshot event until the closing checkout
+                    // succeeds. Its state is part of the batch's rollback scope.
+                    let result = parse_header_and_body(data, true).and_then(|parsed| {
+                        decode_snapshot(guard.doc, parsed.mode, parsed.body, Default::default())
+                    });
+                    if result.is_err() {
+                        // The standalone decoder resets a failed snapshot to an
+                        // empty store. Restore pre-existing empty handles, too.
+                        let mut state = guard.doc.state.lock();
+                        for id in &checkpoint.empty_containers {
+                            state.ensure_container(id);
+                        }
+                    }
+                    let mut oplog = guard.doc.oplog.lock();
+                    // Snapshot decoding installs a new DAG; start the ordinary
+                    // suffix journal only after that installation (or its reset).
+                    oplog.batch_importing = true;
+                    oplog.begin_import_rollback();
+                    result
+                } else {
+                    guard
+                        .doc
+                        .import_without_emitting(data, Default::default(), values)
+                };
+                match result {
                     Ok(s) => {
                         for (peer, (start, end)) in s.success.iter() {
                             match success.0.entry(*peer) {
@@ -3692,8 +3744,18 @@ struct BatchImportGuard<'a> {
     /// we are detached. `_checkout_to_latest_without_commit` requires it to be held.
     txn: Option<LoroMutexGuard<'a, Option<Transaction>>>,
     options: Option<CommitOptions>,
+    /// A full snapshot initialized a previously empty document. On checkout
+    /// failure both its lazy state and its history must be reset, not just the
+    /// updates recorded in the suffix journal.
+    snapshot_checkpoint: Option<BatchSnapshotRollback>,
     #[cfg(debug_assertions)]
     finished: bool,
+}
+
+struct BatchSnapshotRollback {
+    arena: SharedArenaRollback,
+    // Even an empty doc may expose empty containers acquired through getters.
+    empty_containers: Vec<ContainerID>,
 }
 
 /// Forward import diffs of movable lists take untouched element fields from
@@ -3761,11 +3823,23 @@ impl BatchImportGuard<'_> {
                 .validate_movable_list_elem_refs_in_import_scope();
             checkout = validation.and_then(|()| doc._checkout_to_latest_without_commit(true));
             if let Err(e) = &checkout {
-                // `DocState::apply_diff` validates before mutating, so the state is
-                // still at its pre-batch version; undoing the batch in the `OpLog`
-                // makes the two agree again, which is what lets the doc stay attached.
+                // Validation precedes mutation: state is still at its pre-batch
+                // version, or at the bootstrapped snapshot. Restore the matching
+                // baseline in both state and history before leaving attached.
                 tracing::warn!("import_batch cannot reattach, rolling the batch back: {e}");
-                doc.oplog.lock().rollback_import(&mut doc.state.lock());
+                let mut oplog = doc.oplog.lock();
+                let mut state = doc.state.lock();
+                if let Some(checkpoint) = self.snapshot_checkpoint.take() {
+                    state.reset_to_empty_for_failed_snapshot_import();
+                    oplog.reset_to_empty_for_failed_snapshot_import(checkpoint.arena, &mut state);
+                    for id in checkpoint.empty_containers {
+                        state.ensure_container(&id);
+                    }
+                } else {
+                    oplog.rollback_import(&mut state);
+                }
+                drop(state);
+                drop(oplog);
                 // The shared diff calculator cached ranges against the rolled-back
                 // history; drop that cache instead of reusing stale entries.
                 *doc.diff_calculator.lock() = DiffCalculator::new(true);
