@@ -1,6 +1,6 @@
 # Undo application failures
 
-Verified against code 2026-10-17 (including #1202 and #1209).
+Verified against code 2026-10-18 (including #1202 and #1209).
 
 `UndoManager::undo` and `redo` process at most one recorded item. An application
 error returns `Err` after rolling back the inverse: document values, text styles,
@@ -25,12 +25,21 @@ removed. Arena registrations remain valid, new container state and discarded
 parent links are cleared, and exact counter values are restored. Successful
 undo does not take a full-document snapshot.
 
-The transaction mutex shares a reentrant writer gate. Normal transaction locks
-hold it; undo holds it across checkpointing, calculation, application, commit
-and history bookkeeping. A competing transaction writer cannot commit or add
-operations during rollback. Existing oplog/state lock order remains unchanged.
-Read-only queries may still observe intermediate state; this is writer
-serialization, not snapshot isolation for concurrent readers.
+`LoroMutex::lock_exclusive` (`src/lock.rs`, `TxnGate`) keeps other threads'
+transaction writers out while undo runs checkpointing, calculation, application,
+commit and history bookkeeping. Ordinary transaction locks only read the gate's
+`active` flag before and after taking the mutex (two atomic loads); they do not
+take another lock, so local edits cost the same as without the gate. Undo sets
+the flag before it first takes the transaction lock: every other writer either
+finishes before that point or sees the flag after acquiring the mutex, then
+releases it and waits for the gate. The owning thread, including nested
+`lock_exclusive` calls, uses the transaction lock normally. A competing writer
+cannot commit or add operations during rollback, and existing oplog/state lock
+order is unchanged. The gate ignores mutex poisoning: its owner record is reset
+by the guard during unwinding, so a panic inside one undo does not block later
+writers or undos. Read-only queries may still observe intermediate state; this
+is writer serialization, not snapshot isolation for concurrent readers.
+Tests: `lock::txn_gate_tests` (nesting, waiting writers, panic recovery).
 
 Undo must own an intact rollback scope. Losing it or failing rollback panics:
 returning an ordinary error with partly changed state would make retry unsafe.

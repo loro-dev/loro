@@ -56,6 +56,15 @@ impl<T: ?Sized> Mutex<T> {
         expect_not_poisoned(self.inner.lock(), lock_kind)
     }
 
+    /// For locks whose protected state stays valid across a panic (it is
+    /// restored by RAII during unwinding), so one panic does not block every
+    /// later caller.
+    pub(crate) fn lock_ignoring_poison(&self) -> MutexGuard<'_, T> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     pub(crate) fn is_locked(&self) -> bool {
         self.inner.try_lock().is_err()
     }
