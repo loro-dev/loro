@@ -1804,8 +1804,8 @@ impl LoroDoc {
 
     /// Apply a diff to the current state.
     ///
-    /// This method will not recreate containers with the same [ContainerID]s.
-    /// While this can be convenient in certain cases, it can break several internal invariants:
+    /// Regular containers are recreated with new [ContainerID]s. Reusing their
+    /// original IDs could break several internal invariants:
     ///
     /// 1. Each container should appear only once in the document. Allowing containers with the same ID
     ///    would result in multiple instances of the same container in the document.
@@ -1813,6 +1813,9 @@ impl LoroDoc {
     ///
     /// However, the diff may contain operations that depend on container IDs.
     /// Therefore, users need to provide a `container_remap` to record and retrieve the container ID remapping.
+    /// This remapping applies to the diff/undo workflow, not to imported operations.
+    /// Mergeable children instead restore a deterministic parent/key/type marker;
+    /// their identity is preserved only when the parent identity is preserved.
     ///
     /// With `align_revived_mergeable` (a [`DiffBatch::full_state`] batch), a mergeable child the
     /// batch re-activates carries its full state (no entry means empty), which is aligned with
