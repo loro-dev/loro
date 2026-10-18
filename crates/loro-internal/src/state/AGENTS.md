@@ -27,6 +27,8 @@ before changing mergeable child behavior.
   before changing the richtext snapshot codec or that pass.
   `tree_state.rs` builds tree events two ways depending on the diff mode:
   [../../../../context/tree-events.md](../../../../context/tree-events.md).
+  Its depth-independent traversals, snapshot order, and nested result disposal:
+  [../../../../context/tree-depth.md](../../../../context/tree-depth.md).
   `movable_list_state.rs` import validation and the Checkout-mode fallback for
   moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).
