@@ -751,10 +751,10 @@ fn undo_after_a_rejected_step_with_remote_edits() {
     assert_eq!(t.to_string(), "23R");
 }
 
-/// Redo mirrors undo: a rejected redo step (its U was deleted remotely) must
-/// not make the next redo miss its edit. Used to leave "a" instead of "ac".
+/// Redoing a move of a remotely deleted U must leave it deleted while restoring
+/// the same step's text edit, and keep subsequent redo steps correctly rebased.
 #[test]
-fn redo_after_a_rejected_redo_step() {
+fn redo_move_of_deleted_unknown_does_not_recreate_it() {
     let doc = forge(|doc| {
         let ml = doc.get_movable_list("ml");
         edited_counter(ml.push_container(counter()).unwrap());
@@ -787,9 +787,17 @@ fn redo_after_a_rejected_redo_step() {
 
     assert!(undo.redo().unwrap());
     assert_eq!(t.to_string(), "a");
-    assert_rejected_atomically(&doc, |_| undo.redo());
+    // Identity-aware move undo/redo leaves a remotely deleted element absent.
+    // It no longer tries to recreate U from the positional insert, so the text
+    // edit in this same step can be redone without creating an unknown child.
     assert!(undo.redo().unwrap());
-    assert_eq!(t.to_string(), "ac");
+    assert_eq!(t.to_string(), "ab");
+    assert_eq!(
+        loro::ToJson::to_json_value(&doc.get_movable_list("ml").get_value()),
+        serde_json::json!(["x", "y"])
+    );
+    assert!(undo.redo().unwrap());
+    assert_eq!(t.to_string(), "abc");
 }
 
 // Reproductions from the third review of #1142.

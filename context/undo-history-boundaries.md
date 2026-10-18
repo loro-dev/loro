@@ -7,9 +7,10 @@ one recorded `StackItem` per call to `undo` or `redo`. Grouping and the merge
 interval can put several edits, including edits to different containers, into
 that one item.
 
-Remote edits can make the item's transformed inverse a no-op. For example,
-inserting a MovableList element locally and then moving it remotely can cancel
-the positional inverse delete. That item's lack of generated operations must
+Remote edits can make the item's inverse a no-op. For example, inserting a
+MovableList element locally and then deleting it remotely leaves nothing for
+the inverse delete to remove. A move/set whose element was deleted remotely
+also cannot write an inverse. That item's lack of generated operations must
 not cause `perform` to pop another item: the next item may create an unrelated
 parent container, which would then disappear in the same undo call (#1183).
 
@@ -31,9 +32,10 @@ instead consumes an earlier item. This is the `insert/delete undo (one peer)`
 differential profile, seed 2, step 33; changing the boolean return alone does
 not fix it. The subscription cleanup removes both listeners.
 
-This boundary rule does not change MovableList identity/anchor transformation,
-grouping, or error handling. In particular, it does not force an inverse that
-has become empty to delete a remotely moved element.
+This boundary rule does not change grouping or error handling. MovableList
+identity replay (#1209) deletes an inserted element even if it moved remotely,
+so remote movement alone is no longer a no-op trigger. The regression tests
+use remote deletion instead, including a missing move target for redo.
 
 Regressions:
 

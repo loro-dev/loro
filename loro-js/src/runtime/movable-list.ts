@@ -63,6 +63,14 @@ export interface MovableElementId {
   readonly lamport: number;
 }
 
+/** Identity-bearing state used before undo discards position/value versions. */
+export interface MovableUndoElement {
+  readonly id: MovableElementId;
+  readonly position: LastWriter;
+  readonly valueWriter: LastWriter;
+  readonly value: RuntimeValue;
+}
+
 /** Receives user-visible changes in the order they happen. */
 export interface MovableListEvents {
   delete(position: number, length: number): void;
@@ -293,6 +301,39 @@ export class MovableListState {
       if (element !== undefined && element.pos === position) output.push(element);
     });
     return output;
+  }
+
+  /** Reads a historical view without checking out or changing the live state. */
+  undoSnapshotAt(includes: (id: CodecId) => boolean): MovableUndoElement[] {
+    if (!this.historyComplete)
+      throw new Error("movable-list undo needs complete history");
+    const winners: { index: number; element: MovableUndoElement }[] = [];
+    for (const element of this.allElements()) {
+      const position = latestIncluded(element.positions ?? [element.pos], (p) =>
+        includes(p.id),
+      );
+      if (position === undefined || this.positions.someDeletion(position, includes))
+        continue;
+      const value =
+        element.values === undefined
+          ? { writer: element.valueWriter, value: element.value }
+          : latestIncluded(element.values, (v) => v.id === undefined || includes(v.id));
+      if (value === undefined) continue;
+      const index = this.positions.physicalIndexOf(position);
+      if (index === undefined) throw new Error("movable-list undo position missing");
+      winners.push({
+        index,
+        element: {
+          id: { peer: element.peer, lamport: element.lamport },
+          position: positionWriter(position),
+          valueWriter: { ...value.writer },
+          value: value.value,
+        },
+      });
+    }
+    // Rank only the winning positions, rather than scanning every old move.
+    winners.sort((a, b) => a.index - b.index);
+    return winners.map(({ element }) => element);
   }
 
   visibleElementsRange(start: number, end: number): MovableElement[] {
