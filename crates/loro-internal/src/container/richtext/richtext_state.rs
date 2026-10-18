@@ -1241,6 +1241,8 @@ mod query {
 
     use super::*;
 
+    pub(super) type EndQuery<T> = IndexQuery<T, RichtextTreeTrait, true>;
+
     #[cfg(not(feature = "wasm"))]
     pub(super) type EventIndexQuery = UnicodeQuery;
     #[cfg(feature = "wasm")]
@@ -2116,7 +2118,7 @@ impl RichtextState {
             let (start, end) = (
                 self.tree.query::<EventIndexQuery>(&pos).unwrap().cursor,
                 self.tree
-                    .query::<EventIndexQuery>(&(pos + len))
+                    .query::<query::EndQuery<EventIndexQueryT>>(&(pos + len))
                     .unwrap()
                     .cursor,
             );
@@ -2167,19 +2169,21 @@ impl RichtextState {
             let (start_query, end_query) = match pos_type {
                 PosType::Event => (
                     self.tree.query::<EventIndexQuery>(&start_index),
-                    self.tree.query::<EventIndexQuery>(&end_index),
+                    self.tree
+                        .query::<query::EndQuery<EventIndexQueryT>>(&end_index),
                 ),
                 PosType::Bytes => (
                     self.tree.query::<ByteQuery>(&start_index),
-                    self.tree.query::<ByteQuery>(&end_index),
+                    self.tree.query::<query::EndQuery<ByteQueryT>>(&end_index),
                 ),
                 PosType::Unicode => (
                     self.tree.query::<UnicodeQuery>(&start_index),
-                    self.tree.query::<UnicodeQuery>(&end_index),
+                    self.tree
+                        .query::<query::EndQuery<UnicodeQueryT>>(&end_index),
                 ),
                 PosType::Utf16 => (
                     self.tree.query::<Utf16Query>(&start_index),
-                    self.tree.query::<Utf16Query>(&end_index),
+                    self.tree.query::<query::EndQuery<Utf16QueryT>>(&end_index),
                 ),
                 PosType::Entity => (
                     self.tree.query::<EntityQuery>(&start_index),

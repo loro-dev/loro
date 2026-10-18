@@ -275,17 +275,13 @@ fn ensure_no_unknown_container_in_attached(handler: &Handler) -> LoroResult<()> 
         Handler::List(l) => check_children(l.get_value()),
         Handler::MovableList(l) => check_children(l.get_value()),
         Handler::Tree(t) => {
-            fn check_nodes(
-                t: &TreeHandler,
-                nodes: Vec<crate::TreeNodeWithChildren>,
-            ) -> LoroResult<()> {
-                for node in nodes {
-                    ensure_no_unknown_container_in_attached(&Handler::Map(t.get_meta(node.id)?))?;
-                    check_nodes(t, node.children)?;
-                }
-                Ok(())
+            let mut pending = t.get_all_hierarchy_nodes_under(TreeParentId::Root);
+            pending.reverse();
+            while let Some(mut node) = pending.pop() {
+                ensure_no_unknown_container_in_attached(&Handler::Map(t.get_meta(node.id)?))?;
+                pending.extend(std::mem::take(&mut node.children).into_iter().rev());
             }
-            check_nodes(t, t.get_all_hierarchy_nodes_under(TreeParentId::Root))
+            Ok(())
         }
         Handler::Text(_) => Ok(()),
         #[cfg(feature = "counter")]

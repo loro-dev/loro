@@ -1,6 +1,6 @@
 # Shallow Snapshot Dead-Style Redaction
 
-Verified against code 2026-09-30
+Verified against code 2026-10-17
 
 Shallow snapshot export nulls out the values of rich-text style pairs that are
 "dead" at the shallow root — pairs whose anchors no longer enclose any text.
@@ -101,3 +101,10 @@ log. Tests: `crates/loro/tests/snapshot_unclosed_style_mark.rs`.
   the #1057 regression, the both-expand keep + convergence guard, root-alive
   style retention with historical checkout, latest-state-bytes and state-only
   paths, and per-expand-type convergence after typing at the collapsed range.
+
+Deep mark values use the internal iterative `EncodedText::decode`/`encode`
+codec in `richtext_state.rs`, including the redaction pass. The three-field
+columnar layout is unchanged. They must not pass through the external
+128-level `LoroValue` serde budget: valid binary marks can be deeper, and
+rejecting them would make a lazily imported Text panic on first read. See
+[deep-value-stack-safety.md](deep-value-stack-safety.md).

@@ -8,6 +8,10 @@ before changing mergeable child behavior.
 
 ## Local Entry Points
 
+- `value_decode.rs`: iterative postcard map/list value reader. Its layout,
+  destruction and WASM conversion contracts are in
+  [../../../../context/deep-value-stack-safety.md](../../../../context/deep-value-stack-safety.md).
+
 - `../state.rs`: `DocState`, checkout/path/deep-value traversal, state replay,
   lifecycle, and alive-container discovery.
 - `container_store/`: persisted KV-backed container snapshots and
@@ -23,6 +27,8 @@ before changing mergeable child behavior.
   before changing the richtext snapshot codec or that pass.
   `tree_state.rs` builds tree events two ways depending on the diff mode:
   [../../../../context/tree-events.md](../../../../context/tree-events.md).
+  Its depth-independent traversals, snapshot order, and nested result disposal:
+  [../../../../context/tree-depth.md](../../../../context/tree-depth.md).
   `movable_list_state.rs` import validation and the Checkout-mode fallback for
   moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).

@@ -112,6 +112,7 @@
     "scripts",
     "deno_tests",
     "bun_tests",
+    "tests/declarations",
     "node_modules"
   ]
 }

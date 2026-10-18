@@ -1,9 +1,93 @@
 use loro::{
     cursor::{Cursor, Side},
-    ExportMode, LoroDoc, LoroMap, ToJson,
+    CannotFindRelativePosition, ExportMode, LoroDoc, LoroError, LoroMap, ToJson, ID,
 };
 use pretty_assertions::assert_eq;
 use serde_json::json;
+
+#[test]
+fn cursor_decode_rejects_negative_counters() {
+    // #1178: the valid counter 2 (zigzag 04) was replaced by -1 (01).
+    let bytes = [1, 1, 1, 0, 4, b't', b'e', b'x', b't', 0, 1, 2];
+    assert!(Cursor::decode(&bytes).is_err());
+
+    for counter in [-1, -2, -64, i32::MIN] {
+        let cursor = Cursor::new(
+            Some(ID::new(1, counter)),
+            loro::ContainerID::new_root("text", loro::ContainerType::Text),
+            Side::Middle,
+            2,
+        );
+        assert!(Cursor::decode(&cursor.encode()).is_err());
+    }
+
+    for counter in [0, 2, i32::MAX] {
+        let cursor = Cursor::new(
+            Some(ID::new(1, counter)),
+            loro::ContainerID::new_root("text", loro::ContainerType::Text),
+            Side::Middle,
+            2,
+        );
+        assert_eq!(Cursor::decode(&cursor.encode()).unwrap(), cursor);
+    }
+}
+
+#[test]
+fn cursor_queries_reject_negative_counters_without_poisoning_the_document() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let text = doc.get_text("text");
+    text.insert(0, "hello")?;
+    let list = doc.get_list("list");
+    list.push("item")?;
+    let movable = doc.get_movable_list("movable");
+    movable.push("item")?;
+    doc.commit();
+
+    let valid = [
+        text.get_cursor(2, Side::Middle).unwrap(),
+        list.get_cursor(0, Side::Middle).unwrap(),
+        movable.get_cursor(0, Side::Middle).unwrap(),
+    ];
+    // Invalid queries must not even commit pending edits.
+    text.insert(5, "!")?;
+    let frontiers = doc.oplog_frontiers();
+    for cursor in &valid {
+        for peer in [1, 99] {
+            for counter in [-1, -2, -64, i32::MIN] {
+                // Public construction/Serde can bypass Cursor::decode.
+                let mut invalid = cursor.clone();
+                invalid.id = Some(ID::new(peer, counter));
+                assert!(matches!(
+                    doc.get_cursor_pos(&invalid),
+                    Err(CannotFindRelativePosition::IdNotFound)
+                ));
+                assert!(matches!(
+                    doc.try_get_cursor_pos(&invalid),
+                    Err(LoroError::NotFoundError(_))
+                ));
+                assert_eq!(doc.oplog_frontiers(), frontiers);
+            }
+        }
+    }
+
+    assert_eq!(doc.get_cursor_pos(&valid[0])?.current.pos, 2);
+    assert_eq!(doc.get_cursor_pos(&valid[1])?.current.pos, 0);
+    assert_eq!(doc.get_cursor_pos(&valid[2])?.current.pos, 0);
+    let replica = LoroDoc::new();
+    replica.import(&doc.export(ExportMode::Snapshot)?)?;
+    assert_eq!(replica.get_text("text").to_string(), "hello!");
+    replica.set_peer_id(2)?;
+    replica.get_text("text").insert(6, "?")?;
+    replica.commit();
+    doc.import(&replica.export(ExportMode::all_updates())?)?;
+    text.insert(7, ".")?;
+    doc.commit();
+    replica.import(&doc.export(ExportMode::all_updates())?)?;
+    assert_eq!(text.to_string(), "hello!?.");
+    assert_eq!(doc.get_deep_value(), replica.get_deep_value());
+    Ok(())
+}
 
 #[test]
 fn cursors_resolve_after_target_content_is_deleted_for_text_list_and_movable_list(

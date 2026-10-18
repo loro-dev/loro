@@ -16,6 +16,165 @@ fn pending_len(doc: &LoroDoc) -> usize {
     doc.oplog().lock().pending_changes_len()
 }
 
+#[test]
+fn import_batch_snapshot_keeps_untouched_state_lazy() {
+    use crate::HandlerTrait;
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(1).unwrap();
+    for i in 0..64 {
+        source
+            .get_text(format!("text-{i}"))
+            .insert_unicode(0, "snapshot text")
+            .unwrap();
+    }
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let vv = source.oplog_vv();
+    source
+        .get_text("text-0")
+        .insert_unicode(0, "edit ")
+        .unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+
+    let split = LoroDoc::new();
+    split.import(&snapshot).unwrap();
+    split.import(&update).unwrap();
+    let batch = LoroDoc::new();
+    // Sorting must still put the full snapshot first.
+    let status = batch.import_batch(&[update, snapshot]).unwrap();
+    assert!(status.pending.is_none());
+    assert_eq!(
+        status.success,
+        crate::version::VersionRange::from_vv(&source.oplog_vv())
+    );
+    for doc in [&split, &batch] {
+        let untouched = doc.get_text("text-63").idx();
+        assert!(
+            !doc.app_state().lock().store.has_decoded_state(untouched),
+            "snapshot bootstrap must not replay untouched container state"
+        );
+    }
+    assert_eq!(batch.oplog_vv(), split.oplog_vv());
+    assert_eq!(batch.state_frontiers(), split.state_frontiers());
+    assert_eq!(batch.get_deep_value(), split.get_deep_value());
+}
+
+#[test]
+fn import_batch_snapshot_checkout_failure_resets_state_and_history() {
+    let source = LoroDoc::new_auto_commit();
+    source
+        .get_text("text")
+        .insert_unicode(0, "snapshot")
+        .unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let target = LoroDoc::new_auto_commit();
+    // Existing handles and subscriptions must remain usable after rollback.
+    let text = target.get_text("text");
+    let before = target.get_deep_value();
+    let events = Arc::new(AtomicUsize::new(0));
+    let counter = events.clone();
+    let _sub = target.subscribe_root(Arc::new(move |_| {
+        counter.fetch_add(1, Ordering::SeqCst);
+    }));
+    let err = target
+        .import_batch(&[snapshot.clone(), malformed_binary_update(91)])
+        .unwrap_err();
+    assert!(err.to_string().contains("list diff"), "{err:?}");
+    assert!(!target.is_detached());
+    assert!(!target.oplog().lock().batch_importing);
+    assert_eq!(target.oplog_vv(), VersionVector::default());
+    assert_eq!(target.state_frontiers(), Frontiers::default());
+    assert_eq!(target.get_deep_value(), before);
+    assert_eq!(pending_len(&target), 0);
+    assert_eq!(events.load(Ordering::SeqCst), 0);
+    assert!(target.drop_pending_events().is_empty());
+    text.insert_unicode(0, "still usable").unwrap();
+    target.commit_then_renew();
+    assert_eq!(text.to_string(), "still usable");
+    target.import(&snapshot).unwrap();
+    assert_eq!(target.state_frontiers(), target.oplog_frontiers());
+}
+
+#[test]
+fn import_batch_snapshot_preserves_preexisting_pending_changes() {
+    let remote = LoroDoc::new_auto_commit();
+    remote.set_peer_id(72).unwrap();
+    remote.get_map("remote").insert("first", 1).unwrap();
+    let base = remote.export(ExportMode::all_updates()).unwrap();
+    let vv = remote.oplog_vv();
+    remote.get_map("remote").insert("later", 2).unwrap();
+    let pending = remote.export(ExportMode::updates(&vv)).unwrap();
+
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(73).unwrap();
+    source.get_map("source").insert("snapshot", 1).unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let vv = source.oplog_vv();
+    source.get_map("source").insert("update", 2).unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+
+    let target = LoroDoc::new();
+    target.import(&pending).unwrap();
+    assert_eq!(pending_len(&target), 1);
+    let status = target.import_batch(&[snapshot, update]).unwrap();
+    assert!(status.pending.is_some());
+    assert_eq!(pending_len(&target), 1);
+    target.import(&base).unwrap();
+    source.import(&base).unwrap();
+    source.import(&pending).unwrap();
+    assert_eq!(pending_len(&target), 0);
+    assert_eq!(target.get_deep_value(), source.get_deep_value());
+    assert_eq!(target.oplog_vv(), source.oplog_vv());
+}
+
+#[test]
+fn import_batch_snapshot_panic_keeps_prefix_attached() {
+    let source = LoroDoc::new_auto_commit();
+    source.get_map("map").insert("snapshot", 1).unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let vv = source.oplog_vv();
+    source.get_map("map").insert("update", 2).unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+    let blobs = [snapshot.clone(), update];
+    let target = LoroDoc::new_auto_commit();
+    crate::loro::panic_at_batch_import_blob_for_test(1);
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = target.import_batch(&blobs);
+    }))
+    .is_err());
+    assert!(!target.is_detached());
+    assert!(!target.oplog().lock().batch_importing);
+    assert_eq!(target.oplog_vv(), vv);
+    assert_eq!(target.state_frontiers(), target.oplog_frontiers());
+    let expected = LoroDoc::new();
+    expected.import(&snapshot).unwrap();
+    assert_eq!(target.get_deep_value(), expected.get_deep_value());
+    target.import_batch(&blobs).unwrap();
+    assert_eq!(target.get_deep_value(), source.get_deep_value());
+    target.get_map("map").insert("local", 3).unwrap();
+}
+
+#[test]
+fn import_batch_snapshot_into_detached_empty_doc_only_updates_history() {
+    let source = LoroDoc::new_auto_commit();
+    source
+        .get_text("text")
+        .insert_unicode(0, "snapshot")
+        .unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let vv = source.oplog_vv();
+    source.get_text("text").insert_unicode(0, "update").unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+    let target = LoroDoc::new();
+    target.detach();
+    target.import_batch(&[snapshot, update]).unwrap();
+    assert!(target.is_detached());
+    assert_eq!(target.state_frontiers(), Frontiers::default());
+    assert_eq!(target.oplog_vv(), source.oplog_vv());
+    assert_eq!(target.get_text("text").to_string(), "");
+    target.attach();
+    assert_eq!(target.get_deep_value(), source.get_deep_value());
+}
+
 fn corrupt_snapshot_state_bytes(snapshot: &mut [u8]) {
     let body_start = 22;
     let oplog_len =
@@ -640,6 +799,27 @@ fn corrupt_snapshot_import_rolls_back_empty_doc() {
 
     dst.import(&snapshot).unwrap();
     assert_eq!(dst.get_deep_value(), src.get_deep_value());
+}
+
+#[test]
+fn corrupt_snapshot_batch_preserves_empty_handles() {
+    let source = LoroDoc::new_auto_commit();
+    source
+        .get_text("text")
+        .insert_unicode(0, "snapshot")
+        .unwrap();
+    let mut snapshot = source.export(ExportMode::Snapshot).unwrap();
+    corrupt_snapshot_state_bytes(&mut snapshot);
+    let empty_update = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+    let target = LoroDoc::new_auto_commit();
+    let text = target.get_text("existing");
+    let before = target.get_deep_value();
+    assert!(target.import_batch(&[snapshot, empty_update]).is_err());
+    assert!(!target.is_detached());
+    assert_eq!(target.get_deep_value(), before);
+    assert_eq!(target.oplog_vv(), VersionVector::default());
+    text.insert_unicode(0, "usable").unwrap();
+    assert_eq!(text.to_string(), "usable");
 }
 
 #[test]

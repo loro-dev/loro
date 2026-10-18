@@ -5,6 +5,8 @@ the same binary and JSON data as Rust (`loro-crdt`) and give the same results.
 
 ## Context
 
+- Concurrent tree moves, skipped cycles, replay, checkout, and undo:
+  [context/loro-js-tree-moves.md](../context/loro-js-tree-moves.md).
 - Undo/redo no-op return values and item boundaries:
   [context/undo-history-boundaries.md](../context/undo-history-boundaries.md).
 - Index structures, complexity contracts, and benchmarks:
