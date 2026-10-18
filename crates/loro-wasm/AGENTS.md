@@ -91,9 +91,18 @@ are documented in
   bundler smoke tests aligned with these expectations.
 - If package output or published behavior changes, add a changeset.
 
+`pnpm -C crates/loro-wasm test:declarations` checks a consumer of all five
+generated entrypoints with `strict: true` and `skipLibCheck: false`. It runs
+as part of the package tests after building. Keep this check separate from
+the tooling/test tsconfig, which skips checking dependency declarations.
+
 `LoroDoc.toContainerTree` constructs typed nested snapshots with fixed JS helpers. See
 [context/wasm-container-tree.md](../../context/wasm-container-tree.md) for identity, ownership,
 range and Mirror integration contracts.
+
+`LoroDoc.toContainerTreeJson` uses the same traversal and options but writes a single
+JSON string in Rust. Reject binary and non-finite numbers instead of silently
+changing them. Keep the existing object API and its TypeScript return types intact.
 
 `toContainerTree` on attached containers recursively applies its text format.
 Document `roots` filters before reading values; missing roots are omitted. List

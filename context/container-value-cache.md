@@ -1,6 +1,6 @@
 # Container Value Cache (InnerStore)
 
-Verified against code 2026-09-04.
+Verified against code 2026-10-17.
 
 ## The funnel
 
@@ -21,12 +21,43 @@ dropped: ~4 KB per container ever read, superlinear growth on
 container-by-container walks, wasm32 trap at 4 GiB near one million
 containers.
 
-`track_value_cache` now bounds the number of cached decoded values to
-`MAX_CACHED_CONTAINER_VALUES` (2048; 16 under `cfg(test)`) with a
+`track_value_cache` bounds the number of cached decoded values to the document's
+`Configure::decoded_value_cache_limit()` (default 2048; 16 under `cfg(test)`) with a
 second-chance FIFO (`value_cache_queue` + per-wrapper
 `in_value_cache_queue` / `value_cache_referenced` bits on
 `ContainerWrapper`). The second-chance bit exists so a hot ancestor (e.g. the
 root list re-read once per item during a deep walk) survives eviction passes.
+
+## Configuring repeated reads (loro-dev/loro#1191)
+
+`LoroDoc::set_decoded_value_cache_limit(usize)` / JS
+`doc.setDecodedValueCacheLimit(number)` sets a finite limit. The matching
+getters are `decoded_value_cache_limit()` / `getDecodedValueCacheLimit()`.
+JS rejects non-finite, negative, fractional and greater-than-u32 values before
+conversion. Zero disables retention of lazy decoded values; there is no
+unlimited mode and no eager allocation proportional to the chosen limit.
+
+The setting lives in `Configure` and is shared by a document's stores. The
+setter takes the state lock and immediately calls `trim_value_cache` on the
+current and cached shallow-root stores. It does not commit, emit events or
+change document data. Both `Configure::fork` and `LoroDoc::set_config` copy the
+limit into independent fork configuration. Snapshot/update bytes do not carry
+this local performance setting; importing into an existing document preserves
+the receiving document's limit.
+
+Why expose this: a synthetic snapshot/handler walk on main `3827945fe03b`,
+using the production 2048 limit in the unit-test build, counted lazy map-value
+decodes (not elapsed time):
+
+| Child maps | First walk | Second walk | Third walk |
+| --- | --- | --- | --- |
+| 1024 | 1024 | 0 | 0 |
+| 4096 | 4096 | 4096 | 4096 |
+
+The root list is also cached. A finite budget large enough for the full working
+set avoids repeated decoding after warm-up. This only addresses decoded-value
+cache misses; it does not change the separate KV block cache or establish
+speedups for the issue author's unavailable document fixtures.
 
 ## Eviction safety contract
 
@@ -81,6 +112,14 @@ after the first eviction following a full load (the scan's per-entry
   `iter_all_container_ids` stays complete after evictions),
   `evicted_mergeable_child_and_tree_meta_survive_round_trip`,
   `stale_queue_entry_after_lazy_to_state_conversion`.
+- `repeated_handle_walks_respect_decoded_value_cache_limit`: counts lazy
+  misses below/above the default, verifies warm hits after raising the limit,
+  and immediate eviction plus correct re-reads at limits 1 and 0.
+- `lowering_decoded_value_cache_limit_preserves_local_edits`: a queued wrapper
+  becomes dirty state, survives disabling the cache, and round-trips intact.
+- `crates/loro/tests/decoded_value_cache.rs` and
+  `crates/loro-wasm/tests/decoded_value_cache.test.ts`: production default,
+  fork independence, non-serialized settings and JS argument validation.
 - `crates/loro-internal/src/encoding/shallow_snapshot.rs`:
   `reexport_same_shallow_root_after_walk_eviction_keeps_overlay_containers`
   (the silent data-loss regression).

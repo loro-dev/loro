@@ -22,6 +22,9 @@ pub use logging::log::*;
 #[doc(hidden)]
 pub use rustc_hash::FxHashMap;
 pub use span::*;
+#[cfg(feature = "wasm")]
+#[doc(hidden)]
+pub use value::wasm::try_convert as try_loro_value_to_js_value;
 pub use value::{
     to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,
 };

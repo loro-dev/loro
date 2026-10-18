@@ -46,8 +46,12 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   versions, not the replay base: [context/tree-checkout-window.md](context/tree-checkout-window.md).
 - Tree event invariants (revived subtrees get `Create`s) and the two event
   paths, diff-calculator vs raw ops: [context/tree-events.md](context/tree-events.md).
+- Deep tree traversal, snapshot order, and iterative result disposal:
+  [context/tree-depth.md](context/tree-depth.md).
 - loro.js tree diff item order, index counting, apply resolution, and batch dry-run:
   [context/loro-js-tree-diff.md](context/loro-js-tree-diff.md).
+- loro.js concurrent tree moves, skipped cycles, replay, checkout, and undo:
+  [context/loro-js-tree-moves.md](context/loro-js-tree-moves.md).
 - User-facing Loro usage, sync, editor integration, and performance guidance:
   [skills/loro/SKILL.md](skills/loro/SKILL.md).
 - Pure TypeScript runtime indexes, complexity contracts, benchmarks, and remaining gaps:
@@ -69,6 +73,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Bounded decoded-value cache in `InnerStore` (second-chance FIFO, eviction
   safety contract, loro-dev/loro#1092):
   [context/container-value-cache.md](context/container-value-cache.md).
+- Deep plain value decoding, Drop, and WASM conversion stack safety:
+  [context/deep-value-stack-safety.md](context/deep-value-stack-safety.md).
 - How the arena learns a container's parent (parsed changes, state KV, the op
   log's creator resolver), its locking (including `ChangeStore`'s lock order),
   and import rollback: [context/arena-parent-links.md](context/arena-parent-links.md).

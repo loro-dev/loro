@@ -1,4 +1,6 @@
 //! Build JS state with fixed constructors; no callbacks or document-wide intermediary.
+mod json;
+
 use super::*;
 use loro_internal::container_tree::{err, Event, Sink};
 use std::collections::HashMap;
@@ -254,6 +256,25 @@ fn list_slice<H: HandlerTrait>(
 }
 #[wasm_bindgen]
 impl LoroDoc {
+    /// Read visible roots as one JSON string, using the same node shapes and text
+    /// formats as toContainerTree. No per-value JS calls or implicit commit.
+    /// Throws for binary or non-finite numbers rather than losing their values.
+    #[wasm_bindgen(js_name = toContainerTreeJson, skip_typescript)]
+    pub fn to_container_tree_json(
+        &self,
+        opts: Option<JsDocumentContainerTreeOptions>,
+    ) -> JsResult<String> {
+        let opts: DocumentOptions = options(opts.map(Into::into), true)?;
+        let mut sink = json::JsonSink::default();
+        self.doc.app_state().lock().read_container_tree(
+            &mut sink,
+            None,
+            matches!(opts.text, TextMode::Delta),
+            opts.roots.as_deref(),
+        )?;
+        Ok(sink.finish()?)
+    }
+
     /// Convert visible roots to independent container trees without committing.
     /// The text format applies recursively, including Tree metadata. Unknown or
     /// hidden roots are omitted; roots: [] returns an empty object. Reads never
@@ -430,6 +451,15 @@ export type DocumentContainerTree<O> = O extends { roots: readonly (infer R exte
     ? Partial<Record<R, ContainerNode<ContainerTreeText<O>>>>
     : Record<string, ContainerNode<ContainerTreeText<O>>>;
 interface LoroDoc {
+    /** Read visible roots as a single JSON string built in Rust, without per-value JS calls.
+     * JSON.parse(result) has the same node shapes as toContainerTree(options).
+     * Text defaults to plain strings; roots and text apply exactly as in toContainerTree.
+     * No commit, live handles or CRDT history. Throws for binary values or non-finite
+     * numbers (also inside opaque values or delta attributes), invalid options,
+     * unsupported container types or nesting >256. Use toContainerTree for non-JSON data.
+     */
+    toContainerTreeJson(options?: DocumentContainerTreeOptions): string;
+
     /** Convert visible roots to independent container trees. No commit, live handles or CRDT history.
      * Text defaults to plain strings. Throws for invalid options, unsupported types or nesting >256.
      */

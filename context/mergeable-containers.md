@@ -1,6 +1,6 @@
 # Mergeable Container Context
 
-Verified against code 2026-09-29.
+Verified against code 2026-10-17.
 
 Mergeable containers let two peers independently create the same child container
 under a map key and converge to one deterministic container id. The source of
@@ -80,6 +80,34 @@ rewrites the marker.
   deterministic child cid depends on the attached parent cid.
 
 ## Revert, Apply-Diff, Events, And Undo
+
+### Undoing a map child deletion: identity contract (#1187)
+
+`handler.rs`: `Handler::apply_map_container_diff_value` reconstructs a regular
+child with a fresh ID; `_apply_diff` in `loro.rs` and `UndoManager::container_remap`
+in `undo.rs` remap the diff/undo workflow. This is not an alias for subsequent
+imports: remote operations still target their original container IDs. A remote
+edit to the deleted regular child remains associated with the hidden original
+child and does not appear in the reconstructed visible child, whether imported
+before or after undo. This is the existing identity policy, not a convergence
+failure. Reusing regular child IDs would require resolving concurrent placement
+and state-retention rules; do not implement it by redirecting imports locally.
+
+For a mergeable child, undoing the key's deletion restores its marker. The same
+parent/key/type has the same ID, so retained concurrent edits become visible in
+either import order. This requires a stable parent ID: undo that reconstructs a
+regular ancestor gives its mergeable descendants new IDs too.
+
+Public guidance lives on Rust `UndoManager` and in `crates/loro-wasm/README.md`.
+Use mergeable children for a stable logical slot, remembering that slot reuse
+resurfaces retained state. Give distinct entity lifetimes distinct keys. To undo
+entity deletion while preserving identity, retain the container and change a
+visibility/deleted field rather than deleting its parent map key.
+`crates/loro/tests/map_delete_undo_identity.rs` checks the regular/mergeable cases
+in both arrival orders, including IDs, hidden original state, and peer convergence,
+plus the retained-entity model and the recreated-ancestor boundary.
+
+### Diff state and alignment
 
 A mergeable child that becomes visible again keeps its deterministic cid and its hidden
 state. What a diff consumer needs depends on whether it holds that hidden state:

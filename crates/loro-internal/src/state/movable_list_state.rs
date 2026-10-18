@@ -1514,7 +1514,7 @@ struct EncodedFastSnapshot {
 }
 
 mod snapshot {
-    use loro_common::{IdFull, IdLp, LoroValue, PeerID};
+    use loro_common::{IdFull, IdLp, PeerID};
 
     use crate::{
         encoding::value_register::ValueRegister,
@@ -1616,13 +1616,7 @@ mod snapshot {
         }
 
         fn decode_value(bytes: &[u8]) -> loro_common::LoroResult<(loro_common::LoroValue, &[u8])> {
-            let (list_value, bytes) =
-                postcard::take_from_bytes::<Vec<LoroValue>>(bytes).map_err(|_| {
-                    loro_common::LoroError::DecodeError(
-                        "Decode list value failed".to_string().into_boxed_str(),
-                    )
-                })?;
-            Ok((list_value.into(), bytes))
+            crate::state::value_decode::decode_collection(bytes, false)
         }
 
         fn decode_snapshot_fast(
