@@ -358,37 +358,7 @@ pub(crate) fn js_to_cursor(js: JsValue) -> JsResult<Cursor> {
 }
 
 pub(crate) fn convert(value: LoroValue) -> JsResult<JsValue> {
-    Ok(match value {
-        LoroValue::Null => JsValue::NULL,
-        LoroValue::Bool(b) => JsValue::from_bool(b),
-        LoroValue::Double(f) => JsValue::from_f64(f),
-        LoroValue::I64(i) => JsValue::from_f64(i as f64),
-        LoroValue::String(s) => JsValue::from_str(&s),
-        LoroValue::List(list) => {
-            let arr = Array::new_with_length(list.len() as u32);
-            for (i, v) in list.as_ref().iter().cloned().enumerate() {
-                arr.set(i as u32, convert(v)?);
-            }
-            arr.into_js_result()?
-        }
-        LoroValue::Map(m) => {
-            let map = Object::new();
-            for (k, v) in m.as_ref().iter() {
-                let str: &str = k;
-                js_sys::Reflect::set(&map, &JsValue::from_str(str), &convert(v.clone())?)?;
-            }
-
-            map.into_js_result()?
-        }
-        LoroValue::Container(container_id) => JsValue::from(&container_id),
-        LoroValue::Binary(binary) => {
-            let arr = Uint8Array::new_with_length(binary.len() as u32);
-            for (i, v) in binary.iter().enumerate() {
-                arr.set_index(i as u32, *v);
-            }
-            arr.into_js_result()?
-        }
-    })
+    loro_common::try_loro_value_to_js_value(value)
 }
 
 impl From<ImportBlobMetadata> for JsImportBlobMetadata {
