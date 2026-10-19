@@ -117,7 +117,9 @@ fn three_peer_sync_move_set_undo_redo_with_scalar_and_map_values() {
             run(seed);
         }
     } else {
-        for seed in [0, 1, 2, 3, 17, 203, 1340] {
+        // 740: an earlier undo recreated a map child that was deleted again before
+        // this undo wrote to it (see context/undo-atomicity.md).
+        for seed in [0, 1, 2, 3, 17, 203, 740, 1340] {
             run(seed);
         }
     }

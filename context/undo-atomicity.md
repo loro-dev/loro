@@ -51,6 +51,19 @@ the item to its original remote-diff row, keeping its transform base and metadat
 Both container and element identity maps are restored, so ids of discarded
 operations cannot leak into a later retry.
 
+## Deleted remap targets are skipped, not retried
+
+Because a failed step is retried, an error that can never succeed would block that
+manager's older history forever. `apply_diff_with_movable_undo` (`src/loro.rs`)
+therefore skips a container whose remapped target is already deleted, exactly as
+it skips other unreachable containers. A remap target is normally recreated by the
+same batch, so remapped containers used to bypass the reachability check. But an
+earlier undo may have recreated the container, and a later local or remote edit may
+have deleted it again; writing to it then always fails with `ContainerDeleted`
+(the transaction's `is_deleted` check). Main swallowed that error and continued,
+returning `Ok(false)` when nothing else changed; skipping gives the same result.
+Regression: seed 740 in `crates/loro/tests/movable_list_undo_random.rs`.
+
 ## Unknown-container rejection
 
 Keep the existing [unknown-container contract](unknown-containers.md): a

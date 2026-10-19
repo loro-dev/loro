@@ -2114,12 +2114,23 @@ impl LoroDoc {
                 self.state.lock().ensure_container(&id);
             }
 
-            if skip_unreachable
-                && !remapped
-                && !is_full_state
-                && !self.state.lock().get_reachable(&id)
-            {
-                continue;
+            if skip_unreachable && !is_full_state {
+                let mut state = self.state.lock();
+                // A remapped target is normally recreated by this batch and is
+                // applied even before it is attached. An earlier undo may have
+                // recreated it, though, and it may have been deleted since:
+                // writing to it would fail with `ContainerDeleted`, so skip it
+                // like any other unreachable container.
+                let skip = if remapped {
+                    self.arena
+                        .id_to_idx(&id)
+                        .is_some_and(|idx| state.is_deleted(idx))
+                } else {
+                    !state.get_reachable(&id)
+                };
+                if skip {
+                    continue;
+                }
             }
             debug_assert!(
                 !predicted_skips.contains(&batch_id),
