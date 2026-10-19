@@ -26,6 +26,7 @@ use std::backtrace::Backtrace;
 use std::fmt::{Debug, Display};
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 /// A mutex that verifies lock acquisition and release order against a group-wide
@@ -44,6 +45,83 @@ pub struct LoroMutex<T> {
     lock: Mutex<T>,
     kind: u8,
     currently_locked_in_this_thread: Arc<ThreadLocal<Mutex<LockInfo>>>,
+    /// Used only by the `Txn` lock. Stored inline so the writer check reads the
+    /// same allocation (usually the same cache line) as the mutex itself.
+    txn_gate: TxnGate,
+}
+
+/// Keeps other threads' transaction writers out while one thread runs a
+/// compound operation (undo/redo) that releases and reacquires the
+/// transaction lock. Ordinary writers only read `active` after taking the
+/// mutex, so the common uncontended path costs one atomic load, not a lock.
+#[derive(Debug)]
+struct TxnGate {
+    /// True exactly while some thread holds `exclusive`. A plain std atomic
+    /// even under loom: it never blocks, and modelling it would add scheduling
+    /// branches to every transaction lock in every loom test. The blocking
+    /// parts (`exclusive`, `owner`) stay loom-aware.
+    active: std::sync::atomic::AtomicBool,
+    /// Held by the owner for the whole compound operation; other compound
+    /// operations and waiting writers block on it.
+    exclusive: Mutex<()>,
+    /// The owning thread and its reentrancy depth.
+    owner: Mutex<Option<(crate::sync::thread::ThreadId, usize)>>,
+}
+
+impl TxnGate {
+    fn new() -> Self {
+        Self {
+            active: std::sync::atomic::AtomicBool::new(false),
+            exclusive: Mutex::new(()),
+            owner: Mutex::new(None),
+        }
+    }
+
+    // The gate guards no data and `owner` is reset by `TxnExclusiveGuard::drop`
+    // during unwinding, so a panic inside an undo must not poison later writers.
+    fn owner(&self) -> MutexGuard<'_, Option<(crate::sync::thread::ThreadId, usize)>> {
+        self.owner.lock_ignoring_poison()
+    }
+
+    fn wait_exclusive(&self) -> MutexGuard<'_, ()> {
+        self.exclusive.lock_ignoring_poison()
+    }
+
+    fn is_owned_by_current_thread(&self) -> bool {
+        let me = crate::sync::thread::current().id();
+        matches!(*self.owner(), Some((owner, _)) if owner == me)
+    }
+
+    /// Whether a transaction writer on this thread must wait for another
+    /// thread's compound operation.
+    fn must_wait(&self) -> bool {
+        self.active.load(Ordering::SeqCst) && !self.is_owned_by_current_thread()
+    }
+}
+
+/// Guard returned by [`LoroMutex::lock_exclusive`].
+pub(crate) struct TxnExclusiveGuard<'a> {
+    gate: &'a TxnGate,
+    /// Only the outermost guard of a thread holds the gate.
+    held: Option<MutexGuard<'a, ()>>,
+}
+
+impl Drop for TxnExclusiveGuard<'_> {
+    fn drop(&mut self) {
+        let mut owner = self.gate.owner();
+        if let Some((_, depth)) = owner.as_mut() {
+            *depth -= 1;
+        }
+        if self.held.is_some() {
+            debug_assert!(matches!(*owner, Some((_, 0))));
+            *owner = None;
+            // Clear the flag before releasing the gate: waiting writers retry
+            // after acquiring the gate and must then see it cleared.
+            self.gate.active.store(false, Ordering::SeqCst);
+        }
+        drop(owner);
+        self.held.take();
+    }
 }
 
 /// Internal per-thread lock information used for diagnostics and order checks.
@@ -114,6 +192,7 @@ impl LoroLockGroup {
             lock: Mutex::new(value),
             currently_locked_in_this_thread: self.g.clone(),
             kind: kind as u8,
+            txn_gate: TxnGate::new(),
         }
     }
 }
@@ -125,6 +204,60 @@ impl Default for LoroLockGroup {
 }
 
 impl<T> LoroMutex<T> {
+    /// Keep other threads' document writers out across a compound operation
+    /// that releases and reacquires the transaction lock. The owning thread
+    /// (including nested calls) keeps using the normal transaction lock.
+    ///
+    /// Must be called before the owner first takes the transaction lock in the
+    /// operation, so every other writer either finishes before that point or
+    /// observes `active` after acquiring the transaction mutex.
+    pub(crate) fn lock_exclusive(&self) -> TxnExclusiveGuard<'_> {
+        debug_assert_eq!(self.kind, LockKind::Txn as u8);
+        let gate = &self.txn_gate;
+        let me = crate::sync::thread::current().id();
+        {
+            let mut owner = gate.owner();
+            if let Some((id, depth)) = owner.as_mut() {
+                if *id == me {
+                    *depth += 1;
+                    return TxnExclusiveGuard { gate, held: None };
+                }
+            }
+        }
+        let held = gate.wait_exclusive();
+        *gate.owner() = Some((me, 1));
+        gate.active.store(true, Ordering::SeqCst);
+        TxnExclusiveGuard {
+            gate,
+            held: Some(held),
+        }
+    }
+
+    /// Acquire the underlying mutex. Transaction writers wait while another
+    /// thread runs a compound operation (see [`Self::lock_exclusive`]).
+    #[inline]
+    fn acquire(&self) -> MutexGuard<'_, T> {
+        let guard = self.lock.lock_with_kind("LoroMutex");
+        if self.kind != LockKind::Txn as u8 || !self.txn_gate.must_wait() {
+            return guard;
+        }
+        self.acquire_after_exclusive(guard)
+    }
+
+    /// Slow path: another thread owns the compound operation. Checking only
+    /// after taking the mutex is enough: the owner sets `active` before its
+    /// first transaction lock, so a writer either finishes before that point
+    /// or sees the flag here.
+    #[cold]
+    fn acquire_after_exclusive<'a>(&'a self, mut guard: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
+        while self.txn_gate.must_wait() {
+            drop(guard);
+            drop(self.txn_gate.wait_exclusive());
+            guard = self.lock.lock_with_kind("LoroMutex");
+        }
+        guard
+    }
+
     #[track_caller]
     /// Acquire the lock, enforcing strict increasing [`LockKind`] order.
     ///
@@ -158,7 +291,7 @@ impl<T> LoroMutex<T> {
                 );
             }
 
-            let guard = self.lock.lock_with_kind("LoroMutex");
+            let guard = self.acquire();
             *v.lock() = this;
             LoroMutexGuard {
                 guard,
@@ -171,7 +304,7 @@ impl<T> LoroMutex<T> {
         }
         #[cfg(not(debug_assertions))]
         {
-            let guard = self.lock.lock_with_kind("LoroMutex");
+            let guard = self.acquire();
             LoroMutexGuard {
                 guard,
                 _inner: LoroMutexGuardInner { inner: self },
@@ -421,5 +554,74 @@ mod tests {
         }));
 
         let _ = mutex.lock();
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+mod txn_gate_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn owner_thread_nests_and_writes_without_blocking() {
+        let group = LoroLockGroup::new();
+        let txn = group.new_lock(0, LockKind::Txn);
+        let outer = txn.lock_exclusive();
+        {
+            let _inner = txn.lock_exclusive();
+            *txn.lock() += 1;
+        }
+        // The nested guard must not release the gate.
+        assert!(txn.txn_gate.active.load(Ordering::SeqCst));
+        *txn.lock() += 1;
+        drop(outer);
+        assert!(!txn.txn_gate.active.load(Ordering::SeqCst));
+        assert_eq!(*txn.lock(), 2);
+    }
+
+    #[test]
+    fn other_writers_wait_for_the_compound_operation() {
+        let group = LoroLockGroup::new();
+        let txn = Arc::new(group.new_lock(Vec::new(), LockKind::Txn));
+        let exclusive = txn.lock_exclusive();
+        txn.lock().push("owner-1");
+        let (done, finished) = mpsc::channel();
+        let writer = {
+            let txn = txn.clone();
+            std::thread::spawn(move || {
+                txn.lock().push("writer");
+                done.send(()).unwrap();
+            })
+        };
+        // The writer cannot run between the owner's two transaction sections.
+        assert!(finished.recv_timeout(Duration::from_millis(100)).is_err());
+        txn.lock().push("owner-2");
+        drop(exclusive);
+        finished.recv_timeout(Duration::from_secs(10)).unwrap();
+        writer.join().unwrap();
+        assert_eq!(*txn.lock(), vec!["owner-1", "owner-2", "writer"]);
+    }
+
+    #[test]
+    fn a_panic_inside_the_compound_operation_does_not_block_later_writers() {
+        let group = LoroLockGroup::new();
+        let txn = Arc::new(group.new_lock(0, LockKind::Txn));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _exclusive = txn.lock_exclusive();
+            panic!("undo failed");
+        }));
+        assert!(result.is_err());
+        assert!(!txn.txn_gate.active.load(Ordering::SeqCst));
+        let other = {
+            let txn = txn.clone();
+            std::thread::spawn(move || {
+                *txn.lock() += 1;
+                drop(txn.lock_exclusive());
+            })
+        };
+        other.join().unwrap();
+        drop(txn.lock_exclusive());
+        assert_eq!(*txn.lock(), 1);
     }
 }

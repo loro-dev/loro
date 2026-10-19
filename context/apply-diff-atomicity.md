@@ -4,8 +4,9 @@ Verified against code 2026-09-30 (loro-dev/loro#1154).
 
 `LoroDoc::apply_diff` and `revert_to` (and loro-crdt `applyDiff` / `revertTo`)
 are all or nothing. When they return `Err`, the doc's state, history, version
-and subscribers are as before the call. Undo/redo (`undo_internal_with`) still
-calls `LoroDoc::_apply_diff` directly and keeps what applied.
+and subscribers are as before the call. Undo/redo (`undo_internal_with`) also
+uses this rollback scope and holds a writer gate across the whole operation;
+see [undo atomicity](undo-atomicity.md).
 
 ## Why a rollback, not a pre-check
 

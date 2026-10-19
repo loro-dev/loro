@@ -26,11 +26,11 @@ All of these return `LoroError::ArgErr` built by
 
 `_apply_diff` keeps applying the rest of a batch after an error. `apply_diff`
 and `revert_to` now roll a failed batch back
-([apply-diff-atomicity.md](apply-diff-atomicity.md), #1154), but undo/redo
-calls `_apply_diff` without a rollback and keeps what applied. So an unknown
-container has to be found before the first entry is applied; for `apply_diff`
-the check is also the cheaper rejection and keeps its debug assertions on the
-loop. The loop changes its own inputs as it runs, so the check predicts that
+([apply-diff-atomicity.md](apply-diff-atomicity.md), #1154). Undo/redo use the
+same rollback scope around ordinary diffs and native
+MovableList plans ([undo-atomicity.md](undo-atomicity.md), #1186). The unknown
+container preflight remains the cheaper rejection and keeps the debug assertions
+on the loop. The loop changes its own inputs as it runs, so the check predicts that
 from the whole batch:
 
 - *fresh*: container values of Map/List diffs, the metas of created or moved
@@ -111,10 +111,12 @@ merge interval, the step is every edit merged into it (loro-crdt's default is
 - Applying the rest of a rejected step would mean dropping the unknown inserts
   from the diff, and a wrongly predicted MovableList move would then delete an
   existing unknown element for good.
-- `ArgErr` is the rejection signal: `undo_internal` returns no other `ArgErr`.
-  Other ordinary `_apply_diff` errors of an accepted step are still only
-  logged. The private MovableList identity plan fails fast on an unexpected
-  application error; see [movable-list-apply-diff.md](movable-list-apply-diff.md).
+- Only a prechecked rejection (`rejected_step` is set) consumes the item.
+  An application-time `ArgErr`, like other ordinary handler errors, is rolled
+  back and restores the item in its original remote-diff row for retry. This
+  policy is shared by `undo()` and `redo()`; there are no separate bounded APIs.
+  Native MovableList plan errors also use this rollback path; see
+  [movable-list-apply-diff.md](movable-list-apply-diff.md).
 
 `crates/loro/tests/unknown_container_twin_oracle.rs` checks undo against a twin
 with known containers, and that undoing everything leaves exactly the edits of
