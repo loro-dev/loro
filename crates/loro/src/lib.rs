@@ -742,6 +742,16 @@ impl LoroDoc {
         Ok(Self::_new(inner))
     }
 
+    /// Create a new `LoroDoc` from a snapshot without copying it.
+    ///
+    /// The document keeps references into `bytes` and decodes containers when
+    /// they are first read, so a memory-mapped snapshot is only read where used.
+    pub fn from_snapshot_bytes(bytes: bytes::Bytes) -> LoroResult<Self> {
+        let inner = InnerLoroDoc::from_snapshot_bytes(bytes)?;
+        inner.start_auto_commit();
+        Ok(Self::_new(inner))
+    }
+
     /// Import data exported by [`LoroDoc::export`].
     ///
     /// Use [`ExportMode::Snapshot`] for full-state snapshots, or

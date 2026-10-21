@@ -3615,6 +3615,17 @@ fn test_from_shallow_snapshot() {
 
 #[test]
 #[parallel]
+fn test_from_snapshot_bytes_keeps_the_buffer() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "Hello").unwrap();
+    let snapshot = bytes::Bytes::from(doc.export(ExportMode::Snapshot).unwrap());
+    let new_doc = LoroDoc::from_snapshot_bytes(snapshot.clone()).unwrap();
+    assert!(!snapshot.is_unique());
+    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+}
+
+#[test]
+#[parallel]
 fn test_checkout_to_unknown_version() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();

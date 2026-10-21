@@ -1598,6 +1598,7 @@ version = "1.16.2"
 dependencies = [
  "anyhow",
  "base64",
+ "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "enum-as-inner 0.6.1",
