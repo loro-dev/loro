@@ -19,8 +19,9 @@ jobs:
 
       - name: Extract release flags
         id: extract_flags
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          PR_BODY="${{ github.event.pull_request.body }}"
           EXCLUDED_FLAGS=$(echo "$PR_BODY" | grep -o '<!-- RELEASE_FLAGS: .* -->' | sed 's/<!-- RELEASE_FLAGS: \(.*\) -->/\1/')
           echo "EXCLUDED_FLAGS=$EXCLUDED_FLAGS" >> $GITHUB_OUTPUT
 
