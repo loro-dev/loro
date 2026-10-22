@@ -1,5 +1,33 @@
 # loro.js
 
+## 0.4.0
+
+### Minor Changes
+
+- 1cf1dc5: Add `LoroDoc.exportPendingUpdates()` to save remote updates waiting for missing
+  causal dependencies alongside a snapshot. The returned current-format update bytes
+  can be restored with ordinary `import()`; no pending updates returns `undefined`.
+  Export leaves pending updates and uncommitted local edits unchanged.
+
+### Patch Changes
+
+- c849e46: Match Rust when concurrent tree moves would create a cycle: skip the move that
+  closes the cycle and keep all nodes reachable. Preserve the effective placements
+  through later moves, update replay, checkout, snapshots, events, and undo.
+- 70d6cae: Fix MovableList undo duplicating scalar elements after concurrent moves and losing the gap of a removed element. Undo and redo now use element identities for native moves, sets, and inverse insertion deletes, and keep mappings for elements recreated by a removal undo. Equal scalar values remain distinct elements.
+
+  Handle an undo-created replacement coexisting with a remotely revived original without panicking. Apply identity edits while holding the transaction lock that protected their preparation, and report stale-plan errors instead of poisoning the undo manager. Ordinary undo/redo snapshots and models contain only affected elements and their surviving neighbours, avoiding work proportional to a large unchanged list.
+
+  Position restoration prefers the nearest surviving original left neighbour, then the nearest surviving original right neighbour, then the start of the list. The left neighbour wins if neighbours cross; when it survives, new elements in that gap follow the restored element. Without a surviving left neighbour, restoration goes immediately before the original right neighbour. Undoing a move does not recreate a remotely deleted element. A consumed no-op returns false and leaves other history items for later calls, following the history-boundary fix. Ordinary List/Text undo, public diff format, and CRDT merge rules are unchanged.
+
+- e2963e2: Fix `UndoManager.undo()` and `redo()` consuming additional history items when the top item becomes a no-op after remote edits. Each call now consumes at most one recorded item, preserving unrelated edits and parent containers for subsequent calls. This also applies to Rust `UndoManager::undo()` and `redo()`.
+
+  A consumed no-op returns `false` and creates no opposite-stack item. Check `canUndo()` / `canRedo()` (Rust: `can_undo()` / `can_redo()`) for remaining history instead of treating `false` as an empty stack. Grouping and the merge interval still define one history item.
+
+  Align loro.js `UndoManager.undo()` and `redo()` with this result: consuming a no-op returns `false` rather than reporting a change. The item is still consumed and other history remains available.
+
+  Record local commits whose operations cancel in the state diff as undo items in loro.js, so undo consumes that no-op instead of reverting an earlier item. Public state subscriptions remain silent for empty diffs.
+
 ## 0.3.0
 
 ### Minor Changes
