@@ -1,4 +1,4 @@
-use loro::{ExportMode, IdSpan, LoroDoc, VersionVector};
+use loro::{ExportMode, IdSpan, LoroDoc, LoroError, VersionVector};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -334,5 +334,95 @@ fn exporting_pending_preserves_detached_state() -> anyhow::Result<()> {
     restored.import(&a)?;
     assert_eq!(restored.get_text("text").to_string(), "base|AB");
     assert_no_pending(&restored)?;
+    Ok(())
+}
+
+#[test]
+fn shallow_snapshot_and_pending_sidecar_restore_post_root_updates() -> anyhow::Result<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    source.get_text("text").insert(0, "old|")?;
+    source.commit();
+    source.get_text("text").insert(4, "root|")?;
+    source.commit();
+    let root = source.oplog_frontiers();
+    let root_vv = source.oplog_vv();
+    let shallow = source.export(ExportMode::shallow_snapshot(&root))?;
+    source.get_text("text").insert(9, "A")?;
+    source.commit();
+    let a = source.export(ExportMode::updates(&root_vv))?;
+    let after_a = source.oplog_vv();
+    source.get_text("text").insert(10, "B")?;
+    source.commit();
+    let b = source.export(ExportMode::updates(&after_a))?;
+
+    let doc = LoroDoc::from_snapshot(&shallow)?;
+    assert!(doc.import(&b)?.pending.is_some());
+    let sidecar = doc.export_pending_updates()?.unwrap();
+    let saved_snapshot = doc.export(ExportMode::Snapshot)?;
+    let ordinary = LoroDoc::from_snapshot(&saved_snapshot)?;
+    ordinary.import(&a)?;
+    assert_eq!(ordinary.get_text("text").to_string(), "old|root|A");
+    let restored = LoroDoc::from_snapshot(&saved_snapshot)?;
+    for target in [&doc, &restored] {
+        assert!(target.is_shallow());
+        assert_eq!(target.shallow_since_frontiers(), root);
+        assert!(target.import(&sidecar)?.pending.is_some());
+        assert_eq!(target.get_text("text").to_string(), "old|root|");
+        assert!(target.import(&a)?.pending.is_none());
+        assert_eq!(target.get_deep_value(), source.get_deep_value());
+        assert_eq!(target.oplog_vv(), source.oplog_vv());
+        assert_eq!(target.shallow_since_frontiers(), root);
+        assert_no_pending(target)?;
+        target.import(&sidecar)?;
+        assert_eq!(target.get_text("text").to_string(), "old|root|AB");
+        assert_no_pending(target)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn pending_sidecar_preserves_rejection_of_dependencies_before_shallow_root() -> anyhow::Result<()> {
+    let source = LoroDoc::new();
+    source.set_peer_id(1)?;
+    source.get_map("map").insert("before", 1)?;
+    source.commit();
+    let before = source.export(ExportMode::Snapshot)?;
+    let before_vv = source.oplog_vv();
+    source.get_map("map").insert("root", 2)?;
+    source.commit();
+    let root = source.oplog_frontiers();
+    let shallow = source.export(ExportMode::shallow_snapshot(&root))?;
+
+    let fork = LoroDoc::from_snapshot(&before)?;
+    fork.set_peer_id(2)?;
+    fork.get_map("map").insert("concurrent", true)?;
+    fork.commit();
+    let concurrent = fork.export(ExportMode::updates(&before_vv))?;
+    let pending_doc = LoroDoc::new();
+    assert!(pending_doc.import(&concurrent)?.pending.is_some());
+    let sidecar = pending_doc.export_pending_updates()?.unwrap();
+    let doc = LoroDoc::from_snapshot(&shallow)?;
+    let state = doc.get_deep_value();
+    let vv = doc.oplog_vv();
+    let err = doc.import(&sidecar).unwrap_err();
+    assert!(matches!(
+        err,
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    ));
+    assert_eq!(doc.get_deep_value(), state);
+    assert_eq!(doc.oplog_vv(), vv);
+    assert_eq!(doc.shallow_since_frontiers(), root);
+    assert_no_pending(&doc)?;
+    // The sidecar has not invented the trimmed predecessor or consumed its source.
+    assert!(pending_doc.export_pending_updates()?.is_some());
+    pending_doc.import(&before)?;
+    assert_eq!(pending_doc.get_deep_value(), fork.get_deep_value());
+    assert_no_pending(&pending_doc)?;
+    // The shallow replica remains usable for a valid post-root update.
+    source.get_map("map").insert("after", 3)?;
+    source.commit();
+    doc.import(&source.export(ExportMode::updates(&vv))?)?;
+    assert_eq!(doc.get_deep_value(), source.get_deep_value());
     Ok(())
 }

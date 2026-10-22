@@ -551,8 +551,8 @@ mod test {
     }
 
     #[test]
-    fn pending_export_preserves_cross_peer_deps_on_straddling_slice() {
-        use loro_common::{IdSpan, ID};
+    fn pending_export_does_not_bypass_conflicting_history_rejection() {
+        use loro_common::{IdSpan, LoroError, ID};
 
         let source = LoroDoc::new_auto_commit();
         source.set_peer_id(1).unwrap();
@@ -562,47 +562,30 @@ mod test {
         let prefix = source
             .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 0, 1)]))
             .unwrap();
-        let mut json =
-            source.export_json_updates(&VersionVector::default(), &source.oplog_vv(), false);
+        let mut json = source
+            .export_json_updates(&VersionVector::default(), &source.oplog_vv(), false)
+            .unwrap();
         assert_eq!(json.changes.len(), 1);
-        // Exercise accepted JSON input whose unresolved dependency is not yet in
-        // the local DAG, with an already covered prefix of the same change.
+        // This rewrites the dependency of an already applied operation. Current
+        // import validation rejects the conflicting prefix instead of parking
+        // the tail as if it were a valid out-of-order change.
         json.changes[0].deps = vec![ID::new(2, 0)];
         json.changes[0].lamport = 0;
         let doc = LoroDoc::new_auto_commit();
         doc.import(&prefix).unwrap();
-        assert!(doc.import_json_updates(json).unwrap().pending.is_some());
-        let bytes = doc.export_pending_updates().unwrap().unwrap();
-
-        // Decode through the real binary importer, without applying the change,
-        // to verify the original zero + slice offset was retained.
-        let inspector = LoroDoc::new_auto_commit();
-        let parsed = crate::encoding::parse_header_and_body(&bytes, true).unwrap();
-        let decoded = crate::encoding::fast_snapshot::decode_updates(
-            &mut inspector.oplog().lock(),
-            bytes::Bytes::copy_from_slice(parsed.body),
-        )
-        .unwrap();
-        assert_eq!(decoded.len(), 1);
-        assert_eq!(decoded[0].id, ID::new(1, 1));
-        assert_eq!(decoded[0].lamport, 1);
-        assert!(decoded[0].deps.contains(&ID::new(2, 0)));
-        assert!(decoded[0].deps.contains(&ID::new(1, 0)));
-
-        let restored = LoroDoc::new_auto_commit();
-        restored
-            .import(&doc.export(ExportMode::Snapshot).unwrap())
+        let before = doc.oplog_vv();
+        let state = doc.get_deep_value();
+        let err = doc.import_json_updates(json).unwrap_err();
+        assert!(matches!(err, LoroError::UsedOpID { id } if id == ID::new(1, 0)));
+        assert_eq!(doc.oplog_vv(), before);
+        assert_eq!(doc.get_deep_value(), state);
+        assert!(doc.export_pending_updates().unwrap().is_none());
+        // The rejected data did not poison the document or leave a sidecar;
+        // valid history with the same operation IDs still imports normally.
+        doc.import(&source.export(ExportMode::all_updates()).unwrap())
             .unwrap();
-        assert!(restored.import(&bytes).unwrap().pending.is_some());
-        assert_eq!(restored.oplog_vv(), doc.oplog_vv());
-        assert_eq!(
-            restored.get_map("map").get_value().to_json(),
-            r#"{"a":true}"#
-        );
-        // This intentionally conflicting JSON input assigns a new dependency
-        // to an already applied prefix. The exporter must retain that dependency,
-        // not turn its tail into immediately applicable operations.
-        assert!(doc.export_pending_updates().unwrap().is_some());
+        assert_eq!(doc.get_deep_value(), source.get_deep_value());
+        assert!(doc.export_pending_updates().unwrap().is_none());
     }
 
     #[test]
@@ -614,7 +597,9 @@ mod test {
         let before_b = source.oplog_vv();
         source.get_map("map").insert("b", true).unwrap();
         let _ = source.export(ExportMode::all_updates()).unwrap();
-        let mut json = source.export_json_updates(&before_b, &source.oplog_vv(), false);
+        let mut json = source
+            .export_json_updates(&before_b, &source.oplog_vv(), false)
+            .unwrap();
         json.changes[0].lamport = 0;
         let doc = LoroDoc::new_auto_commit();
         assert!(doc.import_json_updates(json).unwrap().pending.is_some());
@@ -643,7 +628,9 @@ mod test {
         let before_b = source.oplog_vv();
         source.get_map("map").insert("b", true).unwrap();
         let _ = source.export(ExportMode::all_updates()).unwrap();
-        let mut json = source.export_json_updates(&before_b, &source.oplog_vv(), false);
+        let mut json = source
+            .export_json_updates(&before_b, &source.oplog_vv(), false)
+            .unwrap();
         json.changes[0].lamport = u32::MAX;
         let doc = LoroDoc::new_auto_commit();
         assert!(doc.import_json_updates(json).unwrap().pending.is_some());

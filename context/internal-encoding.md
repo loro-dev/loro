@@ -243,6 +243,10 @@ is not an empty result. This API does not define or advance a transport cursor,
 prove that the document is synced, or fetch/invent predecessors that were never
 received from a remote peer. Ordinary snapshot export still commits local edits;
 the pending export itself does not.
+A sidecar preserves the ordinary import rules of its target. It does not restore
+history trimmed by a shallow root: updates based before that root are rejected
+with `ImportUpdatesThatDependsOnOutdatedVersion`, while missing post-root
+predecessors can remain pending and later unlock normally.
 
 `encoding.rs::export_pending_updates` uses the existing `FastUpdates = 4`
 envelope with singleton change blocks, not a temporary `ChangeStore`: pending

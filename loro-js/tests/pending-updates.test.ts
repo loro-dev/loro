@@ -209,4 +209,79 @@ describe("exportPendingUpdates", () => {
     expect(doc.getText("text").toString()).toBe("ABCDE");
     expect(doc.exportPendingUpdates()).toBeUndefined();
   });
+
+  test("restores post-root pending updates beside a shallow snapshot", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    source.getText("text").push("old|");
+    source.commit();
+    source.getText("text").push("root|");
+    source.commit();
+    const root = source.oplogFrontiers();
+    const rootVersion = source.oplogVersion();
+    const shallow = source.export({ mode: "shallow-snapshot", frontiers: root });
+    source.getText("text").push("A");
+    const a = source.export({ mode: "update", from: rootVersion });
+    const afterA = source.oplogVersion();
+    source.getText("text").push("B");
+    const b = source.export({ mode: "update", from: afterA });
+    const doc = LoroDoc.fromSnapshot(shallow);
+    expect(doc.import(b).pending?.size).toBe(1);
+    const sidecar = doc.exportPendingUpdates()!;
+    const snapshot = doc.export({ mode: "snapshot" });
+    const ordinary = LoroDoc.fromSnapshot(snapshot);
+    ordinary.import(a);
+    expect(ordinary.getText("text").toString()).toBe("old|root|A");
+    const restored = LoroDoc.fromSnapshot(snapshot);
+    for (const target of [doc, restored]) {
+      expect(target.isShallow()).toBe(true);
+      expect(target.shallowSinceFrontiers()).toEqual(root);
+      expect(target.import(sidecar).pending?.size).toBe(1);
+      expect(target.getText("text").toString()).toBe("old|root|");
+      expect(target.import(a).pending).toBeNull();
+      expect(target.toJSON()).toEqual(source.toJSON());
+      expect(target.oplogVersion().toJSON()).toEqual(source.oplogVersion().toJSON());
+      expect(target.shallowSinceFrontiers()).toEqual(root);
+      expect(target.exportPendingUpdates()).toBeUndefined();
+      target.import(sidecar);
+      expect(target.getText("text").toString()).toBe("old|root|AB");
+      expect(target.exportPendingUpdates()).toBeUndefined();
+    }
+  });
+
+  test("rejects a sidecar whose dependencies precede the shallow root", () => {
+    const source = new LoroDoc();
+    source.setPeerId(1);
+    source.getMap("map").set("before", 1);
+    const before = source.export({ mode: "snapshot" });
+    const beforeVersion = source.oplogVersion();
+    source.getMap("map").set("root", 2);
+    source.commit();
+    const root = source.oplogFrontiers();
+    const shallow = source.export({ mode: "shallow-snapshot", frontiers: root });
+    const fork = LoroDoc.fromSnapshot(before);
+    fork.setPeerId(2);
+    fork.getMap("map").set("concurrent", true);
+    const concurrent = fork.export({ mode: "update", from: beforeVersion });
+    const pendingDoc = new LoroDoc();
+    expect(pendingDoc.import(concurrent).pending?.size).toBe(1);
+    const sidecar = pendingDoc.exportPendingUpdates()!;
+    const doc = LoroDoc.fromSnapshot(shallow);
+    const state = doc.toJSON();
+    const version = doc.oplogVersion().toJSON();
+    expect(() => doc.import(sidecar)).toThrow(
+      "cannot import updates that depend on an outdated version",
+    );
+    expect(doc.toJSON()).toEqual(state);
+    expect(doc.oplogVersion().toJSON()).toEqual(version);
+    expect(doc.shallowSinceFrontiers()).toEqual(root);
+    expect(doc.exportPendingUpdates()).toBeUndefined();
+    expect(pendingDoc.exportPendingUpdates()).toBeInstanceOf(Uint8Array);
+    pendingDoc.import(before);
+    expect(pendingDoc.toJSON()).toEqual(fork.toJSON());
+    expect(pendingDoc.exportPendingUpdates()).toBeUndefined();
+    source.getMap("map").set("after", 3);
+    doc.import(source.export({ mode: "update", from: doc.oplogVersion() }));
+    expect(doc.toJSON()).toEqual(source.toJSON());
+  });
 });

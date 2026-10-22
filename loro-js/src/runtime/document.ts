@@ -5542,7 +5542,11 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           }
           record = {
             ...record,
-            change: slicePendingChange(change, knownEnd - change.id.counter),
+            change: sliceChange(
+              change,
+              knownEnd - change.id.counter,
+              changeLength(change),
+            ),
           };
           change = record.change;
           key = changeKey(change.id);
