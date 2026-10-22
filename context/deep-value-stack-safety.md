@@ -1,6 +1,6 @@
 # Deep plain values and stack safety
 
-Verified against code 2026-10-17.
+Verified against code 2026-10-22.
 
 Issue [#1198](https://github.com/loro-dev/loro/issues/1198) constructs a plain
 `LoroValue::Map` chain with 20,000 levels. On main `3827945f`, its release-mode
@@ -11,8 +11,16 @@ not bound value depth.
 `state/value_decode.rs::decode_collection` reads the existing postcard value
 layout with heap frames. A shallow `Header` consumes a scalar or just a
 collection's length; children are read by the outer loop. Map, List and
-MovableList fast snapshot values use this reader, including the ordered lazy
-map cache in `MapState::decode_value_as_btree_map`. Its layout test compares
+MovableList fast snapshot values use this reader. The ordered lazy map cache
+in `MapState::decode_value_as_btree_map` uses `decode_btree_map`: it reads the
+bare length and keys directly into a `BTreeMap`, while each value uses the same
+iterative `decode_value` reader. Scalars return directly after their shallow
+header; only collection values enter the heap-frame loop. This avoids constructing an intermediate
+`FxHashMap` and then rebuilding an ordered map on the first key read. Neither
+reader reserves storage from untrusted collection lengths. Duplicate keys retain
+the last value and trailing state metadata is returned unchanged. Layout,
+truncation/invalid-length and 20,000-level small-stack/error-cleanup tests cover
+this ordered path. Its layout test compares
 against the existing serde serializer, including container IDs and every scalar
 kind. Import stays lazy and the binary format is unchanged. There is no new
 failure after advancing the oplog: deep snapshot values remain valid and readable.

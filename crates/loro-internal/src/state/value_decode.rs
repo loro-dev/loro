@@ -5,6 +5,7 @@
 use loro_common::{ContainerID, LoroError, LoroResult, LoroValue};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 
 #[derive(Deserialize)]
 enum Header {
@@ -76,9 +77,36 @@ pub(super) fn decode_collection(mut bytes: &[u8], is_map: bool) -> LoroResult<(L
     decode(bytes, Some(root))
 }
 
+/// Read a bare postcard map directly into the ordered lazy-value cache.
+/// Nested values still use heap frames; never reserve an untrusted map length.
+pub(super) fn decode_btree_map(
+    mut bytes: &[u8],
+) -> LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
+    let len: usize = read(&mut bytes)?;
+    let mut map = BTreeMap::new();
+    for _ in 0..len {
+        let key = read(&mut bytes)?;
+        let (value, rest) = decode_value(bytes)?;
+        bytes = rest;
+        map.insert(key, value);
+    }
+    Ok((map, bytes))
+}
+
 /// Read one enum-tagged value embedded in an internal binary field.
-pub(super) fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
-    decode(bytes, None)
+pub(super) fn decode_value(mut bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+    let value = match read::<Header>(&mut bytes)? {
+        Header::Null => LoroValue::Null,
+        Header::Bool(v) => LoroValue::Bool(v),
+        Header::Double(v) => LoroValue::Double(v),
+        Header::I32(v) => LoroValue::I64(v),
+        Header::String(v) => LoroValue::String(v.into()),
+        Header::Container(v) => LoroValue::Container(v),
+        Header::Binary(v) => LoroValue::Binary(v.into()),
+        Header::List(len) => return decode(bytes, Some(Frame::new(len, false))),
+        Header::Map(len) => return decode(bytes, Some(Frame::new(len, true))),
+    };
+    Ok((value, bytes))
 }
 
 fn decode(mut bytes: &[u8], root: Option<Frame>) -> LoroResult<(LoroValue, &[u8])> {
@@ -233,6 +261,113 @@ mod tests {
         let (decoded, rest) = decode_collection(&bytes, true).unwrap();
         assert_eq!(decoded, LoroValue::Map(map.into()));
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn ordered_map_layout_duplicate_keys_and_remaining_metadata() {
+        let values = vec![
+            LoroValue::Null,
+            true.into(),
+            1.25.into(),
+            i64::MIN.into(),
+            "a string".into(),
+            LoroValue::Binary(vec![0, 128, 255].into()),
+            ContainerID::new_root("text", ContainerType::Text).into(),
+            ContainerID::new_normal(ID::new(42, 5), ContainerType::Map).into(),
+            LoroValue::List(vec![1.into(), LoroValue::List(vec![].into())].into()),
+            LoroValue::Map(vec![("nested".into(), "value".into())].into()),
+        ];
+        let expected: BTreeMap<_, _> = values
+            .into_iter()
+            .enumerate()
+            .map(|(i, value)| (format!("key{i}"), value))
+            .collect();
+        let mut bytes = postcard::to_stdvec(&expected).unwrap();
+        bytes.extend([99, 100]);
+        let (decoded, rest) = decode_btree_map(&bytes).unwrap();
+        assert_eq!(decoded, expected);
+        assert_eq!(rest, &[99, 100]);
+        let (old, old_rest): (BTreeMap<String, LoroValue>, _) =
+            postcard::take_from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, old);
+        assert_eq!(rest, old_rest);
+
+        let mut duplicate = postcard::to_stdvec(&2usize).unwrap();
+        for value in [1, 2] {
+            duplicate.extend(postcard::to_stdvec("same").unwrap());
+            encode_value(&LoroValue::I64(value), &mut duplicate).unwrap();
+        }
+        let (decoded, rest) = decode_btree_map(&duplicate).unwrap();
+        assert_eq!(decoded, BTreeMap::from([("same".into(), 2.into())]));
+        assert!(rest.is_empty());
+        let old: BTreeMap<String, LoroValue> = postcard::from_bytes(&duplicate).unwrap();
+        assert_eq!(decoded, old);
+        let (empty, rest) = decode_btree_map(&[0, 99]).unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(rest, &[99]);
+    }
+
+    #[test]
+    fn ordered_map_rejects_truncated_values_and_untrusted_lengths() {
+        let map = BTreeMap::from([
+            ("first".to_string(), LoroValue::from("a complete string")),
+            (
+                "second".to_string(),
+                LoroValue::List(vec![1.into(), true.into()].into()),
+            ),
+        ]);
+        let bytes = postcard::to_stdvec(&map).unwrap();
+        for end in 0..bytes.len() {
+            assert!(decode_btree_map(&bytes[..end]).is_err(), "prefix {end}");
+        }
+        assert_eq!(decode_btree_map(&bytes).unwrap().0, map);
+        // A huge declared size with no entries must fail on input, without an
+        // allocation proportional to that size or a loop over absent entries.
+        let huge_len = postcard::to_stdvec(&usize::MAX).unwrap();
+        assert!(decode_btree_map(&huge_len).is_err());
+        assert!(decode_btree_map(&[255; 20]).is_err());
+        // One valid key followed by an invalid enum tag must return an error.
+        let mut invalid = postcard::to_stdvec(&1usize).unwrap();
+        invalid.extend(postcard::to_stdvec("key").unwrap());
+        invalid.push(255);
+        assert!(decode_btree_map(&invalid).is_err());
+    }
+
+    #[test]
+    fn ordered_map_deep_values_and_error_cleanup_use_bounded_stack() {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut bytes = postcard::to_stdvec(&1usize).unwrap();
+                bytes.extend(postcard::to_stdvec("value").unwrap());
+                bytes.extend_from_slice(&deep_bytes(20_000)[1..]);
+                let (map, rest) = decode_btree_map(&bytes).unwrap();
+                assert!(rest.is_empty());
+                assert_eq!(map["value"].get_depth(), 20_000);
+                drop(map);
+                // Keep a fully decoded deep sibling alive until the next entry
+                // fails, exercising both returned-map and partial-map cleanup.
+                bytes[0] = 2;
+                let complete_entry_len = bytes.len();
+                bytes.extend(postcard::to_stdvec("broken").unwrap());
+                bytes.extend([6, 1, 1, b'a', 255]);
+                assert!(decode_btree_map(&bytes).is_err());
+                // Replacing a duplicate key must also drop its previous deep
+                // value without recursing, before a later entry can fail.
+                bytes.truncate(complete_entry_len);
+                bytes.extend(postcard::to_stdvec("value").unwrap());
+                encode_value(&LoroValue::I64(7), &mut bytes).unwrap();
+                let (map, rest) = decode_btree_map(&bytes).unwrap();
+                assert_eq!(map, BTreeMap::from([("value".into(), 7.into())]));
+                assert!(rest.is_empty());
+                bytes[0] = 3;
+                bytes.extend(postcard::to_stdvec("broken").unwrap());
+                bytes.push(255);
+                assert!(decode_btree_map(&bytes).is_err());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     fn deep_bytes(depth: usize) -> Vec<u8> {

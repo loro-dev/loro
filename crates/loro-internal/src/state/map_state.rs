@@ -615,9 +615,7 @@ mod snapshot {
         pub(crate) fn decode_value_as_btree_map(
             bytes: &[u8],
         ) -> loro_common::LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
-            let (value, bytes) = crate::state::value_decode::decode_collection(bytes, true)?;
-            let map = value.into_map().unwrap().unwrap().into_iter().collect();
-            Ok((map, bytes))
+            crate::state::value_decode::decode_btree_map(bytes)
         }
     }
 
