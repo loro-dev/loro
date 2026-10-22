@@ -745,7 +745,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       covered.set(change.id.peer, end);
     }
     if (records.length === 0) return undefined;
-    return this.#encodeUpdates(records.sort(compareHistoryRecords));
+    return this.#encodeUpdates(
+      records.sort(compareHistoryRecords).map(compactPendingRecordKeys),
+    );
   }
 
   exportJsonUpdates(
@@ -9287,9 +9289,51 @@ function appendToTrailingListInsert(
   return true;
 }
 
+// Key indices inside nested values belong to the input block's table. Build
+// only the entries this pending record uses, without scanning the shared table
+// once per change. The codec registers named Map/Text keys and root names itself.
+function compactPendingRecordKeys(record: HistoryRecord): HistoryRecord {
+  if (
+    record.change.operations.some(
+      ({ container, content }) =>
+        content.type === "future" &&
+        !(
+          container.containerType === CodecContainerType.Counter &&
+          content.property === 0 &&
+          (content.value.type === "double" ||
+            content.value.type === "i64" ||
+            content.value.type === "delta-int")
+        ),
+    )
+  ) {
+    // Future operation properties/value bytes can refer to their original table
+    // in ways this runtime cannot interpret. Preserve it rather than guess.
+    return record;
+  }
+  const keys: string[] = [];
+  const keyIndices = new Map<string, number>();
+  const remap = (index: number): number | undefined => {
+    const key = record.keys[index];
+    if (key === undefined) return undefined;
+    let mapped = keyIndices.get(key);
+    if (mapped === undefined) {
+      mapped = keys.length;
+      keyIndices.set(key, mapped);
+      keys.push(key);
+    }
+    return mapped;
+  };
+  const operations = record.change.operations.map((operation) =>
+    remapOperationKeys(operation, remap),
+  );
+  return { keys, change: { ...record.change, operations } };
+}
+
+type KeyIndexRemap = readonly number[] | ((index: number) => number | undefined);
+
 function remapOperationKeys(
   operation: DecodedOperation,
-  remap: readonly number[],
+  remap: KeyIndexRemap,
 ): DecodedOperation {
   const content = operation.content;
   switch (content.type) {
@@ -9319,7 +9363,7 @@ function remapOperationKeys(
   }
 }
 
-function remapChangeValueKeys(value: ChangeValue, remap: readonly number[]): ChangeValue {
+function remapChangeValueKeys(value: ChangeValue, remap: KeyIndexRemap): ChangeValue {
   switch (value.type) {
     case "loro-value":
       return { ...value, value: remapLoroValueKeys(value.value, remap) };
@@ -9338,7 +9382,7 @@ function remapChangeValueKeys(value: ChangeValue, remap: readonly number[]): Cha
 
 function remapLoroValueKeys(
   value: ChangeLoroValue,
-  remap: readonly number[],
+  remap: KeyIndexRemap,
 ): ChangeLoroValue {
   if (value.type === "list") {
     return {
@@ -9358,11 +9402,12 @@ function remapLoroValueKeys(
   return value;
 }
 
-function remapKeyIndex(keyIndex: bigint, remap: readonly number[]): bigint {
+function remapKeyIndex(keyIndex: bigint, remap: KeyIndexRemap): bigint {
   if (keyIndex < 0n || keyIndex > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error("change value map key index is out of range");
   }
-  const mapped = remap[Number(keyIndex)];
+  const mapped =
+    typeof remap === "function" ? remap(Number(keyIndex)) : remap[Number(keyIndex)];
   if (mapped === undefined) {
     throw new Error("change value map key index is out of range");
   }

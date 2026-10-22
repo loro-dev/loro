@@ -1,7 +1,17 @@
 import { describe, expect, test } from "vitest";
 
-import { decodeChangeBlock, decodeFastUpdates, encodeFastUpdates } from "../src/codec";
+import {
+  ContainerType,
+  decodeChangeBlock,
+  decodeFastUpdates,
+  encodeChangeBlock,
+  encodeFastUpdates,
+  unknownContainerType,
+} from "../src/codec";
 import { LoroDoc } from "../src/index";
+import { loadRustReference } from "./support/rust-reference";
+
+const rust = loadRustReference();
 
 function sequentialUpdates(base = "") {
   const source = new LoroDoc();
@@ -284,4 +294,208 @@ describe("exportPendingUpdates", () => {
     doc.import(source.export({ mode: "update", from: doc.oplogVersion() }));
     expect(doc.toJSON()).toEqual(source.toJSON());
   });
+
+  test.skipIf(rust === undefined).each([64, 128, 256, 512])(
+    "compacts shared Rust block keys for %i pending changes without altering values",
+    (count) => {
+      const source = new rust!.LoroDoc();
+      source.setPeerId("1");
+      source.getMap("root").set("missing", true);
+      const missing = source.export({ mode: "update" });
+      const from = source.oplogVersion();
+      for (let index = 0; index < count; index++) {
+        source.getMap("root").set(`key${index}`, {
+          index,
+          nested: { label: `value${index}`, values: [{ id: index }] },
+        });
+        source.commit({ message: `change${index}` });
+      }
+      const input = source.export({ mode: "update", from });
+      const doc = new LoroDoc();
+      expect(doc.import(input).pending?.size).toBe(1);
+      doc.import(input);
+      const snapshot = doc.export({ mode: "snapshot" });
+      doc.getMap("draft").set("local", true);
+      const local = doc.getUncommittedOpsAsJson();
+      const sidecar = doc.exportPendingUpdates()!;
+      expect(sidecar.length).toBeLessThan(count * 384 + 1024);
+      const blocks = decodeFastUpdates(sidecar).map(decodeChangeBlock);
+      expect(blocks).toHaveLength(count);
+      for (const block of blocks) expect(block.keys.length).toBeLessThanOrEqual(8);
+      expect(doc.exportPendingUpdates()).toEqual(sidecar);
+      expect(doc.getUncommittedOpsAsJson()).toEqual(local);
+      expect(doc.oplogVersion().toJSON()).toEqual(new Map());
+      for (const Target of [LoroDoc, rust!.LoroDoc]) {
+        const restored = new Target();
+        restored.import(snapshot);
+        expect(restored.import(sidecar).pending?.size).toBe(1);
+        restored.import(missing);
+        expect(restored.toJSON()).toEqual(source.toJSON());
+        expect(restored.exportPendingUpdates()).toBeUndefined();
+        restored.import(sidecar);
+        expect(restored.toJSON()).toEqual(source.toJSON());
+      }
+    },
+  );
+
+  test.skipIf(rust === undefined)(
+    "preserves opaque future history while detached through both runtimes",
+    () => {
+      const source = new rust!.LoroDoc();
+      source.setPeerId("1");
+      source.getMap("root").set("missing", true);
+      const missing = source.export({ mode: "update" });
+      const keys = ["unused", "future", "property", "style", "nested"];
+      const input = encodeFastUpdates([
+        encodeChangeBlock({
+          peers: [1n],
+          keys,
+          containers: [],
+          positions: [],
+          changes: [
+            {
+              id: { peer: 1n, counter: 1 },
+              timestamp: 0n,
+              lamport: 1,
+              dependencies: [{ peer: 1n, counter: 0 }],
+              message: undefined,
+              operations: [
+                {
+                  container: {
+                    kind: "root",
+                    name: "future",
+                    containerType: unknownContainerType(42),
+                  },
+                  counter: 1,
+                  length: 1,
+                  content: {
+                    type: "future",
+                    property: 2,
+                    value: {
+                      type: "mark-start",
+                      info: 0,
+                      length: 1n,
+                      keyIndex: 3n,
+                      value: {
+                        type: "map",
+                        value: [[4n, { type: "string", value: "preserved" }]],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const doc = new LoroDoc();
+      doc.detach();
+      doc.import(input);
+      const sidecar = doc.exportPendingUpdates()!;
+      const block = decodeChangeBlock(decodeFastUpdates(sidecar)[0]!);
+      expect(block.keys).toEqual(keys);
+      expect(block.changes[0]!.operations[0]!.content).toEqual(
+        decodeChangeBlock(decodeFastUpdates(input)[0]!).changes[0]!.operations[0]!
+          .content,
+      );
+      expect(doc.exportPendingUpdates()).toEqual(sidecar);
+      // Pure TypeScript does not support applying Unknown containers yet.
+      const restoredTs = new LoroDoc();
+      restoredTs.detach();
+      expect(restoredTs.import(sidecar).pending?.size).toBe(1);
+      expect(() => restoredTs.import(missing)).toThrow("unsupported container type 42");
+      expect(restoredTs.exportPendingUpdates()).toEqual(sidecar);
+      const restored = new rust!.LoroDoc();
+      restored.detach();
+      expect(restored.import(sidecar).pending?.size).toBe(1);
+      restored.import(missing);
+      expect(restored.oplogVersion().toJSON().get("1")).toBe(2);
+      expect(restored.isDetached()).toBe(true);
+      expect(restored.exportPendingUpdates()).toBeUndefined();
+      const output = decodeFastUpdates(restored.export({ mode: "update" }))
+        .flatMap((bytes) => {
+          const decoded = decodeChangeBlock(bytes);
+          return decoded.changes.flatMap((change) =>
+            change.operations.map((operation) => ({ operation, keys: decoded.keys })),
+          );
+        })
+        .find(
+          ({ operation }) => operation.container.containerType !== ContainerType.Map,
+        )!;
+      expect(output.operation.content.type).toBe("future");
+      if (output.operation.content.type !== "future")
+        throw new Error("future operation missing");
+      expect(output.operation.content.property).toBe(2);
+      const value = output.operation.content.value;
+      expect(value.type).toBe("mark-start");
+      if (value.type !== "mark-start") throw new Error("future value missing");
+      expect(output.keys[Number(value.keyIndex)]).toBe("style");
+      expect(value.value.type).toBe("map");
+      if (value.value.type !== "map") throw new Error("nested value missing");
+      expect(output.keys[Number(value.value.value[0]![0])]).toBe("nested");
+      expect(value.value.value[0]![1]).toEqual({ type: "string", value: "preserved" });
+    },
+  );
+
+  test.skipIf(rust === undefined)(
+    "keeps original keys for an unrecognized Counter property",
+    () => {
+      const source = new rust!.LoroDoc();
+      source.setPeerId("1");
+      source.getMap("root").set("missing", true);
+      const missing = source.export({ mode: "update" });
+      const keys = ["unused", "counter", "future-key"];
+      const input = encodeFastUpdates([
+        encodeChangeBlock({
+          peers: [1n],
+          keys,
+          containers: [],
+          positions: [],
+          changes: [
+            {
+              id: { peer: 1n, counter: 1 },
+              timestamp: 0n,
+              lamport: 1,
+              dependencies: [{ peer: 1n, counter: 0 }],
+              message: undefined,
+              operations: [
+                {
+                  container: {
+                    kind: "root",
+                    name: "counter",
+                    containerType: ContainerType.Counter,
+                  },
+                  counter: 1,
+                  length: 1,
+                  content: {
+                    type: "future",
+                    property: 7,
+                    value: { type: "double", value: 0.5 },
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      ]);
+      const doc = new LoroDoc();
+      doc.import(input);
+      const sidecar = doc.exportPendingUpdates()!;
+      const block = decodeChangeBlock(decodeFastUpdates(sidecar)[0]!);
+      expect(block.keys).toEqual(keys);
+      expect(block.changes[0]!.operations[0]!.content).toEqual({
+        type: "future",
+        property: 7,
+        value: { type: "double", value: 0.5 },
+      });
+      expect(doc.exportPendingUpdates()).toEqual(sidecar);
+      for (const Target of [LoroDoc, rust!.LoroDoc]) {
+        const restored = new Target();
+        expect(restored.import(sidecar).pending?.size).toBe(1);
+        restored.import(missing);
+        expect(restored.toJSON()).toEqual({ root: { missing: true }, counter: 0.5 });
+        expect(restored.exportPendingUpdates()).toBeUndefined();
+      }
+    },
+  );
 });

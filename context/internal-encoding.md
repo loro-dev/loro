@@ -273,6 +273,11 @@ the uncommitted local `#pending` transaction. Deferred snapshot index
 materialization must preserve `#pendingHistory`: the staged, applied-only history
 has no pending entries to copy back. Pending export normalizes overlapping spans
 per peer and preserves cross-peer dependencies when slicing.
+Its pending-only encoder compacts each record's referenced key indices, including
+nested Map values, instead of copying a shared input block's complete key table
+once per change. Named keys are registered by the existing codec. Opaque future
+operations retain their original table because their index semantics are unknown;
+that conservative path can retain unused keys. Ordinary update export is unchanged.
 
 `loro.rs:isolated_scalar_root_batch` is a conservative import optimization for
 a causally closed batch of brand-new peers whose operations are scalar Map
