@@ -1278,7 +1278,7 @@ fn sync_two_shallow_docs() {
     assert_eq!(doc_a.get_deep_value(), doc_b.get_deep_value());
     assert_eq!(doc_a.oplog_vv(), doc_b.oplog_vv());
     assert_eq!(doc_a.oplog_frontiers(), doc_b.oplog_frontiers());
-    assert_eq!(doc_a.state_vv().unwrap(), doc_b.state_vv().unwrap());
+    assert_eq!(doc_a.state_vv(), doc_b.state_vv());
     assert_eq!(doc_a.shallow_since_vv(), doc_b.shallow_since_vv());
 }
 
@@ -2092,7 +2092,7 @@ fn issue_490() -> anyhow::Result<()> {
 fn test_loro_doc() {
     let doc = LoroDoc::new();
     doc.get_text("text").insert(0, "Hello").unwrap();
-    doc.state_vv().unwrap();
+    doc.state_vv();
 }
 
 #[test]

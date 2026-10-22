@@ -1187,12 +1187,19 @@ impl LoroDoc {
     /// When the state frontiers are the op-log frontiers, this clones the cached
     /// op-log version vector and does not parse change blocks. Otherwise it
     /// walks the frontiers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the state's version cannot be resolved from the document history.
+    /// Use [`Self::try_state_vv`] to handle unreadable history as an error.
     #[inline]
-    pub fn state_vv(&self) -> LoroResult<VersionVector> {
+    pub fn state_vv(&self) -> VersionVector {
         self.try_state_vv()
+            .expect("Cannot resolve the state version vector")
     }
 
-    /// [`state_vv`](Self::state_vv), including a decode error from unreadable history.
+    /// Get the version vector of the current state, returning a decode error
+    /// when required history cannot be read.
     ///
     /// `Ok(None)` from the frontier walk (the frontiers are not in the dag) is
     /// [`LoroError::FrontiersNotFound`] for an id that can be named, not an empty

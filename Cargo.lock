@@ -841,7 +841,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.17.0",
+ "loro 1.17.1",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -947,7 +947,7 @@ dependencies = [
  "enum_dispatch",
  "itertools 0.12.1",
  "loro 0.16.12",
- "loro 1.17.0",
+ "loro 1.17.1",
  "loro 1.8.1",
  "num_cpus",
  "pretty_assertions",
@@ -1493,7 +1493,7 @@ dependencies = [
 name = "json-float-consumer"
 version = "1.17.0"
 dependencies = [
- "loro 1.17.0",
+ "loro 1.17.1",
  "serde_json",
 ]
 
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.17.0"
+version = "1.17.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1606,7 +1606,7 @@ dependencies = [
  "loom",
  "loro-common 1.17.0",
  "loro-delta 1.13.0",
- "loro-internal 1.17.0",
+ "loro-internal 1.17.1",
  "loro-kv-store 1.17.0",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.17.0"
+version = "1.17.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1949,7 +1949,7 @@ dependencies = [
  "js-sys",
  "loro-common 1.17.0",
  "loro-delta 1.13.0",
- "loro-internal 1.17.0",
+ "loro-internal 1.17.1",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",

@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-10-09.
+Verified against code 2026-10-22.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -161,9 +161,12 @@ already recorded failures, and their history reads also propagate failures
   `try_state_vv`, `try_export_json_updates`, and `try_get_cursor_pos` to
   receive decode errors. `state_vv` clones `OpLog::vv` when the state and op
   log frontiers are equal; that vector is cached and does not parse block
-  bodies. Otherwise it uses `try_frontiers_to_vv`, and returns
+  bodies. Otherwise it uses `try_frontiers_to_vv`. `try_state_vv` returns
   `FrontiersNotFound` when a frontier id is absent rather than an empty
-  version vector. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
+  version vector. `state_vv` preserves its pre-1.17 infallible signature and
+  panics on resolution failure, after releasing the document locks. Rust
+  callers handling untrusted history should use `try_state_vv`; WASM `version()`
+  continues using that fallible path. `cmp_frontiers` keeps its `FrontiersNotIncluded` error type,
   which can now carry the decode-error message; `travel_change_ancestors`
   returns `ChangeTravelError::HistoryUnreadable(LoroError::DecodeError(..))`.
   `ChangeTravelError` is now non-exhaustive, so downstream matches need a
