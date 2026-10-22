@@ -1,5 +1,81 @@
 # Changelog
 
+## 1.17.0
+
+### Minor Changes
+
+- 1055be2: Add `LoroDoc.setDecodedValueCacheLimit()` and `getDecodedValueCacheLimit()` so applications can choose a finite decoded container value cache limit for repeated handler reads of large snapshots. Keep the default at 2048. Lowering the limit evicts cached values safely; zero disables this cache. Forks inherit an independent copy of the local setting, which is not serialized.
+- 1cf1dc5: Add `LoroDoc.exportPendingUpdates()` (`export_pending_updates()` in Rust) to
+  persist remote updates waiting for missing causal dependencies. It returns
+  `undefined` in JavaScript (`None` in Rust) when there are no pending operations.
+  The result uses the existing updates format and can be restored with ordinary
+  `import` after a separately saved snapshot. Export is read-only and does not
+  commit local transactions. Ordinary snapshot/update exports continue to exclude
+  remote pending operations.
+- 4f60d92: Return decode errors when fallible history operations first read an unreadable change block, preserving document state instead of panicking during lazy DAG loading.
+
+  Keep attached imports atomic even after all DAG headers have been loaded: unparsed change-block bodies still require rollback protection. Share the existing version snapshot between rollback journals to avoid two extra copies of the version vector. Legacy infallible range readers continue skipping only the damaged block while recording the failure.
+
+  `state_vv` / `version`, JSON update export, cursor lookup, `apply_diff` rollback, shallow imports, and `fork_at` return `DecodeError` instead of panicking or wrapping the failure as `Unknown`. `state_vv` and `export_json_updates` now return `LoroResult`. `try_state_vv`, `try_export_json_updates`, and `try_get_cursor_pos` report the same failure. `CannotFindRelativePosition` is `#[non_exhaustive]` and gains `HistoryUnreadable`. `LoroEncodeError` gains `DecodeError`.
+
+  Rust compatibility: `ChangeTravelError` gains `HistoryUnreadable(LoroError)` and is now `#[non_exhaustive]`; downstream exhaustive matches must add a wildcard arm. `FrontiersNotIncluded` changes from a unit struct to a struct with a private field plus a same-named constant. Construction via that constant still compiles, but an exhaustive `match` of `Err(FrontiersNotIncluded)` does not (`E0004`): the `history_error: Some(_)` pattern cannot be written from another crate (`E0451`) because the field is private. Downstream must use `Err(_)`. An unreadable-history error is not equal to the `FrontiersNotIncluded` constant.
+
+### Patch Changes
+
+- 752b7fd: Clarify map-child deletion undo in the package README and Rust `UndoManager` docs.
+  Regular children are reconstructed with new IDs, so concurrent edits to the old
+  child do not appear in the restored child. Mergeable children preserve identity
+  and concurrent edits when their parent identity is unchanged. Explain retained
+  state on slot reuse, the recreated-ancestor boundary, and using a visibility or
+  deleted field for entity deletion that must preserve identity. Add regression
+  tests for both import orders. No undo or CRDT merge behavior changes.
+- 55ac31b: Add `LoroDoc.toContainerTreeJson(options?)` to read visible container trees as one JSON string built in Rust, without per-value WASM-to-JS calls. `JSON.parse` returns the same node shapes, IDs and recursively selected text format as `toContainerTree`, with the same root filtering and no implicit commit. Binary values and non-finite numbers are rejected rather than silently changed. Existing `toContainerTree` behavior and return types are unchanged.
+- da2a91e: Use the lazy fast-snapshot import path when a multi-blob `importBatch` starts with a full snapshot in an empty, attached document, then apply the remaining updates in one checkout. Preserve batch rollback on closing validation or checkout failure, including the snapshot's state and history, and defer snapshot events until checkout succeeds.
+- a02843a: Fix quadratic local tree moves when interleaved with queries or failed edits on deleted containers by releasing the revivable deletion cache's table on invalidation.
+- d6f9e6e: Avoid stack overflows when reading a deeply nested LoroTree imported from a snapshot. Use iterative tree hierarchy, ancestor, deletion-status, snapshot, metadata, and value traversals, and release nested tree-node results iteratively while preserving node order and document contents. This builds on the shared-value stack safety in #1204.
+- bce7fcc: Avoid stack overflow when first reading or dropping deeply nested map/list values from small snapshots. Decode snapshot values, release their shared storage, and convert them to JavaScript iteratively. Preserve the snapshot format and lazy import behavior. Other serde deserialization of LoroValue now rejects nesting beyond 128 levels with an error.
+
+  Rich-text mark values in binary snapshots and shallow style redaction also use the iterative codec, retaining values deeper than the external 128-level serde limit. Keep deep mark export and style hashing off the call stack so 20,000-level marks round-trip on small native stacks. The object JSON import restriction is unchanged.
+
+- a02843a: Preserve the full text style configuration, including the default for previously unused style keys, when calling `fork()` or `forkAt()`.
+- ca372b4: Reduce known-history comparison costs for snapshot-loaded documents while preserving peer-id reuse detection. Snapshot updates allocate only new history in the document arena and avoid cloning discarded changes.
+
+  Avoid unnecessary rollback scopes for detached Text imports while retaining validation of pending movable-list operations.
+
+  Keep import rollback decisions consistent across concurrent attach/detach, and fall back to ordinary history parsing when a cold-block comparison is ineligible.
+
+- 1cf1dc5: Avoid an intermediate hash map when first reading snapshot-backed Map values. Reuse a single postcard cursor and decode directly into the ordered lazy cache while preserving iterative deep-value stack safety, the existing binary format, and error handling for malformed input.
+- 089a4e6: Stop the document's arenas from growing every time a change block is parsed again after an export. Streaming text with frequent exports made the string arena grow quadratically until offsets overflowed past 4 GiB and the export panicked (`append-only-bytes` `start <= end`), poisoning the document. List values grew the same way. Parsed blocks now keep their text and list values in buffers freed with them.
+
+  Keep pending changes when a snapshot is imported into a document that holds only pending changes; they were dropped before.
+
+- 43bcdcd: Fix TypeScript declaration errors when consumers use `skipLibCheck: false` and `strict: true` across the bundler, nodejs, web, browser, and base64 entries. Correct the key type of `toJsonWithReplacer`, the return type of `EphemeralStoreWasm.removeOutdated`, and the callback parameter of `LoroText.iter` to match their existing runtime behavior.
+- 3827945: Fix a 1.16.4 regression where history relayed through JSON was rejected with `UsedOpID`, without letting binary import treat those conversions as identical.
+
+  Binary `import`, `import_with`, fast updates, fast snapshots, and `import_batch` stay exact: overlapping op ids must be structurally identical, including finite doubles, large integers, binary versus a list, non-finite doubles versus null, marker strings versus containers, and unknown payloads. JSON import, and `import_with_history_mode` / `import_batch_with_history_mode` with `ImportHistoryMode::JsonLossy`, tolerate the conversions JSON is known to introduce: I64/I64 or I64/Double that match as f64 when at least one integer is outside `[-2^53, 2^53]`; binary versus a same-length list of byte numbers; non-finite doubles versus null; a container-marker string versus any Container; unknown payloads skipped. Finite doubles still use `==`. The receiver keeps its existing prefix values.
+
+  Finite doubles round-trip because `serde_json`'s `float_roundtrip` feature is enabled on the normal dependency. Counter deltas are integer-encoded only when the fraction is exactly 0, and a nonzero delta is applied on import even when it is smaller than `f64::EPSILON`. The JSON format is otherwise unchanged, and this does not restore values a JSON importer already dropped. Callers must opt in before a binary blob that carries those degraded values will import.
+
+- 70d6cae: Fix MovableList undo duplicating scalar elements after concurrent moves and losing the gap of a removed element. Undo and redo now use element identities for native moves, sets, and inverse insertion deletes, and keep mappings for elements recreated by a removal undo. Equal scalar values remain distinct elements.
+
+  Handle an undo-created replacement coexisting with a remotely revived original without panicking. Apply identity edits while holding the transaction lock that protected their preparation, and report stale-plan errors instead of poisoning the undo manager. Ordinary undo/redo snapshots and models contain only affected elements and their surviving neighbours, avoiding work proportional to a large unchanged list.
+
+  Position restoration prefers the nearest surviving original left neighbour, then the nearest surviving original right neighbour, then the start of the list. The left neighbour wins if neighbours cross; when it survives, new elements in that gap follow the restored element. Without a surviving left neighbour, restoration goes immediately before the original right neighbour. Undoing a move does not recreate a remotely deleted element. A consumed no-op returns false and leaves other history items for later calls, following the history-boundary fix. Ordinary List/Text undo, public diff format, and CRDT merge rules are unchanged.
+
+- 52979ab: Reject encoded cursors with negative position counters with a readable decode error. Cursor queries also reject directly constructed invalid cursors before accessing document history, preventing panics and poisoned document locks. Valid and unknown positive cursor positions keep their existing behavior.
+- 4cabfab: Text slices stop before zero-width style anchors at their end, avoiding a scan of accumulated expanding mark ends outside the requested content.
+- 136b944: Undo and redo return application errors after rolling back the failed inverse, preserving document state, the history item and its remote transform base, and container/MovableList identity mappings for retry. Failed operations emit no events. Compound undo operations serialize against transaction writers.
+
+  Keep the existing unknown-container policy: a step rejected before application is consumed, leaves the document unchanged, and returns an error without trying another item.
+
+- e2963e2: Fix `UndoManager.undo()` and `redo()` consuming additional history items when the top item becomes a no-op after remote edits. Each call now consumes at most one recorded item, preserving unrelated edits and parent containers for subsequent calls. This also applies to Rust `UndoManager::undo()` and `redo()`.
+
+  A consumed no-op returns `false` and creates no opposite-stack item. Check `canUndo()` / `canRedo()` (Rust: `can_undo()` / `can_redo()`) for remaining history instead of treating `false` as an empty stack. Grouping and the merge interval still define one history item.
+
+  Align loro.js `UndoManager.undo()` and `redo()` with this result: consuming a no-op returns `false` rather than reporting a change. The item is still consumed and other history remains available.
+
+  Record local commits whose operations cancel in the state diff as undo items in loro.js, so undo consumes that no-op instead of reverting an earlier item. Public state subscriptions remain silent for empty diffs.
+
 ## 1.16.4
 
 ### Patch Changes
