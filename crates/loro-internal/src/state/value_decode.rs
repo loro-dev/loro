@@ -20,12 +20,14 @@ enum Header {
     Binary(Vec<u8>),
 }
 
-fn read<'a, T: Deserialize<'a>>(bytes: &mut &'a [u8]) -> LoroResult<T> {
-    let (value, rest) = postcard::take_from_bytes(bytes).map_err(|err| {
-        LoroError::DecodeError(format!("Decode snapshot value failed: {err}").into_boxed_str())
-    })?;
-    *bytes = rest;
-    Ok(value)
+type Decoder<'a> = postcard::Deserializer<'a, postcard::de_flavors::Slice<'a>>;
+
+fn decode_error(err: postcard::Error) -> LoroError {
+    LoroError::DecodeError(format!("Decode snapshot value failed: {err}").into_boxed_str())
+}
+
+fn read<'a, T: Deserialize<'a>>(decoder: &mut Decoder<'a>) -> LoroResult<T> {
+    T::deserialize(decoder).map_err(decode_error)
 }
 
 enum Collection {
@@ -72,30 +74,36 @@ impl Frame {
 }
 
 /// Read a bare postcard map/list followed by the remaining state metadata.
-pub(super) fn decode_collection(mut bytes: &[u8], is_map: bool) -> LoroResult<(LoroValue, &[u8])> {
-    let root = Frame::new(read(&mut bytes)?, is_map);
-    decode(bytes, Some(root))
+pub(super) fn decode_collection(bytes: &[u8], is_map: bool) -> LoroResult<(LoroValue, &[u8])> {
+    let mut decoder = Decoder::from_bytes(bytes);
+    let root = Frame::new(read(&mut decoder)?, is_map);
+    let value = decode(&mut decoder, Some(root))?;
+    Ok((value, decoder.finalize().map_err(decode_error)?))
 }
 
 /// Read a bare postcard map directly into the ordered lazy-value cache.
 /// Nested values still use heap frames; never reserve an untrusted map length.
-pub(super) fn decode_btree_map(
-    mut bytes: &[u8],
-) -> LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
-    let len: usize = read(&mut bytes)?;
+pub(super) fn decode_btree_map(bytes: &[u8]) -> LoroResult<(BTreeMap<String, LoroValue>, &[u8])> {
+    let mut decoder = Decoder::from_bytes(bytes);
+    let len: usize = read(&mut decoder)?;
     let mut map = BTreeMap::new();
     for _ in 0..len {
-        let key = read(&mut bytes)?;
-        let (value, rest) = decode_value(bytes)?;
-        bytes = rest;
+        let key = read(&mut decoder)?;
+        let value = decode_value_inner(&mut decoder)?;
         map.insert(key, value);
     }
-    Ok((map, bytes))
+    Ok((map, decoder.finalize().map_err(decode_error)?))
 }
 
 /// Read one enum-tagged value embedded in an internal binary field.
-pub(super) fn decode_value(mut bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
-    let value = match read::<Header>(&mut bytes)? {
+pub(super) fn decode_value(bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
+    let mut decoder = Decoder::from_bytes(bytes);
+    let value = decode_value_inner(&mut decoder)?;
+    Ok((value, decoder.finalize().map_err(decode_error)?))
+}
+
+fn decode_value_inner(decoder: &mut Decoder<'_>) -> LoroResult<LoroValue> {
+    let value = match read::<Header>(decoder)? {
         Header::Null => LoroValue::Null,
         Header::Bool(v) => LoroValue::Bool(v),
         Header::Double(v) => LoroValue::Double(v),
@@ -103,13 +111,13 @@ pub(super) fn decode_value(mut bytes: &[u8]) -> LoroResult<(LoroValue, &[u8])> {
         Header::String(v) => LoroValue::String(v.into()),
         Header::Container(v) => LoroValue::Container(v),
         Header::Binary(v) => LoroValue::Binary(v.into()),
-        Header::List(len) => return decode(bytes, Some(Frame::new(len, false))),
-        Header::Map(len) => return decode(bytes, Some(Frame::new(len, true))),
+        Header::List(len) => return decode(decoder, Some(Frame::new(len, false))),
+        Header::Map(len) => return decode(decoder, Some(Frame::new(len, true))),
     };
-    Ok((value, bytes))
+    Ok(value)
 }
 
-fn decode(mut bytes: &[u8], root: Option<Frame>) -> LoroResult<(LoroValue, &[u8])> {
+fn decode(decoder: &mut Decoder<'_>, root: Option<Frame>) -> LoroResult<LoroValue> {
     let mut stack: Vec<_> = root.into_iter().collect();
     loop {
         if let Some(frame) = stack.pop_if(|frame| frame.left == 0) {
@@ -118,15 +126,15 @@ fn decode(mut bytes: &[u8], root: Option<Frame>) -> LoroResult<(LoroValue, &[u8]
                 parent.push(value);
                 continue;
             }
-            return Ok((value, bytes));
+            return Ok(value);
         }
 
         if let Some(frame) = stack.last_mut() {
             if matches!(frame.collection, Collection::Map(_)) {
-                frame.key = Some(read(&mut bytes)?);
+                frame.key = Some(read(decoder)?);
             }
         }
-        let value = match read::<Header>(&mut bytes)? {
+        let value = match read::<Header>(decoder)? {
             Header::Null => LoroValue::Null,
             Header::Bool(v) => LoroValue::Bool(v),
             Header::Double(v) => LoroValue::Double(v),
@@ -146,7 +154,7 @@ fn decode(mut bytes: &[u8], root: Option<Frame>) -> LoroResult<(LoroValue, &[u8]
         if let Some(frame) = stack.last_mut() {
             frame.push(value);
         } else {
-            return Ok((value, bytes));
+            return Ok(value);
         }
     }
 }
@@ -276,6 +284,8 @@ mod tests {
             ContainerID::new_normal(ID::new(42, 5), ContainerType::Map).into(),
             LoroValue::List(vec![1.into(), LoroValue::List(vec![].into())].into()),
             LoroValue::Map(vec![("nested".into(), "value".into())].into()),
+            LoroValue::Map(vec![].into()),
+            LoroValue::List(vec![].into()),
         ];
         let expected: BTreeMap<_, _> = values
             .into_iter()

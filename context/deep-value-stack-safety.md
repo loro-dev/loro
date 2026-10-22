@@ -15,7 +15,10 @@ MovableList fast snapshot values use this reader. The ordered lazy map cache
 in `MapState::decode_value_as_btree_map` uses `decode_btree_map`: it reads the
 bare length and keys directly into a `BTreeMap`, while each value uses the same
 iterative `decode_value` reader. Scalars return directly after their shallow
-header; only collection values enter the heap-frame loop. This avoids constructing an intermediate
+header; only collection values enter the heap-frame loop. Each root reader shares
+one postcard slice deserializer across its keys, headers and children, then
+finalizes once to return remaining metadata. Errors retain the same decode-error
+mapping and never return a partially consumed remainder. This avoids constructing an intermediate
 `FxHashMap` and then rebuilding an ordered map on the first key read. Neither
 reader reserves storage from untrusted collection lengths. Duplicate keys retain
 the last value and trailing state metadata is returned unchanged. Layout,
