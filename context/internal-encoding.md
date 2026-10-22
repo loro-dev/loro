@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-10-01.
+Verified against code 2026-10-22.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -226,6 +226,58 @@ overflow, and truncated block payloads, then sorts decoded changes by lamport.
 `encoding.rs:apply_decoded_changes_to_oplog` imports changes, separates pending
 changes, applies newly-unlocked pending changes, and rejects dependencies before
 a shallow root.
+
+### Persisting remote pending updates
+
+Normal snapshot/update exports cover applied history and exclude remote changes
+parked in `OpLog::pending_changes` for missing causal dependencies.
+`LoroDoc::export_pending_updates` (JS `exportPendingUpdates`) exports those
+operations as an optional sidecar. Restore the ordinary snapshot first, then
+pass the sidecar to normal `import`; missing dependencies must still arrive
+before the operations apply. Prevent document mutations/imports while capturing
+the pair: the two export calls are not an atomic snapshot. Persist/replace the
+snapshot and sidecar consistently as one checkpoint, atomically or as one
+versioned generation. `None`/`undefined` in the new checkpoint records absence
+and must clear any old sidecar rather than skipping its write. An export error
+is not an empty result. This API does not define or advance a transport cursor,
+prove that the document is synced, or fetch/invent predecessors that were never
+received from a remote peer. Ordinary snapshot export still commits local edits;
+the pending export itself does not.
+A sidecar preserves the ordinary import rules of its target. It does not restore
+history trimmed by a shallow root: updates based before that root are rejected
+with `ImportUpdatesThatDependsOnOutdatedVersion`, while missing post-root
+predecessors can remain pending and later unlock normally.
+
+`encoding.rs::export_pending_updates` uses the existing `FastUpdates = 4`
+envelope with singleton change blocks, not a temporary `ChangeStore`: pending
+history can have holes and cannot satisfy the store's continuity contract.
+`PendingChange::Unknown` retains the Lamport supplied by the input even though
+the local DAG cannot yet resolve it. Export preserves that value (adjusted by a
+slice offset); it does not invent a Lamport or fill missing history. Import
+resolves Lamport values through the existing import path. An unrepresentable
+input Lamport range returns an encode error.
+
+`PendingChanges::export_changes` sorts by operation ID and removes already
+applied prefixes and duplicate overlaps, independently of the missing-dependency
+slots. Slicing retains cross-peer dependencies plus the immediate own-peer
+predecessor: normal `Change::slice` assumes an applied causal prefix and would
+discard the original dependencies. The exporter only reads the oplog lock; it
+does not enter `with_barrier`, commit local edits, consume pending, emit events,
+or advance the applied version/frontiers. Rust public regressions are in
+`crates/loro/tests/pending_updates.rs`; real WASM regressions are in
+`crates/loro-wasm/tests/pending_updates.test.ts`.
+
+The pure TS runtime implements the same sidecar API in
+`loro-js/src/runtime/document.ts`. Its remote `#pendingHistory` is separate from
+the uncommitted local `#pending` transaction. Deferred snapshot index
+materialization must preserve `#pendingHistory`: the staged, applied-only history
+has no pending entries to copy back. Pending export normalizes overlapping spans
+per peer and preserves cross-peer dependencies when slicing.
+Its pending-only encoder compacts each record's referenced key indices, including
+nested Map values, instead of copying a shared input block's complete key table
+once per change. Named keys are registered by the existing codec. Opaque future
+operations retain their original table because their index semantics are unknown;
+that conservative path can retain unused keys. Ordinary update export is unchanged.
 
 `loro.rs:isolated_scalar_root_batch` is a conservative import optimization for
 a causally closed batch of brand-new peers whose operations are scalar Map

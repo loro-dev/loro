@@ -34,6 +34,7 @@ use std::{
 };
 use tracing::{info_span, warn};
 mod block_encode;
+pub(crate) use block_encode::encode_block as encode_change_block;
 mod block_meta_encode;
 pub(super) mod iter;
 

@@ -25,6 +25,8 @@ use std::borrow::Cow;
 ///
 /// Loro CRDT internally consists of two parts: document history and current document state.
 /// The export modes offer various options to meet different requirements.
+/// These modes do not include remote changes waiting for missing dependencies.
+/// Persist those separately with [`LoroDoc::export_pending_updates`].
 ///
 /// - CRDT property: Documents maintain consistent states when they receive the same set of updates.
 /// - In real-time collaboration, peers typically only need to synchronize updates
@@ -407,6 +409,26 @@ pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> 
         Ok(())
     })
     .unwrap()
+}
+
+pub(crate) fn export_pending_updates(oplog: &OpLog) -> Result<Option<Vec<u8>>, LoroEncodeError> {
+    let changes = oplog.pending_changes.export_changes(oplog.vv())?;
+    if changes.is_empty() {
+        return Ok(None);
+    }
+
+    encode_with(EncodeMode::FastUpdates, &mut |ans| {
+        // A singleton block needs neither continuous history nor a DAG-resolved
+        // Lamport. Never insert these incomplete changes into a ChangeStore.
+        for change in &changes {
+            let bytes =
+                crate::oplog::encode_change_block(std::slice::from_ref(change), &oplog.arena);
+            leb128::write::unsigned(ans, bytes.len() as u64).unwrap();
+            ans.extend_from_slice(&bytes);
+        }
+        Ok(())
+    })
+    .map(Some)
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {

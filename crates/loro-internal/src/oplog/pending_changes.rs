@@ -8,13 +8,16 @@ use crate::{
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
-use loro_common::{Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, PeerID, ID};
+use loro_common::{
+    Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroEncodeError, PeerID, ID,
+};
+use rle::{HasLength, Sliceable};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
 pub enum PendingChange {
-    // The lamport of the change decoded by `enhanced` is unknown.
-    // we need calculate it when the change can be applied
+    // Retains the input's supplied Lamport, which cannot yet be resolved against
+    // the DAG. Resolve it when the change can be applied.
     Unknown(Change),
     // TODO: Refactor, remove this?
     #[allow(unused)]
@@ -37,6 +40,65 @@ pub(crate) struct PendingChanges {
 }
 
 impl PendingChanges {
+    /// Copy only the pending portions, excluding applied and duplicate operations.
+    /// Slots are indexed by the missing dependency, not by the pending change's ID.
+    pub(crate) fn export_changes(
+        &self,
+        vv: &VersionVector,
+    ) -> Result<Vec<Change>, LoroEncodeError> {
+        let mut pending: Vec<&Change> = self
+            .changes
+            .values()
+            .flat_map(|tree| tree.values())
+            .flatten()
+            .map(|change| &**change)
+            .collect();
+        pending.sort_by_key(|change| {
+            (
+                change.id.peer,
+                change.id.counter,
+                std::cmp::Reverse(change.ctr_end()),
+            )
+        });
+
+        let mut covered = vv.clone();
+        let mut changes = Vec::new();
+        for change in pending {
+            let start = change
+                .id
+                .counter
+                .max(covered.get(&change.id.peer).copied().unwrap_or(0));
+            if start >= change.ctr_end() {
+                continue;
+            }
+
+            // Unknown means the input's Lamport has not been verified against the
+            // DAG yet. Preserve it; ordinary import resolves it once deps arrive.
+            // JSON input can supply a value that cannot fit in a binary block.
+            if change
+                .lamport
+                .checked_add(change.atom_len() as u32)
+                .is_none()
+            {
+                return Err(LoroEncodeError::InternalError(
+                    "pending change's supplied Lamport range cannot be encoded".into(),
+                ));
+            }
+            let offset = (start - change.id.counter) as usize;
+            let mut tail = change.slice(offset, change.atom_len());
+            if offset > 0 {
+                // Change::slice normally keeps only the own-peer predecessor.
+                // Pending input may still need explicit cross-peer dependencies.
+                for dep in change.deps.iter().filter(|dep| dep.peer != change.id.peer) {
+                    tail.deps.push(dep);
+                }
+            }
+            covered.set_end(ID::new(tail.id.peer, tail.ctr_end()));
+            changes.push(tail);
+        }
+        Ok(changes)
+    }
+
     pub(crate) fn has_import_rollback_ops(&self, detached: bool) -> bool {
         self.changes.values().any(|tree| {
             tree.values().any(|changes| {
@@ -386,7 +448,213 @@ fn remote_change_apply_state(
 
 #[cfg(test)]
 mod test {
+    use crate::handler::HandlerTrait;
     use crate::{cursor::PosType, loro::ExportMode, LoroDoc, ToJson, VersionVector};
+
+    #[test]
+    fn pending_export_deduplicates_overlapping_slots_in_every_import_order() {
+        use loro_common::{HasCounterSpan, IdSpan};
+
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source
+            .get_text("text")
+            .insert(0, "ABCDEFG", PosType::Unicode)
+            .unwrap();
+        let _ = source.export(ExportMode::all_updates()).unwrap();
+        assert_eq!(source.oplog().lock().len_changes(), 1);
+        let range = |start, end| {
+            source
+                .export(ExportMode::updates_in_range(vec![IdSpan::new(
+                    1, start, end,
+                )]))
+                .unwrap()
+        };
+        let inputs = [range(1, 4), range(2, 5), range(6, 7)];
+        let a = range(0, 1);
+        let f = range(5, 6);
+
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let doc = LoroDoc::new_auto_commit();
+            for _ in 0..3 {
+                for index in order {
+                    let status = doc.import(&inputs[index]).unwrap();
+                    assert!(status.success.is_empty());
+                    assert!(status.pending.is_some());
+                }
+            }
+            // Real repeated imports leave several copies under each missing-dep
+            // slot. Export must deduplicate across all of those slot vectors.
+            let pending_len = doc.oplog().lock().pending_changes_len();
+            assert_eq!(pending_len, 9);
+            let vv = doc.oplog_vv();
+            let frontiers = doc.oplog_frontiers();
+            let pending = doc.export_pending_updates().unwrap().unwrap();
+            assert!(doc.export_pending_updates().unwrap().is_some());
+            assert_eq!(doc.oplog().lock().pending_changes_len(), pending_len);
+            assert_eq!(doc.oplog_vv(), vv);
+            assert_eq!(doc.oplog_frontiers(), frontiers);
+            assert!(doc.get_text("text").to_string().is_empty());
+
+            let inspector = LoroDoc::new_auto_commit();
+            let parsed = crate::encoding::parse_header_and_body(&pending, true).unwrap();
+            let decoded = crate::encoding::fast_snapshot::decode_updates(
+                &mut inspector.oplog().lock(),
+                bytes::Bytes::copy_from_slice(parsed.body),
+            )
+            .unwrap();
+            let spans: Vec<_> = decoded
+                .iter()
+                .map(|change| (change.id.counter, change.ctr_end()))
+                .collect();
+            assert_eq!(spans, [(1, 4), (4, 5), (6, 7)], "{order:?}");
+            let counters: Vec<_> = decoded
+                .iter()
+                .flat_map(|change| change.id.counter..change.ctr_end())
+                .collect();
+            assert_eq!(counters, [1, 2, 3, 4, 6], "{order:?}");
+            // Check actual FastUpdates framing, not just a merged range summary:
+            // each disjoint/trimmed change has its own current-format block.
+            let mut body = parsed.body;
+            let mut block_count = 0;
+            while !body.is_empty() {
+                let len = leb128::read::unsigned(&mut body).unwrap() as usize;
+                body = &body[len..];
+                block_count += 1;
+            }
+            assert_eq!(block_count, 3);
+
+            let restored = LoroDoc::new_auto_commit();
+            restored
+                .import(&doc.export(ExportMode::Snapshot).unwrap())
+                .unwrap();
+            let status = restored.import(&pending).unwrap();
+            assert!(status.success.is_empty());
+            assert!(status.pending.is_some());
+            for target in [&doc, &restored] {
+                target.import(&a).unwrap();
+                assert_eq!(target.get_text("text").to_string(), "ABCDE");
+                assert_eq!(target.oplog_vv().get(&1), Some(&5));
+                assert!(target.export_pending_updates().unwrap().is_some());
+                target.import(&f).unwrap();
+                assert_eq!(target.get_text("text").to_string(), "ABCDEFG");
+                assert!(target.export_pending_updates().unwrap().is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_export_does_not_bypass_conflicting_history_rejection() {
+        use loro_common::{IdSpan, LoroError, ID};
+
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        for key in ["a", "b", "c"] {
+            source.get_map("map").insert(key, true).unwrap();
+        }
+        let prefix = source
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 0, 1)]))
+            .unwrap();
+        let mut json = source
+            .export_json_updates(&VersionVector::default(), &source.oplog_vv(), false)
+            .unwrap();
+        assert_eq!(json.changes.len(), 1);
+        // This rewrites the dependency of an already applied operation. Current
+        // import validation rejects the conflicting prefix instead of parking
+        // the tail as if it were a valid out-of-order change.
+        json.changes[0].deps = vec![ID::new(2, 0)];
+        json.changes[0].lamport = 0;
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&prefix).unwrap();
+        let before = doc.oplog_vv();
+        let state = doc.get_deep_value();
+        let err = doc.import_json_updates(json).unwrap_err();
+        assert!(matches!(err, LoroError::UsedOpID { id } if id == ID::new(1, 0)));
+        assert_eq!(doc.oplog_vv(), before);
+        assert_eq!(doc.get_deep_value(), state);
+        assert!(doc.export_pending_updates().unwrap().is_none());
+        // The rejected data did not poison the document or leave a sidecar;
+        // valid history with the same operation IDs still imports normally.
+        doc.import(&source.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        assert_eq!(doc.get_deep_value(), source.get_deep_value());
+        assert!(doc.export_pending_updates().unwrap().is_none());
+    }
+
+    #[test]
+    fn pending_export_preserves_unresolved_input_lamport() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.get_map("map").insert("a", true).unwrap();
+        let a = source.export(ExportMode::all_updates()).unwrap();
+        let before_b = source.oplog_vv();
+        source.get_map("map").insert("b", true).unwrap();
+        let _ = source.export(ExportMode::all_updates()).unwrap();
+        let mut json = source
+            .export_json_updates(&before_b, &source.oplog_vv(), false)
+            .unwrap();
+        json.changes[0].lamport = 0;
+        let doc = LoroDoc::new_auto_commit();
+        assert!(doc.import_json_updates(json).unwrap().pending.is_some());
+        let bytes = doc.export_pending_updates().unwrap().unwrap();
+        let restored = LoroDoc::new_auto_commit();
+        restored
+            .import(&doc.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert!(restored.import(&bytes).unwrap().pending.is_some());
+        doc.import(&a).unwrap();
+        restored.import(&a).unwrap();
+        assert!(restored.export_pending_updates().unwrap().is_none());
+        assert_eq!(restored.get_deep_value(), source.get_deep_value());
+        assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+        assert_eq!(restored.oplog_vv(), doc.oplog_vv());
+    }
+
+    #[test]
+    fn pending_export_returns_error_for_unrepresentable_input_lamport() {
+        use loro_common::IdSpan;
+
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.get_map("map").insert("a", true).unwrap();
+        let a = source.export(ExportMode::all_updates()).unwrap();
+        let before_b = source.oplog_vv();
+        source.get_map("map").insert("b", true).unwrap();
+        let _ = source.export(ExportMode::all_updates()).unwrap();
+        let mut json = source
+            .export_json_updates(&before_b, &source.oplog_vv(), false)
+            .unwrap();
+        json.changes[0].lamport = u32::MAX;
+        let doc = LoroDoc::new_auto_commit();
+        assert!(doc.import_json_updates(json).unwrap().pending.is_some());
+        let before = doc.oplog_vv();
+        assert!(doc.export_pending_updates().is_err());
+        assert_eq!(doc.oplog_vv(), before);
+        // A failed export leaves the exact pending input in place.
+        assert_eq!(
+            doc.oplog().lock().pending_changes.version_range().get(&1),
+            Some(&(1, 2))
+        );
+        // Do not apply this deliberately unrepresentable input; a fresh valid
+        // import remains usable and does not inherit any exporter changes.
+        let clean = LoroDoc::new_auto_commit();
+        clean.import(&a).unwrap();
+        clean
+            .import(
+                &source
+                    .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 1, 2)]))
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(clean.get_deep_value(), source.get_deep_value());
+    }
 
     #[test]
     fn import_pending() {

@@ -39,6 +39,70 @@ console.log(alice.toJSON());
 // { body: "hello world", meta: { published: false } }
 ```
 
+Remote updates received through import APIs can remain pending because their
+causal dependencies have not arrived. These are different from uncommitted local
+operations. Ordinary snapshot and update exports exclude remote pending updates;
+`doc.exportPendingUpdates()` exports them as an optional sidecar. It returns
+`undefined` when none remain.
+
+Restore the snapshot first, then pass the pending bytes to ordinary `import()`.
+They still wait for the real missing dependencies. Repeated imports are safe, but
+the bytes cannot reconstruct predecessors the document never received.
+
+```ts
+import { LoroDoc } from "loro.js";
+
+const source = new LoroDoc();
+source.setPeerId("1");
+source.getText("text").insert(0, "base|");
+const baseSnapshot = source.export({ mode: "snapshot" });
+const beforeA = source.oplogVersion();
+source.getText("text").insert(5, "A");
+const a = source.export({ mode: "update", from: beforeA });
+const beforeB = source.oplogVersion();
+source.getText("text").insert(6, "B");
+const b = source.export({ mode: "update", from: beforeB });
+
+const doc = new LoroDoc();
+doc.import(baseSnapshot);
+doc.import(b); // A is missing, so B stays pending.
+// Coordinate checkpoint collection and storage with document mutations.
+let savedCheckpoint = {
+  snapshot: doc.export({ mode: "snapshot" }),
+  pending: doc.exportPendingUpdates(),
+};
+
+const restored = new LoroDoc();
+restored.import(savedCheckpoint.snapshot);
+if (savedCheckpoint.pending !== undefined) restored.import(savedCheckpoint.pending);
+console.assert(restored.getText("text").toString() === "base|");
+restored.import(a);
+console.assert(restored.getText("text").toString() === "base|AB");
+
+savedCheckpoint = {
+  snapshot: restored.export({ mode: "snapshot" }),
+  pending: restored.exportPendingUpdates(),
+};
+console.assert(savedCheckpoint.pending === undefined);
+// After both exports succeed, replace the checkpoint and remove its old pending sidecar.
+```
+
+`exportPendingUpdates()` is read-only: it does not consume pending updates, commit
+local edits, or advance the applied version vector or frontiers. Ordinary snapshot
+export can commit local edits.
+
+Persist the snapshot and pending sidecar as one consistent checkpoint. Coordinate
+collection and persistence with document mutations; the two export calls are not an
+atomic API. Replace the previous checkpoint only after both exports succeed. If
+either throws, keep the previous checkpoint; an error is not an empty result. When
+a successful replacement has `pending: undefined`, you **must delete the old pending
+sidecar as part of that replacement**, rather than skip the write and retain stale
+bytes.
+
+This API is a persistence primitive. A successful export, including an `undefined`
+result, does not prove the document is synced or authorize advancing a sync cursor
+or received checkpoint. The application must define and validate that policy.
+
 `LoroMap`, `LoroList`, `LoroMovableList`, `LoroText`, `LoroTree`, and `LoroCounter`
 are available as attached or detached containers. The runtime also includes snapshots,
 shallow snapshots, checkout and fork, cursors, rich-text deltas, mergeable children,
