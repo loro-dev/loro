@@ -1215,6 +1215,56 @@ pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
 mod tests {
     #![allow(clippy::neg_cmp_op_on_partial_ord)]
     use super::*;
+    /// Spec D6/D7 and L5: remove ancestors, retain every concurrent maximum,
+    /// and keep the maintained current frontier equivalent to the history.
+    #[test]
+    fn frontier_contract_with_tied_heads_and_same_peer_prefixes() {
+        use crate::{loro::ExportMode, LoroDoc};
+        let a = LoroDoc::new_auto_commit();
+        a.set_peer_id(1).unwrap();
+        a.get_text("t").insert_unicode(0, "abc").unwrap();
+        a.commit_then_renew();
+        let historical = a.oplog_vv();
+        let b = a.fork();
+        b.set_peer_id(2).unwrap();
+        a.get_text("t").insert_unicode(3, "de").unwrap();
+        a.commit_then_renew();
+        b.get_text("t").insert_unicode(3, "fg").unwrap();
+        b.commit_then_renew();
+        a.import(&b.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        let cold = LoroDoc::new_auto_commit();
+        cold.import(&a.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        for doc in [&a, &cold] {
+            let oplog = doc.oplog().lock();
+            let dag = &oplog.dag;
+            // Include an interior op, redundant same-peer candidates, and
+            // equal-lamport concurrent tips. Expected heads are explicit,
+            // rather than another implementation of the shrink algorithm.
+            let candidates: Frontiers = vec![
+                ID::new(1, 0),
+                ID::new(1, 2),
+                ID::new(1, 4),
+                ID::new(2, 0),
+                ID::new(2, 1),
+            ]
+            .into();
+            let expected: Frontiers = vec![ID::new(1, 4), ID::new(2, 1)].into();
+            assert_eq!(shrink_frontiers(&candidates, dag).unwrap(), expected);
+            assert_eq!(dag.try_vv_to_frontiers(dag.vv()).unwrap(), expected);
+            assert_eq!(dag.frontiers_to_vv(&expected).unwrap(), *dag.vv());
+            assert_eq!(
+                dag.try_vv_to_frontiers(&historical).unwrap(),
+                Frontiers::from(ID::new(1, 2))
+            );
+            assert!(dag
+                .try_vv_to_frontiers(&VersionVector::default())
+                .unwrap()
+                .is_empty());
+        }
+    }
+
     #[test]
     fn frontier_walk_matches_reference_on_branched_history() {
         use crate::{loro::ExportMode, LoroDoc};
