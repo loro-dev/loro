@@ -1029,6 +1029,78 @@ pub(crate) fn try_shrink_frontiers(
         last_ids
     };
 
+    // Visit each retained head's ancestry once and mark all candidate IDs
+    // encountered, instead of repeating the same walk for every candidate.
+    let mut remaining: FxHashMap<PeerID, Counter> =
+        last_ids.iter().map(|id| (id.peer, id.counter)).collect();
+    let mut frontiers = Vec::new();
+    last_ids.sort_by_key(|id| id.lamport);
+    let mut oldest_remaining = 0;
+    for id in last_ids.iter().rev() {
+        if remaining.remove(&id.peer).is_none() {
+            continue;
+        }
+        frontiers.push(id.id());
+        if remaining.is_empty() {
+            break;
+        }
+        dag.try_travel_ancestors(id.id(), &mut |node| {
+            // Preserve the old early exit when all remaining candidates are
+            // newer than the ancestry we are visiting. The cursor advances
+            // only once per candidate over the whole reduction.
+            while oldest_remaining < last_ids.len()
+                && !remaining.contains_key(&last_ids[oldest_remaining].peer)
+            {
+                oldest_remaining += 1;
+            }
+            if oldest_remaining == last_ids.len()
+                || node.lamport_last() < last_ids[oldest_remaining].lamport
+            {
+                return ControlFlow::Break(());
+            }
+            if let Some(&counter) = remaining.get(&node.peer) {
+                if node.contains_id(ID::new(node.peer, counter)) {
+                    remaining.remove(&node.peer);
+                }
+            }
+            if remaining.is_empty() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })?;
+    }
+
+    Ok(frontiers.into())
+}
+
+#[cfg(test)]
+fn shrink_frontiers_reference(last_ids: &Frontiers, dag: &AppDag) -> Result<Frontiers, ID> {
+    // it only keep the ids of ops that are concurrent to each other
+
+    if last_ids.len() <= 1 {
+        return Ok(last_ids.clone());
+    }
+
+    let mut last_ids = {
+        let ids = filter_duplicated_peer_id(last_ids);
+        if last_ids.len() == 1 {
+            let mut frontiers = Frontiers::default();
+            frontiers.push(last_ids.as_single().unwrap());
+            return Ok(frontiers);
+        }
+
+        let mut last_ids = Vec::with_capacity(ids.len());
+        for id in ids {
+            let Some(lamport) = dag.get_lamport(&id) else {
+                return Err(id);
+            };
+            last_ids.push(IdFull::new(id.peer, id.counter, lamport))
+        }
+
+        last_ids
+    };
+
     let mut frontiers = Vec::new();
     // Iterate from the greatest lamport to the smallest
     last_ids.sort_by_key(|x| x.lamport);
@@ -1048,7 +1120,8 @@ pub(crate) fn try_shrink_frontiers(
                 } else {
                     ControlFlow::Continue(())
                 }
-            })?;
+            })
+            .unwrap();
         }
 
         if should_insert {
@@ -1142,6 +1215,50 @@ pub fn are_frontiers_eq(a: &[ID], b: &[ID]) -> bool {
 mod tests {
     #![allow(clippy::neg_cmp_op_on_partial_ord)]
     use super::*;
+    #[test]
+    fn frontier_walk_matches_reference_on_branched_history() {
+        use crate::{loro::ExportMode, LoroDoc};
+        let docs: Vec<_> = (1..=5)
+            .map(|peer| {
+                let doc = LoroDoc::new_auto_commit();
+                doc.set_peer_id(peer).unwrap();
+                doc
+            })
+            .collect();
+        let merged = LoroDoc::new_auto_commit();
+        for step in 0..80 {
+            let i = step % docs.len();
+            docs[i].get_text("text").insert_unicode(0, "abc").unwrap();
+            docs[i].commit_then_renew();
+            let update = docs[i].export(ExportMode::all_updates()).unwrap();
+            merged.import(&update).unwrap();
+            if step % 3 != 0 {
+                docs[(i + 1) % docs.len()].import(&update).unwrap();
+            }
+        }
+        let cold = LoroDoc::new_auto_commit();
+        cold.import(&merged.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        let oplog = cold.oplog().lock();
+        let dag = &oplog.dag;
+        let mut random = 42u64;
+        for _ in 0..1000 {
+            let mut ids = Frontiers::default();
+            for (&peer, &count) in dag.vv().iter() {
+                random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+                if random % 4 != 0 {
+                    ids.push(ID::new(peer, (random % count as u64) as i32));
+                }
+            }
+            assert_eq!(
+                shrink_frontiers(&ids, dag),
+                shrink_frontiers_reference(&ids, dag)
+            );
+        }
+        let invalid: Frontiers = vec![ID::new(1, 0), ID::new(999, 0)].into();
+        assert_eq!(shrink_frontiers(&invalid, dag), Err(ID::new(999, 0)));
+    }
+
     mod cmp {
         use super::*;
         #[test]

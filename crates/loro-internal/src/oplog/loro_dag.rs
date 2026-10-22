@@ -1348,6 +1348,10 @@ impl AppDag {
     }
 
     pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
+        // The current version already has a maintained frontier.
+        if vv == &self.vv {
+            return Ok(self.frontiers.clone());
+        }
         if vv.is_empty() {
             return Ok(Default::default());
         }
