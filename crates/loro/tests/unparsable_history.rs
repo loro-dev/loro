@@ -59,7 +59,7 @@ fn state_vv_of_the_fixture_uses_the_cached_oplog_vv() {
     let doc = LoroDoc::new();
     doc.import(FIXTURE).unwrap();
     assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
-    let vv = doc.state_vv().unwrap();
+    let vv = doc.state_vv();
     assert_eq!(vv, doc.oplog_vv());
     assert_eq!(doc.try_state_vv().unwrap(), doc.oplog_vv());
 

@@ -341,8 +341,8 @@ fn the_vv_on_shallow_doc() -> anyhow::Result<()> {
     let new_doc = LoroDoc::new();
     new_doc.import(&snapshot.unwrap()).unwrap();
     assert!(!new_doc.shallow_since_vv().is_empty());
-    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv().unwrap());
-    assert_eq!(new_doc.oplog_vv(), doc.state_vv().unwrap());
+    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv());
+    assert_eq!(new_doc.oplog_vv(), doc.state_vv());
     assert_eq!(new_doc.oplog_frontiers(), doc.oplog_frontiers());
     assert_eq!(new_doc.oplog_frontiers(), new_doc.state_frontiers());
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
@@ -351,8 +351,8 @@ fn the_vv_on_shallow_doc() -> anyhow::Result<()> {
     doc.commit();
     let bytes = doc.export(ExportMode::all_updates());
     new_doc.import(&bytes.unwrap()).unwrap();
-    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv().unwrap());
-    assert_eq!(new_doc.oplog_vv(), doc.state_vv().unwrap());
+    assert_eq!(new_doc.oplog_vv(), new_doc.state_vv());
+    assert_eq!(new_doc.oplog_vv(), doc.state_vv());
     assert_eq!(new_doc.oplog_frontiers(), doc.oplog_frontiers());
     assert_eq!(new_doc.oplog_frontiers(), new_doc.state_frontiers());
     assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
