@@ -660,6 +660,94 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     return this.#encodeSnapshot();
   }
 
+  /**
+   * Export remote updates received through import APIs and waiting for missing causal
+   * dependencies.
+   *
+   * These are not uncommitted local operations. Ordinary snapshot and update exports
+   * exclude remote pending updates. Returns `undefined` when none remain.
+   *
+   * Restore a snapshot first, then pass these bytes to ordinary `import()`. The
+   * restored updates still wait until their real dependencies arrive; this cannot
+   * reconstruct predecessors the document never received. Repeated imports are safe.
+   *
+   * This method is read-only: it does not consume pending updates, commit local
+   * edits, or advance the applied version vector or frontiers. Ordinary snapshot
+   * export can commit local edits.
+   *
+   * Persist snapshot and pending bytes as one consistent checkpoint. Coordinate
+   * their collection and persistence with document mutations: the two export calls
+   * are not an atomic API. Replace the previous checkpoint only after both exports
+   * succeed. If either throws, keep the previous checkpoint; an error is not an empty
+   * result. When a successful replacement has `pending: undefined`, remove the old
+   * pending sidecar as part of that replacement instead of retaining stale bytes.
+   *
+   * This is a persistence primitive. Its result does not prove the document is
+   * synced and does not authorize advancing a sync cursor or received checkpoint.
+   *
+   * @example
+   * ```ts
+   * import { LoroDoc } from "loro.js";
+   *
+   * const source = new LoroDoc();
+   * source.setPeerId("1");
+   * source.getText("text").insert(0, "base|");
+   * const baseSnapshot = source.export({ mode: "snapshot" });
+   * const beforeA = source.oplogVersion();
+   * source.getText("text").insert(5, "A");
+   * const a = source.export({ mode: "update", from: beforeA });
+   * const beforeB = source.oplogVersion();
+   * source.getText("text").insert(6, "B");
+   * const b = source.export({ mode: "update", from: beforeB });
+   *
+   * const doc = new LoroDoc();
+   * doc.import(baseSnapshot);
+   * doc.import(b); // A is missing, so B stays pending.
+   * // Coordinate checkpoint collection and storage with document mutations.
+   * let savedCheckpoint = {
+   *   snapshot: doc.export({ mode: "snapshot" }),
+   *   pending: doc.exportPendingUpdates(),
+   * };
+   *
+   * const restored = new LoroDoc();
+   * restored.import(savedCheckpoint.snapshot);
+   * if (savedCheckpoint.pending !== undefined) restored.import(savedCheckpoint.pending);
+   * console.assert(restored.getText("text").toString() === "base|");
+   * restored.import(a);
+   * console.assert(restored.getText("text").toString() === "base|AB");
+   *
+   * savedCheckpoint = {
+   *   snapshot: restored.export({ mode: "snapshot" }),
+   *   pending: restored.exportPendingUpdates(),
+   * };
+   * console.assert(savedCheckpoint.pending === undefined);
+   * // After both exports succeed, replace the checkpoint and remove its old pending sidecar.
+   * ```
+   */
+  exportPendingUpdates(): Uint8Array | undefined {
+    if (this.#pendingHistory.size === 0) return undefined;
+    const covered = this.#historyVersion();
+    const records: HistoryRecord[] = [];
+    const pending = [...this.#pendingHistory.values()].sort(
+      (left, right) =>
+        compareIds(left.change.id, right.change.id) ||
+        changeLength(right.change) - changeLength(left.change),
+    );
+    for (const record of pending) {
+      const { change } = record;
+      const end = change.id.counter + changeLength(change);
+      const start = Math.max(change.id.counter, covered.get(change.id.peer) ?? 0);
+      if (start >= end) continue;
+      records.push({
+        ...record,
+        change: slicePendingChange(change, start - change.id.counter),
+      });
+      covered.set(change.id.peer, end);
+    }
+    if (records.length === 0) return undefined;
+    return this.#encodeUpdates(records.sort(compareHistoryRecords));
+  }
+
   exportJsonUpdates(
     start?: VersionVectorInput,
     end?: VersionVectorInput,
@@ -5454,11 +5542,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
           }
           record = {
             ...record,
-            change: sliceChange(
-              change,
-              knownEnd - change.id.counter,
-              changeLength(change),
-            ),
+            change: slicePendingChange(change, knownEnd - change.id.counter),
           };
           change = record.change;
           key = changeKey(change.id);
@@ -9332,6 +9416,20 @@ function sliceChange(change: DecodedChange, from: number, to: number): DecodedCh
         ? change.dependencies
         : [{ peer: change.id.peer, counter: change.id.counter + from - 1 }],
     operations,
+  };
+}
+
+function slicePendingChange(change: DecodedChange, from: number): DecodedChange {
+  if (from === 0) return change;
+  const sliced = sliceChange(change, from, changeLength(change));
+  // A pending change's original dependencies may still be missing. The own-peer
+  // predecessor alone does not prove those dependencies are available.
+  return {
+    ...sliced,
+    dependencies: [
+      ...change.dependencies.filter((dependency) => dependency.peer !== change.id.peer),
+      ...sliced.dependencies,
+    ],
   };
 }
 

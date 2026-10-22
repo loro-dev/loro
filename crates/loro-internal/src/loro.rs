@@ -3522,6 +3522,21 @@ impl LoroDoc {
         })
     }
 
+    /// Export received remote changes waiting for causal dependencies, excluding
+    /// local uncommitted operations. Returns `None` when nothing remains pending.
+    /// This method does not commit, consume pending, emit events, or advance the
+    /// applied version/frontiers. Ordinary snapshot/update exports omit pending.
+    ///
+    /// Capture snapshot and sidecar without concurrent document mutations/imports
+    /// and persist them as one consistent checkpoint. `None` in a new checkpoint
+    /// must clear its old sidecar; errors must not be treated as `None`. Restore
+    /// snapshot then sidecar with ordinary `import`; actual missing dependencies
+    /// must still arrive. This method cannot supply never-received predecessors
+    /// and does not define cursor advancement or whether the document is synced.
+    pub fn export_pending_updates(&self) -> Result<Option<Vec<u8>>, LoroEncodeError> {
+        encoding::export_pending_updates(&self.oplog.lock())
+    }
+
     /// The doc only contains the history since the shallow history start version vector.
     ///
     /// This is empty if the doc is not shallow.
