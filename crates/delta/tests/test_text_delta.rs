@@ -25,6 +25,50 @@ fn init_color_backtrace() {
 }
 
 #[test]
+fn long_text_insert_preserves_all_bytes() {
+    for n in [127, 128, 129, 255, 256, 257, 1025] {
+        let input: String = (0..n).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert(&input);
+        assert_eq!(text.len(), input.len(), "input length {n}");
+        assert_eq!(text.try_to_string().unwrap(), input);
+
+        text.insert_str(text.len(), &input);
+        assert_eq!(text.try_to_string().unwrap(), input.repeat(2));
+    }
+}
+
+#[test]
+fn long_utf8_insert_preserves_characters() {
+    for character in ["é", "中", "🦀"] {
+        let input = format!("{}{}", "x".repeat(127), character.repeat(130));
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert(&input);
+        assert_eq!(text.try_to_string().unwrap(), input);
+
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert("ab");
+        text.insert_str(1, &input);
+        assert_eq!(text.try_to_string().unwrap(), format!("a{input}b"));
+    }
+}
+
+#[test]
+fn long_text_insert_preserves_attributes() {
+    let input = "aé中🦀".repeat(100);
+    let attrs = HashMap::from([("bold".to_string(), true)]);
+    let mut text = TextDelta::new();
+    text.push_str_insert_with_attr(&input, attrs.clone());
+    assert_eq!(text.try_to_string().unwrap(), input);
+    for item in text.iter() {
+        let loro_delta::DeltaItem::Replace { attr, .. } = item else {
+            panic!("expected an insert");
+        };
+        assert_eq!(attr, &attrs);
+    }
+}
+
+#[test]
 fn text_delta() {
     let mut text = TextDelta::new();
     text.push_str_insert("123456789");
