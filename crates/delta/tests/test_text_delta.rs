@@ -69,6 +69,44 @@ fn long_text_insert_preserves_attributes() {
 }
 
 #[test]
+fn utf8_middle_insert_preserves_order_and_existing_attributes() {
+    let input = format!("{}é", "x".repeat(127));
+    let bold = HashMap::from([("bold".to_string(), true)]);
+    let mut text = TextDelta::new();
+    text.push_str_insert("a");
+    text.push_str_insert_with_attr("bc", bold.clone());
+    text.insert_str(2, &input);
+    assert_eq!(text.try_to_string().unwrap(), format!("ab{input}c"));
+
+    let mut expected = TextDelta::new();
+    expected.push_str_insert("a");
+    expected.push_str_insert_with_attr("b", bold.clone());
+    expected.push_str_insert(&input);
+    expected.push_str_insert_with_attr("c", bold);
+    assert_eq!(text, expected);
+
+    text.push_str_insert("after");
+    assert_eq!(text.try_to_string().unwrap(), format!("ab{input}cafter"));
+}
+
+#[test]
+fn repeated_utf8_middle_insert_matches_string() {
+    let mut text: TextDelta = TextDelta::new();
+    let mut expected = String::new();
+    for i in 0..1_000 {
+        let input = format!("{}é中🦀", "x".repeat(i % 258));
+        let pos = expected
+            .char_indices()
+            .nth(i % (expected.chars().count() + 1))
+            .map_or(expected.len(), |(pos, _)| pos);
+        text.insert_str(pos, &input);
+        expected.insert_str(pos, &input);
+        assert_eq!(text.try_to_string().unwrap(), expected, "edit {i}");
+        assert_eq!(text.len(), expected.len());
+    }
+}
+
+#[test]
 fn text_delta() {
     let mut text = TextDelta::new();
     text.push_str_insert("123456789");

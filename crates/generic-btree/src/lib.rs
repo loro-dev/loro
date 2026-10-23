@@ -597,7 +597,11 @@ impl<B: BTreeTrait> BTree<B> {
             .iter()
             .position(|x| x.arena.unwrap() == pos.leaf.0)
             .unwrap();
-        let left_neighbour = if leaf_slot == 0 {
+        // A nonzero offset leaves this leaf immediately before the insertion,
+        // including when it is split into left and right halves below.
+        let left_neighbour = if pos.offset > 0 {
+            Some(pos.leaf)
+        } else if leaf_slot == 0 {
             None
         } else {
             Some(parent.children[leaf_slot - 1].arena.unwrap().into())
@@ -740,7 +744,12 @@ impl<B: BTreeTrait> BTree<B> {
             inserted = i;
         }
 
-        let mut pos = new_pos.unwrap_or(cursor);
+        // At the end of the tree, merging a batch prefix may have extended
+        // the original leaf. Insert the remaining items after that prefix.
+        let mut pos = new_pos.unwrap_or_else(|| Cursor {
+            offset: self.leaf_nodes.get(cursor.leaf.0).unwrap().elem.rle_len(),
+            ..cursor
+        });
         // TODO: PERF this can be optimized further
         for item in data.drain(inserted..).rev() {
             let (p, _) = self.insert_by_path(pos, item);
