@@ -16,7 +16,7 @@ use crate::{
     dag::{Dag, DagUtils},
     diff_calc::{DiffCalculator, DiffMode},
     encoding::{
-        self, decode_snapshot, export_fast_snapshot, export_fast_updates,
+        self, decode_snapshot, decode_snapshot_bytes, export_fast_snapshot, export_fast_updates,
         export_fast_updates_in_range, export_shallow_snapshot, export_snapshot_at,
         export_state_only_snapshot,
         json_schema::{encode_change_to_json, json::JsonSchema},
@@ -42,6 +42,7 @@ use crate::{
     lock::{LoroLockGroup, LoroMutex},
     txn::Transaction,
 };
+use bytes::Bytes;
 use either::Either;
 
 #[cfg(test)]
@@ -581,11 +582,18 @@ impl LoroDoc {
         self.config.text_style_config.write().default_style = text_style;
     }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
+        Self::from_snapshot_bytes(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Like [`Self::from_snapshot`], but keeps references into `bytes` instead
+    /// of copying the snapshot.
+    pub fn from_snapshot_bytes(bytes: Bytes) -> LoroResult<Self> {
         let doc = Self::new();
-        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(&bytes, true)?;
         if mode.is_snapshot() {
+            let body = bytes.slice_ref(body);
             doc.with_barrier(|| -> Result<(), LoroError> {
-                decode_snapshot(&doc, mode, body, Default::default())?;
+                decode_snapshot_bytes(&doc, mode, body, Default::default())?;
                 Ok(())
             })?;
             Ok(doc)

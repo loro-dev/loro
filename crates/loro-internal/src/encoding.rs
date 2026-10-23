@@ -17,6 +17,7 @@ use crate::oplog::ImportedValues;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
 use crate::{oplog::OpLog, LoroError, VersionVector};
+use bytes::Bytes;
 use loro_common::{IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
 use num_traits::{FromPrimitive, ToPrimitive};
 use std::borrow::Cow;
@@ -505,13 +506,20 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
     origin: InternalString,
 ) -> Result<ImportStatus, LoroError> {
+    decode_snapshot_bytes(doc, mode, Bytes::copy_from_slice(body), origin)
+}
+
+pub(crate) fn decode_snapshot_bytes(
+    doc: &LoroDoc,
+    mode: EncodeMode,
+    body: Bytes,
+    origin: InternalString,
+) -> Result<ImportStatus, LoroError> {
     match mode {
         EncodeMode::OutdatedSnapshot => {
             return Err(LoroError::ImportUnsupportedEncodingMode);
         }
-        EncodeMode::FastSnapshot => {
-            fast_snapshot::decode_snapshot(doc, body.to_vec().into(), origin)?
-        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot(doc, body, origin)?,
         _ => {
             return Err(LoroError::DecodeError(
                 format!("Invalid snapshot encoding mode: {mode:?}").into_boxed_str(),
