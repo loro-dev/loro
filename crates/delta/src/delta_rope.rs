@@ -425,10 +425,24 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             return;
         }
 
-        let pos = self.tree.query::<LengthFinder>(&pos).unwrap();
-        // This would crash if values's number is large
-        self.tree
-            .insert_many_by_cursor(Some(pos.cursor), values.into_iter());
+        let mut cursor = self.tree.query::<LengthFinder>(&pos).unwrap().cursor;
+        let mut values = values.into_iter();
+        let Some(first) = values.next() else {
+            return;
+        };
+        let Some(second) = values.next() else {
+            self.tree.insert_by_path(cursor, first);
+            return;
+        };
+
+        // Published generic-btree 0.10.7 can merge a batch prefix into the
+        // wrong leaf. Insert back to front at the returned start cursor so
+        // published loro-delta does not rely on the workspace-only fix.
+        let mut batch = vec![first, second];
+        batch.extend(values);
+        for value in batch.into_iter().rev() {
+            cursor = self.tree.insert_by_path(cursor, value).0;
+        }
     }
 
     pub fn insert_value(&mut self, pos: usize, value: V, attr: Attr) {
