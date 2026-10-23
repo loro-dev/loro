@@ -620,6 +620,19 @@ criss-cross ladder 测试钉"tips 去重后复杂度线性"（性能声明，不
 多头基准命中最后同步点、单头扫描停在初始分岔、不相交历史归零、
 切口落在同一 change 内部（style 对之间）仍收敛。
 
+前沿与重放性能优化路径的补充回归覆盖：
+
+- `src/tests/replay_base.rs::filtered_replay_preserves_full_causal_context`
+  以作者当时看到的版本和 change 的依赖前沿为对照检查 L13，覆盖跳过无关
+  历史、同一 change 混合多个容器的操作、并发分支、历史目标版本，以及
+  从快照恢复的历史。
+- `filtered_replay_preserves_critical_base_and_checkout_contract` 检查过滤在
+  向前导入与向后 checkout 时，保持重放基准、critical 认证标记、模式、
+  重放范围和上下文不变。
+- `src/version.rs::tests::frontier_contract_with_tied_heads_and_same_peer_prefixes`
+  以明确给出的预期前沿检查 D6/D7 和 L5，覆盖 lamport 相等的并发头、
+  同 peer 的冗余前缀，以及当前版本和历史版本的前沿转换。
+
 ---
 
 ## 6. 待定问题（需要维护者拍板）

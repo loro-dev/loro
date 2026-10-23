@@ -596,8 +596,13 @@ fn replay_container_ops_from_empty(
     let empty_vv = VersionVector::default();
     let empty_frontiers = Frontiers::default();
     let target_frontiers = oplog.dag.vv_to_frontiers(vv);
-    let (_, iter) =
-        oplog.iter_from_replay_base_causally(&empty_vv, &empty_frontiers, vv, &target_frontiers);
+    let (_, iter) = oplog.iter_from_replay_base_causally_filtered(
+        &empty_vv,
+        &empty_frontiers,
+        vv,
+        &target_frontiers,
+        Some(idx),
+    );
 
     for (change, (start_counter, end_counter), vv) in iter {
         let iter_start = change
