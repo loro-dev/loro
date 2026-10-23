@@ -25,6 +25,88 @@ fn init_color_backtrace() {
 }
 
 #[test]
+fn long_text_insert_preserves_all_bytes() {
+    for n in [127, 128, 129, 255, 256, 257, 1025] {
+        let input: String = (0..n).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert(&input);
+        assert_eq!(text.len(), input.len(), "input length {n}");
+        assert_eq!(text.try_to_string().unwrap(), input);
+
+        text.insert_str(text.len(), &input);
+        assert_eq!(text.try_to_string().unwrap(), input.repeat(2));
+    }
+}
+
+#[test]
+fn long_utf8_insert_preserves_characters() {
+    for character in ["é", "中", "🦀"] {
+        let input = format!("{}{}", "x".repeat(127), character.repeat(130));
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert(&input);
+        assert_eq!(text.try_to_string().unwrap(), input);
+
+        let mut text: TextDelta = TextDelta::new();
+        text.push_str_insert("ab");
+        text.insert_str(1, &input);
+        assert_eq!(text.try_to_string().unwrap(), format!("a{input}b"));
+    }
+}
+
+#[test]
+fn long_text_insert_preserves_attributes() {
+    let input = "aé中🦀".repeat(100);
+    let attrs = HashMap::from([("bold".to_string(), true)]);
+    let mut text = TextDelta::new();
+    text.push_str_insert_with_attr(&input, attrs.clone());
+    assert_eq!(text.try_to_string().unwrap(), input);
+    for item in text.iter() {
+        let loro_delta::DeltaItem::Replace { attr, .. } = item else {
+            panic!("expected an insert");
+        };
+        assert_eq!(attr, &attrs);
+    }
+}
+
+#[test]
+fn utf8_middle_insert_preserves_order_and_existing_attributes() {
+    let input = format!("{}é", "x".repeat(127));
+    let bold = HashMap::from([("bold".to_string(), true)]);
+    let mut text = TextDelta::new();
+    text.push_str_insert("a");
+    text.push_str_insert_with_attr("bc", bold.clone());
+    text.insert_str(2, &input);
+    assert_eq!(text.try_to_string().unwrap(), format!("ab{input}c"));
+
+    let mut expected = TextDelta::new();
+    expected.push_str_insert("a");
+    expected.push_str_insert_with_attr("b", bold.clone());
+    expected.push_str_insert(&input);
+    expected.push_str_insert_with_attr("c", bold);
+    assert_eq!(text, expected);
+
+    text.push_str_insert("after");
+    assert_eq!(text.try_to_string().unwrap(), format!("ab{input}cafter"));
+}
+
+#[test]
+fn repeated_utf8_middle_insert_matches_string() {
+    let mut text: TextDelta = TextDelta::new();
+    let mut expected = String::new();
+    for i in 0..1_000 {
+        let input = format!("{}é中🦀", "x".repeat(i % 258));
+        let pos = expected
+            .char_indices()
+            .nth(i % (expected.chars().count() + 1))
+            .map_or(expected.len(), |(pos, _)| pos);
+        text.insert_str(pos, &input);
+        expected.insert_str(pos, &input);
+        assert_eq!(text.try_to_string().unwrap(), expected, "edit {i}");
+        assert_eq!(text.len(), expected.len());
+    }
+}
+
+#[test]
 fn text_delta() {
     let mut text = TextDelta::new();
     text.push_str_insert("123456789");

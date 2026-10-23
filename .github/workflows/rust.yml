@@ -60,6 +60,8 @@ jobs:
         with:
           version: "0.2.100"
       - uses: Swatinem/rust-cache@v2
+      - name: Test packaged loro-delta with registry dependencies
+        run: bash scripts/test-delta-published-deps.sh
       # - name: Clippy Check
       #   run: cargo clippy --all-features -- -Dwarnings
       - name: Run rust tests

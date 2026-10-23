@@ -45,17 +45,8 @@ impl<Attr: DeltaAttr> TextDelta<Attr> {
             return self;
         }
 
-        let mut split_end = 128;
-        let mut split_start = 0;
-        while split_end != s.len() {
-            while !s.is_char_boundary(split_end) {
-                split_end -= 1;
-            }
-
-            let chunk = TextChunk(ArrayString::from(&s[split_start..split_end]).unwrap());
+        for chunk in TextChunk::from_long_str(s) {
             self.push_insert(chunk, attr.clone());
-            split_start = split_end;
-            split_end = (split_end + 128).min(s.len());
         }
 
         self
@@ -98,23 +89,20 @@ impl TextChunk {
         Some(TextChunk(ArrayString::from(s).ok()?))
     }
 
-    pub fn from_long_str(s: &str) -> impl Iterator<Item = Self> + '_ {
-        let mut text_iter = s.chars();
+    pub fn from_long_str(mut s: &str) -> impl Iterator<Item = Self> + '_ {
         std::iter::from_fn(move || {
-            let mut chunk = Self::default();
-            for c in text_iter.by_ref() {
-                let mut bytes = [0, 0, 0, 0];
-                chunk.0.push_str(c.encode_utf8(&mut bytes));
-                if chunk.0.is_full() {
-                    break;
-                }
-            }
-
-            if chunk.0.is_empty() {
+            if s.is_empty() {
                 return None;
             }
 
-            Some(chunk)
+            let mut end = s.len().min(MAX_STRING_SIZE);
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+
+            let (chunk, rest) = s.split_at(end);
+            s = rest;
+            Some(Self(ArrayString::from(chunk).unwrap()))
         })
     }
 }
@@ -174,6 +162,28 @@ impl TryInsert for TextChunk {
 }
 
 impl DeltaValue for TextChunk {}
+
+#[cfg(test)]
+mod tests {
+    use super::{TextChunk, TextDelta, MAX_STRING_SIZE};
+
+    #[test]
+    fn chunking_preserves_text_at_capacity_boundaries() {
+        for n in 0..=MAX_STRING_SIZE * 3 + 1 {
+            for suffix in ["", "é", "中", "🦀"] {
+                let input = format!("{}{suffix}", "x".repeat(n));
+                let chunks: String = TextChunk::from_long_str(&input)
+                    .map(|chunk| chunk.0.to_string())
+                    .collect();
+                assert_eq!(chunks, input);
+
+                let mut text: TextDelta = TextDelta::new();
+                text.push_str_insert(&input);
+                assert_eq!(text.try_to_string().unwrap(), input);
+            }
+        }
+    }
+}
 
 #[cfg(all(test, miri))]
 mod miri_tests {
