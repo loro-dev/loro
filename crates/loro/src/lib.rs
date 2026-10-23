@@ -744,8 +744,13 @@ impl LoroDoc {
 
     /// Create a new `LoroDoc` from a snapshot without copying it.
     ///
-    /// The document keeps references into `bytes` and decodes containers when
-    /// they are first read, so a memory-mapped snapshot is only read where used.
+    /// The document retains shared ownership of `bytes`, allowing it to use an
+    /// owned buffer or memory-mapped snapshot without an additional full-buffer
+    /// copy. Container state is decoded lazily where possible.
+    ///
+    /// Import still scans the snapshot to verify its integrity, so a
+    /// memory-mapped snapshot is read during import even if its containers are
+    /// not accessed. Decoding may allocate additional memory.
     pub fn from_snapshot_bytes(bytes: bytes::Bytes) -> LoroResult<Self> {
         let inner = InnerLoroDoc::from_snapshot_bytes(bytes)?;
         inner.start_auto_commit();

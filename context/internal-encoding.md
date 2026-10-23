@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-10-22.
+Verified against code 2026-10-23.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -68,6 +68,16 @@ still contains current helpers including `import_changes_to_oplog`, `encode_op`,
 `decode_op`, and `ValueRegister`.
 
 ## FastSnapshot
+
+`LoroDoc::from_snapshot_bytes` retains shared ownership of a `bytes::Bytes`
+buffer, including an owner-backed memory mapping. It avoids a full-buffer copy;
+it does not avoid reading the full snapshot during import. Envelope and SSTable
+block checksum verification still scan the encoded data. Container state can
+remain lazily decoded, and decoding may allocate additional memory.
+The borrowed `from_snapshot(&[u8])` entry point validates the envelope and mode
+before copying the supported snapshot body. Do not delegate it by eagerly
+copying the input into `Bytes`: malformed or unsupported input must be rejected
+without an input-sized allocation.
 
 `fast_snapshot.rs:Snapshot` has three body sections:
 

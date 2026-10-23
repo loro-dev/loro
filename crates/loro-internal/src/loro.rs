@@ -582,7 +582,19 @@ impl LoroDoc {
         self.config.text_style_config.write().default_style = text_style;
     }
     pub fn from_snapshot(bytes: &[u8]) -> LoroResult<Self> {
-        Self::from_snapshot_bytes(Bytes::copy_from_slice(bytes))
+        let doc = Self::new();
+        let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(bytes, true)?;
+        if mode.is_snapshot() {
+            doc.with_barrier(|| -> Result<(), LoroError> {
+                decode_snapshot(&doc, mode, body, Default::default())?;
+                Ok(())
+            })?;
+            Ok(doc)
+        } else {
+            Err(LoroError::DecodeError(
+                "Invalid encode mode".to_string().into(),
+            ))
+        }
     }
 
     /// Like [`Self::from_snapshot`], but keeps references into `bytes` instead

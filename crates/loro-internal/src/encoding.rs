@@ -506,7 +506,13 @@ pub(crate) fn decode_snapshot(
     body: &[u8],
     origin: InternalString,
 ) -> Result<ImportStatus, LoroError> {
-    decode_snapshot_bytes(doc, mode, Bytes::copy_from_slice(body), origin)
+    match mode {
+        EncodeMode::FastSnapshot => {
+            decode_snapshot_bytes(doc, mode, Bytes::copy_from_slice(body), origin)
+        }
+        // Unsupported modes must be rejected before allocating a copy of the body.
+        _ => decode_snapshot_bytes(doc, mode, Bytes::new(), origin),
+    }
 }
 
 pub(crate) fn decode_snapshot_bytes(
