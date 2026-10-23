@@ -53,7 +53,7 @@
       "left": "10",
       "panics": false,
       "right": "1080",
-      "value": null
+      "value": "107F80"
     },
     {
       "left": "8080",
@@ -69,9 +69,9 @@
     },
     {
       "left": "80FF",
-      "panics": true,
+      "panics": false,
       "right": "8180",
-      "value": null
+      "value": "80FF80"
     },
     {
       "left": "0080",
@@ -90,6 +90,48 @@
       "panics": false,
       "right": "FF80",
       "value": "FE8180"
+    },
+    {
+      "left": "8180FF",
+      "panics": false,
+      "right": "818180CB",
+      "value": "8180FF80"
+    },
+    {
+      "left": "8180AA",
+      "panics": false,
+      "right": "8180CC",
+      "value": "8180BB80"
+    },
+    {
+      "left": "8180AA",
+      "panics": false,
+      "right": "8180AB",
+      "value": "8180AA80"
+    },
+    {
+      "left": "809011",
+      "panics": false,
+      "right": "80A0",
+      "value": "809080"
+    },
+    {
+      "left": "8010",
+      "panics": false,
+      "right": "8020",
+      "value": "801880"
+    },
+    {
+      "left": "8010",
+      "panics": false,
+      "right": "80200000",
+      "value": "801880"
+    },
+    {
+      "left": "8010",
+      "panics": false,
+      "right": "80100000",
+      "value": null
     }
   ],
   "chains": {

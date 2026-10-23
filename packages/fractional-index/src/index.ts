@@ -474,7 +474,9 @@ function newAfterBytes(bytes: Uint8Array): Uint8Array {
     }
   }
 
-  throw new Error("internal error: entered unreachable code");
+  // Every byte is 0xFF, which a jittered index can end with. Any extension of
+  // `bytes` sorts after it, and the caller appends the terminator.
+  return bytes.slice();
 }
 
 function newBetweenBytes(left: Uint8Array, right: Uint8Array): Uint8Array | undefined {
@@ -485,20 +487,9 @@ function newBetweenBytes(left: Uint8Array, right: Uint8Array): Uint8Array | unde
 
   const shorterLen = minLen - 1;
   for (let i = 0; i < shorterLen; i++) {
-    const leftByte = left[i]!;
-    const rightByte = right[i]!;
-    const diff = rightByte - leftByte;
-
-    if (diff > 1) {
-      const output = left.slice(0, i + 1);
-      output[i] = leftByte + Math.floor(diff / 2);
-      return output;
-    }
-
-    if (diff === 1) {
-      const prefix = left.slice(0, i + 1);
-      const suffix = left.slice(i + 1);
-      return concatBytes(prefix, newAfterBytes(suffix));
+    const diff = right[i]! - left[i]!;
+    if (diff > 0) {
+      return newBetweenAt(left, right, i);
     }
 
     if (diff < 0) {
@@ -506,27 +497,46 @@ function newBetweenBytes(left: Uint8Array, right: Uint8Array): Uint8Array | unde
     }
   }
 
+  // The last byte of the shorter index. Without jitter it is the terminator,
+  // but a jittered index ends with a random byte, so it has to be compared.
+  const i = shorterLen;
+  const split = shorterLen + 1;
   if (left.length < right.length) {
-    const split = shorterLen + 1;
-    const prefix = right.slice(0, split);
-    if (prefix[prefix.length - 1]! < TERMINATOR) {
+    if (right[i]! < left[i]!) {
       return undefined;
     }
 
-    return concatBytes(prefix, newBeforeBytes(right.slice(split)));
+    const suffix = right.slice(split);
+    if (suffix.every((byte) => byte === BYTE_MIN)) {
+      // No terminated index sorts before an all-zero suffix
+      return left[i]! < right[i]! ? newBetweenAt(left, right, i) : undefined;
+    }
+
+    return concatBytes(right.slice(0, split), newBeforeBytes(suffix));
   }
 
   if (left.length === right.length) {
+    return left[i]! < right[i]! ? newBetweenAt(left, right, i) : undefined;
+  }
+
+  if (left[i]! >= right[i]!) {
     return undefined;
   }
 
-  const split = shorterLen + 1;
-  const prefix = left.slice(0, split);
-  if (prefix[prefix.length - 1]! >= TERMINATOR) {
-    return undefined;
+  return concatBytes(left.slice(0, split), newAfterBytes(left.slice(split)));
+}
+
+/** `left` and `right` share their first `i` bytes and `left[i] < right[i]`. */
+function newBetweenAt(left: Uint8Array, right: Uint8Array, i: number): Uint8Array {
+  const leftByte = left[i]!;
+  const diff = right[i]! - leftByte;
+  if (diff > 1) {
+    const output = left.slice(0, i + 1);
+    output[i] = leftByte + Math.floor(diff / 2);
+    return output;
   }
 
-  return concatBytes(prefix, newAfterBytes(left.slice(split)));
+  return concatBytes(left.slice(0, i + 1), newAfterBytes(left.slice(i + 1)));
 }
 
 function concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {

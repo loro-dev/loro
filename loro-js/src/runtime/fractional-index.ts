@@ -80,32 +80,45 @@ function newAfter(bytes: Uint8Array): number[] {
       return output;
     }
   }
-  throw new RangeError("invalid fractional index");
+  // Every byte is 0xFF, which a jittered index can end with. Any extension of
+  // `bytes` sorts after it, and the caller appends the terminator.
+  return [...bytes];
 }
 
 function newBetween(left: Uint8Array, right: Uint8Array): number[] | undefined {
   const shorterLength = Math.min(left.length, right.length) - 1;
   for (let index = 0; index < shorterLength; index += 1) {
     const difference = right[index]! - left[index]!;
-    if (difference > 1) {
-      const output = [...left.subarray(0, index + 1)];
-      output[index] = output[index]! + Math.floor(difference / 2);
-      return output;
-    }
-    if (difference === 1) {
-      return [...left.subarray(0, index + 1), ...newAfter(left.subarray(index + 1))];
-    }
+    if (difference > 0) return newBetweenAt(left, right, index);
     if (difference < 0) return undefined;
   }
+  // The last byte of the shorter index. Without jitter it is the terminator,
+  // but a jittered index ends with a random byte, so it has to be compared.
+  const index = shorterLength;
+  const split = shorterLength + 1;
   if (left.length < right.length) {
-    const split = shorterLength + 1;
-    if (right[split - 1]! < TERMINATOR) return undefined;
-    return [...right.subarray(0, split), ...newBefore(right.subarray(split))];
+    if (right[index]! < left[index]!) return undefined;
+    const suffix = right.subarray(split);
+    if (suffix.every((byte) => byte === 0)) {
+      // No terminated index sorts before an all-zero suffix
+      return left[index]! < right[index]! ? newBetweenAt(left, right, index) : undefined;
+    }
+    return [...right.subarray(0, split), ...newBefore(suffix)];
   }
-  if (left.length > right.length) {
-    const split = shorterLength + 1;
-    if (left[split - 1]! >= TERMINATOR) return undefined;
-    return [...left.subarray(0, split), ...newAfter(left.subarray(split))];
+  if (left.length === right.length) {
+    return left[index]! < right[index]! ? newBetweenAt(left, right, index) : undefined;
   }
-  return undefined;
+  if (left[index]! >= right[index]!) return undefined;
+  return [...left.subarray(0, split), ...newAfter(left.subarray(split))];
+}
+
+/** `left` and `right` share their first `index` bytes and `left[index] < right[index]`. */
+function newBetweenAt(left: Uint8Array, right: Uint8Array, index: number): number[] {
+  const difference = right[index]! - left[index]!;
+  if (difference > 1) {
+    const output = [...left.subarray(0, index + 1)];
+    output[index] = output[index]! + Math.floor(difference / 2);
+    return output;
+  }
+  return [...left.subarray(0, index + 1), ...newAfter(left.subarray(index + 1))];
 }

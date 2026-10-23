@@ -50,6 +50,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   paths, diff-calculator vs raw ops: [context/tree-events.md](context/tree-events.md).
 - Deep tree traversal, snapshot order, and iterative result disposal:
   [context/tree-depth.md](context/tree-depth.md).
+- Fractional indexes with jitter (random trailing bytes) and the `new_between`
+  rules shared with the TS ports: [context/fractional-index-jitter.md](context/fractional-index-jitter.md).
 - loro.js tree diff item order, index counting, apply resolution, and batch dry-run:
   [context/loro-js-tree-diff.md](context/loro-js-tree-diff.md).
 - loro.js concurrent tree moves, skipped cycles, replay, checkout, and undo:
