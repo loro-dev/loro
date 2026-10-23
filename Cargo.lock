@@ -230,7 +230,7 @@ dependencies = [
  "arbitrary",
  "enum-as-inner 0.5.1",
  "flate2",
- "loro-common 1.16.0",
+ "loro-common 1.17.0",
  "rand 0.8.5",
  "serde_json",
 ]
@@ -841,7 +841,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "flate2",
- "loro 1.16.2",
+ "loro 1.17.1",
  "rand 0.8.5",
  "serde_json",
  "tabled 0.15.0",
@@ -947,7 +947,7 @@ dependencies = [
  "enum_dispatch",
  "itertools 0.12.1",
  "loro 0.16.12",
- "loro 1.16.2",
+ "loro 1.17.1",
  "loro 1.8.1",
  "num_cpus",
  "pretty_assertions",
@@ -1491,9 +1491,9 @@ dependencies = [
 
 [[package]]
 name = "json-float-consumer"
-version = "0.0.0"
+version = "1.17.0"
 dependencies = [
- "loro 1.16.2",
+ "loro 1.17.1",
  "serde_json",
 ]
 
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "loro"
-version = "1.16.2"
+version = "1.17.1"
 dependencies = [
  "anyhow",
  "base64",
@@ -1605,10 +1605,10 @@ dependencies = [
  "generic-btree",
  "hegeltest",
  "loom",
- "loro-common 1.16.0",
+ "loro-common 1.17.0",
  "loro-delta 1.13.0",
- "loro-internal 1.16.2",
- "loro-kv-store 1.16.0",
+ "loro-internal 1.17.1",
+ "loro-kv-store 1.17.0",
  "pretty_assertions",
  "rand 0.8.5",
  "rustc-hash",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "loro-common"
-version = "1.16.0"
+version = "1.17.0"
 dependencies = [
  "arbitrary",
  "enum-as-inner 0.6.1",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.16.2"
+version = "1.17.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -1819,9 +1819,9 @@ dependencies = [
  "js-sys",
  "leb128",
  "loom",
- "loro-common 1.16.0",
+ "loro-common 1.17.0",
  "loro-delta 1.13.0",
- "loro-kv-store 1.16.0",
+ "loro-kv-store 1.17.0",
  "loro-rle 1.6.0",
  "loro_fractional_index 1.13.0",
  "md5",
@@ -1884,13 +1884,13 @@ dependencies = [
 
 [[package]]
 name = "loro-kv-store"
-version = "1.16.0"
+version = "1.17.0"
 dependencies = [
  "bytes",
  "ctor 0.2.9",
  "dev-utils",
  "ensure-cov",
- "loro-common 1.16.0",
+ "loro-common 1.17.0",
  "lz4_flex",
  "once_cell",
  "quick_cache",
@@ -1945,12 +1945,12 @@ checksum = "3f3d053a135388e6b1df14e8af1212af5064746e9b87a06a345a7a779ee9695a"
 
 [[package]]
 name = "loro-wasm"
-version = "1.16.4"
+version = "1.17.1"
 dependencies = [
  "js-sys",
- "loro-common 1.16.0",
+ "loro-common 1.17.0",
  "loro-delta 1.13.0",
- "loro-internal 1.16.2",
+ "loro-internal 1.17.1",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "loro-wasm-tools"
-version = "1.16.2"
+version = "1.17.0"
 dependencies = [
  "anyhow",
  "clap 4.5.47",

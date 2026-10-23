@@ -1677,6 +1677,12 @@ impl LoroDoc {
     ///
     /// @returns A byte array containing the exported data.
     ///
+    /// This export commits the current local transaction before producing bytes.
+    ///
+    /// Snapshot and update exports do not include remote updates that are still
+    /// waiting for missing causal dependencies. Use `exportPendingUpdates()` to
+    /// persist those updates separately.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc, LoroText } from "loro-crdt";
@@ -1706,6 +1712,77 @@ impl LoroDoc {
         let export_mode = js_to_export_mode(mode)
             .map_err(|e| JsValue::from_str(&format!("Invalid export mode. Error: {:?}", e)))?;
         Ok(self.doc.export(export_mode)?)
+    }
+
+    /// Export remote updates received through import APIs that are still waiting
+    /// for missing causal dependencies. These differ from uncommitted local operations.
+    ///
+    /// Returns `undefined` when no remote updates are pending. Ordinary snapshot
+    /// and update exports exclude these pending updates, so persist this result
+    /// as a separate sidecar to a normal snapshot. Export errors are thrown;
+    /// they are not returned as `undefined`.
+    ///
+    /// Restore the snapshot first, then pass the sidecar bytes to ordinary
+    /// `import()`. The restored updates remain pending until later imports supply
+    /// their real missing dependencies. This method only exports operations already
+    /// received; it cannot supply missing predecessors.
+    ///
+    /// This method is read-only: it does not consume pending updates, advance the
+    /// applied version vector/frontiers, emit document events, or commit a local
+    /// transaction. Uncommitted local operations are excluded. Ordinary snapshot
+    /// export still commits local operations as usual.
+    ///
+    /// Coordinate document mutations while collecting the snapshot and sidecar,
+    /// and persist them as one consistent checkpoint. The two export calls do not
+    /// form an atomic capture. Replace the saved checkpoint only after both exports
+    /// succeed. As part of that successful replacement, `undefined` means remove
+    /// any old pending sidecar. If either export throws, keep the previous checkpoint.
+    ///
+    /// This method does not define or advance a sync cursor or establish that the
+    /// document is synced. `undefined` only means no received remote updates are
+    /// currently pending.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const source = new LoroDoc();
+    /// source.setPeerId("1");
+    /// source.getText("text").insert(0, "base|");
+    /// const baseSnapshot = source.export({ mode: "snapshot" });
+    /// const beforeA = source.oplogVersion();
+    /// source.getText("text").insert(5, "A");
+    /// const a = source.export({ mode: "update", from: beforeA });
+    /// const beforeB = source.oplogVersion();
+    /// source.getText("text").insert(6, "B");
+    /// const b = source.export({ mode: "update", from: beforeB });
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.import(baseSnapshot);
+    /// doc.import(b); // A is missing, so B stays pending.
+    /// // Coordinate checkpoint collection and storage with document mutations.
+    /// let savedCheckpoint = {
+    ///   snapshot: doc.export({ mode: "snapshot" }),
+    ///   pending: doc.exportPendingUpdates(),
+    /// };
+    ///
+    /// const restored = new LoroDoc();
+    /// restored.import(savedCheckpoint.snapshot);
+    /// if (savedCheckpoint.pending !== undefined) restored.import(savedCheckpoint.pending);
+    /// console.assert(restored.getText("text").toString() === "base|");
+    /// restored.import(a);
+    /// console.assert(restored.getText("text").toString() === "base|AB");
+    ///
+    /// savedCheckpoint = {
+    ///   snapshot: restored.export({ mode: "snapshot" }),
+    ///   pending: restored.exportPendingUpdates(),
+    /// };
+    /// console.assert(savedCheckpoint.pending === undefined);
+    /// // After both exports succeed, replace the checkpoint and remove its old pending sidecar.
+    /// ```
+    #[wasm_bindgen(js_name = "exportPendingUpdates")]
+    pub fn export_pending_updates(&self) -> JsResult<Option<Vec<u8>>> {
+        Ok(self.doc.export_pending_updates()?)
     }
 
     /// Export updates in the given range in JSON format.

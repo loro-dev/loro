@@ -752,7 +752,7 @@ impl LoroDoc {
         Ok(Self::_new(inner))
     }
 
-    /// Import data exported by [`LoroDoc::export`].
+    /// Import data exported by [`LoroDoc::export`] or [`LoroDoc::export_pending_updates`].
     ///
     /// Use [`ExportMode::Snapshot`] for full-state snapshots, or
     /// [`ExportMode::all_updates`] / [`ExportMode::updates`] for updates.
@@ -1008,15 +1008,20 @@ impl LoroDoc {
     ///
     /// When the state is at the op-log frontiers this clones the cached op-log
     /// version vector and does not parse change blocks. Otherwise it walks the
-    /// frontiers. A change block that cannot be parsed is [`LoroError::DecodeError`].
-    /// Frontiers that are not in the dag are [`LoroError::FrontiersNotFound`] when
-    /// an id can be named, not an empty version vector.
+    /// frontiers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the state's version cannot be resolved from the document history.
+    /// Use [`Self::try_state_vv`] to handle unreadable history as an error.
     #[inline]
-    pub fn state_vv(&self) -> LoroResult<VersionVector> {
-        self.try_state_vv()
+    pub fn state_vv(&self) -> VersionVector {
+        self.doc.state_vv()
     }
 
-    /// [`state_vv`](Self::state_vv).
+    /// Get the `VersionVector` version of `DocState`, returning an error if the
+    /// required history cannot be read or a state frontier is missing.
+    /// Unreadable history produces [`LoroError::DecodeError`].
     #[inline]
     pub fn try_state_vv(&self) -> LoroResult<VersionVector> {
         self.doc.try_state_vv()
@@ -1412,8 +1417,8 @@ impl LoroDoc {
     /// Export the document in the given mode.
     ///
     /// Common modes:
-    /// - [`ExportMode::Snapshot`]: full state + history
-    /// - [`ExportMode::all_updates()`]: all known ops
+    /// - [`ExportMode::Snapshot`]: full state + applied history
+    /// - [`ExportMode::all_updates()`]: all applied ops
     /// - [`ExportMode::updates(&VersionVector)`]: ops since a specific version
     /// - [`ExportMode::shallow_snapshot(..)`]: GC’d snapshot starting at frontiers
     /// - [`ExportMode::updates_in_range(..)`]: ops in specific ID spans
@@ -1422,6 +1427,8 @@ impl LoroDoc {
     /// - Auto-commit: `export` finalizes the current transaction before producing bytes.
     /// - Shallow snapshots: peers cannot import updates from before the shallow start.
     /// - Performance: exporting fresh snapshots periodically can reduce import time for new peers.
+    /// - Remote changes waiting for missing dependencies are excluded. Persist them
+    ///   separately with [`LoroDoc::export_pending_updates`].
     ///
     /// # Examples
     /// ```
@@ -1443,6 +1450,92 @@ impl LoroDoc {
     /// ```
     pub fn export(&self, mode: ExportMode) -> Result<Vec<u8>, LoroEncodeError> {
         self.doc.export(mode)
+    }
+
+    /// Export imported remote updates that are waiting for missing causal dependencies.
+    ///
+    /// These updates were received through the import APIs but cannot yet be
+    /// applied because causal predecessors are missing. They are distinct from
+    /// uncommitted local operations, which are excluded from this export.
+    /// Returns `Ok(None)` when no received remote operations remain pending, or
+    /// `Ok(Some(bytes))` in the ordinary updates format. The bytes are semantically
+    /// equivalent to the pending operations, not necessarily the original input blob.
+    ///
+    /// This method is read-only: it does not consume pending updates, commit a local
+    /// transaction, emit events, or advance the applied version vector/frontiers.
+    /// Ordinary snapshot/update exports through [`LoroDoc::export`] exclude remote
+    /// pending updates; a snapshot export still commits local edits as usual.
+    ///
+    /// # Persistence and limits
+    ///
+    /// Capture a normal snapshot and this pending sidecar while preventing document
+    /// mutations/imports: the two export calls do not form an atomic pair. Persist
+    /// or replace both as one consistent checkpoint (for example, one transaction
+    /// or versioned generation). If the new result is `None`, the new checkpoint
+    /// must remove or record the absence of any older pending sidecar; merely
+    /// skipping its write would retain stale data. Replace the previous checkpoint
+    /// only after both exports succeed; an export error is not `None`.
+    ///
+    /// Restore the snapshot first, then pass any sidecar bytes to ordinary
+    /// [`LoroDoc::import`]. Restored operations remain pending until their actual
+    /// missing dependencies are imported. This method neither fetches nor invents
+    /// predecessors that were never received from a remote peer.
+    ///
+    /// This API does not define or advance a transport cursor, nor establish that
+    /// a document is synced. `None` only describes this document's current remote
+    /// pending queue; it says nothing about updates that have not been received.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{ExportMode, LoroDoc};
+    ///
+    /// struct Checkpoint {
+    ///     snapshot: Vec<u8>,
+    ///     pending: Option<Vec<u8>>,
+    /// }
+    ///
+    /// let source = LoroDoc::new();
+    /// source.set_peer_id(1).unwrap();
+    /// let text = source.get_text("text");
+    /// text.insert(0, "base|").unwrap();
+    /// let base = source.export(ExportMode::Snapshot).unwrap();
+    /// let before_a = source.oplog_vv();
+    /// text.insert(5, "A").unwrap();
+    /// let a = source.export(ExportMode::updates(&before_a)).unwrap();
+    /// let before_b = source.oplog_vv();
+    /// text.insert(6, "B").unwrap();
+    /// let b = source.export(ExportMode::updates(&before_b)).unwrap();
+    ///
+    /// let receiver = LoroDoc::new();
+    /// receiver.import(&base).unwrap();
+    /// receiver.import(&b).unwrap(); // A has not arrived, so B stays pending.
+    /// // No document mutations/imports may interleave these two exports.
+    /// let mut saved = Checkpoint {
+    ///     snapshot: receiver.export(ExportMode::Snapshot).unwrap(),
+    ///     pending: receiver.export_pending_updates().unwrap(),
+    /// };
+    /// assert!(saved.pending.is_some());
+    /// // Persist both fields as one checkpoint in the application's storage.
+    ///
+    /// let restored = LoroDoc::new();
+    /// restored.import(&saved.snapshot).unwrap();
+    /// if let Some(bytes) = saved.pending.as_deref() {
+    ///     restored.import(bytes).unwrap();
+    /// }
+    /// assert_eq!(restored.get_text("text").to_string(), "base|");
+    /// assert!(restored.export_pending_updates().unwrap().is_some());
+    /// restored.import(&a).unwrap(); // The actual missing dependency arrives.
+    /// assert_eq!(restored.get_text("text").to_string(), "base|AB");
+    ///
+    /// // Replace the stored checkpoint, including clearing its older sidecar.
+    /// saved = Checkpoint {
+    ///     snapshot: restored.export(ExportMode::Snapshot).unwrap(),
+    ///     pending: restored.export_pending_updates().unwrap(),
+    /// };
+    /// assert!(saved.pending.is_none());
+    /// ```
+    pub fn export_pending_updates(&self) -> Result<Option<Vec<u8>>, LoroEncodeError> {
+        self.doc.export_pending_updates()
     }
 
     /// Analyze the container info of the doc

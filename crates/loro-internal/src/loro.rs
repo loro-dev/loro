@@ -1195,12 +1195,19 @@ impl LoroDoc {
     /// When the state frontiers are the op-log frontiers, this clones the cached
     /// op-log version vector and does not parse change blocks. Otherwise it
     /// walks the frontiers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the state's version cannot be resolved from the document history.
+    /// Use [`Self::try_state_vv`] to handle unreadable history as an error.
     #[inline]
-    pub fn state_vv(&self) -> LoroResult<VersionVector> {
+    pub fn state_vv(&self) -> VersionVector {
         self.try_state_vv()
+            .expect("Cannot resolve the state version vector")
     }
 
-    /// [`state_vv`](Self::state_vv), including a decode error from unreadable history.
+    /// Get the version vector of the current state, returning a decode error
+    /// when required history cannot be read.
     ///
     /// `Ok(None)` from the frontier walk (the frontiers are not in the dag) is
     /// [`LoroError::FrontiersNotFound`] for an id that can be named, not an empty
@@ -3528,6 +3535,21 @@ impl LoroDoc {
             }
             Ok(ans)
         })
+    }
+
+    /// Export received remote changes waiting for causal dependencies, excluding
+    /// local uncommitted operations. Returns `None` when nothing remains pending.
+    /// This method does not commit, consume pending, emit events, or advance the
+    /// applied version/frontiers. Ordinary snapshot/update exports omit pending.
+    ///
+    /// Capture snapshot and sidecar without concurrent document mutations/imports
+    /// and persist them as one consistent checkpoint. `None` in a new checkpoint
+    /// must clear its old sidecar; errors must not be treated as `None`. Restore
+    /// snapshot then sidecar with ordinary `import`; actual missing dependencies
+    /// must still arrive. This method cannot supply never-received predecessors
+    /// and does not define cursor advancement or whether the document is synced.
+    pub fn export_pending_updates(&self) -> Result<Option<Vec<u8>>, LoroEncodeError> {
+        encoding::export_pending_updates(&self.oplog.lock())
     }
 
     /// The doc only contains the history since the shallow history start version vector.
