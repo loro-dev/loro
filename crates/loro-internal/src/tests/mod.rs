@@ -3,6 +3,7 @@ fn init() {
     dev_utils::setup_test_log();
 }
 
+mod full_tracker_reuse;
 mod import_atomicity;
 mod op_count;
 mod replay_base;

@@ -123,3 +123,12 @@ List, Text, and MovableList still rebuild their trackers from CRDT IDs when
 retreating, when their source context is incomplete, or when shallow history
 requires it. That fallback is a correctness requirement, not a replay-base
 optimization.
+
+A rebuild from empty history leaves the Text tracker holding every op of its
+container by ID, with no opaque base span. The persistent calculator used by
+checkout and undo keeps such a tracker (`RichtextCalcMode::Crdt::full`): the
+next round replays into it only the ops above the version it holds, and diffs
+on it directly, retreats included. Without this, every undo and every
+checkout to an earlier version rebuilt the tracker from the whole history.
+Shallow documents seed the tracker from the shallow root, so they keep
+rebuilding.
