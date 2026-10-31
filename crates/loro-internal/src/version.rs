@@ -1045,8 +1045,19 @@ pub(crate) fn try_shrink_frontiers(
                 } else if x.lamport_last() < id.lamport {
                     // Already travel to a node with smaller lamport, no need to continue, we are sure two ops are concurrent now
                     ControlFlow::Break(())
+                } else if let Some(vv) = x.vv.get() {
+                    // The version at the start of `x`, cached by an earlier query, answers for
+                    // all of `x`'s ancestors (the ops in `x` itself are `x.peer`'s). Without
+                    // this, each id walks down to its own lamport: O(peers × history) on a doc
+                    // that has seen many peers.
+                    if vv.includes_id(id.id()) {
+                        should_insert = false;
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(false)
+                    }
                 } else {
-                    ControlFlow::Continue(())
+                    ControlFlow::Continue(true)
                 }
             })?;
         }
