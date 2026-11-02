@@ -8,7 +8,6 @@ use std::{
 use crate::sync::Mutex;
 use either::Either;
 use enum_as_inner::EnumAsInner;
-use enum_dispatch::enum_dispatch;
 use generic_btree::rle::{HasLength as _, Sliceable};
 use loro_common::{
     ContainerType, Counter, HasLamport, IdFull, IdLp, InternalString, LoroValue, PeerID, ID,
@@ -574,21 +573,13 @@ impl ContainerHistoryCache {
     }
 }
 
-#[enum_dispatch(OpGroupTrait)]
+#[whichever::dispatch(HistoryCacheTrait)]
 #[derive(Debug, EnumAsInner)]
 pub(crate) enum HistoryCacheForImporting {
     Tree(TreeOpGroup),
 }
 
-impl HistoryCacheForImporting {
-    fn insert(&mut self, op: &RichOp) {
-        match self {
-            HistoryCacheForImporting::Tree(t) => t.insert(op),
-        }
-    }
-}
-
-#[enum_dispatch]
+#[whichever::dispatchable]
 trait HistoryCacheTrait {
     fn insert(&mut self, op: &RichOp);
 }

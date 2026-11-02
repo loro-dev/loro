@@ -25,6 +25,7 @@ generic-btree = { path = "crates/generic-btree" }
 
 [workspace.dependencies]
 enum_dispatch = "0.3.11"
+whichever = "0.4.0"
 enum-as-inner = "0.6.0"
 rustc-hash = "2.1.1"
 tracing = { version = "0.1" }
