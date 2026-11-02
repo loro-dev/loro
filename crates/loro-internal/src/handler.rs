@@ -1083,6 +1083,7 @@ impl HandlerTrait for UnknownHandler {
     }
 }
 
+#[whichever::dispatch(from = false)]
 #[derive(Clone, EnumAsInner, Debug)]
 pub enum Handler {
     Text(TextHandler),
@@ -1223,6 +1224,7 @@ impl HandlerTrait for Handler {
     }
 }
 
+#[whichever::dispatch]
 impl Handler {
     fn apply_map_container_diff_value(
         map: &MapHandler,
@@ -1297,31 +1299,11 @@ impl Handler {
         })
     }
 
-    pub fn id(&self) -> ContainerID {
-        match self {
-            Self::Map(x) => x.id(),
-            Self::List(x) => x.id(),
-            Self::Text(x) => x.id(),
-            Self::Tree(x) => x.id(),
-            Self::MovableList(x) => x.id(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.id(),
-            Self::Unknown(x) => x.id(),
-        }
-    }
+    #[dispatch(*)]
+    pub fn id(&self) -> ContainerID;
 
-    pub(crate) fn container_idx(&self) -> ContainerIdx {
-        match self {
-            Self::Map(x) => x.idx(),
-            Self::List(x) => x.idx(),
-            Self::Text(x) => x.idx(),
-            Self::Tree(x) => x.idx(),
-            Self::MovableList(x) => x.idx(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.idx(),
-            Self::Unknown(x) => x.idx(),
-        }
-    }
+    #[dispatch(*, call = idx)]
+    pub(crate) fn container_idx(&self) -> ContainerIdx;
 
     pub fn c_type(&self) -> ContainerType {
         match self {
@@ -1336,18 +1318,8 @@ impl Handler {
         }
     }
 
-    fn get_deep_value(&self) -> LoroValue {
-        match self {
-            Self::Map(x) => x.get_deep_value(),
-            Self::List(x) => x.get_deep_value(),
-            Self::MovableList(x) => x.get_deep_value(),
-            Self::Text(x) => x.get_deep_value(),
-            Self::Tree(x) => x.get_deep_value(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.get_deep_value(),
-            Self::Unknown(x) => x.get_deep_value(),
-        }
-    }
+    #[dispatch(*)]
+    fn get_deep_value(&self) -> LoroValue;
 
     pub(crate) fn apply_diff(
         &self,
@@ -1554,17 +1526,9 @@ impl Handler {
         Ok(())
     }
 
+    #[dispatch(Text, Map, List, MovableList, Tree, Counter)]
     pub fn clear(&self) -> LoroResult<()> {
-        match self {
-            Handler::Text(text_handler) => text_handler.clear(),
-            Handler::Map(map_handler) => map_handler.clear(),
-            Handler::List(list_handler) => list_handler.clear(),
-            Handler::MovableList(movable_list_handler) => movable_list_handler.clear(),
-            Handler::Tree(tree_handler) => tree_handler.clear(),
-            #[cfg(feature = "counter")]
-            Handler::Counter(counter_handler) => counter_handler.clear(),
-            Handler::Unknown(_unknown_handler) => Ok(()),
-        }
+        Ok(())
     }
 }
 
