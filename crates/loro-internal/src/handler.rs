@@ -113,6 +113,7 @@ fn checked_delta_index_end(pos: usize, len: usize, container_len: usize) -> Loro
     })
 }
 
+#[whichever::dispatchable]
 pub trait HandlerTrait: Clone + Sized {
     fn is_attached(&self) -> bool;
     fn attached_handler(&self) -> Option<&BasicHandler>;
@@ -128,7 +129,7 @@ pub trait HandlerTrait: Clone + Sized {
         txn: &mut Transaction,
         parent: &BasicHandler,
         self_id: ContainerID,
-    ) -> LoroResult<Self>;
+    ) -> Result<Self, LoroError>;
     /// If a detached container is attached, this method will return its corresponding attached handler.
     fn get_attached(&self) -> Option<Self>;
 
@@ -1096,131 +1097,10 @@ pub enum Handler {
     Unknown(UnknownHandler),
 }
 
+#[whichever::dispatch]
 impl HandlerTrait for Handler {
-    fn is_attached(&self) -> bool {
-        match self {
-            Self::Text(x) => x.is_attached(),
-            Self::Map(x) => x.is_attached(),
-            Self::List(x) => x.is_attached(),
-            Self::Tree(x) => x.is_attached(),
-            Self::MovableList(x) => x.is_attached(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.is_attached(),
-            Self::Unknown(x) => x.is_attached(),
-        }
-    }
-
-    fn attached_handler(&self) -> Option<&BasicHandler> {
-        match self {
-            Self::Text(x) => x.attached_handler(),
-            Self::Map(x) => x.attached_handler(),
-            Self::List(x) => x.attached_handler(),
-            Self::MovableList(x) => x.attached_handler(),
-            Self::Tree(x) => x.attached_handler(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.attached_handler(),
-            Self::Unknown(x) => x.attached_handler(),
-        }
-    }
-
-    fn get_value(&self) -> LoroValue {
-        match self {
-            Self::Text(x) => x.get_value(),
-            Self::Map(x) => x.get_value(),
-            Self::List(x) => x.get_value(),
-            Self::MovableList(x) => x.get_value(),
-            Self::Tree(x) => x.get_value(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.get_value(),
-            Self::Unknown(x) => x.get_value(),
-        }
-    }
-
-    fn get_deep_value(&self) -> LoroValue {
-        match self {
-            Self::Text(x) => x.get_deep_value(),
-            Self::Map(x) => x.get_deep_value(),
-            Self::List(x) => x.get_deep_value(),
-            Self::MovableList(x) => x.get_deep_value(),
-            Self::Tree(x) => x.get_deep_value(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.get_deep_value(),
-            Self::Unknown(x) => x.get_deep_value(),
-        }
-    }
-
-    fn kind(&self) -> ContainerType {
-        match self {
-            Self::Text(x) => x.kind(),
-            Self::Map(x) => x.kind(),
-            Self::List(x) => x.kind(),
-            Self::MovableList(x) => x.kind(),
-            Self::Tree(x) => x.kind(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.kind(),
-            Self::Unknown(x) => x.kind(),
-        }
-    }
-
-    fn to_handler(&self) -> Handler {
-        match self {
-            Self::Text(x) => x.to_handler(),
-            Self::Map(x) => x.to_handler(),
-            Self::List(x) => x.to_handler(),
-            Self::MovableList(x) => x.to_handler(),
-            Self::Tree(x) => x.to_handler(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.to_handler(),
-            Self::Unknown(x) => x.to_handler(),
-        }
-    }
-
-    fn attach(
-        &self,
-        txn: &mut Transaction,
-        parent: &BasicHandler,
-        self_id: ContainerID,
-    ) -> LoroResult<Self> {
-        match self {
-            Self::Text(x) => Ok(Handler::Text(x.attach(txn, parent, self_id)?)),
-            Self::Map(x) => Ok(Handler::Map(x.attach(txn, parent, self_id)?)),
-            Self::List(x) => Ok(Handler::List(x.attach(txn, parent, self_id)?)),
-            Self::MovableList(x) => Ok(Handler::MovableList(x.attach(txn, parent, self_id)?)),
-            Self::Tree(x) => Ok(Handler::Tree(x.attach(txn, parent, self_id)?)),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => Ok(Handler::Counter(x.attach(txn, parent, self_id)?)),
-            Self::Unknown(x) => Ok(Handler::Unknown(x.attach(txn, parent, self_id)?)),
-        }
-    }
-
-    fn get_attached(&self) -> Option<Self> {
-        match self {
-            Self::Text(x) => x.get_attached().map(Handler::Text),
-            Self::Map(x) => x.get_attached().map(Handler::Map),
-            Self::List(x) => x.get_attached().map(Handler::List),
-            Self::MovableList(x) => x.get_attached().map(Handler::MovableList),
-            Self::Tree(x) => x.get_attached().map(Handler::Tree),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.get_attached().map(Handler::Counter),
-            Self::Unknown(x) => x.get_attached().map(Handler::Unknown),
-        }
-    }
-
     fn from_handler(h: Handler) -> Option<Self> {
         Some(h)
-    }
-
-    fn doc(&self) -> Option<LoroDoc> {
-        match self {
-            Self::Text(x) => x.doc(),
-            Self::Map(x) => x.doc(),
-            Self::List(x) => x.doc(),
-            Self::MovableList(x) => x.doc(),
-            Self::Tree(x) => x.doc(),
-            #[cfg(feature = "counter")]
-            Self::Counter(x) => x.doc(),
-            Self::Unknown(x) => x.doc(),
-        }
     }
 }
 
@@ -1317,9 +1197,6 @@ impl Handler {
             Self::Unknown(x) => x.id().container_type(),
         }
     }
-
-    #[dispatch(*)]
-    fn get_deep_value(&self) -> LoroValue;
 
     pub(crate) fn apply_diff(
         &self,
