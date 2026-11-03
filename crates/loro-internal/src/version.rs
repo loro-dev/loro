@@ -1066,7 +1066,7 @@ pub(crate) fn try_shrink_frontiers(
             if remaining.is_empty() {
                 ControlFlow::Break(())
             } else {
-                ControlFlow::Continue(())
+                ControlFlow::Continue(true)
             }
         })?;
     }
