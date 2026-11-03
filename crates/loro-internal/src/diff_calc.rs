@@ -118,7 +118,7 @@ pub(crate) struct DiffCalcVersionInfo<'a> {
     replay_base_vv: &'a VersionVector,
     /// The replay base is a critical version of `ancestry(from) ∪ ancestry(to)`:
     /// nothing above it is concurrent with anything below it. See
-    /// `OpLog::iter_from_replay_base_causally`.
+    /// `OpLog::try_iter_from_replay_base_causally`.
     replay_base_is_critical: bool,
 }
 

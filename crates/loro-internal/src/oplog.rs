@@ -133,7 +133,7 @@ pub(crate) enum CriticalVersionSearch {
     Unknown,
 }
 
-/// The replay base [`OpLog::iter_from_replay_base_causally`] chose.
+/// The replay base [`OpLog::try_iter_from_replay_base_causally`] chose.
 #[derive(Debug)]
 pub(crate) struct ReplayBase {
     pub vv: VersionVector,
@@ -1115,6 +1115,8 @@ impl OpLog {
     /// every container with an op in the concurrent old history: the diff
     /// calculator resolves those from history and treats them as "source not
     /// in op context", and may trust `from` as the base for everything else.
+    // Production replays go through the fallible or filtered entry points.
+    #[cfg(test)]
     #[allow(clippy::type_complexity)]
     pub(crate) fn iter_from_replay_base_causally(
         &self,
