@@ -152,6 +152,34 @@ describe("undo", () => {
     expect(doc.getText("text").length).toBe(100);
   });
 
+  test("onPush metadata survives eviction at the undo limit", () => {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    let before = 0;
+    let restored: { value: unknown; cursors: Cursor[] } | undefined;
+    const undo = new UndoManager(doc, {
+      maxUndoSteps: 3,
+      mergeInterval: 0,
+      onPush: () => ({ value: before, cursors: [expectDefined(text.getCursor(before))] }),
+      onPop: (_isUndo, meta) => {
+        restored = meta;
+      },
+    });
+    for (let i = 0; i < 10; i++) {
+      before = text.length;
+      text.insert(before, "x");
+      doc.commit();
+    }
+    for (let i = 0; i < 3; i++) {
+      const length = text.length;
+      expect(undo.undo()).toBe(true);
+      expect(restored?.value).toBe(length - 1);
+      expect(restored?.cursors.length).toBe(1);
+    }
+    expect(undo.undo()).toBe(false);
+    undo.free();
+  });
+
   test("max undo steps after remote update and undo", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
