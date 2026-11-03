@@ -2,6 +2,10 @@
 #![allow(clippy::uninlined_format_args)]
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]
+/// Re-export of the [`bytes`](https://docs.rs/bytes) crate used by
+/// [`LoroDoc::from_snapshot_bytes`], so callers can build a matching
+/// [`bytes::Bytes`] without depending on a compatible `bytes` version themselves.
+pub use bytes;
 use event::DiffBatch;
 use event::{DiffEvent, Subscriber};
 pub use loro_common::InternalString;
@@ -751,6 +755,28 @@ impl LoroDoc {
     /// Import still scans the snapshot to verify its integrity, so a
     /// memory-mapped snapshot is read during import even if its containers are
     /// not accessed. Decoding may allocate additional memory.
+    ///
+    /// # Buffer lifetime
+    ///
+    /// The returned document may keep slices of `bytes` alive for its whole
+    /// lifetime, even after the containers stored there are deleted. Lazy reads trust bytes that were
+    /// checksum-verified during import, so the underlying memory must not
+    /// change while any slice is alive. When `bytes` wraps a memory-mapped
+    /// file, do not truncate or rewrite that file in place while the document
+    /// is alive (doing so can raise `SIGBUS` or corrupt reads, and Windows
+    /// refuses to replace a mapped file); write a new file and rename it over
+    /// the old path instead. To release the buffer, drop the document, or
+    /// export a snapshot and import it with [`LoroDoc::from_snapshot`].
+    ///
+    /// ```
+    /// use loro::{bytes::Bytes, ExportMode, LoroDoc};
+    ///
+    /// let doc = LoroDoc::new();
+    /// doc.get_text("text").insert(0, "Hello").unwrap();
+    /// let snapshot = Bytes::from(doc.export(ExportMode::Snapshot).unwrap());
+    /// let restored = LoroDoc::from_snapshot_bytes(snapshot).unwrap();
+    /// assert_eq!(restored.get_text("text").to_string(), "Hello");
+    /// ```
     pub fn from_snapshot_bytes(bytes: bytes::Bytes) -> LoroResult<Self> {
         let inner = InnerLoroDoc::from_snapshot_bytes(bytes)?;
         inner.start_auto_commit();

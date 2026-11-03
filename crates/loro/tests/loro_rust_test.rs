@@ -3615,13 +3615,43 @@ fn test_from_shallow_snapshot() {
 
 #[test]
 #[parallel]
-fn test_from_snapshot_bytes_keeps_the_buffer() {
+fn test_from_snapshot_bytes() {
     let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
     doc.get_text("text").insert(0, "Hello").unwrap();
-    let snapshot = bytes::Bytes::from(doc.export(ExportMode::Snapshot).unwrap());
-    let new_doc = LoroDoc::from_snapshot_bytes(snapshot.clone()).unwrap();
-    assert!(!snapshot.is_unique());
-    assert_eq!(new_doc.get_deep_value(), doc.get_deep_value());
+    doc.commit();
+    let shallow_frontiers = doc.oplog_frontiers();
+    doc.get_map("map").insert("k", vec![7u8; 1024]).unwrap();
+    doc.commit();
+
+    let snapshot = loro::bytes::Bytes::from(doc.export(ExportMode::Snapshot).unwrap());
+    let restored = LoroDoc::from_snapshot_bytes(snapshot.clone()).unwrap();
+    assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+    assert_eq!(restored.oplog_vv(), doc.oplog_vv());
+    // The restored doc stays editable and exportable after the input handle is dropped.
+    drop(snapshot);
+    restored.get_text("text").insert(5, "!").unwrap();
+    let again = LoroDoc::from_snapshot(&restored.export(ExportMode::Snapshot).unwrap()).unwrap();
+    assert_eq!(again.get_deep_value(), restored.get_deep_value());
+
+    let shallow = doc
+        .export(ExportMode::shallow_snapshot(&shallow_frontiers))
+        .unwrap();
+    let restored = LoroDoc::from_snapshot_bytes(shallow.into()).unwrap();
+    assert!(restored.is_shallow());
+    assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+
+    // Invalid input is rejected the same way as by `from_snapshot`.
+    let updates = doc.export(ExportMode::all_updates()).unwrap();
+    assert!(LoroDoc::from_snapshot_bytes(updates.into()).is_err());
+    let mut corrupted = doc.export(ExportMode::Snapshot).unwrap();
+    let last = corrupted.len() - 1;
+    corrupted[last] ^= 1;
+    assert!(matches!(
+        LoroDoc::from_snapshot_bytes(corrupted.into()),
+        Err(LoroError::DecodeChecksumMismatchError)
+    ));
+    assert!(LoroDoc::from_snapshot_bytes(loro::bytes::Bytes::from_static(b"not loro")).is_err());
 }
 
 #[test]

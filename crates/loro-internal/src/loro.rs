@@ -598,7 +598,9 @@ impl LoroDoc {
     }
 
     /// Like [`Self::from_snapshot`], but keeps references into `bytes` instead
-    /// of copying the snapshot.
+    /// of copying the snapshot. The doc (and its kv stores and block caches)
+    /// may hold slices of `bytes` for its whole lifetime, so the caller must
+    /// not mutate the underlying memory; see `context/internal-encoding.md`.
     pub fn from_snapshot_bytes(bytes: Bytes) -> LoroResult<Self> {
         let doc = Self::new();
         let ParsedHeaderAndBody { mode, body, .. } = parse_header_and_body(&bytes, true)?;

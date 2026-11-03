@@ -1,10 +1,12 @@
-use loro::{LoroDoc, LoroError};
+use loro::{bytes::Bytes, ExportMode, LoroDoc, LoroError};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 struct LargestAllocation;
 
 static LARGEST: AtomicUsize = AtomicUsize::new(0);
+/// Serializes the tests in this file: they share the `LARGEST` counter.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 unsafe impl GlobalAlloc for LargestAllocation {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -25,9 +27,10 @@ unsafe impl GlobalAlloc for LargestAllocation {
 #[global_allocator]
 static ALLOCATOR: LargestAllocation = LargestAllocation;
 
-// Keep this integration test separate so other tests cannot affect its allocation counter.
+// Keep these integration tests in their own binary so unrelated tests cannot affect the allocation counter.
 #[test]
 fn from_snapshot_rejects_invalid_input_without_copying_it() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     const INPUT_SIZE: usize = 1024 * 1024;
     let invalid_magic = vec![0; INPUT_SIZE];
     let mut invalid_checksum = vec![0; INPUT_SIZE];
@@ -71,4 +74,40 @@ fn from_snapshot_rejects_invalid_input_without_copying_it() {
             input.len(),
         );
     }
+}
+
+#[test]
+fn from_snapshot_bytes_does_not_copy_the_snapshot() {
+    let _guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    const VALUES: u32 = 8;
+    const VALUE_SIZE: usize = 128 * 1024;
+    let doc = LoroDoc::new();
+    let map = doc.get_map("images");
+    for i in 0..VALUES {
+        // Pseudo-random bytes so the store cannot shrink them by compression.
+        let mut x = 0x9E37_79B9u32.wrapping_mul(i + 1);
+        let value: Vec<u8> = (0..VALUE_SIZE)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        map.insert(&i.to_string(), value).unwrap();
+    }
+    doc.commit();
+    let snapshot = Bytes::from(doc.export(ExportMode::Snapshot).unwrap());
+    let expected = doc.get_deep_value();
+    drop(doc);
+
+    LARGEST.store(0, Relaxed);
+    let restored = LoroDoc::from_snapshot_bytes(snapshot.clone()).unwrap();
+    let largest = LARGEST.load(Relaxed);
+    assert!(
+        largest < snapshot.len() / 2,
+        "allocated {largest} bytes while importing a {}-byte snapshot",
+        snapshot.len(),
+    );
+    assert_eq!(restored.get_deep_value(), expected);
 }

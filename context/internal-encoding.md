@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-10-23.
+Verified against code 2026-11-03.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -78,6 +78,17 @@ The borrowed `from_snapshot(&[u8])` entry point validates the envelope and mode
 before copying the supported snapshot body. Do not delegate it by eagerly
 copying the input into `Bytes`: malformed or unsupported input must be rejected
 without an input-sized allocation.
+Ownership contract: the SSTable `data` of the oplog/state stores, the shallow
+root's `encoded_state_bytes`, and lazy container wrappers hold `slice_ref`s into
+the caller's buffer, so the doc can keep that buffer alive for its whole
+lifetime, including after compaction or deletion of the containers stored in it.
+Lazy reads trust bytes verified at import, so the buffer must not change while
+the doc lives (an mmapped file rewritten in place gives `SIGBUS` or wrong data).
+The public docs on `loro::LoroDoc::from_snapshot_bytes` state this; keep them in
+sync. `loro` re-exports `bytes` as `loro::bytes` so callers need not match the
+crate version themselves. Regressions: `test_from_snapshot_bytes` in
+`crates/loro/tests/loro_rust_test.rs` and the allocation-counting tests in
+`crates/loro/tests/snapshot_import_allocation.rs`.
 
 `fast_snapshot.rs:Snapshot` has three body sections:
 
