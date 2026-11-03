@@ -14,7 +14,6 @@ use itertools::Itertools;
 use tracker_texts::TrackerTexts;
 use tracker_values::TrackerValues;
 
-use enum_dispatch::enum_dispatch;
 use loro_common::{
     CompactIdLp, ContainerID, Counter, HasCounterSpan, IdFull, IdLp, IdSpan, LoroValue, PeerID, ID,
 };
@@ -516,7 +515,7 @@ impl DiffCalculator {
 /// NOTE: not every op between two versions are included in a certain container.
 /// So there may be some ops that cannot be seen by the container.
 ///
-#[enum_dispatch]
+#[whichever::dispatchable]
 pub(crate) trait DiffCalculatorTrait {
     fn start_tracking(&mut self, oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode);
     fn apply_change(
@@ -546,7 +545,7 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-#[enum_dispatch(DiffCalculatorTrait)]
+#[whichever::dispatch(DiffCalculatorTrait)]
 #[derive(Debug)]
 pub(crate) enum ContainerDiffCalculator {
     Map(MapDiffCalculator),
@@ -559,6 +558,7 @@ pub(crate) enum ContainerDiffCalculator {
     Unknown(UnknownDiffCalculator),
 }
 
+#[whichever::dispatch]
 impl ContainerDiffCalculator {
     /// Whether ops that both versions already contain can be skipped.
     ///
@@ -571,14 +571,8 @@ impl ContainerDiffCalculator {
         matches!(self, Self::Map(_))
     }
 
-    fn mark_source_not_in_op_context(&mut self) {
-        match self {
-            Self::Richtext(calc) => calc.mark_source_not_in_op_context(),
-            Self::List(calc) => calc.mark_source_not_in_op_context(),
-            Self::MovableList(calc) => calc.mark_source_not_in_op_context(),
-            _ => {}
-        }
-    }
+    #[dispatch(Richtext, List, MovableList)]
+    fn mark_source_not_in_op_context(&mut self) {}
 }
 
 trait RebuildOpVisitor {

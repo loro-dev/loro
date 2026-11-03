@@ -9,7 +9,6 @@ use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
 use container_store::ContainerStore;
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
-use enum_dispatch::enum_dispatch;
 use loro_common::{ContainerID, Lamport, LoroError, LoroResult, TreeID, ID};
 use loro_delta::DeltaItem;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -273,7 +272,7 @@ pub(crate) struct ApplyLocalOpReturn {
     pub deleted_containers: Vec<ContainerID>,
 }
 
-#[enum_dispatch]
+#[whichever::dispatchable]
 pub(crate) trait ContainerState {
     fn container_idx(&self) -> ContainerIdx;
 
@@ -312,6 +311,7 @@ pub(crate) trait ContainerState {
     #[allow(unused)]
     fn get_child_containers(&self) -> Vec<ContainerID>;
 
+    #[allow(unused)]
     fn fork(&self, config: &Configure) -> Self;
 }
 
@@ -391,7 +391,7 @@ impl<T: ContainerState> ContainerState for Box<T> {
 }
 
 #[allow(clippy::enum_variant_names)]
-#[enum_dispatch(ContainerState)]
+#[whichever::dispatch(ContainerState)]
 #[derive(EnumAsInner, Debug)]
 pub enum State {
     ListState(Box<ListState>),
@@ -441,6 +441,7 @@ impl From<CounterState> for State {
     }
 }
 
+#[whichever::dispatch]
 impl State {
     pub fn new_list(idx: ContainerIdx) -> Self {
         Self::ListState(Box::new(ListState::new(idx)))
@@ -462,35 +463,8 @@ impl State {
         Self::UnknownState(UnknownState::new(idx))
     }
 
-    pub fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
-        match self {
-            State::ListState(s) => s.encode_snapshot_fast(&mut w),
-            State::MovableListState(s) => s.encode_snapshot_fast(&mut w),
-            State::MapState(s) => s.encode_snapshot_fast(&mut w),
-            State::RichtextState(s) => s.encode_snapshot_fast(&mut w),
-            State::TreeState(s) => s.encode_snapshot_fast(&mut w),
-            #[cfg(feature = "counter")]
-            State::CounterState(s) => s.encode_snapshot_fast(&mut w),
-            State::UnknownState(s) => s.encode_snapshot_fast(&mut w),
-        }
-    }
-
-    pub fn fork(&self, config: &Configure) -> Self {
-        match self {
-            State::ListState(list_state) => State::ListState(list_state.fork(config)),
-            State::MovableListState(movable_list_state) => {
-                State::MovableListState(movable_list_state.fork(config))
-            }
-            State::MapState(map_state) => State::MapState(map_state.fork(config)),
-            State::RichtextState(richtext_state) => {
-                State::RichtextState(richtext_state.fork(config))
-            }
-            State::TreeState(tree_state) => State::TreeState(tree_state.fork(config)),
-            #[cfg(feature = "counter")]
-            State::CounterState(counter_state) => State::CounterState(counter_state.fork(config)),
-            State::UnknownState(unknown_state) => State::UnknownState(unknown_state.fork(config)),
-        }
-    }
+    #[dispatch(*)]
+    pub fn encode_snapshot_fast<W: Write>(&mut self, w: W);
 }
 
 impl DocState {
