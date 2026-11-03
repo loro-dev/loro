@@ -851,11 +851,13 @@ impl AppDag {
 
     /// Travel the ancestors of the given id, and call the callback for each node
     ///
-    /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest)
+    /// It will travel the ancestors in the reverse order (from the greatest lamport to the smallest).
+    /// The callback returns `Continue(false)` to skip a node's own ancestors; they are still
+    /// visited if another path reaches them.
     pub(crate) fn try_travel_ancestors(
         &self,
         id: ID,
-        f: &mut dyn FnMut(&AppDagNode) -> ControlFlow<()>,
+        f: &mut dyn FnMut(&AppDagNode) -> ControlFlow<(), bool>,
     ) -> LoroResult<()> {
         struct PendingNode(AppDagNode);
         impl PartialEq for PendingNode {
@@ -884,8 +886,10 @@ impl AppDag {
             self.try_get(id)?.ok_or(LoroError::FrontiersNotFound(id))?,
         ));
         while let Some(PendingNode(node)) = pending.pop() {
-            if f(&node).is_break() {
-                break;
+            match f(&node) {
+                ControlFlow::Break(()) => break,
+                ControlFlow::Continue(false) => continue,
+                ControlFlow::Continue(true) => {}
             }
 
             for dep in node.deps.iter() {
@@ -1348,6 +1352,10 @@ impl AppDag {
     }
 
     pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
+        // The current version already has a maintained frontier.
+        if vv == &self.vv {
+            return Ok(self.frontiers.clone());
+        }
         if vv.is_empty() {
             return Ok(Default::default());
         }

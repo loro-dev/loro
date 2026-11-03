@@ -721,3 +721,145 @@ fn persisted_walks_record_each_movable_list_value_once() {
     });
     assert_eq!(len, 2 * 2 * rounds);
 }
+
+/// L13: filtering is a projection of yielded changes, never of their causal
+/// context. Record the author's actual version before each retained op as an
+/// oracle independent of the replay iterator (both iterator entry points share
+/// an implementation).
+#[test]
+fn filtered_replay_preserves_full_causal_context() {
+    use crate::handler::HandlerTrait;
+    use loro_common::ID;
+
+    let a = LoroDoc::new_auto_commit();
+    a.set_peer_id(1).unwrap();
+    a.get_map("noise").insert("seed", 0).unwrap();
+    a.commit_then_renew();
+    let b = a.fork();
+    b.set_peer_id(2).unwrap();
+    let c = a.fork();
+    c.set_peer_id(3).unwrap();
+    // A transitive dependency containing no target-container operations.
+    b.get_map("noise").insert("remote", 1).unwrap();
+    b.commit_then_renew();
+    a.import(&b.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    a.get_map("noise").insert("local", 2).unwrap();
+    a.commit_then_renew();
+    let first_context = a.oplog_vv();
+    let first_id = ID::new(1, first_context.get(&1).copied().unwrap());
+    a.get_text("target").insert_unicode(0, "x").unwrap();
+    a.commit_then_renew();
+    // An unrelated op inside the retained change must still count toward the
+    // author's prefix when its later target op is handed to the tracker.
+    let second_change_context = a.oplog_vv();
+    a.get_map("noise").insert("mixed", 3).unwrap();
+    let mut second_context = second_change_context.clone();
+    let second_id = ID::new(1, second_context.get(&1).copied().unwrap() + 1);
+    second_context.extend_to_include_end_id(second_id);
+    a.get_text("target").insert_unicode(1, "y").unwrap();
+    a.commit_then_renew();
+    let historical = a.oplog_vv();
+    // Concurrent retained and skipped changes must not leak into A's context.
+    let concurrent_context = c.oplog_vv();
+    c.get_text("target").insert_unicode(0, "z").unwrap();
+    c.commit_then_renew();
+    c.get_map("noise").insert("concurrent", 4).unwrap();
+    c.commit_then_renew();
+    a.import(&c.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+
+    for cold in [false, true] {
+        let restored = LoroDoc::new_auto_commit();
+        let doc = if cold {
+            restored
+                .import(&a.export(ExportMode::Snapshot).unwrap())
+                .unwrap();
+            &restored
+        } else {
+            &a
+        };
+        let idx = doc.get_text("target").idx();
+        let oplog = doc.oplog().lock();
+        for target in [&historical, oplog.dag.vv()] {
+            let heads = oplog.dag.vv_to_frontiers(target);
+            let (_, iter) = oplog.iter_from_replay_base_causally_filtered(
+                &VersionVector::default(),
+                &Default::default(),
+                target,
+                &heads,
+                Some(idx),
+            );
+            let mut seen = std::collections::HashMap::new();
+            for (change, (start, end), context) in iter {
+                assert!(change.ops.iter().any(|op| op.container == idx));
+                let mut expected_change_context = oplog.dag.frontiers_to_vv(&change.deps).unwrap();
+                expected_change_context.extend_to_include_end_id(change.id);
+                assert_eq!(*context.borrow(), expected_change_context);
+                for op in change
+                    .ops
+                    .iter()
+                    .filter(|op| op.container == idx && op.counter >= start && op.counter < end)
+                {
+                    let id = ID::new(change.peer(), op.counter);
+                    let mut actual = context.borrow().clone();
+                    actual.extend_to_include_end_id(id);
+                    assert!(seen.insert(id, actual).is_none());
+                }
+            }
+            assert_eq!(seen.get(&first_id), Some(&first_context));
+            assert_eq!(seen.get(&second_id), Some(&second_context));
+            if target == &historical {
+                assert_eq!(seen.len(), 2);
+            } else {
+                assert_eq!(seen.len(), 3);
+                assert_eq!(seen.get(&ID::new(3, 0)), Some(&concurrent_context));
+            }
+        }
+    }
+}
+
+/// D8b / section 4.1: filtering must not change the selected base, its
+/// criticality certificate, the mode, or retained changes' ranges/contexts.
+#[test]
+fn filtered_replay_preserves_critical_base_and_checkout_contract() {
+    use crate::handler::HandlerTrait;
+    let (doc, sync, before, after) = one_concurrent_import(4);
+    let idx = doc.get_text("t").idx();
+    let absent = doc.get_text("absent").idx();
+    let oplog = doc.oplog().lock();
+    for (from, to) in [(&before, &after), (&after, &before), (&sync, &after)] {
+        let from_heads = oplog.dag.vv_to_frontiers(from);
+        let to_heads = oplog.dag.vv_to_frontiers(to);
+        let (expected_base, iter) =
+            oplog.iter_from_replay_base_causally(from, &from_heads, to, &to_heads);
+        let expected: Vec<_> = iter
+            .map(|(c, range, vv)| (c.id, range, vv.borrow().clone()))
+            .collect();
+        assert!(!expected.is_empty());
+        for filter in [idx, absent] {
+            let (base, iter) = oplog.iter_from_replay_base_causally_filtered(
+                from,
+                &from_heads,
+                to,
+                &to_heads,
+                Some(filter),
+            );
+            assert_eq!(base.vv, expected_base.vv);
+            assert_eq!(base.is_critical, expected_base.is_critical);
+            assert_eq!(base.diff_mode, expected_base.diff_mode);
+            assert_eq!(
+                base.concurrent_containers,
+                expected_base.concurrent_containers
+            );
+            let actual: Vec<_> = iter
+                .map(|(c, range, vv)| (c.id, range, vv.borrow().clone()))
+                .collect();
+            if filter == idx {
+                assert_eq!(actual, expected);
+            } else {
+                assert!(actual.is_empty());
+            }
+        }
+    }
+}
