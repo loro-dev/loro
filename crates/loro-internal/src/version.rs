@@ -1064,9 +1064,23 @@ pub(crate) fn try_shrink_frontiers(
                 }
             }
             if remaining.is_empty() {
-                ControlFlow::Break(())
+                return ControlFlow::Break(());
+            }
+            if let Some(vv) = node.vv.get() {
+                // The version at the start of `node`, cached by an earlier
+                // query, answers for all of its ancestors (its own ops are
+                // `node.peer`'s, checked above), so resolve every remaining
+                // candidate against it instead of walking further down.
+                // Without this the walk runs to the oldest candidate's
+                // lamport: O(history) per import on a doc with many peers.
+                remaining.retain(|&peer, &mut counter| !vv.includes_id(ID::new(peer, counter)));
+                if remaining.is_empty() {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(false)
+                }
             } else {
-                ControlFlow::Continue(())
+                ControlFlow::Continue(true)
             }
         })?;
     }
@@ -1117,18 +1131,9 @@ fn shrink_frontiers_reference(last_ids: &Frontiers, dag: &AppDag) -> Result<Fron
                 } else if x.lamport_last() < id.lamport {
                     // Already travel to a node with smaller lamport, no need to continue, we are sure two ops are concurrent now
                     ControlFlow::Break(())
-                } else if let Some(vv) = x.vv.get() {
-                    // The version at the start of `x`, cached by an earlier query, answers for
-                    // all of `x`'s ancestors (the ops in `x` itself are `x.peer`'s). Without
-                    // this, each id walks down to its own lamport: O(peers × history) on a doc
-                    // that has seen many peers.
-                    if vv.includes_id(id.id()) {
-                        should_insert = false;
-                        ControlFlow::Break(())
-                    } else {
-                        ControlFlow::Continue(false)
-                    }
                 } else {
+                    // The reference deliberately ignores cached version
+                    // vectors so it stays independent of that shortcut.
                     ControlFlow::Continue(true)
                 }
             })
@@ -1303,7 +1308,15 @@ mod tests {
         let oplog = cold.oplog().lock();
         let dag = &oplog.dag;
         let mut random = 42u64;
+        let peers: Vec<_> = dag.vv().iter().map(|(&p, &c)| (p, c)).collect();
         for _ in 0..1000 {
+            // Warm one node's cached version vector per round, so the walk
+            // runs against cold, partially warm and mostly warm caches.
+            random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let (peer, count) = peers[(random >> 33) as usize % peers.len()];
+            let id = ID::new(peer, (random % count as u64) as Counter);
+            let node = crate::dag::Dag::get(dag, id).unwrap();
+            dag.ensure_vv_for(&node);
             let mut ids = Frontiers::default();
             for (&peer, &count) in dag.vv().iter() {
                 random = random.wrapping_mul(6364136223846793005).wrapping_add(1);
