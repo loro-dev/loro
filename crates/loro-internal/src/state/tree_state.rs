@@ -21,13 +21,13 @@ use crate::delta::{TreeDiff, TreeDiffItem, TreeExternalDiff};
 use crate::diff_calc::DiffMode;
 use crate::event::InternalDiff;
 use crate::op::Op;
+use crate::LoroDocInner;
 use crate::{
     container::tree::tree_op::TreeOp,
     delta::TreeInternalDiff,
     event::{Diff, Index},
     op::RawOp,
 };
-use crate::{DocState, LoroDocInner};
 
 #[derive(Clone, Debug, EnumAsInner)]
 pub enum TreeFractionalIndexConfigInner {
@@ -1501,20 +1501,6 @@ impl ContainerState for TreeState {
 
     fn fork(&self, _config: &Configure) -> Self {
         self.clone()
-    }
-}
-
-// convert map container to LoroValue
-#[allow(clippy::ptr_arg)]
-pub(crate) fn get_meta_value(nodes: &mut Vec<LoroValue>, state: &mut DocState) {
-    let mut pending = nodes.iter_mut().rev().collect::<Vec<_>>();
-    while let Some(node) = pending.pop() {
-        let map = node.as_map_mut().unwrap().make_mut();
-        let meta = map.get_mut("meta").unwrap();
-        let id = meta.as_container().unwrap();
-        *meta = state.get_container_deep_value(state.arena.register_container(id));
-        let children = map.get_mut("children").unwrap().as_list_mut().unwrap();
-        pending.extend(children.make_mut().iter_mut().rev());
     }
 }
 

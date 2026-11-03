@@ -1547,7 +1547,7 @@ mod snapshot {
         /// 6. A list of unique peer IDs used in the encoding
         fn encode_snapshot_fast<W: std::io::prelude::Write>(&mut self, mut w: W) {
             let value = self.get_value().into_list().unwrap();
-            postcard::to_io(&*value, &mut w).unwrap();
+            crate::state::value_decode::encode_list(&value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let len = self.len();
             let mut items = Vec::with_capacity(len);

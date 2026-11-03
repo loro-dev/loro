@@ -506,7 +506,7 @@ mod snapshot {
             // 3. Groups of (leb128 peer_idx, leb128 lamport), each has a respective map entry
             //    from either 1 or 2 when they all sorted by the key strings
             let value = self.get_value().into_map().unwrap();
-            postcard::to_io(&*value, &mut w).unwrap();
+            crate::state::value_decode::encode_map(&value, &mut w).unwrap();
 
             let keys_with_none_value = self
                 .map

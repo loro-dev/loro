@@ -23,7 +23,6 @@ use crate::{
     delta::TreeExternalDiff,
     diff_calc::{DiffCalculator, DiffMode},
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff, KeptChange},
-    fx_map,
     handler::ValueOrHandler,
     id::PeerID,
     lock::{LoroLockGroup, LoroMutex},
@@ -37,6 +36,7 @@ pub(crate) mod container_store;
 #[cfg(feature = "counter")]
 mod counter_state;
 mod dead_containers_cache;
+mod deep_value;
 mod list_state;
 mod map_state;
 mod mergeable;
@@ -52,7 +52,7 @@ pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::{redact_dead_style_values, RichtextState};
 pub(crate) use tree_state::FiIfNotConfigured;
-pub(crate) use tree_state::{get_meta_value, FractionalIndexGenResult, NodePosition, TreeState};
+pub(crate) use tree_state::{FractionalIndexGenResult, NodePosition, TreeState};
 pub use tree_state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
@@ -1718,168 +1718,18 @@ impl DocState {
         LoroValue::Map(map.into())
     }
 
+    /// See [`Self::deep_value_of`]; iterative, since container chains can be arbitrarily deep.
     pub(crate) fn get_container_deep_value_with_id(
         &mut self,
         container: ContainerIdx,
         id: Option<ContainerID>,
     ) -> LoroValue {
-        let id = id.unwrap_or_else(|| self.arena.idx_to_id(container).unwrap());
-        let Some(value) = self.store.get_value_ephemeral(container) else {
-            return container.get_type().default_value();
-        };
-        // The `cid` is the container id's Display string, the same form that the
-        // JS `container.id` getter returns (e.g. `cid:root-map:Map`,
-        // `cid:92@2311024965712536503:Map`).
-        let cid_str = LoroValue::String(id.to_string().into());
-        match value {
-            LoroValue::Container(_) => unreachable!(),
-            LoroValue::List(mut list) => {
-                if container.get_type() == ContainerType::Tree {
-                    get_meta_value(list.make_mut(), self);
-                } else {
-                    if list.iter().all(|x| !x.is_container()) {
-                        return LoroValue::Map(
-                            (fx_map!(
-                                "cid".into() => cid_str,
-                                "value".into() =>  LoroValue::List(list)
-                            ))
-                            .into(),
-                        );
-                    }
-
-                    let list_mut = list.make_mut();
-                    for item in list_mut.iter_mut() {
-                        if item.is_container() {
-                            let container = item.as_container().unwrap();
-                            let container_idx = self.arena.register_container(container);
-                            let value = self.get_container_deep_value_with_id(
-                                container_idx,
-                                Some(container.clone()),
-                            );
-                            *item = value;
-                        }
-                    }
-                }
-                LoroValue::Map(
-                    (fx_map!(
-                        "cid".into() => cid_str,
-                        "value".into() => LoroValue::List(list)
-                    ))
-                    .into(),
-                )
-            }
-            LoroValue::Map(mut map) => {
-                // A map's mergeable children are encoded as compact binary markers in the map's
-                // own value table (loro-dev/loro#759), so they are already present in `map` here.
-                // Derive the active children straight from that value — re-fetching the
-                // `MapState` would force the snapshot-backed container to decode and break the
-                // lazy-value invariant for roots.
-                let mergeable_children = self.mergeable_children_from_value(&id, &map);
-
-                let map_mut = map.make_mut();
-                for (_key, value) in map_mut.iter_mut() {
-                    if value.is_container() {
-                        let container = value.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let new_value = self.get_container_deep_value_with_id(
-                            container_idx,
-                            Some(container.clone()),
-                        );
-                        *value = new_value;
-                    }
-                }
-                // Replace each marker with the nested deep value of its resolved child, keyed
-                // under the same logical key.
-                for (key, cid) in mergeable_children {
-                    let child_idx = self.arena.register_container(&cid);
-                    let new_value = self.get_container_deep_value_with_id(child_idx, Some(cid));
-                    map_mut.insert(key.to_string(), new_value);
-                }
-
-                LoroValue::Map(
-                    (fx_map!(
-                        "cid".into() => cid_str,
-                        "value".into() => LoroValue::Map(map)
-                    ))
-                    .into(),
-                )
-            }
-            _ => LoroValue::Map(
-                (fx_map!(
-                    "cid".into() => cid_str,
-                    "value".into() => value
-                ))
-                .into(),
-            ),
-        }
+        self.deep_value_of(container, id, true)
     }
 
+    /// See [`Self::deep_value_of`]; iterative, since container chains can be arbitrarily deep.
     pub fn get_container_deep_value(&mut self, container: ContainerIdx) -> LoroValue {
-        let Some(value) = self.store.get_value_ephemeral(container) else {
-            return container.get_type().default_value();
-        };
-        match value {
-            LoroValue::Container(_) => unreachable!(),
-            LoroValue::List(mut list) => {
-                if container.get_type() == ContainerType::Tree {
-                    // Each tree node has an associated map container to represent
-                    // the metadata of this node. When the user get the deep value,
-                    // we need to add a field named `meta` to the tree node,
-                    // whose value is deep value of map container.
-                    get_meta_value(list.make_mut(), self);
-                } else {
-                    if list.iter().all(|x| !x.is_container()) {
-                        return LoroValue::List(list);
-                    }
-
-                    let list_mut = list.make_mut();
-                    for item in list_mut.iter_mut() {
-                        if item.is_container() {
-                            let container = item.as_container().unwrap();
-                            let container_idx = self.arena.register_container(container);
-                            let value = self.get_container_deep_value(container_idx);
-                            *item = value;
-                        }
-                    }
-                }
-                LoroValue::List(list)
-            }
-            LoroValue::Map(mut map) => {
-                // A map's mergeable children are encoded as compact binary markers in the map's
-                // own value table (loro-dev/loro#759), so they are already present in `map` here.
-                // Derive the active children straight from that value — re-fetching the
-                // `MapState` would force the snapshot-backed container to decode and break the
-                // lazy-value invariant for roots.
-                let mergeable_children = self
-                    .arena
-                    .idx_to_id(container)
-                    .map(|parent_id| self.mergeable_children_from_value(&parent_id, &map))
-                    .unwrap_or_default();
-
-                if mergeable_children.is_empty() && map.iter().all(|x| !x.1.is_container()) {
-                    return LoroValue::Map(map);
-                }
-
-                let map_mut = map.make_mut();
-                for (_key, value) in map_mut.iter_mut() {
-                    if value.is_container() {
-                        let container = value.as_container().unwrap();
-                        let container_idx = self.arena.register_container(container);
-                        let new_value = self.get_container_deep_value(container_idx);
-                        *value = new_value;
-                    }
-                }
-                // Replace each marker with the nested deep value of its resolved child, keyed
-                // under the same logical key.
-                for (key, cid) in mergeable_children {
-                    let child_idx = self.arena.register_container(&cid);
-                    let new_value = self.get_container_deep_value(child_idx);
-                    map_mut.insert(key.to_string(), new_value);
-                }
-                LoroValue::Map(map)
-            }
-            _ => value,
-        }
+        self.deep_value_of(container, None, false)
     }
 
     /// Get the deep value of a list/movable-list container's elements in the range

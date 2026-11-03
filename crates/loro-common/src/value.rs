@@ -36,29 +36,93 @@ pub enum LoroValue {
 
 impl PartialEq for LoroValue {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
+        values_eq(self, other)
+    }
+}
+
+/// Structural equality without recursion: values come from untrusted peers and can be nested
+/// far deeper than the stack allows (see `context/deep-value-stack-safety.md`).
+fn values_eq<'a>(a: &'a LoroValue, b: &'a LoroValue) -> bool {
+    let mut pending: Vec<(&'a LoroValue, &'a LoroValue)> = vec![(a, b)];
+    while let Some((a, b)) = pending.pop() {
+        let equal = match (a, b) {
             (LoroValue::Null, LoroValue::Null) => true,
             (LoroValue::Bool(a), LoroValue::Bool(b)) => a == b,
             (LoroValue::Double(a), LoroValue::Double(b)) => a == b || (a.is_nan() && b.is_nan()),
             (LoroValue::I64(a), LoroValue::I64(b)) => a == b,
             (LoroValue::Binary(a), LoroValue::Binary(b)) => a == b,
             (LoroValue::String(a), LoroValue::String(b)) => a == b,
-            (LoroValue::List(a), LoroValue::List(b)) => a == b,
-            (LoroValue::Map(a), LoroValue::Map(b)) => a == b,
+            (LoroValue::List(a), LoroValue::List(b)) => {
+                if Arc::ptr_eq(&a.0, &b.0) {
+                    true
+                } else if a.len() != b.len() {
+                    false
+                } else {
+                    pending.extend(a.iter().zip(b.iter()));
+                    true
+                }
+            }
+            (LoroValue::Map(a), LoroValue::Map(b)) => {
+                if Arc::ptr_eq(&a.0, &b.0) {
+                    true
+                } else if a.len() != b.len() {
+                    false
+                } else {
+                    let mut all_keys = true;
+                    for (key, a) in a.iter() {
+                        match b.get(key) {
+                            Some(b) => pending.push((a, b)),
+                            None => {
+                                all_keys = false;
+                                break;
+                            }
+                        }
+                    }
+                    all_keys
+                }
+            }
             (LoroValue::Container(a), LoroValue::Container(b)) => a == b,
             _ => false,
+        };
+        if !equal {
+            return false;
         }
     }
+    true
 }
 
 #[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
 pub struct LoroBinaryValue(Arc<Vec<u8>>);
 #[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
 pub struct LoroStringValue(Arc<String>);
-#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+#[derive(Default, Debug, Clone, Arbitrary)]
 pub struct LoroListValue(Arc<Vec<LoroValue>>);
-#[derive(Default, Debug, PartialEq, Clone, Arbitrary)]
+#[derive(Default, Debug, Clone, Arbitrary)]
 pub struct LoroMapValue(Arc<FxHashMap<String, LoroValue>>);
+
+impl PartialEq for LoroListValue {
+    fn eq(&self, other: &Self) -> bool {
+        values_eq_list(self, other)
+    }
+}
+
+impl PartialEq for LoroMapValue {
+    fn eq(&self, other: &Self) -> bool {
+        values_eq_map(self, other)
+    }
+}
+
+fn values_eq_list(a: &LoroListValue, b: &LoroListValue) -> bool {
+    Arc::ptr_eq(&a.0, &b.0)
+        || (a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| values_eq(a, b)))
+}
+
+fn values_eq_map(a: &LoroMapValue, b: &LoroMapValue) -> bool {
+    Arc::ptr_eq(&a.0, &b.0)
+        || (a.len() == b.len()
+            && a.iter()
+                .all(|(k, a)| b.get(k).is_some_and(|b| values_eq(a, b))))
+}
 
 impl From<Vec<u8>> for LoroBinaryValue {
     fn from(value: Vec<u8>) -> Self {

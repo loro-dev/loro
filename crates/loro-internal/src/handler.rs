@@ -1223,6 +1223,19 @@ impl HandlerTrait for Handler {
     }
 }
 
+/// The parent map is already a mergeable container whose ancestors' names together reach
+/// [`loro_common::MAX_MERGEABLE_ANCESTOR_NAME_BYTES`].
+fn mergeable_too_deep_error(parent: &ContainerID) -> LoroError {
+    LoroError::ArgErr(
+        format!(
+            "Cannot create a mergeable child of {parent}: mergeable containers are nested \
+             too deeply (their names exceed {} bytes together)",
+            loro_common::MAX_MERGEABLE_ANCESTOR_NAME_BYTES
+        )
+        .into_boxed_str(),
+    )
+}
+
 impl Handler {
     fn apply_map_container_diff_value(
         map: &MapHandler,
@@ -1235,6 +1248,9 @@ impl Handler {
             let parent_id = map.id();
             let kind = old_id.container_type();
             let new_id = ContainerID::new_mergeable(&parent_id, key, kind);
+            if !new_id.is_mergeable() {
+                return Err(mergeable_too_deep_error(&parent_id));
+            }
             let marker = loro_common::mergeable_marker(&parent_id, key, kind);
             map.insert_without_skipping(key, marker)?;
             // The deterministic cid may still hold hidden state, while the child's diff in
@@ -4760,6 +4776,9 @@ impl MapHandler {
         }
 
         let cid = ContainerID::new_mergeable(&parent.id, key, child.kind());
+        if !cid.is_mergeable() {
+            return Err(mergeable_too_deep_error(&parent.id));
+        }
         let marker = loro_common::mergeable_marker(&parent.id, key, child.kind());
 
         // Idempotent-skip on same marker: `MapHandler::get` translates markers to Container, so
