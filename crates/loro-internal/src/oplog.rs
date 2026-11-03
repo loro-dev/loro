@@ -1138,6 +1138,37 @@ impl OpLog {
         (base, iter.map(Result::unwrap))
     }
 
+    /// Filter unrelated changes before materializing their version vectors.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn iter_from_replay_base_causally_filtered(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+        to_frontiers: &Frontiers,
+        container_filter: Option<ContainerIdx>,
+    ) -> (
+        ReplayBase,
+        impl Iterator<
+                Item = (
+                    BlockChangeRef,
+                    (Counter, Counter),
+                    Rc<RefCell<VersionVector>>,
+                ),
+            > + '_,
+    ) {
+        let (base, iter) = self
+            .try_iter_from_replay_base_causally_filtered(
+                from,
+                from_frontiers,
+                to,
+                to_frontiers,
+                container_filter,
+            )
+            .unwrap();
+        (base, iter.map(Result::unwrap))
+    }
+
     #[allow(clippy::type_complexity)]
     pub(crate) fn try_iter_from_replay_base_causally(
         &self,
@@ -1145,6 +1176,39 @@ impl OpLog {
         from_frontiers: &Frontiers,
         to: &VersionVector,
         to_frontiers: &Frontiers,
+    ) -> Result<
+        (
+            ReplayBase,
+            impl Iterator<
+                    Item = Result<
+                        (
+                            BlockChangeRef,
+                            (Counter, Counter),
+                            Rc<RefCell<VersionVector>>,
+                        ),
+                        LoroError,
+                    >,
+                > + '_,
+        ),
+        LoroError,
+    > {
+        self.try_iter_from_replay_base_causally_filtered(
+            from,
+            from_frontiers,
+            to,
+            to_frontiers,
+            None,
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn try_iter_from_replay_base_causally_filtered(
+        &self,
+        from: &VersionVector,
+        from_frontiers: &Frontiers,
+        to: &VersionVector,
+        to_frontiers: &Frontiers,
+        container_filter: Option<ContainerIdx>,
     ) -> Result<
         (
             ReplayBase,
@@ -1279,40 +1343,47 @@ impl OpLog {
             },
             std::iter::from_fn(move || {
                 let result = (|| -> Result<_, LoroError> {
-                    if let Some(inner) = &node {
-                        let mut inner_vv = vv.borrow_mut();
-                        // FIXME: PERF: it looks slow for large vv, like 10000+ entries
-                        inner_vv.clear();
-                        self.dag.try_ensure_vv_for(&inner.data)?;
-                        inner_vv.extend_to_include_vv(inner.data.vv.get().unwrap().iter());
-                        let peer = inner.data.peer;
-                        let cnt = inner
-                            .data
-                            .cnt
-                            .max(cur_cnt)
-                            .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
-                        let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
-                            .min(merged_vv.get(&peer).copied().unwrap_or(0));
-                        let change = match self.change_store.get_change(ID::new(peer, cnt)) {
-                            Some(change) => change,
-                            None => {
-                                self.check_history_parsable()?;
-                                panic!("DAG node must have a change");
+                    loop {
+                        if let Some(inner) = &node {
+                            let dag_node = inner.data.clone();
+                            let peer = inner.data.peer;
+                            let cnt = inner
+                                .data
+                                .cnt
+                                .max(cur_cnt)
+                                .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
+                            let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
+                                .min(merged_vv.get(&peer).copied().unwrap_or(0));
+                            let change = match self.change_store.get_change(ID::new(peer, cnt)) {
+                                Some(change) => change,
+                                None => {
+                                    self.check_history_parsable()?;
+                                    panic!("DAG node must have a change");
+                                }
+                            };
+
+                            if change.ctr_end() < dag_node_end {
+                                cur_cnt = change.ctr_end();
+                            } else {
+                                node = iter.next();
+                                cur_cnt = 0;
                             }
-                        };
 
-                        if change.ctr_end() < dag_node_end {
-                            cur_cnt = change.ctr_end();
+                            if container_filter
+                                .is_some_and(|idx| !change.ops.iter().any(|op| op.container == idx))
+                            {
+                                continue;
+                            }
+                            let mut inner_vv = vv.borrow_mut();
+                            inner_vv.clear();
+                            self.dag.try_ensure_vv_for(&dag_node)?;
+                            inner_vv.extend_to_include_vv(dag_node.vv.get().unwrap().iter());
+                            inner_vv.extend_to_include_end_id(change.id);
+
+                            return Ok(Some((change, (cnt, dag_node_end), vv.clone())));
                         } else {
-                            node = iter.next();
-                            cur_cnt = 0;
+                            return Ok(None);
                         }
-
-                        inner_vv.extend_to_include_end_id(change.id);
-
-                        Ok(Some((change, (cnt, dag_node_end), vv.clone())))
-                    } else {
-                        Ok(None)
                     }
                 })();
                 match result {
