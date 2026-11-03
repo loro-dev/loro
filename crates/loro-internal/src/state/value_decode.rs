@@ -159,6 +159,33 @@ fn decode(decoder: &mut Decoder<'_>, root: Option<Frame>) -> LoroResult<LoroValu
     }
 }
 
+/// Write `values` in the postcard layout of `Vec<LoroValue>` without recursing through
+/// child values; the counterpart of `decode_collection(bytes, false)`.
+pub(super) fn encode_list<W: std::io::Write>(
+    values: &[LoroValue],
+    mut writer: W,
+) -> postcard::Result<()> {
+    postcard::to_io(&values.len(), &mut writer)?;
+    for value in values {
+        encode_value(value, &mut writer)?;
+    }
+    Ok(())
+}
+
+/// Write `map` in the postcard layout of `FxHashMap<String, LoroValue>` without recursing
+/// through child values; the counterpart of `decode_collection(bytes, true)`.
+pub(super) fn encode_map<W: std::io::Write>(
+    map: &FxHashMap<String, LoroValue>,
+    mut writer: W,
+) -> postcard::Result<()> {
+    postcard::to_io(&map.len(), &mut writer)?;
+    for (key, value) in map {
+        postcard::to_io(key.as_str(), &mut writer)?;
+        encode_value(value, &mut writer)?;
+    }
+    Ok(())
+}
+
 /// Write the same postcard enum layout without recursing through child values.
 pub(super) fn encode_value<W: std::io::Write>(
     value: &LoroValue,
@@ -256,6 +283,10 @@ mod tests {
             assert_eq!(rest, &[99, 100]);
         }
         let mut bytes = postcard::to_stdvec(&values).unwrap();
+        // Snapshot writers use the iterative collection encoders.
+        let mut encoded = Vec::new();
+        encode_list(&values, &mut encoded).unwrap();
+        assert_eq!(encoded, bytes);
         bytes.extend([99, 100]);
         let (decoded, rest) = decode_collection(&bytes, false).unwrap();
         assert_eq!(decoded, LoroValue::List(values.clone().into()));
@@ -266,6 +297,9 @@ mod tests {
             .map(|(i, value)| (i.to_string(), value))
             .collect();
         let bytes = postcard::to_stdvec(&map).unwrap();
+        let mut encoded = Vec::new();
+        encode_map(&map, &mut encoded).unwrap();
+        assert_eq!(encoded, bytes);
         let (decoded, rest) = decode_collection(&bytes, true).unwrap();
         assert_eq!(decoded, LoroValue::Map(map.into()));
         assert!(rest.is_empty());

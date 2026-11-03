@@ -770,7 +770,7 @@ mod snapshot {
         ///    - Lamport timestamp (LEB128)
         fn encode_snapshot_fast<W: Write>(&mut self, mut w: W) {
             let value = self.get_value().into_list().unwrap();
-            postcard::to_io(&*value, &mut w).unwrap();
+            crate::state::value_decode::encode_list(&value, &mut w).unwrap();
             let mut peers: ValueRegister<PeerID> = ValueRegister::new();
             let mut ids = Vec::with_capacity(self.len());
             for elem in self.iter_with_id() {

@@ -17,7 +17,7 @@ use loro_common::{PeerID, ID};
 use rustc_hash::FxHashMap;
 use std::fmt;
 use std::{
-    num::NonZeroU16,
+    num::NonZeroU32,
     ops::{Range, RangeBounds},
     sync::Arc,
 };
@@ -51,7 +51,7 @@ struct ArenaContainers {
     container_idx_to_id: Vec<ContainerID>,
     /// Cached container depth. `None` means unknown or waiting on an unknown parent depth.
     /// Use `get_depth()` for authoritative reads; direct access is only a cache fast path.
-    depth: Vec<Option<NonZeroU16>>,
+    depth: Vec<Option<NonZeroU32>>,
     container_id_to_idx: FxHashMap<ContainerID, ContainerIdx>,
     /// The parent of each container.
     parents: FxHashMap<ContainerIdx, Option<ContainerIdx>>,
@@ -153,6 +153,33 @@ impl ArenaContainers {
             return idx;
         }
 
+        // A mergeable Root's ID encodes its parent, which may be another unregistered mergeable
+        // Root, once per key of the path. Untrusted updates can carry thousands of keys, so walk
+        // the chain with a loop instead of recursing. Registration order (child first) and
+        // link order (topmost parent first) are unchanged.
+        let (idx, mut parent_id) = self.register_one(id);
+        let mut links = Vec::new();
+        let mut child = idx;
+        while let Some(pid) = parent_id.take() {
+            let parent = if let Some(&p) = self.container_id_to_idx.get(&pid) {
+                p
+            } else {
+                let (p, grandparent) = self.register_one(&pid);
+                parent_id = grandparent;
+                p
+            };
+            links.push((child, parent));
+            child = parent;
+        }
+        for (child, parent) in links.into_iter().rev() {
+            self.set_parent(child, Some(parent));
+        }
+        idx
+    }
+
+    /// Register `id`, which must be new, without linking it. Returns the parent a mergeable
+    /// Root's ID encodes; the caller registers it and links the two.
+    fn register_one(&mut self, id: &ContainerID) -> (ContainerIdx, Option<ContainerID>) {
         let idx = self.container_idx_to_id.len();
         self.container_idx_to_id.push(id.clone());
         let idx = ContainerIdx::from_index_and_type(idx as u32, id.container_type());
@@ -168,25 +195,25 @@ impl ArenaContainers {
             (true, None) => {
                 self.push_root(idx, false);
                 self.parents.insert(idx, None);
-                self.depth.push(NonZeroU16::new(1));
+                self.depth.push(NonZeroU32::new(1));
+                (idx, None)
             }
             (true, Some((parent_id, _key, _kind))) => {
                 // Mergeable Roots are retention roots AND logical children. Push to `root_c_idx`
                 // so shallow snapshot's `retain_keys` does not GC the loser of a concurrent-kind
                 // conflict (whose state is reachable only by its deterministic cid, not through
-                // the parent marker); then `set_parent` for path/event resolution. They are
-                // deliberately absent from `top_level_root_c_idx` so user-facing root
+                // the parent marker); the caller then sets the parent for path/event resolution.
+                // They are deliberately absent from `top_level_root_c_idx` so user-facing root
                 // enumeration does not have to filter them out.
                 self.push_root(idx, true);
                 self.depth.push(None);
-                let parent_idx = self.register_container(&parent_id);
-                self.set_parent(idx, Some(parent_idx));
+                (idx, Some(parent_id))
             }
             (false, _) => {
                 self.depth.push(None);
+                (idx, None)
             }
         }
-        idx
     }
 
     fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
@@ -199,68 +226,96 @@ impl ArenaContainers {
                 // be assembling parent edges from KV snapshots, so resolving depth here would make
                 // arena -> KV and KV -> arena lock orders coexist.
                 if let Some(d) = self.depth[p.to_index() as usize] {
-                    self.depth[child.to_index() as usize] = NonZeroU16::new(d.get() + 1);
+                    self.depth[child.to_index() as usize] = Some(
+                        d.checked_add(1)
+                            .expect("InternalError: container depth overflows u32"),
+                    );
                 } else {
                     self.depth[child.to_index() as usize] = None;
                 }
             }
             None => {
-                self.depth[child.to_index() as usize] = NonZeroU16::new(1);
+                self.depth[child.to_index() as usize] = NonZeroU32::new(1);
             }
         }
     }
 
-    fn get_depth(&mut self, target: ContainerIdx) -> Option<NonZeroU16> {
-        if let Some(d) = self.depth[target.to_index() as usize] {
-            return Some(d);
+    /// The parent to compute `target`'s depth from: `Some(None)` for a top-level root, `None`
+    /// when the parent cannot be determined.
+    fn parent_for_depth(&mut self, target: ContainerIdx) -> Option<Option<ContainerIdx>> {
+        if let Some(p) = self.parents.get(&target) {
+            return Some(*p);
         }
 
-        let parent: Option<ContainerIdx> = if let Some(p) = self.parents.get(&target) {
-            *p
-        } else {
-            let id = self
-                .container_idx_to_id
-                .get(target.to_index() as usize)
-                .unwrap()
-                .clone();
-            if id.is_root() && !id.is_mergeable() {
-                None
-            } else {
-                // Mergeable Roots get registered via the main `register_container` path, which
-                // already wires their parent edge — they should never reach here with a missing
-                // `parents` entry. But for ordinary children whose parent isn't in the arena
-                // yet, fall back to the resolver.
-                let resolver = self.parent_resolver.clone()?;
-                let parent_id = resolver(id)?;
-                // Route through `register_container` so a freshly-discovered parent (especially
-                // a mergeable cid) lands in `root_c_idx`, gets its own parent edge wired up,
-                // and has `parents` initialized — instead of being half-registered with just
-                // `idx_to_id` / `id_to_idx` / `depth` and silently missing from retention walks.
-                let parent_idx =
-                    if let Some(idx) = self.container_id_to_idx.get(&parent_id).copied() {
-                        // Already in the arena. For a top-level root that was hand-registered
-                        // somewhere else without a `parents` entry, ensure it has one.
-                        if parent_id.is_root() && !parent_id.is_mergeable() {
-                            self.parents.entry(idx).or_insert(None);
-                            if self.depth[idx.to_index() as usize].is_none() {
-                                self.depth[idx.to_index() as usize] = NonZeroU16::new(1);
-                            }
-                        }
-                        idx
-                    } else {
-                        self.register_container(&parent_id)
-                    };
+        let id = self
+            .container_idx_to_id
+            .get(target.to_index() as usize)
+            .unwrap()
+            .clone();
+        if id.is_root() && !id.is_mergeable() {
+            return Some(None);
+        }
 
-                Some(parent_idx)
+        // Mergeable Roots get registered via the main `register_container` path, which
+        // already wires their parent edge — they should never reach here with a missing
+        // `parents` entry. But for ordinary children whose parent isn't in the arena
+        // yet, fall back to the resolver.
+        let resolver = self.parent_resolver.clone()?;
+        let parent_id = resolver(id)?;
+        // Route through `register_container` so a freshly-discovered parent (especially
+        // a mergeable cid) lands in `root_c_idx`, gets its own parent edge wired up,
+        // and has `parents` initialized — instead of being half-registered with just
+        // `idx_to_id` / `id_to_idx` / `depth` and silently missing from retention walks.
+        let parent_idx = if let Some(idx) = self.container_id_to_idx.get(&parent_id).copied() {
+            // Already in the arena. For a top-level root that was hand-registered
+            // somewhere else without a `parents` entry, ensure it has one.
+            if parent_id.is_root() && !parent_id.is_mergeable() {
+                self.parents.entry(idx).or_insert(None);
+                if self.depth[idx.to_index() as usize].is_none() {
+                    self.depth[idx.to_index() as usize] = NonZeroU32::new(1);
+                }
+            }
+            idx
+        } else {
+            self.register_container(&parent_id)
+        };
+
+        Some(Some(parent_idx))
+    }
+
+    /// Iterative: container chains come from untrusted updates and can be arbitrarily deep.
+    fn get_depth(&mut self, target: ContainerIdx) -> Option<NonZeroU32> {
+        // Containers on the way up whose depth is unknown, `target` first.
+        let mut chain = Vec::new();
+        let mut c = target;
+        let mut depth = loop {
+            if let Some(d) = self.depth[c.to_index() as usize] {
+                break d;
+            }
+            chain.push(c);
+            // A chain longer than the arena means the parent links form a cycle.
+            assert!(
+                chain.len() <= self.container_idx_to_id.len(),
+                "InternalError: the parent links of {:?} form a cycle",
+                self.container_id(target)
+            );
+            match self.parent_for_depth(c)? {
+                Some(p) => c = p,
+                None => {
+                    let c = chain.pop().unwrap();
+                    let d = NonZeroU32::MIN;
+                    self.depth[c.to_index() as usize] = Some(d);
+                    break d;
+                }
             }
         };
-
-        let d = match parent {
-            Some(p) => NonZeroU16::new(self.get_depth(p)?.get() + 1),
-            None => NonZeroU16::new(1),
-        };
-        self.depth[target.to_index() as usize] = d;
-        d
+        while let Some(c) = chain.pop() {
+            depth = depth
+                .checked_add(1)
+                .expect("InternalError: container depth overflows u32");
+            self.depth[c.to_index() as usize] = Some(depth);
+        }
+        Some(depth)
     }
 
     fn container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
@@ -801,8 +856,7 @@ impl SharedArena {
         self.inner.containers.read().top_level_root_c_idx.clone()
     }
 
-    // TODO: this can return a u16 directly now, since the depths are always valid
-    pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU16> {
+    pub(crate) fn get_depth(&self, container: ContainerIdx) -> Option<NonZeroU32> {
         if let Some(d) = self.inner.containers.read().depth[container.to_index() as usize] {
             return Some(d);
         }
@@ -810,17 +864,18 @@ impl SharedArena {
         // `ArenaContainers::get_depth` runs under the arena lock, where the creator resolver
         // cannot run, so resolve the missing parent links first.
         let mut c = container;
-        // Every step goes one level up, and no valid chain is deeper than `u16::MAX`.
+        // Every step goes one level up, and no valid chain is longer than the arena.
         let mut steps = 0usize;
         loop {
             steps += 1;
-            assert!(
-                steps <= u16::MAX as usize + 1,
-                "InternalError: the parent links of {:?} form a cycle",
-                self.idx_to_id(container)
-            );
             {
                 let containers = self.inner.containers.read();
+                // Resolving may register ancestors, so compare with the current size.
+                assert!(
+                    steps <= containers.container_idx_to_id.len() + 1,
+                    "InternalError: the parent links of {:?} form a cycle",
+                    containers.container_id(container)
+                );
                 if containers.depth[c.to_index() as usize].is_some() {
                     break;
                 }

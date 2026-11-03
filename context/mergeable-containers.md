@@ -1,6 +1,6 @@
 # Mergeable Container Context
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-03.
 
 Mergeable containers let two peers independently create the same child container
 under a map key and converge to one deterministic container id. The source of
@@ -183,6 +183,17 @@ When to opt in:
   `{ fullState: true }` in JS. In Rust the flag comes with `LoroDoc::diff`. Without it, such
   a doc gets main's behavior: the full state is appended to the hidden one. On a doc
   without hidden state both modes give the same result.
+
+Name budget: `MAX_MERGEABLE_ANCESTOR_NAME_BYTES` (1 MiB, `loro-common/src/lib.rs`) bounds
+the summed names of a mergeable container's mergeable ancestors. Registering a container
+registers each ancestor, and each ancestor's name is a prefix of the child's, so an
+unbounded name costs O(n²) time and memory (a 40 KB update took 5 s and 400 MB). Over the
+budget, `is_mergeable`/`parse_mergeable` reject the name, so it is an ordinary root,
+like any malformed prefixed name, on every decode path (updates, JSON, snapshots).
+`parse_mergeable_marker` also rejects markers whose child ID would not be mergeable,
+so a marker never activates a child that reads as a plain top-level root, and
+`ensure_mergeable_*` and `apply_diff`'s remap return `ArgErr`. Each level adds at least
+two bytes, which caps nesting at about 1000 levels.
 
 Known limitations:
 

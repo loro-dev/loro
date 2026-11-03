@@ -263,10 +263,65 @@ fn parse_mergeable_base_parent(segment: &str) -> Option<ContainerID> {
     }
 }
 
+/// Upper bound on the summed name lengths of a mergeable container's mergeable ancestors.
+///
+/// Every mergeable ancestor's name is a prefix of the child's, and registering a container
+/// registers all of them, so without a bound one name of `n` bytes costs O(n²) time and
+/// memory: a 40 KB update took 5 s and 400 MB. A name over the budget is not mergeable;
+/// since each level adds at least two bytes, this also caps nesting at about 1000 levels.
+/// See `context/mergeable-containers.md`.
+pub const MAX_MERGEABLE_ANCESTOR_NAME_BYTES: usize = 1 << 20;
+
 fn validate_mergeable_payload(payload: &str) -> Option<()> {
     let separator = find_first_mergeable_separator(payload)?;
     validate_mergeable_base_parent(&payload[..separator])?;
-    validate_mergeable_key_path(&payload[separator + '>'.len_utf8()..])
+    validate_mergeable_key_path(&payload[separator + '>'.len_utf8()..])?;
+    (mergeable_ancestor_name_bytes(payload) <= MAX_MERGEABLE_ANCESTOR_NAME_BYTES).then_some(())
+}
+
+/// The summed name lengths of the mergeable ancestors of the container with this (valid)
+/// payload: each unescaped separator after the first ends one ancestor's payload.
+fn mergeable_ancestor_name_bytes(payload: &str) -> usize {
+    let mut total = 0usize;
+    let mut seen_first = false;
+    let mut escaped = false;
+    for (idx, ch) in payload.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '>' if seen_first => {
+                total = total.saturating_add(MERGEABLE_NAMESPACE_PREFIX.len() + idx);
+            }
+            '>' => seen_first = true,
+            _ => {}
+        }
+    }
+    total
+}
+
+/// Whether `new_mergeable(parent, ..)` yields a valid mergeable container ID.
+fn can_be_mergeable_parent(parent: &ContainerID) -> bool {
+    match parent {
+        ContainerID::Root {
+            name,
+            container_type: ContainerType::Map,
+        } => match name.as_str().strip_prefix(MERGEABLE_NAMESPACE_PREFIX) {
+            Some(payload) => {
+                validate_mergeable_payload(payload).is_some()
+                    && mergeable_ancestor_name_bytes(payload).saturating_add(name.len())
+                        <= MAX_MERGEABLE_ANCESTOR_NAME_BYTES
+            }
+            None => check_root_container_name(name),
+        },
+        ContainerID::Normal {
+            container_type: ContainerType::Map,
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 fn validate_mergeable_base_parent(segment: &str) -> Option<()> {
@@ -437,6 +492,12 @@ pub fn parse_mergeable_marker(
     let digest_start = MERGEABLE_MARKER_MAGIC.len() + 1;
     let expected = mergeable_marker_crc24(parent, key, kind);
     if &bytes[digest_start..] != expected.as_slice() {
+        return None;
+    }
+
+    // A marker whose child ID would not be mergeable (e.g. over the ancestor-name budget)
+    // stays an inert value, instead of activating a child that reads as a plain root.
+    if !can_be_mergeable_parent(parent) {
         return None;
     }
 
@@ -1418,6 +1479,38 @@ mod test {
             assert_eq!(cid.parse_mergeable(), None, "payload {name:?}");
             assert!(!cid.is_mergeable(), "payload {name:?}");
         }
+    }
+
+    #[test]
+    fn mergeable_ancestor_name_budget_is_consistent() {
+        // Walk a chain of long keys past the budget. At every level the parent's marker
+        // activates a child exactly when the child's ID is mergeable.
+        let key = "k".repeat(4000);
+        let mut parent = ContainerID::new_root("t", ContainerType::Map);
+        let mut levels = 0;
+        loop {
+            let child = ContainerID::new_mergeable(&parent, &key, ContainerType::Map);
+            let marker = mergeable_marker(&parent, &key, ContainerType::Map);
+            let active = parse_mergeable_marker(&parent, &key, &marker).is_some();
+            assert_eq!(active, child.is_mergeable(), "level {levels}");
+            if !active {
+                break;
+            }
+            let (decoded_parent, decoded_key, _) = child.parse_mergeable().unwrap();
+            assert_eq!(decoded_parent, parent);
+            assert_eq!(decoded_key, key);
+            parent = child;
+            levels += 1;
+        }
+        // Each level adds an ancestor of about `levels * key.len()` bytes.
+        assert!((15..40).contains(&levels), "levels = {levels}");
+        // A plain root that merely carries the prefix cannot be a mergeable parent.
+        let fake = ContainerID::Root {
+            name: "🤝:garbage".into(),
+            container_type: ContainerType::Map,
+        };
+        let marker = mergeable_marker(&fake, "a", ContainerType::Map);
+        assert!(parse_mergeable_marker(&fake, "a", &marker).is_none());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Arena Parent Links
 
-Verified against code 2026-10-22.
+Verified against code 2026-11-03.
 
 `SharedArena` (`crates/loro-internal/src/arena.rs`) stores each container's
 parent. Liveness (`DocState::is_deleted`), paths (`DocState::get_path`,
@@ -59,7 +59,10 @@ lock, and event emission (`with_ancestors`) under no document lock. So:
 - The arena calls the resolver without holding its own lock.
   `ArenaContainers::get_depth` runs under the arena lock, so
   `SharedArena::get_depth` first resolves the missing links of the ancestor
-  chain. It fails fast on a cycle, which would otherwise loop.
+  chain. It fails fast on a cycle, which would otherwise loop. Both walks are
+  loops, not recursion, and depth is a `NonZeroU32`: untrusted chains can be
+  deeper than 65,535 levels (see
+  [deep-value-stack-safety.md](deep-value-stack-safety.md)).
 - The change store never resolves an arena parent while holding `inner`.
   `ChangeStore::visit_all_changes` runs its callback under that lock; none of
   its callers resolve parents.

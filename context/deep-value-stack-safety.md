@@ -1,6 +1,6 @@
 # Deep plain values and stack safety
 
-Verified against code 2026-10-22.
+Verified against code 2026-11-03.
 
 Issue [#1198](https://github.com/loro-dev/loro/issues/1198) constructs a plain
 `LoroValue::Map` chain with 20,000 levels. On main `3827945f`, its release-mode
@@ -88,3 +88,37 @@ rewrite the retained live value. It also covers remote binary updates, verifies
 the leaf and state/oplog frontiers, and edits/exports an unrelated map after
 reads. WASM `deep-mark.test.ts` covers 129-level marks and verifies that a rejected
 object JSON import still leaves its target usable.
+
+## Equality, snapshot writers and container chains
+
+A report against 1.17.1 found further per-level recursion reachable from untrusted
+updates, each aborting a 512 KiB reader stack:
+
+- `PartialEq for LoroValue` (and `LoroListValue`/`LoroMapValue`, which no longer
+  derive it) uses a work list of value pairs in `loro-common/src/value.rs`
+  (`values_eq`), short-circuiting on `Arc::ptr_eq`. Adjacent rich-text spans with
+  equal but separately allocated deep marks reached it from
+  `RichtextState::get_richtext_value`. NaN still equals NaN.
+- Map, List and MovableList `encode_snapshot_fast` write their value with
+  `value_decode::encode_map`/`encode_list`, byte-identical to the previous
+  `postcard::to_io` (checked in `postcard_layout_and_remaining_metadata`).
+- Container depth (`SharedArena`) is a `NonZeroU32`; it was a `NonZeroU16` whose
+  `+ 1` wrapped to `None` at 65,535 levels (debug builds panicked), so
+  `ContainerWrapper::new` panicked under the state lock. `ArenaContainers::get_depth`
+  walks the chain with a loop, and `register_container` registers a mergeable ID's
+  encoded ancestors with a loop (same registration and link order).
+- `DocState::get_container_deep_value{,_with_id}` delegate to
+  `state/deep_value.rs::deep_value_of`, which keeps one heap frame per open
+  container. Children resolve in value order, then mergeable children, so a marker's
+  child still wins its key; tree metas stay plain deep values.
+
+Container chains are not capped at import: a fast snapshot loads its change blocks and
+state lazily, so import never walks them. Readers are made iterative instead. Mergeable
+names are bounded (`MAX_MERGEABLE_ANCESTOR_NAME_BYTES`, see
+[mergeable-containers.md](mergeable-containers.md)) because every ancestor's name is a
+prefix of the child's, so the cost is quadratic in the name, not in depth.
+
+Building a long chain *locally* with `insert_container` is still quadratic (about 8 s
+for 20,000 levels in release); import of the same chain takes about 50 ms. Tests
+therefore generate deep chains as JSON updates. `crates/loro/tests/untrusted_depth.rs`
+covers every case above on a 1 MiB stack.
