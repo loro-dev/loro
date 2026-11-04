@@ -459,6 +459,14 @@ Pre-shallow frontier safety lives in `loro.rs`: `checkout`, `diff`, and
 `revert_to` must return `SwitchToVersionBeforeShallowRoot` instead of traversing
 history before the shallow root.
 
+Operation-span queries also require both endpoints to include the shallow root,
+including equal endpoints. `DagUtils::try_find_path` validates endpoints before
+walking. The retained span walk can still reach a pruned predecessor while its
+minimum-span bound requires descent: that predecessor is shared by both validated
+versions, so `_walk_to_meet` stops that edge and updates its queue counts. Missing
+dependencies outside the stored shallow cut remain errors. The public regressions
+are in `crates/loro/tests/shallow_span_queries.rs`.
+
 Merge semantics of a shallow replica meeting concurrent full-history peers
 (which updates apply, pend, or are rejected, and why a never-synced peer can
 never merge): [docs/shallow-snapshot-concurrency.md](../docs/shallow-snapshot-concurrency.md)

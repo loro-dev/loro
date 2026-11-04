@@ -1706,6 +1706,10 @@ impl LoroDoc {
     }
 
     /// Finds operation spans between versions, reporting unreadable history.
+    ///
+    /// On a shallow document, both versions must include the shallow root.
+    /// A version before that root returns [`LoroError::SwitchToVersionBeforeShallowRoot`].
+    /// Retained suffix queries do not require the pruned history.
     pub fn try_find_id_spans_between(
         &self,
         from: &Frontiers,
