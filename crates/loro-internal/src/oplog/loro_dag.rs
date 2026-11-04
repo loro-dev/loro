@@ -1118,6 +1118,14 @@ impl Dag for AppDag {
     fn contains(&self, id: ID) -> bool {
         self.vv.includes_id(id)
     }
+
+    fn is_pruned(&self, id: ID) -> bool {
+        self.shallow_since_vv.includes_id(id)
+    }
+
+    fn is_before_shallow_root(&self, frontiers: &Frontiers) -> bool {
+        AppDag::is_before_shallow_root(self, frontiers)
+    }
 }
 
 /// A vv already stored on parsed nodes, or why that read cannot answer.

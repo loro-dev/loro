@@ -1898,6 +1898,8 @@ impl LoroDoc {
 
     /// Finds operation spans between versions, reporting unreadable history, a version
     /// that is not in this doc, or one before its shallow root.
+    ///
+    /// Retained suffix queries on a shallow document do not require the pruned history.
     pub fn try_find_id_spans_between(
         &self,
         from: &Frontiers,
