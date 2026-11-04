@@ -85,6 +85,21 @@ text state is materialized. It keeps list length prefixes, sorted map keys,
 normalized NaNs/zero and the existing scalar hashes. Neither change relaxes the
 external serde depth budget.
 
+`encoding/value.rs::ValueReader` checks direct and nested list/map lengths before
+reserving their storage. A list child needs at least one remaining kind byte; a
+map entry also needs a key-index byte. In addition to the existing collection-size
+cap, one counter initialized to the reader's initial raw length is debited once
+for each declared child/entry and never replenished. Every successfully decoded
+slot has a distinct kind byte, including across nested and successive values,
+so this preserves valid compact values, duplicate keys and non-minimal varints.
+Per-collection remaining-byte checks alone cannot provide that aggregate bound
+because nested slices overlap. This bounds declared slots at these four sites
+per reader, not exact allocator capacity/bytes, key copies, conversion storage,
+other block allocations or compressed-input amplification. Failed input can be
+rejected before its previous cursor/allocation/drop position; the existing
+corruption error still propagates. The local reservation patch and its two new
+compatibility/malformed-input tests have not yet been compiled or run.
+
 `crates/loro/tests/deep_mark_snapshot.rs` constructs and exports marks at depths
 129, 200 and 20,000 entirely on a 1 MiB stack, then reads snapshot, shallow and
 state-only round trips. Each source includes both a live deep mark and a deep
