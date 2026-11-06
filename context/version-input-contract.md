@@ -42,6 +42,11 @@ usable only where the panic unwinds: in a `panic = "abort"` build it still ends 
 process. Code that takes versions from outside must call the `try_` form. `try_find_id_spans_between` also rejects
 a version before the shallow root, as `checkout` does.
 
+`checkout_to_latest` and `attach` have the same shape and are not fixed. A detached
+import does not touch the state, so an update the state would reject (a list insert
+past the end) gets into the op log, and their `expect` panics under the txn lock when
+it is applied. `checkout` with the op log's frontiers returns the error instead.
+
 `minimize_frontiers` with a single id does not check that the id exists, despite
 its doc comment: `try_shrink_frontiers` returns early for fewer than two ids. No
 state is at risk, and `checkout` validates the result.
@@ -49,7 +54,9 @@ state is at risk, and `checkout` validates the result.
 ## Peer ids in detached editing
 
 `check_change_greater_than_last_peer_id` rejects a transaction whose peer already
-has ops after the state version. A write is not the only thing that opens a
+has ops after the state version. In any mode, attached too, it also rejects one
+whose next id is held or awaited by parked changes (`context/import-peer-id-reuse.md`),
+and the rest of this section applies the same way. A write is not the only thing that opens a
 transaction: every barrier renews the auto-commit one, which `expect`ed success
 under the txn lock. Commit, export, `set_peer_id` and import then panicked, and
 the doc was poisoned.

@@ -32,7 +32,7 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   why replays materialize empty roots:
   [context/root-container-visibility.md](context/root-container-visibility.md).
 - Imports that reuse local op ids (a shared peer id): the known-history check,
-  what counts as equal, and what it cannot catch:
+  parked changes, local writes, what counts as equal, and what it cannot catch:
   [context/import-peer-id-reuse.md](context/import-peer-id-reuse.md).
 - Frontiers, version vectors and peer ids from callers: normalization, APIs with
   no error in their signature, a peer that cannot write in detached editing:

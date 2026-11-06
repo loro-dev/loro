@@ -622,7 +622,10 @@ impl OpLog {
 
     /// Ensure the new change is greater than the last peer's id and the counter is continuous.
     ///
-    /// It can be false when users use detached editing mode and use a custom peer id.
+    /// It can be false when users use detached editing mode and use a custom peer id, or
+    /// in any mode when parked changes hold or wait for the ids of `peer` from `counter`
+    /// on. Such a write would fork the history they were written on, and their import
+    /// later corrupts the DAG. See `context/import-peer-id-reuse.md`.
     // This method might be slow and can be optimized if needed in the future.
     pub(crate) fn check_change_greater_than_last_peer_id(
         &self,
@@ -630,6 +633,14 @@ impl OpLog {
         counter: Counter,
         deps: &Frontiers,
     ) -> Result<(), LoroError> {
+        if let Some(last_counter) = self.pending_changes.last_parked_at_or_after(peer, counter) {
+            return Err(LoroError::ConcurrentOpsWithSamePeerID {
+                peer,
+                last_counter,
+                current: counter,
+            });
+        }
+
         if counter == 0 {
             return Ok(());
         }

@@ -28,8 +28,10 @@ path, which rolls back only the arena (decode may have registered containers).
 2. **Parked history.** The part of each change the version vector does not cover
    is compared with parked changes that hold the same ids (see below). A mismatch
    returns `UsedOpID` the same way.
-3. **Trim.** The known parts are dropped, as the decoders used to do.
-4. **Skipped counters.** A change whose deps are present but whose peer's
+3. **The import itself.** Changes of one import are compared with each other over
+   that same part (see "One import").
+4. **Trim.** The known parts are dropped, as the decoders used to do.
+5. **Skipped counters.** A change whose deps are present but whose peer's
    previous counter is not is rejected with `DecodeError`. The main pass of
    `import_changes_to_oplog` would apply it and trip the counter assertion in
    `AppDag::update_version_on_new_change` under the op log lock. The check replays
@@ -73,9 +75,60 @@ The check runs when the second update arrives, not when the dep does:
 id, and scanning it per import makes out-of-order delivery quadratic.
 `PendingChanges::claims` maps, per peer, disjoint counter spans to the parked change
 that first held them. Comparing with one holder is enough: everything else parked over
-those ids was compared with it on arrival. Claims are derived data. `claim` adds them
-in `push_pending_change`, `release_claims_below` drops what the op log now has, and
-import rollback rebuilds them, since the scope restores slots wholesale.
+those ids was compared with it on arrival. `claim` adds them when a change first parks,
+and `release_claims_below` drops what the op log now has.
+
+Claims cannot be rebuilt from `changes`. `JsonLossy` equality is not transitive: null
+matches NaN and infinity, which do not match each other, so a doc can park all three
+for one id only while null holds it. A rebuild picks a holder by slot order, and then
+an update accepted before a failed import is rejected after it. So
+`PendingChangesRollback` logs every claim edit and undoes the log in reverse, while it
+restores `changes` by slot. `apply_diff` scopes log nothing, as they park nothing.
+
+The same non-transitivity remains when the ids reach the op log. The first of the
+parked changes to apply decides the value, and later imports compare with that value:
+with null held and NaN and infinity parked, infinity applied by another slot makes a
+repeat of NaN a `UsedOpID`. That is a true conflict that null was hiding, and deps are
+compared exactly in both modes, so it cannot break the DAG.
+
+## Local writes
+
+A local write takes the next id of its peer. When parked changes hold that id or any
+later one, or wait for one, the write forks the history they were written on:
+
+- A held id: the dep applies the rest of the parked change over the write. Its lamport
+  was computed from its own deps, so `AppDag` asserts `lamport is not continuous` under
+  the op log lock, which poisons it and aborts the process on drop.
+- A parked tail past the next id: the writes get there, and the tail is applied onto
+  history it does not continue, or stays parked for good.
+- An awaited id (`1@0` waits for `7@0`, and the local `7@0` is something else): the
+  next import that has peer 7 applies `1@0` on the wrong base.
+
+`check_change_greater_than_last_peer_id` reports all of them from
+`Transaction::new_with_origin` through `PendingChanges::last_parked_at_or_after`, with
+`ConcurrentOpsWithSamePeerID`, in attached mode too. This runs before the write, and
+imports stop the auto-commit transaction under the txn lock (`with_barrier`), so a
+transaction cannot start before ids park and commit after. `auto_commit_txn` then leaves
+no transaction, and the next write reports the error, the same as in detached editing
+(`context/version-input-contract.md`). The write works again once the dep arrives, or
+with another peer id.
+
+A remote can use this to stop a doc writing with a peer id, by parking a change under
+that id. Peer ids are random and public in updates, and a forged update already could
+abort the doc this way, so this is the better failure. The way out is `set_peer_id`.
+
+## One import
+
+Two changes of one import can reuse an id. The check above sees only what the doc had
+before the import, so the first is applied, the second parks, and the dep brings it over
+the first with the same assertion as a local write, from a single forged update.
+
+An exporter writes each peer's changes in counter order, so
+`check_changes_agree_with_each_other` first makes one pass over the counters, one hash
+operation per change. Only a blob out of order takes the second pass, which holds spans
+the way `PendingChanges` does (`ClaimedSpans`) and compares overlaps from the version
+vector on. Below the version vector both sides were already compared with the op log,
+and under `JsonLossy` they may legitimately differ from each other.
 
 ## What "equal" means
 
@@ -181,12 +234,6 @@ is per atom range, not per change:
   sequence is then rejected by `validate_diff` and rolled back (loro-dev/loro#1160).
   A tail that happens to land on valid positions is applied and scrambles the
   state. Detecting that needs content hashes in the version vector.
-- **One blob that contradicts itself.** Two changes with the same id inside one
-  import are not compared with each other. Only a forged blob has this: the second is
-  dropped as known. Comparing within a blob would cost every import.
-- **A local commit over a parked id.** If a doc commits with a peer that has parked
-  changes, those changes are dropped as known when their deps arrive. See the last
-  entry of this list.
 - **Same-peer changes that are concurrent but contiguous** (for example `p@2`
   with deps `[]` on top of a local `p@0..=1`). They do not crash, and are still
   accepted.
@@ -277,6 +324,31 @@ and reports the second delivery, which compares with every parked change.
 | text_stream | 32,000 | 156.023 | 161.852 | 1.04x |
 | overlap_snap | 32,000 | 5.034 | 4.905 | 0.97x |
 | reimport_map | 64,000 | 31.247 | 32.452 | 1.04x |
+
+### Local writes and the pass over one import
+
+Measured against the tree before them, with separate build directories: a shared
+`CARGO_TARGET_DIR` reuses artifacts between trees, and the two binaries come out
+identical. 3 interleaved process runs, 5 where the table says so.
+
+| Scenario | Changes | before ms | after ms | Ratio |
+|---|---:|---:|---:|---:|
+| pending_repeat | 4,000 | 1,773.814 | 1,767.981 | 1.00x |
+| ooo | 32,000 | 173.911 | 174.424 | 1.00x |
+| batch (5 runs) | 32,000 | 244.420 | 247.338 | 1.01x |
+| batch_rev (5 runs) | 32,000 | 299.399 | 305.033 | 1.02x |
+| blob_order (5 runs) | 64,000 | 204.371 | 208.214 | 1.02x |
+| text_stream with `SEEDSYNC=1` (5 runs) | 32,000 | 165.635 | 167.676 | 1.01x |
+| overlap_snap | 32,000 | 4.956 | 4.949 | 1.00x |
+| reimport_map | 64,000 | 30.421 | 30.224 | 0.99x |
+| local_commits | 20,000 | 18.318 | 17.969 | 0.98x |
+
+`local_commits` writes next to 1,000 parked changes of another peer. `blob_order` is
+one blob of 4 peers. `batch` was 1.08x until imports of one change stopped allocating
+the map. `text_stream` with a local seed (4,000 changes, about 700 us per import)
+measured 1.02x and 1.04x in two rounds of 7. With the write check compiled out it was
+1.01x in the same round, and nothing else runs per import there, so this does not
+come from a code path of this check.
 
 `pending_repeat` is quadratic with or without claims, which is why it stops at 4,000:
 4x the changes cost 16x. `try_apply_pending` is called with the ids of parked

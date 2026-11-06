@@ -11,7 +11,7 @@
 //! Scenarios: `text_peers`, `map_peers`, `text_stream`, `overlap_mem`, `overlap_snap`,
 //! `overlap_partial`, `reimport_mem`, `reimport_snap`, `reimport_snapshot`, `reimport_map`,
 //! `reimport_tail`, `pending_repeat`, `snap_plus`, `snap_mem`, `batch`, `batch_rev`, `ooo`, `detached`,
-//! `mlist_batch`, `mlist_stream`, `check`.
+//! `mlist_batch`, `mlist_stream`, `blob_order`, `local_commits`, `check`.
 use loro::{ExportMode, LoroDoc, ID};
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,8 @@ fn main() {
         "reimport_map" => reimport(n, rounds, fat, ReimportMode::Map),
         "reimport_tail" => reimport(n, rounds, fat, ReimportMode::Tail),
         "pending_repeat" => pending_repeat(n, rounds),
+        "blob_order" => blob_order(n, rounds),
+        "local_commits" => local_commits(n, rounds),
         "snap_plus" => snap_plus(n, rounds, fat),
         "snap_mem" => snap_mem(n, fat),
         "batch" => batch(n, rounds, false),
@@ -574,6 +576,54 @@ fn pending_repeat(n: usize, rounds: usize) {
         &samples_of(times),
         &format!("park_ms={park_ms:.3}"),
     );
+}
+
+/// One blob of `n` changes of 4 peers, the hot path of the pass over each peer's
+/// counters.
+fn blob_order(n: usize, rounds: usize) {
+    let src = LoroDoc::new();
+    src.set_change_merge_interval(-1);
+    let text = src.get_text("t");
+    for i in 0..n {
+        src.set_peer_id(1 + (i % 4) as u64).unwrap();
+        text.insert(0, "a").unwrap();
+        src.commit();
+    }
+    let blob = src.export(ExportMode::all_updates()).unwrap();
+    let mut times = Vec::new();
+    for round in 0..=rounds {
+        let doc = LoroDoc::new();
+        let start = Instant::now();
+        doc.import(&blob).unwrap();
+        if round > 0 {
+            times.push(start.elapsed());
+        }
+    }
+    report("blob_order", n, &samples_of(times), "");
+}
+
+/// `n` one-op commits next to 1,000 parked changes of another peer: the write check
+/// runs once per transaction.
+fn local_commits(n: usize, rounds: usize) {
+    let parked = one_peer_blobs(1_000);
+    let mut times = Vec::new();
+    for round in 0..=rounds {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(9).unwrap();
+        for blob in parked.iter().skip(1) {
+            doc.import(blob).unwrap();
+        }
+        let map = doc.get_map("m");
+        let start = Instant::now();
+        for i in 0..n {
+            map.insert("k", i as i64).unwrap();
+            doc.commit();
+        }
+        if round > 0 {
+            times.push(start.elapsed());
+        }
+    }
+    report("local_commits", n, &samples_of(times), "");
 }
 
 fn snap_plus(n: usize, rounds: usize, fat: usize) {

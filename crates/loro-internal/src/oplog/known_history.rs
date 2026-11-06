@@ -11,6 +11,7 @@ use loro_common::{Counter, HasCounterSpan, LoroError, LoroResult, LoroValue, Pee
 use rle::{HasLength, Sliceable};
 use rustc_hash::FxHashMap;
 
+use super::pending_changes::ClaimedSpans;
 use crate::{
     arena::SharedArena,
     change::Change,
@@ -110,8 +111,8 @@ impl OpLog {
     /// same op ids, then drop the parts it already has.
     ///
     /// Returns [`LoroError::UsedOpID`] with the first conflicting id when an imported
-    /// change differs from the local one, or from a parked change that holds the same
-    /// ids (deps or op content), and
+    /// change differs from the local one, from a parked change that holds the same
+    /// ids, or from an earlier change of the same import (deps or op content), and
     /// [`LoroError::DecodeError`] when a change skips counters of its peer (see
     /// [`Self::check_changes_do_not_skip_counters`]). It reads the op log only, so a
     /// caller can return the error before mutating anything.
@@ -148,6 +149,7 @@ impl OpLog {
                 self.check_parked_part_of_change(change, known_end, values, imported_arena)?;
             }
         }
+        self.check_changes_agree_with_each_other(&changes, values, imported_arena)?;
 
         changes.retain_mut(|c| {
             let end = known_end(c);
@@ -288,26 +290,67 @@ impl OpLog {
         let peer = change.id.peer;
         let start = change.id.counter.max(known_end);
         let end = change.ctr_end();
-        for (claim_start, claim_end, parked) in self.pending_changes.claims_in(peer, start, end) {
-            let ctr = claim_start.max(start);
-            let seg_end = claim_end.min(end);
-            let mismatch = if deps_at(change, ctr) != deps_at(parked, ctr) {
-                Some(ctr)
-            } else {
-                first_mismatch(
-                    imported_arena,
-                    &self.arena,
-                    values,
-                    change,
-                    parked,
-                    ctr,
-                    seg_end,
-                )
-            };
-            if let Some(bad) = mismatch {
-                return Err(LoroError::UsedOpID {
-                    id: ID::new(peer, bad),
-                });
+        check_holders_of_change(
+            change,
+            start,
+            end,
+            self.pending_changes.claims_in(peer, start, end),
+            imported_arena,
+            &self.arena,
+            values,
+        )
+    }
+
+    /// Compare the changes of one import with each other, from the version vector on.
+    /// Applying the first of two that disagree and parking the second would bring the
+    /// second over the first once its dep arrives, which breaks the DAG under the op
+    /// log lock. Only a forged import has this, and an exporter writes each peer's
+    /// changes in counter order, so a pass over the counters clears everything else.
+    fn check_changes_agree_with_each_other(
+        &self,
+        changes: &[Change],
+        values: ImportedValues,
+        imported_arena: &SharedArena,
+    ) -> LoroResult<()> {
+        // A sync loop delivers one change at a time: not worth a map per import.
+        if changes.len() < 2 {
+            return Ok(());
+        }
+
+        let mut ends: FxHashMap<PeerID, Counter> = FxHashMap::default();
+        let in_order = changes.iter().all(|change| {
+            let end = ends.entry(change.id.peer).or_default();
+            let in_order = change.id.counter >= *end;
+            *end = change.ctr_end();
+            in_order
+        });
+        if in_order {
+            return Ok(());
+        }
+
+        let vv = self.vv();
+        let mut held: FxHashMap<PeerID, ClaimedSpans<&Change>> = FxHashMap::default();
+        for change in changes {
+            let peer = change.id.peer;
+            let known_end = vv.get(&peer).copied().unwrap_or(0);
+            let start = change.id.counter.max(known_end);
+            let end = change.ctr_end();
+            if start >= end {
+                continue;
+            }
+
+            let spans = held.entry(peer).or_default();
+            check_holders_of_change(
+                change,
+                start,
+                end,
+                spans.overlapping(start, end),
+                imported_arena,
+                imported_arena,
+                values,
+            )?;
+            for (start, end) in spans.gaps(start, end) {
+                spans.hold(start, end, change);
             }
         }
 
@@ -412,6 +455,42 @@ impl OpLog {
         )?;
         Ok(checked.then_some(block_end))
     }
+}
+
+/// Compare `change` over `start..end` with the changes that hold those ids.
+fn check_holders_of_change<'a>(
+    change: &Change,
+    start: Counter,
+    end: Counter,
+    holders: impl Iterator<Item = (Counter, Counter, &'a Change)>,
+    change_arena: &SharedArena,
+    holder_arena: &SharedArena,
+    values: ImportedValues,
+) -> LoroResult<()> {
+    for (claim_start, claim_end, holder) in holders {
+        let ctr = claim_start.max(start);
+        let seg_end = claim_end.min(end);
+        let mismatch = if deps_at(change, ctr) != deps_at(holder, ctr) {
+            Some(ctr)
+        } else {
+            first_mismatch(
+                change_arena,
+                holder_arena,
+                values,
+                change,
+                holder,
+                ctr,
+                seg_end,
+            )
+        };
+        if let Some(bad) = mismatch {
+            return Err(LoroError::UsedOpID {
+                id: ID::new(change.id.peer, bad),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 /// The deps of the op at `ctr`. Inside a change every op depends on the previous
