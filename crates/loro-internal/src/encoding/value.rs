@@ -868,9 +868,7 @@ impl<'a> ValueReader<'a> {
 
     #[allow(unused)]
     pub fn read_i32(&mut self) -> LoroResult<i32> {
-        leb128::read::signed(&mut self.raw)
-            .map(|x| x as i32)
-            .map_err(|_| LoroError::DecodeDataCorruptionError)
+        i32::try_from(self.read_i64()?).map_err(|_| LoroError::DecodeDataCorruptionError)
     }
 
     pub fn read_f64(&mut self) -> LoroResult<f64> {
@@ -1478,6 +1476,50 @@ mod tests {
 
         for (value, expected) in cases {
             assert_eq!(encode_then_decode_owned(value), expected);
+        }
+    }
+
+    #[test]
+    fn delta_int_decoding_rejects_out_of_range_signed_values() {
+        let arenas = TestArenas {
+            keys: Vec::new(),
+            peers: Vec::new(),
+        };
+        let cases: &[&[u8]] = &[
+            &[0x80, 0x80, 0x80, 0x80, 0x08], // i32::MAX + 1
+            &[0xff, 0xff, 0xff, 0xff, 0x77], // i32::MIN - 1
+            &[0x80, 0x80, 0x80, 0x80, 0x10], // 1 << 32, previously narrowed to zero
+            &[0x80],                         // truncated signed varint
+        ];
+
+        for bytes in cases {
+            let mut reader = ValueReader::new(bytes);
+            assert!(matches!(
+                Value::decode(ValueKind::DeltaInt, &mut reader, &arenas, ID::new(9, 1)),
+                Err(LoroError::DecodeDataCorruptionError)
+            ));
+        }
+    }
+
+    #[test]
+    fn delta_int_decoding_preserves_i32_bounds_and_nonminimal_values() {
+        let arenas = TestArenas {
+            keys: Vec::new(),
+            peers: Vec::new(),
+        };
+        let cases: &[(&[u8], i32)] = &[
+            (&[0x80, 0x80, 0x80, 0x80, 0x78], i32::MIN),
+            (&[0xff, 0xff, 0xff, 0xff, 0x07], i32::MAX),
+            (&[0x80, 0x00], 0),
+            (&[0xff, 0x7f], -1),
+        ];
+
+        for &(bytes, expected) in cases {
+            let mut reader = ValueReader::new(bytes);
+            let value = Value::decode(ValueKind::DeltaInt, &mut reader, &arenas, ID::new(9, 1))
+                .unwrap()
+                .into_owned();
+            assert_eq!(value, OwnedValue::DeltaInt(expected));
         }
     }
 
