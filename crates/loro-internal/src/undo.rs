@@ -400,6 +400,16 @@ impl Stack {
         None
     }
 
+    /// Peek the top-most StackItem's counter span without modifying the stack.
+    ///
+    /// Returns None if the stack is empty.
+    fn peek_top_span(&self) -> Option<CounterSpan> {
+        self.stack
+            .iter()
+            .rev()
+            .find_map(|(items, _)| items.back().map(|item| item.span))
+    }
+
     pub fn pop(&mut self) -> Option<(StackItem, Arc<Mutex<DiffBatch>>)> {
         while self.stack.back().unwrap().0.is_empty() && self.stack.len() > 1 {
             let (_, diff) = self.stack.pop_back().unwrap();
@@ -1073,6 +1083,20 @@ impl UndoManager {
     /// Get the metadata of the top redo stack item, if any.
     pub fn top_redo_meta(&self) -> Option<UndoItemMeta> {
         self.inner.lock().borrow().redo_stack.peek_top_meta()
+    }
+
+    /// Get the counter span of the top undo stack item, if any.
+    ///
+    /// A span that equals the one passed to `on_push` identifies the pushed item, also when
+    /// the push evicted the oldest item at the stack size limit. A push merged into the
+    /// previous item extends that item's span instead.
+    pub fn top_undo_span(&self) -> Option<CounterSpan> {
+        self.inner.lock().borrow().undo_stack.peek_top_span()
+    }
+
+    /// Get the counter span of the top redo stack item, if any.
+    pub fn top_redo_span(&self) -> Option<CounterSpan> {
+        self.inner.lock().borrow().redo_stack.peek_top_span()
     }
 
     /// Get the value associated with the top undo stack item, if any.
