@@ -109,7 +109,9 @@ regression on out-of-order batches, where every blob parks and is later unlocked
 
 Standalone detached imports do not apply state, so preflight uses
 `import_op_can_reject(op, true)`: only MovableList `Move`/`Set` element validation
-requires a rollback scope. Text/List/Tree state validation still opens a scope
+and Text `StyleEnd` anchor validation
+(`OpLog::validate_style_end_anchors_in_import_scope`, loro-dev/loro#1254) require a
+rollback scope. Text/List/Tree state validation still opens a scope
 when attached. An applied Text or scalar update can unlock a pre-existing bad
 MovableList pending change, so preflight includes pending `Move`/`Set` ops when
 `applies_to_dag` is true. The batch's history journal (the suffix journal after
