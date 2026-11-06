@@ -4,9 +4,10 @@ use crate::handler::{
 use crate::jsonpath::ast::{
     ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
 };
-use crate::jsonpath::JSONPathParser;
+use crate::jsonpath::{Query, JSONPathParser};
 use crate::{HandlerTrait, LoroDoc};
 use loro_common::{ContainerID, LoroValue};
+use smallvec::SmallVec;
 use std::ops::ControlFlow;
 use thiserror::Error;
 
@@ -17,34 +18,67 @@ pub enum JsonPathError {
     #[error("JSONPath evaluation error: {0}")]
     EvaluationError(String),
 }
+/// An immutable JSONPath parsed with the standard parser.
+///
+/// Stores syntax only and can be reused across documents. Evaluation uses the
+/// same evaluator and supported-function behavior as the string API.
+/// Its AST is private so constructed or custom-parser ASTs cannot bypass the
+/// standard parser's validation through this API.
+#[derive(Debug, Clone)]
+pub struct ParsedJsonPath {
+    query: Query,
+}
+
+impl ParsedJsonPath {
+    pub fn parse(path: &str) -> Result<Self, JsonPathError> {
+        JSONPathParser::new()
+            .parse(path)
+            .map(|query| Self { query })
+            .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))
+    }
+}
+
 impl LoroDoc {
     #[inline]
     pub fn jsonpath(&self, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
         evaluate_jsonpath(self, jsonpath)
     }
+
+    /// Evaluate an already parsed query against the current document state.
+    #[inline]
+    pub fn jsonpath_parsed(&self, query: &ParsedJsonPath) -> Vec<ValueOrHandler> {
+        evaluate_parsed_jsonpath(self, query)
+    }
 }
+
+// Relative field queries usually yield zero or one node. Keep that common case
+// inline while preserving arbitrary multi-node selectors and their order.
+type NodeSet = SmallVec<[ValueOrHandler; 1]>;
 
 enum ExprValue {
     Bool(bool),
     Value(LoroValue),
-    Nodes(Vec<ValueOrHandler>),
+    Nodes(NodeSet),
 }
 
 pub fn evaluate_jsonpath(
     root: &dyn PathValue,
     jsonpath: &str,
 ) -> Result<Vec<ValueOrHandler>, JsonPathError> {
-    let parser = JSONPathParser::new();
-    let query = parser
-        .parse(jsonpath)
-        .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
+    let query = ParsedJsonPath::parse(jsonpath)?;
 
-    let mut results = Vec::new();
-    evaluate_segment(root, &query.segments, &mut results);
-    Ok(results)
+    Ok(evaluate_parsed_jsonpath(root, &query))
 }
 
-fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<ValueOrHandler>) {
+/// Evaluate a reusable query without parsing it or retaining document values.
+/// Every invocation traverses the supplied root and returns fresh owned results.
+fn evaluate_parsed_jsonpath(root: &dyn PathValue, query: &ParsedJsonPath) -> Vec<ValueOrHandler> {
+    let mut results = NodeSet::new();
+    evaluate_segment(root, &query.query.segments, &mut results);
+    results.into_vec()
+}
+
+fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut NodeSet) {
     match segment {
         Segment::Root {} => {
             if let Ok(cloned) = root.clone_this() {
@@ -55,7 +89,7 @@ fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<V
             if left.is_singular() && matches!(**left, Segment::Root {}) {
                 apply_selectors(root, root, selectors, results);
             } else {
-                let mut intermediate = Vec::new();
+                let mut intermediate = NodeSet::new();
                 evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     apply_selectors(root, &node, selectors, results);
@@ -66,7 +100,7 @@ fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<V
             if left.is_singular() && matches!(**left, Segment::Root {}) {
                 recursive_descent(root, root, selectors, results);
             } else {
-                let mut intermediate = Vec::new();
+                let mut intermediate = NodeSet::new();
                 evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     recursive_descent(root, &node, selectors, results);
@@ -80,7 +114,7 @@ fn apply_selectors(
     root: &dyn PathValue,
     node: &dyn PathValue,
     selectors: &[Selector],
-    results: &mut Vec<ValueOrHandler>,
+    results: &mut NodeSet,
 ) {
     for sel in selectors {
         match sel {
@@ -168,7 +202,7 @@ fn recursive_descent(
     root: &dyn PathValue,
     node: &dyn PathValue,
     selectors: &[Selector],
-    results: &mut Vec<ValueOrHandler>,
+    results: &mut NodeSet,
 ) {
     // 1. apply selectors to the *current* node
     apply_selectors(root, node, selectors, results);
@@ -244,12 +278,12 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
             ExprValue::Bool(compare_expr(l, operator, r))
         }
         FilterExpression::RelativeQuery { query } => {
-            let mut query_results = Vec::new();
+            let mut query_results = NodeSet::new();
             evaluate_segment(current, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::RootQuery { query } => {
-            let mut query_results = Vec::new();
+            let mut query_results = NodeSet::new();
             evaluate_segment(root, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
@@ -520,7 +554,8 @@ impl PathValue for ValueOrHandler {
 // Implement PathValue for LoroDoc
 impl PathValue for LoroDoc {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
-        self.get_by_str_path(key)
+        // JSONPath names are literal keys, not slash-separated document paths.
+        self.get_by_path(&[crate::event::Index::Key(key.into())])
     }
 
     fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {

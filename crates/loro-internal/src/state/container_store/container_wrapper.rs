@@ -232,6 +232,19 @@ impl ContainerWrapper {
         self.try_get_value(idx, ctx).unwrap()
     }
 
+    /// Return no answer when a map would need decoding. In particular, do not
+    /// initialize a lazy map's OnceCell just to ask whether its value is empty.
+    pub(super) fn resident_map_is_empty(&self) -> Option<bool> {
+        match &self.data {
+            ContainerData::State(State::MapState(map)) => Some(map.len() == 0),
+            ContainerData::Lazy(lazy) => match lazy.value.as_ref()? {
+                LazyDecodedValue::Map { ordered, .. } => Some(ordered.is_empty()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Read the current value without populating the lazy-value cache.
     ///
     /// Snapshot export uses this while walking reachable containers. Keeping the decoded value

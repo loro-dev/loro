@@ -47,3 +47,11 @@ logging = ["loro-internal/logging"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
+[[example]]
+name = "jsonpath_reuse_bench"
+required-features = ["jsonpath"]
+
+[[example]]
+name = "jsonpath_allocation_bench"
+required-features = ["jsonpath"]
