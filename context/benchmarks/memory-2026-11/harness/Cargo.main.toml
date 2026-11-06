@@ -1,0 +1,49 @@
+[package]
+name = "loro-mem"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "../src/lib.rs"
+
+[[bin]]
+name = "memprof"
+path = "../src/bin/memprof.rs"
+
+[[bin]]
+name = "multidoc"
+path = "../src/bin/multidoc.rs"
+
+[[bin]]
+name = "builddoc"
+path = "../src/bin/builddoc.rs"
+
+[dependencies]
+loro = { path = "/root/.lody/repos/github---loro-dev---loro/worktrees/cc1fb721-a110-4e28-a171-4505df947eb6/crates/loro" }
+bytes = "1.9"
+dhat = "0.3"
+memmap2 = "0.9"
+libc = "0.2"
+rand = { version = "0.8", features = ["small_rng"] }
+serde_json = "1"
+mimalloc = { version = "0.1", default-features = false }
+tikv-jemallocator = "0.6"
+
+[features]
+default = []
+main_api = []
+proto = ["main_api"]
+dhat_heap = []
+jemalloc = []
+mimalloc_alloc = []
+
+[profile.release]
+opt-level = 3
+debug = 1
+lto = "thin"
+codegen-units = 16
+
+[workspace]
+[patch.crates-io]
+generic-btree = { path = "/root/.lody/repos/github---loro-dev---loro/worktrees/cc1fb721-a110-4e28-a171-4505df947eb6/crates/generic-btree" }

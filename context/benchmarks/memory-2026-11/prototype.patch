@@ -1,0 +1,650 @@
+diff --git a/crates/kv-store/src/sstable.rs b/crates/kv-store/src/sstable.rs
+index bf14e40e..1c2fb737 100644
+--- a/crates/kv-store/src/sstable.rs
++++ b/crates/kv-store/src/sstable.rs
+@@ -307,13 +307,14 @@ impl SsTableBuilder {
+                 )
+             })
+             .unwrap_or_default();
++        let table_blocks = self.meta.len();
+         SsTable {
+             data: Bytes::from(buf),
+             first_key,
+             last_key,
+             meta: self.meta,
+             meta_offset: meta_offset as usize,
+-            block_cache: new_block_cache(),
++            block_cache: new_block_cache(table_blocks),
+         }
+     }
+ }
+@@ -330,9 +331,10 @@ impl quick_cache::Weighter<usize, Arc<Block>> for BlockDataWeighter {
+     }
+ }
+ 
+-fn new_block_cache() -> BlockCache {
+-    let estimated_blocks =
++fn new_block_cache(table_blocks: usize) -> BlockCache {
++    let max_blocks =
+         (BLOCK_CACHE_MAX_BYTES / crate::MemKvStore::DEFAULT_BLOCK_SIZE as u64) as usize;
++    let estimated_blocks = table_blocks.clamp(4, max_blocks);
+     BlockCache::with_weighter(estimated_blocks, BLOCK_CACHE_MAX_BYTES, BlockDataWeighter)
+ }
+ 
+@@ -355,7 +357,7 @@ impl Clone for SsTable {
+             last_key: self.last_key.clone(),
+             meta: self.meta.clone(),
+             meta_offset: self.meta_offset,
+-            block_cache: new_block_cache(),
++            block_cache: new_block_cache(self.meta.len()),
+         }
+     }
+ }
+@@ -447,13 +449,14 @@ impl SsTable {
+                     .unwrap_or(meta.last().map(|m| m.first_key.clone()).unwrap_or_default())
+             })
+             .unwrap_or_default();
++        let meta_len = meta.len();
+         let ans = Self {
+             data: bytes,
+             first_key,
+             last_key,
+             meta,
+             meta_offset,
+-            block_cache: new_block_cache(),
++            block_cache: new_block_cache(meta_len),
+         };
+         Ok(ans)
+     }
+diff --git a/crates/loro-internal/src/dag.rs b/crates/loro-internal/src/dag.rs
+index ff194495..65eb23f9 100644
+--- a/crates/loro-internal/src/dag.rs
++++ b/crates/loro-internal/src/dag.rs
+@@ -603,7 +603,11 @@ fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>
+     let Some(mut deps) = ids_to_ord_id_spans(node.deps.as_ref(), get)? else {
+         return Ok(None);
+     };
+-    if node.id.counter > 0 {
++    // PROTOTYPE, measurement only: assume axiom A6 (explicit deps cover the author's prefix).
++    // Imported data is not checked against A6, so this is not a fix.
++    let assume_a6 =
++        std::env::var_os("LORO_PROTO_A6").is_some() && !deps.is_empty();
++    if node.id.counter > 0 && !assume_a6 {
+         let prev = node.id.inc(-1);
+         if let Some(prev) = OrdIdSpan::from_dag_node(prev, get)? {
+             if !deps.iter().any(|dep| dep.contains_id(prev.id_last())) {
+diff --git a/crates/loro-internal/src/encoding/shallow_snapshot.rs b/crates/loro-internal/src/encoding/shallow_snapshot.rs
+index 360f6ac4..acffe492 100644
+--- a/crates/loro-internal/src/encoding/shallow_snapshot.rs
++++ b/crates/loro-internal/src/encoding/shallow_snapshot.rs
+@@ -305,6 +305,9 @@ pub(crate) fn export_shallow_snapshot_inner(
+ ) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
+     let oplog = doc.oplog().lock();
+     let start_from = calc_shallow_doc_start(&oplog, start_from, oplog.frontiers())?;
++    if std::env::var_os("LORO_PROTO_TRACE_SHALLOW").is_some() {
++        eprintln!("export start_from={start_from:?}");
++    }
+     // `root_vv` is the version of the state at the shallow root; `start_vv`
+     // additionally excludes the frontier ops themselves because the retained
+     // history must include them.
+@@ -949,6 +952,9 @@ fn calc_shallow_doc_start(
+         .dag()
+         .try_latest_single_head_critical_version(frontiers, retained_to)?;
+ 
++    if std::env::var_os("LORO_PROTO_TRACE_SHALLOW").is_some() {
++        eprintln!("calc_shallow asked={frontiers:?} retained_to={retained_to:?} root={root:?}");
++    }
+     let mut ans = Frontiers::new();
+     for id in root.iter() {
+         let mut processed = false;
+diff --git a/crates/loro-internal/src/loro.rs b/crates/loro-internal/src/loro.rs
+index b1bf6524..4a52297a 100644
+--- a/crates/loro-internal/src/loro.rs
++++ b/crates/loro-internal/src/loro.rs
+@@ -3475,6 +3475,27 @@ impl LoroDoc {
+         self.oplog.lock().has_history_cache()
+     }
+ 
++    /// PROTOTYPE: sizes of the structures that dominate parsed history.
++    pub fn proto_sizes() -> String {
++        use std::mem::size_of as s;
++        format!(
++            "Op={} InnerContent={} Change={} AppDagNodeInner={} ImVersionVector={} Frontiers={} ChangesBlock={} ContainerWrapper={}",
++            s::<crate::op::Op>(),
++            s::<crate::op::InnerContent>(),
++            s::<crate::change::Change>(),
++            s::<crate::oplog::loro_dag::AppDagNodeInner>(),
++            s::<crate::version::ImVersionVector>(),
++            s::<crate::version::Frontiers>(),
++            s::<crate::oplog::ChangesBlockSizeProbe>(),
++            0,
++        )
++    }
++
++    /// PROTOTYPE: release parsed change blocks. See `ChangeStore::evict_parsed_blocks`.
++    pub fn evict_parsed_blocks(&self) -> usize {
++        self.with_barrier(|| self.oplog.lock().evict_parsed_blocks())
++    }
++
+     /// Encoded all ops and history cache to bytes and store them in the kv store.
+     ///
+     /// The parsed ops will be dropped
+diff --git a/crates/loro-internal/src/oplog.rs b/crates/loro-internal/src/oplog.rs
+index 8e405a3e..77848cf4 100644
+--- a/crates/loro-internal/src/oplog.rs
++++ b/crates/loro-internal/src/oplog.rs
+@@ -40,6 +40,7 @@ use smallvec::SmallVec;
+ pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
+ pub(crate) use change_store::encode_change_block;
+ pub use change_store::{BlockChangeRef, ChangeStore};
++pub(crate) type ChangesBlockSizeProbe = change_store::ChangesBlockProbe;
+ 
+ /// [OpLog] store all the ops i.e. the history.
+ /// It allows multiple [AppState] to attach to it.
+@@ -894,6 +895,10 @@ impl OpLog {
+         from_frontiers: &Frontiers,
+         to: &VersionVector,
+     ) -> Result<Option<Vec<Frontiers>>, LoroError> {
++        // PROTOTYPE: nothing can fail to cover the empty version.
++        if from.is_empty() {
++            return Ok(Some(Vec::new()));
++        }
+         let mut uncovered = Vec::new();
+         for (peer, span) in from.diff(to).forward.iter() {
+             let id_span = IdSpan::new(*peer, span.start, span.end);
+@@ -1314,10 +1319,13 @@ impl OpLog {
+             }
+         };
+ 
+-        let mut replay_base_vv = self
+-            .dag
+-            .try_frontiers_to_vv(&replay_base_frontiers)?
+-            .unwrap();
++        // PROTOTYPE: the caller already knows the vv of `from`.
++        let mut replay_base_vv = if &replay_base_frontiers == from_frontiers {
++            self.dag.hint_vv(from_frontiers, from);
++            from.clone()
++        } else {
++            self.dag.try_frontiers_to_vv(&replay_base_frontiers)?.unwrap()
++        };
+         replay_base_is_critical |= replay_base_vv.is_empty();
+         if !replay_base_vv.includes_vv(&shallow_since_vv) {
+             // The replay base cannot point before shallow history because those
+@@ -1335,6 +1343,7 @@ impl OpLog {
+         let mut iter = crate::dag::DagCausalIter::try_new(&self.dag, replay_base_frontiers, diff)?;
+         let mut node = iter.next();
+         let mut cur_cnt = 0;
++        let filter_cid = container_filter.and_then(|idx| self.arena.get_container_id(idx));
+         let vv = Rc::new(RefCell::new(VersionVector::default()));
+         Ok((
+             ReplayBase {
+@@ -1356,6 +1365,21 @@ impl OpLog {
+                                 .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
+                             let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
+                                 .min(merged_vv.get(&peer).copied().unwrap_or(0));
++                            // PROTOTYPE: skip a whole block without parsing it.
++                            if let Some(cid) = &filter_cid {
++                                if let Some(block_end) = self
++                                    .change_store
++                                    .block_end_if_lacks_container(ID::new(peer, cnt), cid)
++                                {
++                                    if block_end < dag_node_end {
++                                        cur_cnt = block_end;
++                                    } else {
++                                        node = iter.next();
++                                        cur_cnt = 0;
++                                    }
++                                    continue;
++                                }
++                            }
+                             let change = match self.change_store.get_change(ID::new(peer, cnt)) {
+                                 Some(change) => change,
+                                 None => {
+@@ -1606,6 +1630,12 @@ impl OpLog {
+         ans
+     }
+ 
++    /// PROTOTYPE
++    pub fn evict_parsed_blocks(&mut self) -> usize {
++        self.change_store
++            .evict_parsed_blocks(self.dag.vv(), self.dag.frontiers())
++    }
++
+     #[inline]
+     pub fn compact_change_store(&mut self) {
+         self.change_store
+diff --git a/crates/loro-internal/src/oplog/change_store.rs b/crates/loro-internal/src/oplog/change_store.rs
+index e4cd3c47..494b1333 100644
+--- a/crates/loro-internal/src/oplog/change_store.rs
++++ b/crates/loro-internal/src/oplog/change_store.rs
+@@ -165,6 +165,26 @@ struct ChangeStoreInner {
+     retired: bool,
+     /// Conservative until a full history walk: headers do not validate block bodies.
+     may_have_unparsed_bodies: bool,
++    /// PROTOTYPE: block id -> (end counter, hashes of the block's containers), so a filtered
++    /// replay can skip a block that is no longer loaded.
++    block_cid_index: BTreeMap<ID, (Counter, Box<[u64]>)>,
++}
++
++fn proto_block_cap() -> usize {
++    static CAP: once_cell::sync::Lazy<usize> = once_cell::sync::Lazy::new(|| {
++        std::env::var("LORO_PROTO_BLOCK_CAP")
++            .ok()
++            .and_then(|x| x.parse().ok())
++            .unwrap_or(usize::MAX)
++    });
++    *CAP
++}
++
++fn proto_hash_cid(cid: &ContainerID) -> u64 {
++    use std::hash::{Hash, Hasher};
++    let mut h = rustc_hash::FxHasher::default();
++    cid.hash(&mut h);
++    h.finish()
+ }
+ 
+ #[derive(Debug)]
+@@ -245,6 +265,8 @@ pub(crate) struct ChangesBlock {
+     parsed_extent: ArenaExtent,
+ }
+ 
++pub(crate) type ChangesBlockProbe = ChangesBlock;
++
+ #[derive(Clone)]
+ pub(crate) enum ChangesBlockContent {
+     Changes(Arc<Vec<Change>>),
+@@ -273,6 +295,7 @@ impl ChangeStore {
+                 mem_parsed_kv: BTreeMap::new(),
+                 retired: false,
+                 may_have_unparsed_bodies: false,
++                block_cid_index: BTreeMap::new(),
+             })),
+             arena: a.clone(),
+             external_vv: Arc::new(Mutex::new(VersionVector::new())),
+@@ -701,6 +724,63 @@ impl ChangeStore {
+         inner.retired = true;
+     }
+ 
++    /// PROTOTYPE: if the unparsed block holding `id` has no op on `cid`, its end counter.
++    pub(crate) fn block_end_if_lacks_container(&self, id: ID, cid: &ContainerID) -> Option<Counter> {
++        let hash = proto_hash_cid(cid);
++        {
++            let inner = self.inner.lock();
++            if let Some((_, (end, hashes))) = inner.block_cid_index.range(..=id).next_back() {
++                if _id_same_peer(id, &inner, *end) {
++                    return (!hashes.contains(&hash)).then_some(*end);
++                }
++            }
++        }
++        let block = self.get_block_that_contains(id)?;
++        let ChangesBlockContent::Bytes(b) = &block.content else {
++            return None;
++        };
++        let contains = b.may_contain_container(cid).ok()?;
++        if block.flushed {
++            let header = b.header.get()?;
++            let hashes: Box<[u64]> = header.cids.get()?.iter().map(proto_hash_cid).collect();
++            let start = ID::new(block.peer, block.counter_range.0);
++            self.inner
++                .lock()
++                .block_cid_index
++                .insert(start, (block.counter_range.1, hashes));
++        }
++        (!contains).then_some(block.counter_range.1)
++    }
++
++    fn maybe_evict(&self) {
++        let cap = proto_block_cap();
++        if cap == usize::MAX {
++            return;
++        }
++        let mut inner = self.inner.lock();
++        if inner.mem_parsed_kv.len() > cap {
++            // `insert_change` merges into the map's previous block of the peer, so the last
++            // block of every peer has to stay: dropping it panics "counter should be continuous".
++            let mut last_of_peer: FxHashMap<PeerID, ID> = FxHashMap::default();
++            for id in inner.mem_parsed_kv.keys() {
++                last_of_peer.insert(id.peer, *id);
++            }
++            inner.mem_parsed_kv.retain(|id, b| {
++                !b.flushed || Arc::strong_count(b) > 1 || last_of_peer.get(&id.peer) == Some(id)
++            });
++        }
++    }
++
++    /// PROTOTYPE: flush everything, then drop every block from the parsed map. The KV store
++    /// holds them all afterwards; the DAG keeps its own nodes. Returns the evicted count.
++    pub(crate) fn evict_parsed_blocks(&self, vv: &VersionVector, frontiers: &Frontiers) -> usize {
++        self.flush_and_compact(vv, frontiers);
++        let mut inner = self.inner.lock();
++        let n = inner.mem_parsed_kv.len();
++        inner.mem_parsed_kv.clear();
++        n
++    }
++
+     pub fn get_dag_nodes_that_contains(&self, id: ID) -> Option<Vec<AppDagNode>> {
+         let block = self.get_block_that_contains(id)?;
+         Some(block.content.iter_dag_nodes())
+@@ -1020,6 +1100,8 @@ impl ChangeStore {
+                     && id.counter < block.counter_range.1
+             })
+             .map(|(_, block)| block.clone());
++        drop(inner);
++        self.maybe_evict();
+ 
+         block
+     }
+@@ -1065,6 +1147,7 @@ impl ChangeStore {
+                 mem_parsed_kv: BTreeMap::new(),
+                 retired: false,
+                 may_have_unparsed_bodies: !vv.is_empty(),
++                block_cid_index: BTreeMap::new(),
+             })),
+             arena,
+             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
+@@ -1377,7 +1460,9 @@ mod mut_inner_kv {
+                     if let Some(rollback) = &mut rollback {
+                         rollback.record_block_before_mutation(*_id, block);
+                     }
++                    let block_key = *_id;
+ 
++                    let block_cid_index_key = block_key;
+                     match block.push_change(
+                         change,
+                         estimated_size,
+@@ -1392,6 +1477,7 @@ mod mut_inner_kv {
+                         &self.arena,
+                     ) {
+                         Ok(_) => {
++                            inner.block_cid_index.remove(&block_cid_index_key);
+                             drop(inner);
+                             debug_assert!(self.get_change(id).is_some());
+                             return;
+@@ -1783,7 +1869,10 @@ mod mut_inner_kv {
+ 
+         fn get_parsed_block(&self, id: ID) -> Option<Arc<ChangesBlock>> {
+             match Self::load_parsed_block(&self.inner, &self.external_kv, &self.arena, id) {
+-                Ok(block) => block,
++                Ok(block) => {
++                    self.maybe_evict();
++                    block
++                }
+                 Err((block_id, err)) => {
+                     warn!(?block_id, ?err, "failed to parse change block");
+                     self.parse_failures.record(block_id, &err);
+@@ -1973,6 +2062,14 @@ mod mut_inner_kv {
+     }
+ }
+ 
++fn _id_same_peer(id: ID, inner: &ChangeStoreInner, end: Counter) -> bool {
++    inner
++        .block_cid_index
++        .range(..=id)
++        .next_back()
++        .is_some_and(|(k, _)| k.peer == id.peer && id.counter < end)
++}
++
+ #[must_use]
+ #[derive(Clone, Debug)]
+ pub(crate) struct BatchDecodeInfo {
+@@ -2384,6 +2481,16 @@ impl ChangesBlockBytes {
+         Ok(())
+     }
+ 
++    /// PROTOTYPE: `false` proves the block has no op on `cid`. Reads only the header and cid table.
++    fn may_contain_container(&self, cid: &ContainerID) -> LoroResult<bool> {
++        self.ensure_header()?;
++        let header = self.header.get().unwrap();
++        if header.cids.get().is_none() {
++            block_encode::fill_cids(&self.bytes, header)?;
++        }
++        Ok(header.cids.get().unwrap().contains(cid))
++    }
++
+     fn parse(&self, a: &SharedArena) -> LoroResult<Vec<Change>> {
+         self.ensure_header()?;
+         let ans: Vec<Change> = decode_block(&self.bytes, a, self.header.get().map(|h| h.as_ref()))?;
+diff --git a/crates/loro-internal/src/oplog/change_store/block_encode.rs b/crates/loro-internal/src/oplog/change_store/block_encode.rs
+index 641fde05..7c3b4354 100644
+--- a/crates/loro-internal/src/oplog/change_store/block_encode.rs
++++ b/crates/loro-internal/src/oplog/change_store/block_encode.rs
+@@ -540,6 +540,25 @@ pub fn decode_cids(
+     Ok(header)
+ }
+ 
++/// PROTOTYPE: fill `header.cids` in place, without touching ops or values.
++pub(super) fn fill_cids(bytes: &[u8], header: &ChangesBlockHeader) -> LoroResult<()> {
++    let doc: EncodedBlock<'_> = postcard::from_bytes(bytes)
++        .map_err(|e| LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str()))?;
++    let EncodedBlock { cids, keys, .. } = doc;
++    let keys = header.keys.get_or_try_init(|| decode_keys(&keys))?;
++    let decode_arena = ValueDecodeArena {
++        peers: &header.peers,
++        keys,
++    };
++    header.cids.get_or_try_init(|| {
++        ContainerArena::decode(&cids)?
++            .iter()
++            .map(|x| x.as_container_id(&decode_arena))
++            .try_collect()
++    })?;
++    Ok(())
++}
++
+ /// Visit a Text-insert-only block without building changes or allocating arena
+ /// strings. Other op kinds use the general decoder and semantic comparison.
+ /// Timestamps/messages are intentionally irrelevant to known-history equality.
+@@ -790,6 +809,10 @@ pub fn decode_block(
+     for (change_index, op) in decoded_ops {
+         changes[change_index].ops.push(op);
+     }
++    // PROTOTYPE: drop the growth slack of parsed op vectors.
++    for change in changes.iter_mut() {
++        change.ops.vec_mut().shrink_to_fit();
++    }
+     Ok(changes)
+ }
+ 
+diff --git a/crates/loro-internal/src/oplog/loro_dag.rs b/crates/loro-internal/src/oplog/loro_dag.rs
+index 20bd8016..2c5a657b 100644
+--- a/crates/loro-internal/src/oplog/loro_dag.rs
++++ b/crates/loro-internal/src/oplog/loro_dag.rs
+@@ -53,6 +53,9 @@ pub struct AppDag {
+     /// we need to make sure it breaks at the given point.
+     unhandled_dep_points: Mutex<BTreeSet<ID>>,
+     pending_txn_node: Option<AppDagNode>,
++    /// PROTOTYPE: the last version resolved without walking to the root. A node whose deps are
++    /// exactly these frontiers takes this vv, so a new node near the head does not walk either.
++    vv_hint: Mutex<Option<(Frontiers, ImVersionVector)>>,
+     import_rollback_has_journal: AtomicBool,
+     import_rollback: Mutex<Option<AppDagRollback>>,
+ }
+@@ -132,6 +135,7 @@ impl AppDag {
+             shallow_root_frontiers_deps: Default::default(),
+             shallow_since_vv: Default::default(),
+             pending_txn_node: None,
++            vv_hint: Mutex::new(None),
+             import_rollback_has_journal: AtomicBool::new(false),
+             import_rollback: Mutex::new(None),
+         }
+@@ -1156,6 +1160,16 @@ impl AppDag {
+                     continue;
+                 }
+ 
++                {
++                    let hint = self.vv_hint.lock();
++                    if let Some((f, v)) = hint.as_ref() {
++                        if f == &top_node.deps {
++                            let _ = top_node.vv.set(v.clone());
++                            continue;
++                        }
++                    }
++                }
++
+                 let mut ans_vv = ImVersionVector::default();
+                 if top_node.deps == self.shallow_root_frontiers_deps {
+                     for (&p, &c) in self.shallow_since_vv.iter() {
+@@ -1274,6 +1288,11 @@ impl AppDag {
+             return Ok(Some(vv));
+         }
+ 
++        if let Some(vv) = self.try_vv_near_head(frontiers)? {
++            *self.vv_hint.lock() = Some((frontiers.clone(), ImVersionVector::from_vv(&vv)));
++            return Ok(Some(vv));
++        }
++
+         let mut vv: VersionVector = Default::default();
+         for id in frontiers.iter() {
+             let Some(x) = self.try_get(id)? else {
+@@ -1287,6 +1306,89 @@ impl AppDag {
+         Ok(Some(vv))
+     }
+ 
++    /// PROTOTYPE: remember a version the caller already resolved, unless the regular path
++    /// can reach it cheaply from a cached node.
++    pub(crate) fn hint_vv(&self, frontiers: &Frontiers, vv: &VersionVector) {
++        for id in frontiers.iter() {
++            if let Ok(Some(n)) = self.try_get(id) {
++                if n.vv.get().is_some() {
++                    return;
++                }
++            }
++        }
++        *self.vv_hint.lock() = Some((frontiers.clone(), ImVersionVector::from_vv(vv)));
++    }
++
++    /// PROTOTYPE: the version vector of a version close to the head, from the head's vv and the
++    /// path between them. Touches only the DAG nodes near the head.
++    fn try_vv_near_head(&self, frontiers: &Frontiers) -> LoroResult<Option<VersionVector>> {
++        const MAX_LAMPORT_DISTANCE: u32 = 4096;
++        if std::env::var_os("LORO_PROTO_NO_NEAR").is_some() {
++            return Ok(None);
++        }
++        // Shallow: `try_find_path` must not walk below the shallow root.
++        if self.frontiers.is_empty() || frontiers.is_empty() || !self.shallow_since_vv.is_empty() {
++            return Ok(None);
++        }
++        if frontiers == &self.frontiers {
++            return Ok(Some(self.vv.clone()));
++        }
++        let mut head_lamport = 0;
++        for id in self.frontiers.iter() {
++            let Some(l) = self.try_get_lamport(&id)? else {
++                return Ok(None);
++            };
++            head_lamport = head_lamport.max(l);
++        }
++        for id in frontiers.iter() {
++            let Some(node) = self.try_get(id)? else {
++                return Ok(None);
++            };
++            if node.vv.get().is_some() {
++                return Ok(None);
++            }
++            // A cached dep makes the regular path one step long, and it shares structure
++            // with the dep's vv. Rebuilding from a flat vv here would not.
++            for dep in node.deps.iter() {
++                if let Some(d) = self.try_get(dep)? {
++                    if d.vv.get().is_some() {
++                        return Ok(None);
++                    }
++                }
++            }
++            let Some(l) = self.try_get_lamport(&id)? else {
++                return Ok(None);
++            };
++            if head_lamport.saturating_sub(l) > MAX_LAMPORT_DISTANCE {
++                return Ok(None);
++            }
++        }
++        let path = crate::dag::DagUtils::try_find_path(self, &self.frontiers, frontiers)?;
++        if !path.forward.is_empty() {
++            return Ok(None);
++        }
++        let mut vv = self.vv.clone();
++        for (peer, span) in path.retreat.iter() {
++            let start = span.start.min(span.end);
++            if start <= 0 {
++                vv.remove(peer);
++            } else {
++                vv.insert(*peer, start);
++            }
++        }
++        if std::env::var_os("LORO_PROTO_CHECK_VV").is_some() {
++            let mut slow: VersionVector = Default::default();
++            for id in frontiers.iter() {
++                let x = self.try_get(id)?.unwrap();
++                let target_vv = self.try_ensure_vv_for(&x)?;
++                slow.extend_to_include_vv(target_vv.iter());
++                slow.extend_to_include_last_id(id);
++            }
++            assert_eq!(vv, slow, "near-head vv mismatch for {frontiers:?}");
++        }
++        Ok(Some(vv))
++    }
++
+     #[allow(unused)]
+     pub(crate) fn frontiers_to_im_vv(&self, frontiers: &Frontiers) -> ImVersionVector {
+         if frontiers.is_empty() {
+diff --git a/crates/loro-internal/src/version.rs b/crates/loro-internal/src/version.rs
+index 2fab4923..60f4017a 100644
+--- a/crates/loro-internal/src/version.rs
++++ b/crates/loro-internal/src/version.rs
+@@ -240,13 +240,30 @@ impl ImVersionVector {
+                 continue;
+             }
+ 
+-            if let Some(my_counter) = self.0.get_mut(&client_id) {
+-                *my_counter = normalize_vv_counter(*my_counter);
+-                if *my_counter < counter {
+-                    *my_counter = counter;
++            // PROTOTYPE: `get_mut` copies the shared path even when nothing changes.
++            static OLD_COW: once_cell::sync::Lazy<bool> =
++                once_cell::sync::Lazy::new(|| std::env::var_os("LORO_PROTO_VV_COW").is_some());
++            if *OLD_COW {
++                if let Some(my_counter) = self.0.get_mut(&client_id) {
++                    *my_counter = normalize_vv_counter(*my_counter);
++                    if *my_counter < counter {
++                        *my_counter = counter;
++                    }
++                } else {
++                    self.0.insert(client_id, counter);
++                }
++                continue;
++            }
++            match self.0.get(&client_id).copied() {
++                Some(my_counter) => {
++                    let merged = normalize_vv_counter(my_counter).max(counter);
++                    if merged != my_counter {
++                        self.0.insert(client_id, merged);
++                    }
++                }
++                None => {
++                    self.0.insert(client_id, counter);
+                 }
+-            } else {
+-                self.0.insert(client_id, counter);
+             }
+         }
+     }
+diff --git a/crates/loro/src/lib.rs b/crates/loro/src/lib.rs
+index 6e08ca2c..19bcb089 100644
+--- a/crates/loro/src/lib.rs
++++ b/crates/loro/src/lib.rs
+@@ -1437,6 +1437,16 @@ impl LoroDoc {
+         self.doc.free_diff_calculator()
+     }
+ 
++    /// PROTOTYPE
++    pub fn proto_sizes() -> String {
++        InnerLoroDoc::proto_sizes()
++    }
++
++    /// PROTOTYPE: release parsed change blocks.
++    pub fn evict_parsed_blocks(&self) -> usize {
++        self.doc.evict_parsed_blocks()
++    }
++
+     /// Encoded all ops and history cache to bytes and store them in the kv store.
+     ///
+     /// This will free up the memory that used by parsed ops
