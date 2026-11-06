@@ -27,6 +27,17 @@ use crate::{
 
 use super::{ApplyLocalOpReturn, ContainerState, DiffApplyContext};
 
+#[cfg(test)]
+thread_local! {
+    static SNAPSHOT_SCALAR_SCAN_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn snapshot_scalar_count(s: &str) -> usize {
+    #[cfg(test)]
+    SNAPSHOT_SCALAR_SCAN_BYTES.with(|count| count.set(count.get() + s.len()));
+    s.chars().count()
+}
+
 #[derive(Debug)]
 pub struct RichtextState {
     idx: ContainerIdx,
@@ -1621,6 +1632,7 @@ mod snapshot {
             let span_iter = iters.spans.into_iter();
             let mut mark_iter = iters.marks.into_iter();
             let mut id_to_style = FxHashMap::default();
+            let mut remaining_scalars = super::snapshot_scalar_count(s.as_str());
             for span in span_iter {
                 let EncodedTextSpan {
                     peer_idx,
@@ -1677,12 +1689,13 @@ mod snapshot {
                         }
 
                         // Text
-                        if s.as_str().chars().count() < len as usize {
+                        if remaining_scalars < len as usize {
                             return Err(state_decode_error(
                                 "Decode richtext state failed: text span exceeds value length",
                             ));
                         }
 
+                        remaining_scalars -= len as usize;
                         let (new, rest) = s.split_at_unicode_pos(len as usize);
                         s = rest;
                         RichtextStateChunk::new_text(new.bytes().clone(), id_full)
@@ -1776,6 +1789,29 @@ mod snapshot {
                 ctx,
             )
             .is_err());
+        }
+
+        #[test]
+        fn fragmented_unicode_snapshot_counts_scalars_once() {
+            let text = "aé𝄞".repeat(1024);
+            let spans = (0..3072).map(|i| span(i * 2, 1)).collect();
+            let bytes = payload(&text, spans, vec![]);
+            let (value, rest) = RichtextState::decode_value(&bytes).unwrap();
+            let idx = ContainerIdx::from_index_and_type(0, ContainerType::Text);
+            let configure = Default::default();
+            let ctx = ContainerCreationContext {
+                configure: &configure,
+                peer: 0,
+            };
+            super::super::SNAPSHOT_SCALAR_SCAN_BYTES.with(|count| count.set(0));
+            let mut state = RichtextState::decode_snapshot_fast(idx, (value, rest), ctx).unwrap();
+            assert_eq!(state.get_value().into_string().unwrap().to_string(), text);
+            let scanned = super::super::SNAPSHOT_SCALAR_SCAN_BYTES.with(|count| count.get());
+            assert_eq!(
+                scanned,
+                text.len(),
+                "scalar validation must scan the value only once"
+            );
         }
 
         const PEER: PeerID = 7;
