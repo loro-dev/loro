@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.17.2
+
+### Patch Changes
+
+- 499461f: Speed up concurrent imports by reusing the current frontier, reducing repeated
+  ancestor traversal, and filtering unrelated container history before materializing
+  replay version vectors.
+- e42321a: Speed up importing a concurrent change into a document that has seen many peer ids. Turning the replay base into frontiers walked the history back once per peer; the walk now stops at nodes whose version vector is already cached, so a document with hundreds of peers imports in a fraction of a millisecond instead of tens to hundreds.
+- ea1d383: Stop deeply nested data from untrusted updates from aborting the process. `LoroValue` equality, container depth tracking, deep-value reads (`getDeepValue`/`toJSON`) and Map/List/MovableList snapshot export no longer recurse once per nesting level, and container depth no longer overflows past 65,535 levels. Mergeable container names whose ancestors' names together exceed 1 MiB are no longer treated as mergeable (they used to cost quadratic time and memory on import), and creating such a child with `ensureMergeable*` returns an error.
+
 ## 1.17.1
 
 ### Patch Changes
