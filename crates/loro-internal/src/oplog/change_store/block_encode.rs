@@ -790,6 +790,10 @@ pub fn decode_block(
     for (change_index, op) in decoded_ops {
         changes[change_index].ops.push(op);
     }
+    // Parsed blocks stay in memory, so the growth slack of these vectors would too.
+    for change in changes.iter_mut() {
+        change.ops.vec_mut().shrink_to_fit();
+    }
     Ok(changes)
 }
 
@@ -803,6 +807,27 @@ mod test {
     use crate::{cursor::PosType, delta::DeltaValue, loro::ExportMode, LoroDoc};
 
     use super::*;
+
+    #[test]
+    fn decoded_changes_keep_no_spare_op_capacity() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let text = doc.get_text("text");
+        // Each insert lands before the previous one, so no two of them merge into one op.
+        for _ in 0..9 {
+            text.insert(0, "x", PosType::Unicode).unwrap();
+        }
+        doc.commit_then_renew();
+        let changes = doc.oplog().lock().change_store().get_change(ID::new(1, 0));
+        let change = changes.unwrap();
+        let bytes = encode_block(std::slice::from_ref(&*change), &doc.oplog().lock().arena);
+
+        let decoded = decode_block(&bytes, &SharedArena::new(), None).unwrap();
+
+        let ops = decoded[0].ops.vec();
+        assert_eq!(ops.len(), 9);
+        assert_eq!(ops.capacity(), ops.len());
+    }
 
     #[test]
     fn block_range_rejects_overflow_instead_of_panicking_on_external_bytes() {

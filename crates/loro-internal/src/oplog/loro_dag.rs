@@ -1135,6 +1135,28 @@ impl AppDag {
         })
     }
 
+    /// Give `node` a version vector the caller already knows, the vv of `node.deps`, so that
+    /// resolving it does not walk to the root on a lazily loaded DAG.
+    ///
+    /// A dep with a cached vv is left to [`Self::try_ensure_vv_for`]: one step from there shares
+    /// structure with that vv, while `from_vv` builds a whole new map.
+    pub(crate) fn seed_vv_of_deps(
+        &self,
+        node: &AppDagNode,
+        deps_vv: &VersionVector,
+    ) -> LoroResult<()> {
+        if node.vv.get().is_some() {
+            return Ok(());
+        }
+        for dep in node.deps.iter() {
+            if self.try_get(dep)?.is_some_and(|d| d.vv.get().is_some()) {
+                return Ok(());
+            }
+        }
+        let _ = node.vv.set(ImVersionVector::from_vv(deps_vv));
+        Ok(())
+    }
+
     pub(crate) fn ensure_vv_for(&self, target_node: &AppDagNode) -> ImVersionVector {
         self.try_ensure_vv_for(target_node).unwrap()
     }
