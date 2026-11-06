@@ -61,6 +61,12 @@ pub(crate) trait Dag: Debug {
     fn frontier(&self) -> &Frontiers;
     fn vv(&self) -> &VersionVector;
     fn contains(&self, id: ID) -> bool;
+    fn is_pruned(&self, _id: ID) -> bool {
+        false
+    }
+    fn is_before_shallow_root(&self, _frontiers: &Frontiers) -> bool {
+        false
+    }
 }
 
 /// Whether the meet of two versions can serve as the replay base between them.
@@ -183,6 +189,14 @@ impl<T: Dag + ?Sized> DagUtils for T {
     }
 
     fn try_find_path(&self, from: &Frontiers, to: &Frontiers) -> LoroResult<VersionVectorDiff> {
+        for id in from.iter().chain(to.iter()) {
+            if id.counter < 0 || !self.contains(id) {
+                return Err(LoroError::FrontiersNotFound(id));
+            }
+        }
+        if self.is_before_shallow_root(from) || self.is_before_shallow_root(to) {
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
+        }
         let mut ans = VersionVectorDiff::default();
         if from == to {
             return Ok(ans);
@@ -235,6 +249,7 @@ impl<T: Dag + ?Sized> DagUtils for T {
 
         _walk_to_meet(
             &|v| self.try_get(v),
+            &|id| self.is_pruned(id),
             from,
             to,
             &mut |span, node_type| match node_type {
@@ -426,6 +441,7 @@ where
 /// - deep whether keep searching until the min of non-shared node is found
 fn _walk_to_meet<'a, F, D, G>(
     get: &'a F,
+    is_pruned: &impl Fn(ID) -> bool,
     a_ids: &Frontiers,
     b_ids: &Frontiers,
     notify: &mut G,
@@ -439,10 +455,12 @@ where
     let mut ans: FxHashMap<PeerID, Counter> = Default::default();
     let mut queue: BinaryHeap<(OrdIdSpan, NodeType)> = BinaryHeap::new();
     for id in a_ids.iter() {
-        queue.push((OrdIdSpan::from_dag_node(id, get)?.unwrap(), NodeType::A));
+        let node = OrdIdSpan::from_dag_node(id, get)?.ok_or(LoroError::FrontiersNotFound(id))?;
+        queue.push((node, NodeType::A));
     }
     for id in b_ids.iter() {
-        queue.push((OrdIdSpan::from_dag_node(id, get)?.unwrap(), NodeType::B));
+        let node = OrdIdSpan::from_dag_node(id, get)?.ok_or(LoroError::FrontiersNotFound(id))?;
+        queue.push((node, NodeType::B));
     }
     let mut visited: HashMap<PeerID, (Counter, NodeType), _> = FxHashMap::default();
     // invariants in this method:
@@ -540,7 +558,19 @@ where
         }
 
         for dep_id in node.deps.as_ref().iter() {
-            queue.push((OrdIdSpan::from_dag_node(dep_id, get)?.unwrap(), node_type));
+            match OrdIdSpan::from_dag_node(dep_id, get)? {
+                Some(dep) => queue.push((dep, node_type)),
+                None if is_pruned(dep_id) => {
+                    // Both endpoints include the shallow root. Its pruned past
+                    // is shared, even if the other walk has not reached it yet.
+                    match node_type {
+                        NodeType::A => a_count -= 1,
+                        NodeType::B => b_count -= 1,
+                        NodeType::Shared => {}
+                    }
+                }
+                None => return Err(LoroError::FrontiersNotFound(dep_id)),
+            }
         }
 
         if node_type != NodeType::Shared {
