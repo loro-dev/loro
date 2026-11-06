@@ -240,12 +240,9 @@ impl ImVersionVector {
                 continue;
             }
 
-            if let Some(my_counter) = self.0.get_mut(&client_id) {
-                *my_counter = normalize_vv_counter(*my_counter);
-                if *my_counter < counter {
-                    *my_counter = counter;
-                }
-            } else {
+            // `get_mut` would copy the path to the entry even when nothing changes, and every
+            // DAG node keeps one of these maps.
+            if self.0.get(&client_id).is_none_or(|my| *my < counter) {
                 self.0.insert(client_id, counter);
             }
         }
@@ -1408,5 +1405,48 @@ mod tests {
         // Convert back to VersionVector and compare
         let decoded_vv = VersionVector::from_im_vv(&decoded_im_vv);
         assert_eq!(vv, decoded_vv);
+    }
+}
+
+#[cfg(test)]
+mod im_version_vector_merge_tests {
+    use super::*;
+
+    fn many_peers() -> ImVersionVector {
+        let mut vv = ImVersionVector::new();
+        for peer in 0..64 {
+            vv.insert(peer, 10);
+        }
+        vv
+    }
+
+    #[test]
+    fn merging_a_covered_vv_keeps_the_map_shared() {
+        let original = many_peers();
+        let mut merged = original.clone();
+
+        merged.extend_to_include_vv(original.iter());
+
+        assert!(merged.0.ptr_eq(&original.0));
+    }
+
+    #[test]
+    fn merging_raises_lower_counters_only() {
+        let mut vv = ImVersionVector::new();
+        vv.insert(1, 5);
+        vv.insert(2, 5);
+        vv.insert(3, -1);
+        let mut other = ImVersionVector::new();
+        other.insert(1, 3);
+        other.insert(2, 8);
+        other.insert(3, 2);
+        other.insert(4, 1);
+        other.insert(5, 0);
+
+        vv.extend_to_include_vv(other.iter());
+
+        let mut merged: Vec<_> = vv.iter().map(|(&p, &c)| (p, c)).collect();
+        merged.sort();
+        assert_eq!(merged, vec![(1, 5), (2, 8), (3, 2), (4, 1)]);
     }
 }

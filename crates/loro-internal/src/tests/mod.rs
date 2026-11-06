@@ -4,6 +4,7 @@ fn init() {
 }
 
 mod import_atomicity;
+mod lazy_history;
 mod op_count;
 mod replay_base;
 mod text_arena_growth;

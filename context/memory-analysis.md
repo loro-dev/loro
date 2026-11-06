@@ -4,8 +4,9 @@ Verified against code 2026-11-06 (main `ea1d383e`, after #1218, #1222, #1244).
 
 This is a measurement report for a process that keeps many `LoroDoc`s open for a
 long time: a local sync hub holding tens to thousands of documents, with single
-documents up to 28 MB. Nothing here changes behavior. Prototypes live in
-[`benchmarks/memory-2026-11/prototype.patch`](benchmarks/memory-2026-11/prototype.patch).
+documents up to 28 MB. The numbers below describe `ea1d383e` unless a section says
+otherwise. Items 2, 1a, 7 and 9 have landed, see [What landed](#what-landed). Prototypes
+live in [`benchmarks/memory-2026-11/prototype.patch`](benchmarks/memory-2026-11/prototype.patch).
 
 ## Summary
 
@@ -281,8 +282,45 @@ item changes the encoding format.
 | 11 | **Keep parsed ops columnar** | Inferred: 64 B/op toward the 7–9 B/op on disk, `dlong` mainly | `change_store`, large | High: every reader of `Op` | Not prototyped |
 | 12 | **Flat `ImVersionVector` for few peers** | Inferred: 7.5 MiB → under 1 MiB on `d28m` | `version.rs`, small | Low to medium: needs the `im` path above a threshold | Stack measured |
 
-Suggested order: 2, 7, 9 and 1a are small and independent. Then 4 with 3. Items 1b
-and 5 need design work first.
+Items 2, 1a, 7 and 9 have landed. Next: 4 with 3. Items 1b and 5 need design work first.
+
+### What landed
+
+Items 2, 1a, 7 and 9, measured with the same commands on `ea1d383e` and on the branch.
+Single runs on a shared host, so treat time differences under about 10% as noise.
+
+| Scenario | `ea1d383e` | With the four items |
+| --- | --- | --- |
+| Cold import, `d28m` | 57.8 ms, 57.64 MB live, +28.81 MB | 0.2 ms, 28.84 MB, +0.01 MB |
+| Cold import, `dlong` | 13.1 ms, 18.08 MB, +9.30 MB | 0.6 ms, 8.96 MB, +0.20 MB |
+| 800 fresh-peer stale writes, `d1m` | 10.6 s, 48.08 MB, peak RSS 56.5 MB | 6.8 s, 13.28 MB, peak RSS 21.7 MB |
+| Export then trim, live heap, `dlong` | 116.78 MB | 83.74 MB |
+| Detached loop, live heap, `dlong` | 124.33 MB | 90.16 MB |
+| Shadow loop, live heap, `dlong` | 233.12 MB | 164.53 MB |
+| 5,000 docs at 1.4 KB, `open0` | 25.7 KB/doc, 122.6 MB | 20.0 KB/doc, 95.4 MB |
+
+`d28m` export, detached and shadow loops barely move: under 5 MB of live heap each. Those
+need items 3 and 4. The export peak drops on `dlong` (211 → 178 MB) and not on `d28m`.
+
+Item 1a seeds only a sequential import, whose first node has `deps == from_frontiers`.
+A concurrent import still walks to the root, which is item 1b.
+
+**`from` must be the vv of `from_frontiers`.** `OpLog::try_iter_from_replay_base_causally`
+now trusts that pair when the replay base equals `from_frontiers`, and writes it into the
+DAG through `AppDagNode::vv`, which is a `OnceCell` that nothing corrects later. Every
+caller meets this today: each takes `oplog.vv()` and `oplog.frontiers()` at the same point,
+resolves the vv from the frontiers, or passes both empty. A new caller has to do the same.
+Pending changes are in neither.
+
+Two guards came from review:
+
+- Empty `from_frontiers` skips the shortcut. `VersionVector::is_empty` does not normalize,
+  so a `from` holding a zero counter would turn the empty base into a non-critical one.
+  Regression: `a_zero_counter_in_the_start_vv_keeps_the_empty_replay_base_critical`.
+- `AppDag::seed_vv_of_deps` leaves a node alone when a dep already has a vv. One step
+  from there shares structure with that vv, while `ImVersionVector::from_vv` builds a full
+  map. This is the many-peer regression listed under the hazards below. On the fresh-peer
+  run above the branch holds 13.28 MB, against 11.63 MB for item 2 alone.
 
 ### Hazards found by the prototypes
 
@@ -334,15 +372,16 @@ No unbounded leak was found. Growth comes from retention that has no release pat
 
 ### `ImVersionVector::extend_to_include_vv` destroys structural sharing
 
-`crates/loro-internal/src/version.rs`. It calls `im::HashMap::get_mut` for every
-peer, and `get_mut` copies the path to the entry even when the counter does not
-change. So merging two vvs at a merge node unshares the whole map.
+Fixed: see [What landed](#what-landed). `crates/loro-internal/src/version.rs` called
+`im::HashMap::get_mut` for every peer, and `get_mut` copies the path to the entry even
+when the counter does not change. So merging two vvs at a merge node unshared the whole
+map. It now reads first, and inserts only on change.
 
 Fresh-peer stale writes, `d1m`, 800 writes, 802 peers, with the near-head path off:
 
 | Variant | Live heap | Peak RSS | p50 |
 | --- | --- | --- | --- |
-| `get_mut` (today) | 46.33 MB | 54.9 MB | 10.7 ms |
+| `get_mut` (before the fix) | 46.33 MB | 54.9 MB | 10.7 ms |
 | `get`, insert only on change | 11.63 MB | 19.8 MB | 7.6 ms |
 
 ### Shallow snapshots barely trim alternating-peer documents

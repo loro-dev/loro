@@ -307,13 +307,14 @@ impl SsTableBuilder {
                 )
             })
             .unwrap_or_default();
+        let block_cache = new_block_cache(self.meta.len());
         SsTable {
             data: Bytes::from(buf),
             first_key,
             last_key,
             meta: self.meta,
             meta_offset: meta_offset as usize,
-            block_cache: new_block_cache(),
+            block_cache,
         }
     }
 }
@@ -330,9 +331,11 @@ impl quick_cache::Weighter<usize, Arc<Block>> for BlockDataWeighter {
     }
 }
 
-fn new_block_cache() -> BlockCache {
-    let estimated_blocks =
+/// `table_blocks` sizes what the cache reserves up front: a process can hold many small tables.
+fn new_block_cache(table_blocks: usize) -> BlockCache {
+    let max_blocks =
         (BLOCK_CACHE_MAX_BYTES / crate::MemKvStore::DEFAULT_BLOCK_SIZE as u64) as usize;
+    let estimated_blocks = table_blocks.clamp(1, max_blocks);
     BlockCache::with_weighter(estimated_blocks, BLOCK_CACHE_MAX_BYTES, BlockDataWeighter)
 }
 
@@ -355,7 +358,7 @@ impl Clone for SsTable {
             last_key: self.last_key.clone(),
             meta: self.meta.clone(),
             meta_offset: self.meta_offset,
-            block_cache: new_block_cache(),
+            block_cache: new_block_cache(self.meta.len()),
         }
     }
 }
@@ -447,13 +450,14 @@ impl SsTable {
                     .unwrap_or(meta.last().map(|m| m.first_key.clone()).unwrap_or_default())
             })
             .unwrap_or_default();
+        let block_cache = new_block_cache(meta.len());
         let ans = Self {
             data: bytes,
             first_key,
             last_key,
             meta,
             meta_offset,
-            block_cache: new_block_cache(),
+            block_cache,
         };
         Ok(ans)
     }
