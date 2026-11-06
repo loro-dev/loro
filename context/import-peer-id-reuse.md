@@ -25,8 +25,11 @@ path, which rolls back only the arena (decode may have registered containers).
    compared with the local changes over the overlap, also when the import brings
    nothing new. A mismatch returns `LoroError::UsedOpID { id }` with the first
    differing id.
-2. **Trim.** The known parts are dropped, as the decoders used to do.
-3. **Skipped counters.** A change whose deps are present but whose peer's
+2. **Parked history.** The part of each change the version vector does not cover
+   is compared with parked changes that hold the same ids (see below). A mismatch
+   returns `UsedOpID` the same way.
+3. **Trim.** The known parts are dropped, as the decoders used to do.
+4. **Skipped counters.** A change whose deps are present but whose peer's
    previous counter is not is rejected with `DecodeError`. The main pass of
    `import_changes_to_oplog` would apply it and trip the counter assertion in
    `AppDag::update_version_on_new_change` under the op log lock. The check replays
@@ -46,6 +49,33 @@ arena. Frontier blocks parsed by `import_all` are taken, not cloned. No dropped
 prefix strings or list values are allocated in the document arena, including when
 snapshot and local history use different change boundaries. The regular import
 entry then runs its counter/preflight checks as usual.
+
+## Parked changes
+
+Two writers can reuse an id on top of a dep the receiver lacks, so both updates are
+parked. When the dep arrives, one is applied and the other reaches
+`ChangeState::Applied` in `try_apply_pending` and disappears, with every import
+returning `Ok`. Both contents were received, so unlike delta sync this is comparable
+without any format change.
+
+The check runs when the second update arrives, not when the dep does:
+
+- The update that brought the conflict gets the error. At unlock it would land on
+  the dep's import, which is innocent.
+- Nothing has changed yet, so no rollback is needed. An error at unlock has to undo
+  the applied dep, and then the conflict stays parked: the dep can never be imported
+  again and sync is stuck for good.
+- It gives the same outcome as known history: the first writer stays, and the second
+  is rejected. It also covers an update that could apply at once while a conflicting
+  one is parked.
+
+`PendingChanges::changes` is keyed by the missing dep, so it cannot say who holds an
+id, and scanning it per import makes out-of-order delivery quadratic.
+`PendingChanges::claims` maps, per peer, disjoint counter spans to the parked change
+that first held them. Comparing with one holder is enough: everything else parked over
+those ids was compared with it on arrival. Claims are derived data. `claim` adds them
+in `push_pending_change`, `release_claims_below` drops what the op log now has, and
+import rollback rebuilds them, since the scope restores slots wholesale.
 
 ## What "equal" means
 
@@ -151,6 +181,12 @@ is per atom range, not per change:
   sequence is then rejected by `validate_diff` and rolled back (loro-dev/loro#1160).
   A tail that happens to land on valid positions is applied and scrambles the
   state. Detecting that needs content hashes in the version vector.
+- **One blob that contradicts itself.** Two changes with the same id inside one
+  import are not compared with each other. Only a forged blob has this: the second is
+  dropped as known. Comparing within a blob would cost every import.
+- **A local commit over a parked id.** If a doc commits with a peer that has parked
+  changes, those changes are dropped as known when their deps arrive. See the last
+  entry of this list.
 - **Same-peer changes that are concurrent but contiguous** (for example `p@2`
   with deps `[]` on top of a local `p@0..=1`). They do not crash, and are still
   accepted.
@@ -222,11 +258,38 @@ runs per cell, 3 timed rounds each; medians. Heap is `mallinfo2`.
   `text_stream` 1.01x, `batch` 1.00x, and, for imports that already compared,
   `overlap_mem` 1.05x and `overlap_snap` 0.98x.
 
+### Parked history
+
+Each import checks `claims` once per change it brings past the version vector: one
+hash lookup, or nothing beyond it when the peer has nothing parked. `claim` copies the
+change once, when it first parks; moving between slots does not touch `claims`.
+Measured as above, 3 interleaved process runs, against the same tree without claims.
+`pending_repeat` delivers `n` shuffled blobs that all wait for a missing dep, twice,
+and reports the second delivery, which compares with every parked change.
+
+| Scenario | Changes | no claims ms | claims ms | Ratio |
+|---|---:|---:|---:|---:|
+| pending_repeat | 1,000 | 103.374 | 101.697 | 0.98x |
+| pending_repeat | 4,000 | 1,725.852 | 1,750.650 | 1.01x |
+| ooo | 32,000 | 161.179 | 164.218 | 1.02x |
+| batch_rev | 32,000 | 296.898 | 296.074 | 1.00x |
+| batch | 32,000 | 246.102 | 246.042 | 1.00x |
+| text_stream | 32,000 | 156.023 | 161.852 | 1.04x |
+| overlap_snap | 32,000 | 5.034 | 4.905 | 0.97x |
+| reimport_map | 64,000 | 31.247 | 32.452 | 1.04x |
+
+`pending_repeat` is quadratic with or without claims, which is why it stops at 4,000:
+4x the changes cost 16x. `try_apply_pending` is called with the ids of parked
+changes too, and for each one lifts and re-parks every slot below it. That predates
+this check. The first version of `claim` ran on every re-park and cost 1.6x here.
+
 ## Tests
 
 - `crates/loro/tests/import_reused_peer_id.rs`: conflicts in imports that bring
   nothing new through every path, attached and detached, and repeated imports of
-  known history in every form; the #1118 repro through
+  known history in every form; conflicts with parked changes (both orders, partial
+  overlaps, parked on the same peer, updates that could apply, every import path)
+  and repeated delivery of parked updates; the #1118 repro through
   updates, snapshot, `import_batch` and JSON; a same-length conflict that used to
   scramble; a conflicting known change followed by a new one; skipped counters;
   and re-imports that must still succeed (piecewise vs merged change stores, every
@@ -241,6 +304,8 @@ runs per cell, 3 timed rounds each; medians. Heap is `mallinfo2`.
   and JSON re-imports, later relay edits, retained prefix history, genuine
   text/value conflicts that must still be rejected, and an exact-path rejection
   of `2^60` versus `2^60 + 1`.
+- `tests::import_atomicity::failed_import_batch_restores_which_parked_changes_hold_their_ids`:
+  a rollback restores claims in both directions.
 - `oplog::known_history::json_lossy_value_tests`: the precise value equivalences
   and rejection boundaries, including nested values, byte-list contents, numeric
   representations, 1 ULP finite doubles, marker-string ambiguity and unknown-op
@@ -248,6 +313,8 @@ runs per cell, 3 timed rounds each; medians. Heap is `mallinfo2`.
 - `oplog::known_history::two_arena_tests`: cross-arena container identity and
   Unicode atom comparisons, and a dependency mismatch inside a merged import's
   cold prefix.
+- `crates/loro/tests/untrusted_depth.rs`: `JsonLossy` comparison of 20,000-level
+  values on a 1 MiB stack, equal and conflicting.
 - `crates/json-float-consumer`: a normal `loro` dependency, without the `loro`
   crate's dev-only `float_roundtrip`, checks finite-double JSON text then an
   exact binary reimport, and the same `2^60` conflict under both modes.

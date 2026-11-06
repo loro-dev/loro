@@ -33,58 +33,75 @@ pub(crate) enum ImportedValues {
 }
 
 impl ImportedValues {
-    fn eq(self, a: &LoroValue, b: &LoroValue) -> bool {
+    /// Walks collections with a work list: a value comes from an untrusted peer and
+    /// can be nested deeper than the stack allows, like in `LoroValue`'s own `eq`.
+    /// See `context/deep-value-stack-safety.md`.
+    fn eq<'a>(self, a: &'a LoroValue, b: &'a LoroValue) -> bool {
         if self == Self::Exact {
             return a == b;
         }
 
-        match (a, b) {
-            (LoroValue::I64(a), LoroValue::I64(b)) => {
-                // JS numbers can round distinct large integers to the same f64.
-                // Keep exact comparison in the range where every integer fits.
-                const MAX_EXACT_INTEGER: i64 = 1 << 53;
-                a == b
-                    || ((a.unsigned_abs() > MAX_EXACT_INTEGER as u64
-                        || b.unsigned_abs() > MAX_EXACT_INTEGER as u64)
-                        && *a as f64 == *b as f64)
-            }
-            (LoroValue::Double(d), LoroValue::I64(i))
-            | (LoroValue::I64(i), LoroValue::Double(d)) => {
-                // Inside +/-2^53 this is exact numeric equality; outside it also
-                // accepts the rounded Double produced by a JS-number relay.
-                *d == *i as f64
-            }
-            (LoroValue::String(string), LoroValue::Container(_))
-            | (LoroValue::Container(_), LoroValue::String(string)) => {
-                // A marker-looking string also becomes a container reference.
-                // JSON peer compression can reinterpret its peer as an index,
-                // so the decoded id cannot safely be compared with that string.
-                loro_common::ContainerID::try_from_loro_value_string(string).is_some()
-            }
-            (LoroValue::Binary(bytes), LoroValue::List(list))
-            | (LoroValue::List(list), LoroValue::Binary(bytes)) => {
-                bytes.len() == list.len()
-                    && bytes
-                        .iter()
-                        .zip(list.iter())
-                        .all(|(&byte, value)| match value {
-                            LoroValue::I64(number) => *number == i64::from(byte),
-                            LoroValue::Double(number) => *number == f64::from(byte),
-                            _ => false,
+        let mut pending = vec![(a, b)];
+        while let Some((a, b)) = pending.pop() {
+            let equal = match (a, b) {
+                (LoroValue::I64(a), LoroValue::I64(b)) => {
+                    // JS numbers can round distinct large integers to the same f64.
+                    // Keep exact comparison in the range where every integer fits.
+                    const MAX_EXACT_INTEGER: i64 = 1 << 53;
+                    a == b
+                        || ((a.unsigned_abs() > MAX_EXACT_INTEGER as u64
+                            || b.unsigned_abs() > MAX_EXACT_INTEGER as u64)
+                            && *a as f64 == *b as f64)
+                }
+                (LoroValue::Double(d), LoroValue::I64(i))
+                | (LoroValue::I64(i), LoroValue::Double(d)) => {
+                    // Inside +/-2^53 this is exact numeric equality; outside it also
+                    // accepts the rounded Double produced by a JS-number relay.
+                    *d == *i as f64
+                }
+                (LoroValue::String(string), LoroValue::Container(_))
+                | (LoroValue::Container(_), LoroValue::String(string)) => {
+                    // A marker-looking string also becomes a container reference.
+                    // JSON peer compression can reinterpret its peer as an index,
+                    // so the decoded id cannot safely be compared with that string.
+                    loro_common::ContainerID::try_from_loro_value_string(string).is_some()
+                }
+                (LoroValue::Binary(bytes), LoroValue::List(list))
+                | (LoroValue::List(list), LoroValue::Binary(bytes)) => {
+                    bytes.len() == list.len()
+                        && bytes
+                            .iter()
+                            .zip(list.iter())
+                            .all(|(&byte, value)| match value {
+                                LoroValue::I64(number) => *number == i64::from(byte),
+                                LoroValue::Double(number) => *number == f64::from(byte),
+                                _ => false,
+                            })
+                }
+                (LoroValue::Double(number), LoroValue::Null)
+                | (LoroValue::Null, LoroValue::Double(number)) => !number.is_finite(),
+                (LoroValue::List(a), LoroValue::List(b)) => {
+                    pending.extend(a.iter().zip(b.iter()));
+                    a.len() == b.len()
+                }
+                (LoroValue::Map(a), LoroValue::Map(b)) => {
+                    a.len() == b.len()
+                        && a.iter().all(|(key, a)| match b.get(key) {
+                            Some(b) => {
+                                pending.push((a, b));
+                                true
+                            }
+                            None => false,
                         })
+                }
+                _ => a == b,
+            };
+            if !equal {
+                return false;
             }
-            (LoroValue::Double(number), LoroValue::Null)
-            | (LoroValue::Null, LoroValue::Double(number)) => !number.is_finite(),
-            (LoroValue::List(a), LoroValue::List(b)) => {
-                a.len() == b.len() && a.iter().zip(b.iter()).all(|(a, b)| self.eq(a, b))
-            }
-            (LoroValue::Map(a), LoroValue::Map(b)) => {
-                a.len() == b.len()
-                    && a.iter()
-                        .all(|(key, a)| b.get(key).is_some_and(|b| self.eq(a, b)))
-            }
-            _ => a == b,
         }
+
+        true
     }
 }
 
@@ -93,7 +110,8 @@ impl OpLog {
     /// same op ids, then drop the parts it already has.
     ///
     /// Returns [`LoroError::UsedOpID`] with the first conflicting id when an imported
-    /// change differs from the local one (deps or op content), and
+    /// change differs from the local one, or from a parked change that holds the same
+    /// ids (deps or op content), and
     /// [`LoroError::DecodeError`] when a change skips counters of its peer (see
     /// [`Self::check_changes_do_not_skip_counters`]). It reads the op log only, so a
     /// caller can return the error before mutating anything.
@@ -122,8 +140,12 @@ impl OpLog {
         let vv = self.vv();
         let known_end = |c: &Change| vv.get(&c.id.peer).copied().unwrap_or(0);
         for change in changes.iter() {
-            if change.id.counter < known_end(change) {
-                self.check_known_part_of_change(change, known_end(change), values, imported_arena)?;
+            let known_end = known_end(change);
+            if change.id.counter < known_end {
+                self.check_known_part_of_change(change, known_end, values, imported_arena)?;
+            }
+            if change.ctr_end() > known_end {
+                self.check_parked_part_of_change(change, known_end, values, imported_arena)?;
             }
         }
 
@@ -249,6 +271,49 @@ impl OpLog {
 
         Ok(())
     }
+
+    /// Compare `change` from `known_end` on with the parked changes that hold the
+    /// same ids. Applying either one later drops the other as already known, so this
+    /// is the last point where the import that brought the conflict can be told, and
+    /// nothing has changed yet. Parked history stays comparable through
+    /// [`PendingChanges::claims_in`](super::pending_changes::PendingChanges::claims_in),
+    /// which keeps this O(overlap) and free for a doc with nothing parked.
+    fn check_parked_part_of_change(
+        &self,
+        change: &Change,
+        known_end: Counter,
+        values: ImportedValues,
+        imported_arena: &SharedArena,
+    ) -> LoroResult<()> {
+        let peer = change.id.peer;
+        let start = change.id.counter.max(known_end);
+        let end = change.ctr_end();
+        for (claim_start, claim_end, parked) in self.pending_changes.claims_in(peer, start, end) {
+            let ctr = claim_start.max(start);
+            let seg_end = claim_end.min(end);
+            let mismatch = if deps_at(change, ctr) != deps_at(parked, ctr) {
+                Some(ctr)
+            } else {
+                first_mismatch(
+                    imported_arena,
+                    &self.arena,
+                    values,
+                    change,
+                    parked,
+                    ctr,
+                    seg_end,
+                )
+            };
+            if let Some(bad) = mismatch {
+                return Err(LoroError::UsedOpID {
+                    id: ID::new(peer, bad),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Compare cold Text insert history directly from its encoded block. This
     /// preserves every dependency boundary and op atom without retaining the
     /// block's parsed changes or strings. Unsupported blocks use the full check.

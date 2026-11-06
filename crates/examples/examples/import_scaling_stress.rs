@@ -10,7 +10,7 @@
 //!
 //! Scenarios: `text_peers`, `map_peers`, `text_stream`, `overlap_mem`, `overlap_snap`,
 //! `overlap_partial`, `reimport_mem`, `reimport_snap`, `reimport_snapshot`, `reimport_map`,
-//! `reimport_tail`, `snap_plus`, `snap_mem`, `batch`, `batch_rev`, `ooo`, `detached`,
+//! `reimport_tail`, `pending_repeat`, `snap_plus`, `snap_mem`, `batch`, `batch_rev`, `ooo`, `detached`,
 //! `mlist_batch`, `mlist_stream`, `check`.
 use loro::{ExportMode, LoroDoc, ID};
 use std::time::{Duration, Instant};
@@ -52,6 +52,7 @@ fn main() {
         "reimport_snapshot" => reimport(n, rounds, fat, ReimportMode::Snapshot),
         "reimport_map" => reimport(n, rounds, fat, ReimportMode::Map),
         "reimport_tail" => reimport(n, rounds, fat, ReimportMode::Tail),
+        "pending_repeat" => pending_repeat(n, rounds),
         "snap_plus" => snap_plus(n, rounds, fat),
         "snap_mem" => snap_mem(n, fat),
         "batch" => batch(n, rounds, false),
@@ -508,6 +509,70 @@ fn reimport(n: usize, rounds: usize, fat: usize, mode: ReimportMode) {
             updates.len(),
             snap.len()
         ),
+    );
+}
+
+/// `n` changes that all wait for a dep that has not arrived, delivered one blob at a
+/// time and then delivered again: the cost of parking, and of comparing with what
+/// is parked. Reports the second delivery; `park_ms` is the first.
+fn pending_repeat(n: usize, rounds: usize) {
+    let base = LoroDoc::new();
+    base.set_peer_id(1).unwrap();
+    base.get_text("t").insert(0, "a").unwrap();
+    base.commit();
+    let base_vv = base.oplog_vv();
+    let base_updates = base.export(ExportMode::all_updates()).unwrap();
+
+    let src = LoroDoc::new();
+    src.import(&base_updates).unwrap();
+    src.set_peer_id(2).unwrap();
+    src.set_change_merge_interval(-1);
+    let mut vv = base_vv;
+    let mut blobs = Vec::with_capacity(n);
+    for _ in 0..n {
+        append_text(&src, "b");
+        blobs.push(src.export(ExportMode::updates(&vv)).unwrap());
+        vv = src.oplog_vv();
+    }
+    let expected = src.get_text("t").to_string();
+    // The newest blob first would wait on the previous one instead of the base.
+    let shuffled: Vec<&Vec<u8>> = {
+        let mut order: Vec<usize> = (0..n).collect();
+        let mut x = 0x9E37_79B9usize;
+        for i in (1..n).rev() {
+            x = x.wrapping_mul(0x5851_F42D).wrapping_add(12345);
+            order.swap(i, (x >> 16) % (i + 1));
+        }
+        order.into_iter().map(|i| &blobs[i]).collect()
+    };
+
+    let mut times = Vec::with_capacity(rounds + 1);
+    let mut parks = Vec::with_capacity(rounds + 1);
+    for round in 0..=rounds {
+        let doc = LoroDoc::new();
+        let start = Instant::now();
+        for blob in &shuffled {
+            doc.import(blob).unwrap();
+        }
+        let park = start.elapsed();
+        let start = Instant::now();
+        for blob in &shuffled {
+            doc.import(blob).unwrap();
+        }
+        let elapsed = start.elapsed();
+        doc.import(&base_updates).unwrap();
+        assert_eq!(doc.get_text("t").to_string(), expected);
+        if round > 0 {
+            times.push(elapsed);
+            parks.push(park);
+        }
+    }
+    let park_ms = samples_of(parks).median.as_secs_f64() * 1e3;
+    report(
+        "pending_repeat",
+        n,
+        &samples_of(times),
+        &format!("park_ms={park_ms:.3}"),
     );
 }
 

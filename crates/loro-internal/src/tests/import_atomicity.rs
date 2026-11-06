@@ -598,6 +598,46 @@ fn failed_import_batch_reparks_prebatch_pending_changes() {
     assert_eq!(dst.get_deep_value(), src.get_deep_value());
 }
 
+/// A rollback also restores which parked change holds an id, or an import after it
+/// compares with changes that are gone, or misses ones that came back.
+#[test]
+fn failed_import_batch_restores_which_parked_changes_hold_their_ids() {
+    let dep_doc = LoroDoc::new_auto_commit();
+    dep_doc.set_peer_id(1).unwrap();
+    dep_doc.get_text("t").insert_unicode(0, "x").unwrap();
+    let dep = dep_doc
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let dep_vv = dep_doc.oplog_vv();
+    let writer = |text: &str| {
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&dep).unwrap();
+        doc.set_peer_id(7).unwrap();
+        doc.get_text("t").insert_unicode(1, text).unwrap();
+        doc.export(ExportMode::updates(&dep_vv)).unwrap()
+    };
+    let (a, b) = (writer("A"), writer("B"));
+
+    // Parked by the batch: gone with it, so `b` no longer conflicts.
+    let doc = LoroDoc::new();
+    doc.import_batch(&[a.clone(), malformed_binary_update(31)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert_eq!(pending_len(&doc), 0);
+    doc.import(&b).unwrap();
+    doc.import(&dep).unwrap();
+    assert_eq!(doc.get_text("t").to_string(), "xB");
+
+    // Parked before it, unlocked by it, and parked again.
+    let doc = LoroDoc::new();
+    doc.import(&a).unwrap();
+    doc.import_batch(&[dep.clone(), malformed_binary_update(31)])
+        .expect_err("the malformed blob must fail the whole batch");
+    assert_eq!(pending_len(&doc), 1);
+    assert!(matches!(doc.import(&b), Err(LoroError::UsedOpID { .. })));
+    doc.import(&dep).unwrap();
+    assert_eq!(doc.get_text("t").to_string(), "xA");
+}
+
 /// Changes are parked under the ID of the dep they are missing, so two peers waiting
 /// on the same change share one pending slot. When a batch appends to a slot that
 /// already held a pre-batch change, rollback has to trim its own entry off and keep

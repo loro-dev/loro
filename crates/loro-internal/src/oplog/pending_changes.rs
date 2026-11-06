@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map::Entry, BTreeMap},
     ops::Deref,
+    sync::Arc,
 };
 
 use crate::{
@@ -37,6 +38,18 @@ impl Deref for PendingChange {
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
+    /// Which parked change holds each parked op id, because `changes` is keyed by the
+    /// dep a change waits for. Spans of a peer are disjoint and keyed by their start.
+    /// The first change to park an id holds it: imports that overlap it were compared
+    /// with it, so one holder per id is enough. Derived from `changes`: rebuilt on
+    /// rollback, and dropped once the op log has the ids.
+    claims: FxHashMap<PeerID, BTreeMap<Counter, Claim>>,
+}
+
+#[derive(Debug)]
+struct Claim {
+    end: Counter,
+    change: Arc<Change>,
 }
 
 impl PendingChanges {
@@ -114,6 +127,78 @@ impl PendingChanges {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.changes.is_empty()
+    }
+
+    /// The claimed spans of `peer` overlapping `start..end`, in order, each with the
+    /// parked change that holds it.
+    pub(super) fn claims_in(
+        &self,
+        peer: PeerID,
+        start: Counter,
+        end: Counter,
+    ) -> impl Iterator<Item = (Counter, Counter, &Change)> {
+        self.claims.get(&peer).into_iter().flat_map(move |tree| {
+            let first = tree
+                .range(..=start)
+                .next_back()
+                .filter(|(_, claim)| claim.end > start)
+                .map_or(start, |(&claim_start, _)| claim_start);
+            tree.range(first..end)
+                .map(|(&claim_start, claim)| (claim_start, claim.end, &*claim.change))
+        })
+    }
+
+    /// Record `change` as the holder of its ids that nothing holds yet. Called when it
+    /// first parks: `try_apply_pending` moves parked changes between slots constantly,
+    /// and they keep what they hold.
+    fn claim(&mut self, change: &Change) {
+        let (peer, end) = (change.id.peer, change.ctr_end());
+        let mut gaps = Vec::new();
+        let mut ctr = change.id.counter;
+        for (claim_start, claim_end, _) in self.claims_in(peer, ctr, end) {
+            if ctr < claim_start {
+                gaps.push((ctr, claim_start));
+            }
+            ctr = ctr.max(claim_end);
+        }
+        if ctr < end {
+            gaps.push((ctr, end));
+        }
+        if gaps.is_empty() {
+            return;
+        }
+
+        let change = Arc::new(change.clone());
+        let tree = self.claims.entry(peer).or_default();
+        for (start, end) in gaps {
+            let change = change.clone();
+            tree.insert(start, Claim { end, change });
+        }
+    }
+
+    /// Drop the spans of `peer` the op log has now: its own history answers for them.
+    fn release_claims_below(&mut self, peer: PeerID, known_end: Counter) {
+        let Some(tree) = self.claims.get_mut(&peer) else {
+            return;
+        };
+        while let Some(claim) = tree.first_entry() {
+            if claim.get().end > known_end {
+                break;
+            }
+            claim.remove();
+        }
+        if tree.is_empty() {
+            self.claims.remove(&peer);
+        }
+    }
+
+    fn rebuild_claims(&mut self) {
+        self.claims.clear();
+        let changes = std::mem::take(&mut self.changes);
+        for change in changes.values().flat_map(BTreeMap::values).flatten() {
+            self.claim(change);
+        }
+        self.changes = changes;
     }
 
     /// Number of changes parked under `[peer][counter]`, or `None` if nothing is.
@@ -242,6 +327,7 @@ impl PendingChangesRollback {
         }
 
         pending_changes.changes.retain(|_, tree| !tree.is_empty());
+        pending_changes.rebuild_claims();
     }
 }
 
@@ -288,6 +374,7 @@ impl OpLog {
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
                     parked.push(local_change.id_span());
+                    self.pending_changes.claim(&local_change);
                     self.push_pending_change(miss_dep, local_change);
                 }
                 ChangeState::Applied => {}
@@ -338,6 +425,9 @@ impl OpLog {
         mut would_affect: Option<&mut VersionRange>,
     ) {
         while let Some(id) = new_ids.pop() {
+            let known_end = self.vv().get(&id.peer).copied().unwrap_or(0);
+            self.pending_changes
+                .release_claims_below(id.peer, known_end);
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
             };
@@ -383,6 +473,10 @@ impl OpLog {
                     }
                 }
             }
+        }
+
+        if self.pending_changes.is_empty() {
+            self.pending_changes.claims.clear();
         }
     }
 

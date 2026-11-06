@@ -4,7 +4,8 @@
 //! See loro-dev/loro#1118.
 
 use loro::{
-    ExportMode, LoroDoc, LoroError, LoroResult, LoroValue, ToJson, TreeParentId, VersionVector, ID,
+    ExportMode, IdSpan, ImportStatus, LoroDoc, LoroError, LoroResult, LoroValue, ToJson,
+    TreeParentId, VersionVector, ID,
 };
 use pretty_assertions::assert_eq;
 
@@ -283,6 +284,222 @@ fn reimporting_only_known_history_is_idempotent() -> LoroResult<()> {
             assert_unchanged(doc, &before);
         }
     }
+    Ok(())
+}
+
+/// `1@0`, and updates of two writers that reuse peer 7 on top of it. A receiver
+/// without `1@0` parks them.
+struct ParkedFork {
+    dep: Vec<u8>,
+    dep_vv: VersionVector,
+    dep_doc: LoroDoc,
+}
+
+impl ParkedFork {
+    fn new() -> LoroResult<Self> {
+        let dep_doc = LoroDoc::new();
+        dep_doc.set_peer_id(1)?;
+        dep_doc.get_text("t").insert(0, "x")?;
+        dep_doc.commit();
+        Ok(Self {
+            dep: dep_doc.export(ExportMode::all_updates())?,
+            dep_vv: dep_doc.oplog_vv(),
+            dep_doc,
+        })
+    }
+
+    fn writer(&self, text: &str) -> LoroResult<LoroDoc> {
+        let doc = self.dep_doc.fork();
+        doc.set_peer_id(7)?;
+        doc.get_text("t").insert(1, text)?;
+        doc.commit();
+        Ok(doc)
+    }
+
+    fn update(&self, text: &str) -> LoroResult<Vec<u8>> {
+        Ok(self
+            .writer(text)?
+            .export(ExportMode::updates(&self.dep_vv))?)
+    }
+}
+
+fn assert_nothing_new(status: &ImportStatus, pending: bool) {
+    assert!(status.success.is_empty(), "{status:?}");
+    assert_eq!(status.pending.is_some(), pending, "{status:?}");
+}
+
+/// Both updates waited for `1@0`, then the second one was dropped as already known
+/// while every import returned `Ok`.
+#[test]
+fn second_conflicting_update_is_rejected_while_both_wait_for_a_dep() -> LoroResult<()> {
+    for (first, second, expected) in [("A", "B", "xA"), ("B", "A", "xB")] {
+        let fork = ParkedFork::new()?;
+        let (first, second) = (fork.update(first)?, fork.update(second)?);
+        let doc = LoroDoc::new();
+
+        assert_nothing_new(&doc.import(&first)?, true);
+        assert_used_op_id(doc.import(&second).unwrap_err(), ID::new(7, 0));
+
+        // The rejected update left nothing behind, and the parked one still lands.
+        let status = doc.import(&fork.dep)?;
+        assert!(status.pending.is_none(), "{status:?}");
+        assert_eq!(doc.get_text("t").to_string(), expected);
+        assert_used_op_id(doc.import(&second).unwrap_err(), ID::new(7, 0));
+        assert_eq!(doc.get_text("t").to_string(), expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn parked_update_can_be_delivered_again() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let update = fork.update("A")?;
+    let doc = LoroDoc::new();
+    for _ in 0..3 {
+        assert_nothing_new(&doc.import(&update)?, true);
+    }
+    assert!(doc.import(&fork.dep)?.pending.is_none());
+    assert_eq!(doc.get_text("t").to_string(), "xA");
+    Ok(())
+}
+
+/// Overlaps that do not line up, cut at different change boundaries.
+#[test]
+fn partly_overlapping_parked_updates_are_compared_over_the_overlap() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let writer = fork.writer("ab")?;
+    let short = writer.export(ExportMode::updates(&fork.dep_vv))?;
+    writer.get_text("t").insert(3, "cd")?;
+    writer.commit();
+    let long = writer.export(ExportMode::updates(&fork.dep_vv))?;
+    let tail = writer.export(ExportMode::updates_in_range(vec![IdSpan::new(7, 1, 4)]))?;
+
+    for order in [
+        [&short, &long, &tail],
+        [&long, &tail, &short],
+        [&tail, &long, &short],
+    ] {
+        let doc = LoroDoc::new();
+        for update in order {
+            assert_nothing_new(&doc.import(update)?, true);
+        }
+        assert!(doc.import(&fork.dep)?.pending.is_none());
+        assert_eq!(doc.get_text("t").to_string(), "xabcd");
+    }
+
+    // The conflict is at the second op, and only the long update reaches it.
+    let other = fork.update("aZ!!")?;
+    let doc = LoroDoc::new();
+    doc.import(&short)?;
+    assert_used_op_id(doc.import(&other).unwrap_err(), ID::new(7, 1));
+    doc.import(&fork.dep)?;
+    assert_eq!(doc.get_text("t").to_string(), "xab");
+    Ok(())
+}
+
+/// A change parked on its own peer's previous op, with no other peer involved.
+#[test]
+fn updates_parked_on_their_own_peer_are_compared() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let tail_of = |text: &str| -> LoroResult<(LoroDoc, Vec<u8>)> {
+        let doc = fork.writer("a")?;
+        let vv = doc.oplog_vv();
+        doc.get_text("t").insert(2, text)?;
+        doc.commit();
+        let update = doc.export(ExportMode::updates(&vv))?;
+        Ok((doc, update))
+    };
+    let (writer, first) = tail_of("B")?;
+    let (_, second) = tail_of("C")?;
+
+    let doc = LoroDoc::new();
+    doc.import(&fork.dep)?;
+    assert_nothing_new(&doc.import(&first)?, true);
+    assert_used_op_id(doc.import(&second).unwrap_err(), ID::new(7, 1));
+    doc.import(&writer.export(ExportMode::all_updates())?)?;
+    assert_eq!(doc.get_text("t").to_string(), "xaB");
+    Ok(())
+}
+
+/// The second writer needs nothing, so it would apply at once, and the parked first
+/// writer would be dropped when its dep arrives.
+#[test]
+fn update_that_could_apply_is_rejected_when_it_conflicts_with_a_parked_one() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let parked = fork.update("A")?;
+    let doc = LoroDoc::new();
+    doc.import(&parked)?;
+
+    let applicable = LoroDoc::new();
+    applicable.set_peer_id(7)?;
+    applicable.get_text("t").insert(0, "B")?;
+    applicable.commit();
+    let updates = applicable.export(ExportMode::all_updates())?;
+    assert_used_op_id(doc.import(&updates).unwrap_err(), ID::new(7, 0));
+    assert_eq!(doc.oplog_vv(), Default::default());
+
+    doc.import(&fork.dep)?;
+    assert_eq!(doc.get_text("t").to_string(), "xA");
+    Ok(())
+}
+
+/// Bytes that also carry the missing dep are rejected as a whole.
+#[test]
+fn conflict_with_a_parked_update_is_found_on_every_import_path() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let parked = fork.update("A")?;
+    let other = fork.writer("B")?;
+    let json = other.export_json_updates(&Default::default(), &other.oplog_vv())?;
+
+    let doc = LoroDoc::new();
+    doc.import(&parked)?;
+    for result in [
+        doc.import(&other.export(ExportMode::all_updates())?),
+        doc.import(&other.export(ExportMode::Snapshot)?),
+        doc.import_batch(&[other.export(ExportMode::all_updates())?]),
+        doc.import_json_updates(json),
+    ] {
+        assert_used_op_id(result.unwrap_err(), ID::new(7, 0));
+        assert_eq!(doc.oplog_vv(), Default::default());
+    }
+
+    doc.detach();
+    let err = doc
+        .import(&other.export(ExportMode::all_updates())?)
+        .unwrap_err();
+    assert_used_op_id(err, ID::new(7, 0));
+    doc.attach();
+
+    doc.import(&fork.dep)?;
+    assert_eq!(doc.get_text("t").to_string(), "xA");
+    Ok(())
+}
+
+/// A blob that fails does not undo the other blobs of its batch. The rollback of a
+/// failed closing checkout is covered in `import_atomicity`.
+#[test]
+fn batch_reports_a_conflict_between_its_blobs() -> LoroResult<()> {
+    let fork = ParkedFork::new()?;
+    let (a, b) = (fork.update("A")?, fork.update("B")?);
+
+    let doc = LoroDoc::new();
+    assert_used_op_id(
+        doc.import_batch(&[a.clone(), b.clone()]).unwrap_err(),
+        ID::new(7, 0),
+    );
+    assert_used_op_id(doc.import(&b).unwrap_err(), ID::new(7, 0));
+    assert!(doc.import(&fork.dep)?.pending.is_none());
+    assert_eq!(doc.get_text("t").to_string(), "xA");
+
+    // The dep lands first in the batch and unlocks the parked update.
+    let doc = LoroDoc::new();
+    doc.import(&a)?;
+    assert_used_op_id(
+        doc.import_batch(&[fork.dep.clone(), b.clone()])
+            .unwrap_err(),
+        ID::new(7, 0),
+    );
+    assert_eq!(doc.get_text("t").to_string(), "xA");
     Ok(())
 }
 

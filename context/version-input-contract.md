@@ -37,7 +37,9 @@ through a span from `sub_iter`, not with raw `vv.get(..) - counter` arithmetic.
 | `find_id_spans_between` | panics after releasing the locks; `try_find_id_spans_between` returns the error |
 
 `find_id_spans_between` stays a panic because no value answers it, and an empty
-diff would claim the versions are equal. `try_find_id_spans_between` also rejects
+diff would claim the versions are equal. Releasing the locks first keeps the doc
+usable only where the panic unwinds: in a `panic = "abort"` build it still ends the
+process. Code that takes versions from outside must call the `try_` form. `try_find_id_spans_between` also rejects
 a version before the shallow root, as `checkout` does.
 
 `minimize_frontiers` with a single id does not check that the id exists, despite

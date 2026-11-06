@@ -75,6 +75,29 @@ describe("importing history that reuses local op ids", () => {
     expect(doc.getText("t").toString()).toBe("abcde");
   });
 
+  it("throws when an update conflicts with one waiting for the same dep", () => {
+    const dep = new LoroDoc();
+    dep.setPeerId(1);
+    dep.getText("t").insert(0, "x");
+    dep.commit();
+    const depUpdate = dep.export({ mode: "update" });
+    const writer = (text: string) => {
+      const doc = dep.fork();
+      doc.setPeerId(7);
+      doc.getText("t").insert(1, text);
+      doc.commit();
+      return doc.export({ mode: "update", from: dep.version() });
+    };
+    const [a, b] = [writer("A"), writer("B")];
+
+    const doc = new LoroDoc();
+    doc.import(a);
+    doc.import(a); // Delivering the same update again is fine.
+    expect(() => doc.import(b)).toThrow(/has been used/);
+    expect(doc.import(depUpdate).pending).toBeNull();
+    expect(doc.getText("t").toString()).toBe("xA");
+  });
+
   it("still accepts re-imports of what the doc already has", () => {
     const doc = history();
     const updates = doc.export({ mode: "update" });
