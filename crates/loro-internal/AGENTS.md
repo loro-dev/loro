@@ -27,6 +27,9 @@ over graceful degradation.
   changes, version vectors/frontiers, shallow roots, and history traversal.
   `ChangeStore` is also read without the op log lock, so keep its lock order:
   [../../context/arena-parent-links.md](../../context/arena-parent-links.md).
+- Retained memory by component, what forces a full history parse, and why
+  `mem_parsed_kv` has no release path:
+  [../../context/memory-analysis.md](../../context/memory-analysis.md).
 - `src/arena.rs`: container IDs, indices, and parent links. How a parent is
   found in a lazily loaded document, and the locking rules:
   [../../context/arena-parent-links.md](../../context/arena-parent-links.md).
