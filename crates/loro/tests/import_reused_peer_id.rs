@@ -166,25 +166,123 @@ fn import_known_conflicting_change_followed_by_new_change_is_rejected() -> LoroR
     Ok(())
 }
 
-/// A peer-id collision in history the import does not build on (nothing new is
-/// imported) is not detected, and the import stays a no-op.
+/// A fork that reuses the peer id writes other ops under ids the doc already has.
+/// The import brings no new op, and it used to return `Ok` with nothing in
+/// `success` or `pending`: the fork's edits were dropped without a word.
+fn forked_conflict() -> LoroResult<(LoroDoc, LoroDoc)> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(7)?;
+    doc.get_text("t").insert(0, "abc")?;
+    doc.commit();
+    let base = doc.state_frontiers();
+    doc.get_text("t").insert(3, "de")?;
+    doc.commit();
+
+    let fork = doc.fork_at(&base)?;
+    fork.set_peer_id(7)?;
+    fork.get_text("t").insert(1, "XY")?;
+    fork.commit();
+    assert_eq!(fork.oplog_vv(), doc.oplog_vv());
+    Ok((doc, fork))
+}
+
 #[test]
-fn import_with_only_known_conflicting_changes_is_a_no_op() -> LoroResult<()> {
-    let history = LoroDoc::new();
-    history.set_peer_id(7)?;
-    history.get_text("t").insert(0, "ab")?;
-    history.commit();
+fn import_with_only_known_conflicting_changes_is_rejected() -> LoroResult<()> {
+    let (doc, fork) = forked_conflict()?;
+    let before = snapshot_of(&doc);
+    let conflict = ID::new(7, 3);
 
-    let other = LoroDoc::new();
-    other.set_peer_id(7)?;
-    other.get_text("t").insert(0, "xy")?;
-    other.commit();
+    let updates = fork.export(ExportMode::all_updates())?;
+    assert_used_op_id(doc.import(&updates).unwrap_err(), conflict);
+    assert_unchanged(&doc, &before);
 
-    let before = snapshot_of(&history);
-    let status = history.import(&other.export(ExportMode::all_updates())?)?;
-    assert!(status.success.is_empty());
-    assert!(status.pending.is_none());
-    assert_unchanged(&history, &before);
+    let snapshot = fork.export(ExportMode::Snapshot)?;
+    assert_used_op_id(doc.import(&snapshot).unwrap_err(), conflict);
+    assert_unchanged(&doc, &before);
+
+    let batch = [updates.clone(), snapshot];
+    assert_used_op_id(doc.import_batch(&batch).unwrap_err(), conflict);
+    assert_unchanged(&doc, &before);
+
+    let json = fork.export_json_updates(&Default::default(), &fork.oplog_vv())?;
+    assert_used_op_id(doc.import_json_updates(json).unwrap_err(), conflict);
+    assert_unchanged(&doc, &before);
+
+    // Only the tail of the fork, also without the shared prefix in it.
+    let mut prefix = fork.oplog_vv();
+    prefix.insert(7, 3);
+    let tail = fork.export(ExportMode::updates(&prefix))?;
+    assert_used_op_id(doc.import(&tail).unwrap_err(), conflict);
+    assert_unchanged(&doc, &before);
+
+    assert_still_usable(&doc);
+    Ok(())
+}
+
+/// A conflict in a doc detached from it, which keeps the state where it is.
+#[test]
+fn import_with_only_known_conflicting_changes_is_rejected_while_detached() -> LoroResult<()> {
+    let (doc, fork) = forked_conflict()?;
+    doc.detach();
+    let err = doc
+        .import(&fork.export(ExportMode::all_updates())?)
+        .unwrap_err();
+    assert_used_op_id(err, ID::new(7, 3));
+    doc.checkout_to_latest();
+    assert_eq!(doc.get_text("t").to_string(), "abcde");
+    Ok(())
+}
+
+/// The sender can only tell what the receiver misses from the receiver's version
+/// vector, which already claims these ids. Nothing is sent, so nothing is compared:
+/// see "Delta sync" in context/import-peer-id-reuse.md.
+#[test]
+fn delta_from_the_receivers_version_cannot_reveal_the_conflict() -> LoroResult<()> {
+    let (doc, fork) = forked_conflict()?;
+    let before = snapshot_of(&doc);
+    let status = doc.import(&fork.export(ExportMode::updates(&doc.oplog_vv()))?)?;
+    assert!(status.success.is_empty() && status.pending.is_none());
+    assert_unchanged(&doc, &before);
+    Ok(())
+}
+
+/// Importing what the doc already has again and again changes nothing, however the
+/// blob was cut and whichever way the history reached this doc.
+#[test]
+fn reimporting_only_known_history_is_idempotent() -> LoroResult<()> {
+    let (source, replica) = build_source_and_piecewise_replica()?;
+    replica.import(&source.export(ExportMode::all_updates())?)?;
+    let shallow_since = source.oplog_frontiers();
+    let mut mid = source.oplog_vv();
+    let (&peer, &end) = mid.iter().next().unwrap();
+    mid.insert(peer, end / 2);
+
+    let blobs = [
+        source.export(ExportMode::all_updates())?,
+        replica.export(ExportMode::all_updates())?,
+        source.export(ExportMode::updates(&mid))?,
+        source.export(ExportMode::Snapshot)?,
+        replica.export(ExportMode::Snapshot)?,
+        source.export(ExportMode::shallow_snapshot(&shallow_since))?,
+    ];
+    for doc in [&source, &replica] {
+        let before = snapshot_of(doc);
+        for _ in 0..2 {
+            for blob in &blobs {
+                let status = doc.import(blob)?;
+                assert!(status.success.is_empty(), "{status:?}");
+                assert!(status.pending.is_none());
+                assert_unchanged(doc, &before);
+            }
+            let status = doc.import_batch(&blobs[..5])?;
+            assert!(status.success.is_empty(), "{status:?}");
+            assert_unchanged(doc, &before);
+            let json = source.export_json_updates(&Default::default(), &source.oplog_vv())?;
+            let status = doc.import_json_updates(json)?;
+            assert!(status.success.is_empty(), "{status:?}");
+            assert_unchanged(doc, &before);
+        }
+    }
     Ok(())
 }
 

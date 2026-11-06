@@ -18,6 +18,7 @@ use loro_internal::{
     configure::{StyleConfig, StyleConfigMap},
     container::{richtext::ExpandType, ContainerID},
     cursor::{self, PosType, Side},
+    diff::diff_impl::UpdateTimeoutError,
     encoding::ImportBlobMetadata,
     event::Index,
     handler::{
@@ -510,6 +511,13 @@ mod observer {
     unsafe impl Sync for Observer {}
     unsafe impl Send for SafeJsValue {}
     unsafe impl Sync for SafeJsValue {}
+}
+
+fn update_error_to_js(err: UpdateTimeoutError) -> JsValue {
+    match err {
+        UpdateTimeoutError::Timeout => JsError::new("Update timeout").into(),
+        UpdateTimeoutError::Loro(err) => JsError::new(&err.to_string()).into(),
+    }
 }
 
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
@@ -2959,7 +2967,7 @@ impl LoroText {
         };
         self.handler
             .update(text, options)
-            .map_err(|_| JsError::new("Update timeout").into())
+            .map_err(update_error_to_js)
     }
 
     /// Update the current text to the target text, the difference is calculated line by line.
@@ -2989,7 +2997,7 @@ impl LoroText {
         };
         self.handler
             .update_by_line(text, options)
-            .map_err(|_| JsError::new("Update timeout").into())
+            .map_err(update_error_to_js)
     }
 
     /// Insert the string at the given index (utf-16 index).

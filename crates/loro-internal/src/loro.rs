@@ -233,7 +233,10 @@ impl LoroDoc {
     /// - After enabling this mode, the document will use a different PeerID. Each
     ///   time you call checkout, a new PeerID will be used.
     /// - If you set a custom PeerID while this mode is enabled, ensure that
-    ///   concurrent operations with the same PeerID are not possible.
+    ///   concurrent operations with the same PeerID are not possible. While the
+    ///   PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check
+    ///   out another version to write again.
     /// - On detached mode, importing will not change the state of the document.
     ///   It also doesn't change the version of the [DocState]. The changes will be
     ///   recorded into [OpLog] only. You need to call `checkout` to make it take effect.
@@ -443,11 +446,7 @@ impl LoroDoc {
                 }
             }
             if config.immediate_renew && self.can_edit() {
-                let mut t = self.txn().unwrap();
-                if let Some(options) = options.as_ref() {
-                    t.set_options(options.clone());
-                }
-                *txn_guard = Some(t);
+                *txn_guard = self.auto_commit_txn(options.clone());
             }
 
             if let Some(on_commit) = on_commit {
@@ -3596,9 +3595,15 @@ impl LoroDoc {
         }
     }
 
+    /// [`Self::try_find_id_spans_between`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
-        self.oplog().lock().dag.find_path(from, to)
+        self.try_find_id_spans_between(from, to)
+            .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Finds operation spans between versions, reporting unreadable history.
@@ -3613,6 +3618,11 @@ impl LoroDoc {
             if !oplog.vv().includes_id(id) {
                 return Err(LoroError::FrontiersNotFound(id));
             }
+        }
+        if from != to
+            && (oplog.dag.is_before_shallow_root(from) || oplog.dag.is_before_shallow_root(to))
+        {
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
         oplog.dag.try_find_path(from, to)
     }
@@ -3892,18 +3902,18 @@ impl LoroDoc {
             let len = i64::try_from(len).unwrap_or(i64::MAX);
             let start = i64::from(id.counter);
             let end = start.saturating_add(len);
-            if end <= 0 {
-                return set;
-            }
-
-            let start = start.max(0).min(i64::from(i32::MAX));
-            let end = end.max(0).min(i64::from(i32::MAX));
-            if start >= end {
-                return set;
-            }
 
             {
                 let oplog = self.oplog().lock();
+                // The part of the range this doc holds.
+                let first = oplog.shallow_since_vv().get(&id.peer).copied().unwrap_or(0);
+                let last = oplog.vv().get(&id.peer).copied().unwrap_or(0);
+                let start = start.max(i64::from(first));
+                let end = end.min(i64::from(last));
+                if start >= end {
+                    return set;
+                }
+
                 let span = IdSpan::new(id.peer, start as i32, end as i32);
                 for op in oplog.iter_ops(span) {
                     let id = oplog.arena.get_container_id(op.container()).unwrap();

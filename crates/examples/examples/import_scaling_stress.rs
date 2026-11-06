@@ -9,7 +9,8 @@
 //! ```
 //!
 //! Scenarios: `text_peers`, `map_peers`, `text_stream`, `overlap_mem`, `overlap_snap`,
-//! `overlap_partial`, `snap_plus`, `snap_mem`, `batch`, `batch_rev`, `ooo`, `detached`,
+//! `overlap_partial`, `reimport_mem`, `reimport_snap`, `reimport_snapshot`, `reimport_map`,
+//! `reimport_tail`, `snap_plus`, `snap_mem`, `batch`, `batch_rev`, `ooo`, `detached`,
 //! `mlist_batch`, `mlist_stream`, `check`.
 use loro::{ExportMode, LoroDoc, ID};
 use std::time::{Duration, Instant};
@@ -46,6 +47,11 @@ fn main() {
         "overlap_mem" => overlap(n, rounds, fat, OverlapMode::Mem),
         "overlap_snap" => overlap(n, rounds, fat, OverlapMode::Snap),
         "overlap_partial" => overlap(n, rounds, fat, OverlapMode::Partial),
+        "reimport_mem" => reimport(n, rounds, fat, ReimportMode::Mem),
+        "reimport_snap" => reimport(n, rounds, fat, ReimportMode::Snap),
+        "reimport_snapshot" => reimport(n, rounds, fat, ReimportMode::Snapshot),
+        "reimport_map" => reimport(n, rounds, fat, ReimportMode::Map),
+        "reimport_tail" => reimport(n, rounds, fat, ReimportMode::Tail),
         "snap_plus" => snap_plus(n, rounds, fat),
         "snap_mem" => snap_mem(n, fat),
         "batch" => batch(n, rounds, false),
@@ -90,6 +96,7 @@ fn rss_kb() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(target_os = "macos")]
 #[repr(C)]
 struct MallocStats {
     blocks_in_use: u32,
@@ -98,11 +105,41 @@ struct MallocStats {
     size_allocated: usize,
 }
 
+#[cfg(target_os = "macos")]
 extern "C" {
     fn malloc_default_zone() -> *mut std::ffi::c_void;
     fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStats);
 }
 
+/// glibc's `struct mallinfo2`; `uordblks` is the only field read.
+#[cfg(target_os = "linux")]
+#[repr(C)]
+#[derive(Default)]
+struct MallInfo2 {
+    arena: usize,
+    ordblks: usize,
+    smblks: usize,
+    hblks: usize,
+    hblkhd: usize,
+    usmblks: usize,
+    fsmblks: usize,
+    uordblks: usize,
+    fordblks: usize,
+    keepcost: usize,
+}
+
+#[cfg(target_os = "linux")]
+extern "C" {
+    fn mallinfo2() -> MallInfo2;
+}
+
+#[cfg(target_os = "linux")]
+fn heap_kb() -> u64 {
+    let info = unsafe { mallinfo2() };
+    ((info.uordblks + info.hblkhd) / 1024) as u64
+}
+
+#[cfg(target_os = "macos")]
 fn heap_kb() -> u64 {
     unsafe {
         let mut stats = MallocStats {
@@ -380,6 +417,96 @@ fn overlap(n: usize, rounds: usize, fat: usize, mode: OverlapMode) {
         &format!(
             "fat={fat} changes={changes} blob={blob_len} snap={}",
             base_snap.len()
+        ),
+    );
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ReimportMode {
+    /// Loaded from updates (parsed blocks); imports the same updates.
+    Mem,
+    /// Loaded from a snapshot (cold blocks); imports all updates as one blob.
+    Snap,
+    /// Loaded from updates; imports a snapshot.
+    Snapshot,
+    /// Like `Snap`, for map ops, which have no cold-block comparison.
+    Map,
+    /// Like `Snap`, delivering the last changes again one blob at a time.
+    Tail,
+}
+
+/// Imports that bring nothing new: duplicate delivery. Every op of the blob is
+/// already known, so the time is decoding plus the known-history comparison.
+fn reimport(n: usize, rounds: usize, fat: usize, mode: ReimportMode) {
+    let src = if mode == ReimportMode::Map {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        doc.set_change_merge_interval(-1);
+        for i in 0..n {
+            doc.get_map("m")
+                .insert(&format!("k{}", i % 64), i as i64)
+                .unwrap();
+            doc.commit();
+        }
+        doc
+    } else {
+        text_history(n, 1, fat)
+    };
+    let updates = src.export(ExportMode::all_updates()).unwrap();
+    let snap = src.export(ExportMode::Snapshot).unwrap();
+    let tail: Vec<Vec<u8>> = {
+        // One change each, the newest `min(n, 200)`.
+        let end = *src.oplog_vv().get(&1).expect("peer 1");
+        (end - (n.min(200) as i32)..end)
+            .map(|from| {
+                let span = loro::IdSpan::new(1, from, from + 1);
+                src.export(ExportMode::updates_in_range(vec![span]))
+                    .unwrap()
+            })
+            .collect()
+    };
+    let name = match mode {
+        ReimportMode::Mem => "reimport_mem",
+        ReimportMode::Snap => "reimport_snap",
+        ReimportMode::Snapshot => "reimport_snapshot",
+        ReimportMode::Map => "reimport_map",
+        ReimportMode::Tail => "reimport_tail",
+    };
+    let mut times = Vec::with_capacity(rounds + 1);
+    let mut last_heap = 0;
+    for round in 0..=rounds {
+        let doc = LoroDoc::new();
+        match mode {
+            ReimportMode::Mem | ReimportMode::Snapshot => doc.import(&updates).unwrap(),
+            ReimportMode::Snap | ReimportMode::Map | ReimportMode::Tail => {
+                doc.import(&snap).unwrap()
+            }
+        };
+        let blobs: Vec<&[u8]> = match mode {
+            ReimportMode::Tail => tail.iter().map(Vec::as_slice).collect(),
+            ReimportMode::Snapshot => vec![&snap],
+            _ => vec![&updates],
+        };
+        let before = heap_kb();
+        let start = Instant::now();
+        for blob in blobs {
+            let status = doc.import(blob).unwrap();
+            assert!(status.success.is_empty() && status.pending.is_none());
+        }
+        let elapsed = start.elapsed();
+        last_heap = heap_kb().saturating_sub(before);
+        if round > 0 {
+            times.push(elapsed);
+        }
+    }
+    report(
+        name,
+        n,
+        &samples_of(times),
+        &format!(
+            "fat={fat} updates={} snap={} heap_delta_kb={last_heap}",
+            updates.len(),
+            snap.len()
         ),
     );
 }

@@ -98,9 +98,11 @@ impl OpLog {
     /// [`Self::check_changes_do_not_skip_counters`]). It reads the op log only, so a
     /// caller can return the error before mutating anything.
     ///
-    /// The comparison runs only when the import brings something new: that is what
-    /// would be applied on top of a conflicting prefix. An import made only of
-    /// known changes is a no-op either way and stays as cheap as before.
+    /// The comparison also runs when the import brings nothing new. Such an import
+    /// changes nothing either way, but returning `Ok` would tell the caller its
+    /// ops are in this doc when others hold their ids. An import that repeats
+    /// what the doc has passes the comparison, and costs O(overlap) on top of
+    /// decoding it: see "Cost" in `context/import-peer-id-reuse.md`.
     pub(crate) fn check_and_trim_known_part_of_changes(
         &self,
         changes: Vec<Change>,
@@ -119,16 +121,9 @@ impl OpLog {
     ) -> LoroResult<Vec<Change>> {
         let vv = self.vv();
         let known_end = |c: &Change| vv.get(&c.id.peer).copied().unwrap_or(0);
-        if changes.iter().any(|c| c.ctr_end() > known_end(c)) {
-            for change in changes.iter() {
-                if change.id.counter < known_end(change) {
-                    self.check_known_part_of_change(
-                        change,
-                        known_end(change),
-                        values,
-                        imported_arena,
-                    )?;
-                }
+        for change in changes.iter() {
+            if change.id.counter < known_end(change) {
+                self.check_known_part_of_change(change, known_end(change), values, imported_arena)?;
             }
         }
 

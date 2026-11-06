@@ -2,9 +2,13 @@ use super::*;
 use either::Either;
 
 /// Frontiers representation.
+///
+/// It keeps one id per peer. Ops of a peer are totally ordered, so when ids of the
+/// same peer are added, the greatest counter stands for all of them.
 //
 // Internal Invariance:
-// - Frontiers::Map(map) always have at least 2 elements.
+// - Frontiers::Map(map) always have at least 2 elements. Every constructor goes
+//   through `push`, because ids of one peer collapse into one map entry.
 #[derive(Clone, Default)]
 pub enum Frontiers {
     #[default]
@@ -335,33 +339,13 @@ impl Frontiers {
 }
 impl From<&[ID]> for Frontiers {
     fn from(ids: &[ID]) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for &id in ids {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.iter().copied().collect()
     }
 }
 
 impl From<Vec<ID>> for Frontiers {
     fn from(ids: Vec<ID>) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in ids {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.into_iter().collect()
     }
 }
 
@@ -392,33 +376,13 @@ impl From<Option<ID>> for Frontiers {
 
 impl<const N: usize> From<[ID; N]> for Frontiers {
     fn from(value: [ID; N]) -> Self {
-        match N {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(value[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in value {
-                    map.insert(id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        value.into_iter().collect()
     }
 }
 
 impl From<&Vec<ID>> for Frontiers {
     fn from(ids: &Vec<ID>) -> Self {
-        match ids.len() {
-            0 => Frontiers::None,
-            1 => Frontiers::ID(ids[0]),
-            _ => {
-                let mut map = InternalMap::new();
-                for id in ids {
-                    map.insert(*id);
-                }
-                Frontiers::Map(map)
-            }
-        }
+        ids.iter().copied().collect()
     }
 }
 

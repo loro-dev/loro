@@ -34,6 +34,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Imports that reuse local op ids (a shared peer id): the known-history check,
   what counts as equal, and what it cannot catch:
   [context/import-peer-id-reuse.md](context/import-peer-id-reuse.md).
+- Frontiers, version vectors and peer ids from callers: normalization, APIs with
+  no error in their signature, a peer that cannot write in detached editing:
+  [context/version-input-contract.md](context/version-input-contract.md).
 - `apply_diff`/`revert_to` rollback of a failed batch, reused op ids, other
   threads: [context/apply-diff-atomicity.md](context/apply-diff-atomicity.md).
 - Movable-list `Move`/`Set` import validation, and why a move of a deleted element

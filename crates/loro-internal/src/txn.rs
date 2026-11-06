@@ -102,10 +102,40 @@ impl crate::LoroDoc {
             return;
         }
 
-        let txn = self
-            .txn()
-            .expect("auto-commit should be able to create a transaction");
-        self_txn.replace(txn);
+        *self_txn = self.auto_commit_txn(None);
+    }
+
+    /// [`Self::start_auto_commit`] for a caller about to write: it returns why the
+    /// transaction cannot start, see [`Self::auto_commit_txn`].
+    pub(crate) fn try_start_auto_commit(&self) -> LoroResult<()> {
+        self.auto_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut self_txn = self.txn.lock();
+        if self_txn.is_none() && self.can_edit() {
+            *self_txn = Some(self.txn()?);
+        }
+
+        Ok(())
+    }
+
+    /// The next auto-commit transaction, or `None` when the peer cannot write here.
+    ///
+    /// In detached editing, a custom peer id that already has ops after the state
+    /// version cannot start a transaction. That is no fault of the commit, export
+    /// or import that renews it, so they go on with no pending transaction. The
+    /// next write tries again in `with_txn` and reports
+    /// [`LoroError::ConcurrentOpsWithSamePeerID`] to its caller.
+    pub(crate) fn auto_commit_txn(&self, options: Option<CommitOptions>) -> Option<Transaction> {
+        match self.txn() {
+            Ok(mut txn) => {
+                if let Some(options) = options {
+                    txn.set_options(options);
+                }
+                Some(txn)
+            }
+            Err(LoroError::ConcurrentOpsWithSamePeerID { .. }) => None,
+            Err(err) => panic!("auto-commit should be able to create a transaction: {err}"),
+        }
     }
 
     #[inline]
@@ -116,13 +146,7 @@ impl crate::LoroDoc {
                 return;
             }
 
-            let mut txn = self
-                .txn()
-                .expect("auto-commit should be able to renew a transaction");
-            if let Some(options) = options {
-                txn.set_options(options);
-            }
-            self_txn.replace(txn);
+            *self_txn = self.auto_commit_txn(options);
         }
     }
 
@@ -137,13 +161,7 @@ impl crate::LoroDoc {
                 return;
             }
 
-            let mut txn = self
-                .txn()
-                .expect("auto-commit should be able to renew a transaction");
-            if let Some(options) = options {
-                txn.set_options(options);
-            }
-            guard.replace(txn);
+            *guard = self.auto_commit_txn(options);
         }
     }
 }

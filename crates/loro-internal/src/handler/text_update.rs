@@ -3,15 +3,26 @@ use std::{char, sync::Arc};
 use itertools::Itertools;
 use rustc_hash::FxHashMap;
 
-use crate::diff::DiffHandler;
+use crate::diff::{diff_impl::UpdateTimeoutError, DiffHandler};
+use loro_common::{LoroError, LoroResult};
 
 use super::TextHandler;
+
+/// Runs one edit of a diff. [`DiffHandler`] cannot return an error, so the first
+/// one is kept for [`DiffHook::finish`] and the remaining edits are skipped: they
+/// were computed for a text this edit did not reach.
+fn run_edit(error: &mut Option<LoroError>, edit: impl FnOnce() -> LoroResult<()>) {
+    if error.is_none() {
+        *error = edit().err();
+    }
+}
 
 pub(super) struct DiffHook<'a> {
     text: &'a TextHandler,
     new: &'a [u32],
     last_old_index: usize,
     current_index: usize,
+    error: Option<LoroError>,
 }
 
 impl<'a> DiffHook<'a> {
@@ -21,7 +32,16 @@ impl<'a> DiffHook<'a> {
             new,
             last_old_index: 0,
             current_index: 0,
+            error: None,
         }
+    }
+
+    /// The result of `update`: an edit that failed outranks the diff's own result.
+    pub(super) fn finish(
+        self,
+        result: Result<(), UpdateTimeoutError>,
+    ) -> Result<(), UpdateTimeoutError> {
+        self.error.map_or(result, |err| Err(err.into()))
     }
 }
 
@@ -32,23 +52,23 @@ impl DiffHandler for DiffHook<'_> {
             self.last_old_index = old_index;
         }
 
-        self.text
-            .insert_unicode(
-                self.current_index,
-                &self.new[new_index..new_index + new_len]
+        let (text, new, index) = (self.text, self.new, self.current_index);
+        run_edit(&mut self.error, || {
+            text.insert_unicode(
+                index,
+                &new[new_index..new_index + new_len]
                     .iter()
                     .map(|x| char::from_u32(*x).unwrap())
                     .collect::<String>(),
             )
-            .unwrap();
+        });
         self.current_index += new_len;
     }
 
     fn delete(&mut self, old_index: usize, old_len: usize) {
         self.current_index += old_index - self.last_old_index;
-        self.text
-            .delete_unicode(self.current_index, old_len)
-            .unwrap();
+        let (text, index) = (self.text, self.current_index);
+        run_edit(&mut self.error, || text.delete_unicode(index, old_len));
         self.last_old_index = old_index + old_len;
     }
 }
@@ -62,6 +82,7 @@ pub(super) struct DiffHookForLine<'a> {
 
     last_old_index: usize,
     current_index: usize,
+    error: Option<LoroError>,
 }
 
 impl<'a> DiffHookForLine<'a> {
@@ -74,6 +95,7 @@ impl<'a> DiffHookForLine<'a> {
             lines_lookup: FxHashMap::default(),
             last_old_index: 0,
             current_index: 0,
+            error: None,
         };
 
         let text_str = text.to_string();
@@ -109,6 +131,14 @@ impl<'a> DiffHookForLine<'a> {
     pub fn get_new_arr(&self) -> &[u32] {
         &self.new
     }
+
+    /// See [`DiffHook::finish`].
+    pub(super) fn finish(
+        self,
+        result: Result<(), UpdateTimeoutError>,
+    ) -> Result<(), UpdateTimeoutError> {
+        self.error.map_or(result, |err| Err(err.into()))
+    }
 }
 
 impl DiffHandler for DiffHookForLine<'_> {
@@ -125,7 +155,8 @@ impl DiffHandler for DiffHookForLine<'_> {
             .iter()
             .map(|x| self.lines[*x as usize].clone())
             .join("");
-        self.text.insert_unicode(self.current_index, &s).unwrap();
+        let (text, index) = (self.text, self.current_index);
+        run_edit(&mut self.error, || text.insert_unicode(index, &s));
         self.current_index += s.chars().count();
     }
 
@@ -142,8 +173,7 @@ impl DiffHandler for DiffHookForLine<'_> {
             .map(|x| self.lines[self.old[x] as usize].chars().count())
             .sum::<usize>();
 
-        self.text
-            .delete_unicode(self.current_index, delete_len)
-            .unwrap();
+        let (text, index) = (self.text, self.current_index);
+        run_edit(&mut self.error, || text.delete_unicode(index, delete_len));
     }
 }

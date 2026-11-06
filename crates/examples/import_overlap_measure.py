@@ -15,7 +15,8 @@ from pathlib import Path
 
 SCENARIOS = [
     "overlap_snap", "overlap_partial", "overlap_mem", "snap_plus", "snap_mem",
-    "detached", "mlist_batch", "text_stream", "batch",
+    "detached", "mlist_batch", "text_stream", "batch", "reimport_mem",
+    "reimport_snap", "reimport_snapshot", "reimport_map", "reimport_tail",
 ]
 
 

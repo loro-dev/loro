@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-10-01.
+Verified against code 2026-11-06.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -21,9 +21,9 @@ single entry for binary updates, snapshots imported into a non-empty doc, JSON
 updates, and each blob of `import_batch`. An error takes the existing early-exit
 path, which rolls back only the arena (decode may have registered containers).
 
-1. **Content.** If the import brings anything new, every imported change that
-   overlaps the local version vector is compared with the local changes over the
-   overlap. A mismatch returns `LoroError::UsedOpID { id }` with the first
+1. **Content.** Every imported change that overlaps the local version vector is
+   compared with the local changes over the overlap, also when the import brings
+   nothing new. A mismatch returns `LoroError::UsedOpID { id }` with the first
    differing id.
 2. **Trim.** The known parts are dropped, as the decoders used to do.
 3. **Skipped counters.** A change whose deps are present but whose peer's
@@ -151,8 +151,6 @@ is per atom range, not per change:
   sequence is then rejected by `validate_diff` and rolled back (loro-dev/loro#1160).
   A tail that happens to land on valid positions is applied and scrambles the
   state. Detecting that needs content hashes in the version vector.
-- **Imports with nothing new.** A conflicting duplicate that brings nothing new
-  is a no-op and is not reported. This keeps a no-op re-import as cheap as before.
 - **Same-peer changes that are concurrent but contiguous** (for example `p@2`
   with deps `[]` on top of a local `p@0..=1`). They do not crash, and are still
   accepted.
@@ -160,9 +158,9 @@ is per atom range, not per change:
 
 ## Cost
 
-The scope of conflict detection is unchanged: all imported overlapping peers
-are compared when the import brings new ops, including a fully known peer whose
-history another peer depends on. No new detection limit is introduced.
+All imported overlapping peers are compared, including a fully known peer whose
+history another peer depends on. No detection limit applies. An import with no
+overlap, the normal path, only reads the version vector once per change.
 
 Cold blocks containing only Text inserts can be compared directly from their
 encoded container IDs, positions, UTF-8 strings and dependency boundaries
@@ -188,9 +186,47 @@ process-wide allocator statistic; inspect both the one-import delta and the
 repeated-import series rather than interpreting one allocator growth step as a
 universal ratio.
 
+### Imports that bring nothing new
+
+Reporting a conflict here is what stops `import` from returning `Ok` for ops it
+did not take, so such an import now pays the comparison. Measured with
+`reimport_*` in the release probe on Linux x86_64 under shared load, against the
+same tree with the check skipped when nothing is new. 3 interleaved process
+runs per cell, 3 timed rounds each; medians. Heap is `mallinfo2`.
+
+| Scenario | FAT | Changes | no check ms | check ms | no check KiB | check KiB |
+|---|---:|---:|---:|---:|---:|---:|
+| reimport_mem | 1 | 64,000 | 0.019 | 0.021 | 0 | 0 |
+| reimport_mem | 64 | 64,000 | 1.019 | 1.201 | 0 | 0 |
+| reimport_snapshot | 1 | 64,000 | 12.888 | 17.182 | 12 | 9 |
+| reimport_snapshot | 64 | 64,000 | 19.241 | 25.157 | 1 | 1 |
+| reimport_snap | 1 | 8,000 | 0.007 | 0.812 | 1 | 21 |
+| reimport_snap | 1 | 64,000 | 0.020 | 6.386 | 0 | 228 |
+| reimport_snap | 64 | 64,000 | 1.029 | 13.035 | 0 | 4,247 |
+| reimport_map | 1 | 8,000 | 1.403 | 3.632 | 16 | 1,493 |
+| reimport_map | 1 | 64,000 | 8.840 | 29.546 | 172 | 12,633 |
+| reimport_tail | 1 | 64,000 | 0.389 | 0.575 | 0 | 155 |
+| reimport_tail | 64 | 64,000 | 0.415 | 0.450 | 0 | 0 |
+
+- Byte-identical blocks still skip decoding and comparison (`reimport_mem`), which
+  is the common repeat of the same export.
+- `reimport_tail` delivers the newest 200 changes again, one blob each: duplicate
+  delivery over a sync channel. Its cost is 1.05x to 1.48x.
+- `reimport_snap` looks worst because `all_updates` merges this history into very
+  few changes, so the old import did almost nothing. The real figure is about
+  0.1 microseconds per op, or 0.2 with `FAT=64`, comparing with cold blocks.
+- `reimport_map` compares through `get_change`, which parses cold blocks and keeps
+  them parsed. A full-history repeat on a cold doc costs about 3x and 0.2 KiB per
+  change. An overlapping import with one new op has always paid this.
+- With no overlap nothing changes. At 32,000 changes the fixed/no-check ratios were
+  `text_stream` 1.01x, `batch` 1.00x, and, for imports that already compared,
+  `overlap_mem` 1.05x and `overlap_snap` 0.98x.
+
 ## Tests
 
-- `crates/loro/tests/import_reused_peer_id.rs`: the #1118 repro through
+- `crates/loro/tests/import_reused_peer_id.rs`: conflicts in imports that bring
+  nothing new through every path, attached and detached, and repeated imports of
+  known history in every form; the #1118 repro through
   updates, snapshot, `import_batch` and JSON; a same-length conflict that used to
   scramble; a conflicting known change followed by a new one; skipped counters;
   and re-imports that must still succeed (piecewise vs merged change stores, every

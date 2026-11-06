@@ -2797,13 +2797,9 @@ impl TextHandler {
         let old_str = self.to_string();
         let new = text.chars().map(|x| x as u32).collect::<Vec<u32>>();
         let old = old_str.chars().map(|x| x as u32).collect::<Vec<u32>>();
-        diff(
-            &mut OperateProxy::new(text_update::DiffHook::new(self, &new)),
-            options,
-            &old,
-            &new,
-        )?;
-        Ok(())
+        let mut proxy = OperateProxy::new(text_update::DiffHook::new(self, &new));
+        let result = diff(&mut proxy, options, &old, &new);
+        proxy.unwrap().finish(result)
     }
 
     pub fn update_by_line(
@@ -2814,12 +2810,9 @@ impl TextHandler {
         let hook = text_update::DiffHookForLine::new(self, text);
         let old_lines = hook.get_old_arr().to_vec();
         let new_lines = hook.get_new_arr().to_vec();
-        diff(
-            &mut OperateProxy::new(hook),
-            options,
-            &old_lines,
-            &new_lines,
-        )
+        let mut proxy = OperateProxy::new(hook);
+        let result = diff(&mut proxy, options, &old_lines, &new_lines);
+        proxy.unwrap().finish(result)
     }
 
     #[allow(clippy::inherent_to_string)]
@@ -4976,13 +4969,13 @@ fn with_txn<R>(doc: &LoroDoc, f: impl FnOnce(&mut Transaction) -> LoroResult<R>)
     loop {
         if let Some(txn) = &mut *txn {
             return f(txn);
-        } else if cfg!(target_arch = "wasm32") || !doc.can_edit() {
+        } else if !doc.can_edit() {
             return Err(LoroError::AutoCommitNotStarted);
         } else {
             drop(txn);
             #[cfg(loom)]
             loom::thread::yield_now();
-            doc.start_auto_commit();
+            doc.try_start_auto_commit()?;
             txn = doc.txn.lock();
         }
     }
