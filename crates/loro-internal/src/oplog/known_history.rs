@@ -95,8 +95,9 @@ impl OpLog {
     /// Returns [`LoroError::UsedOpID`] with the first conflicting id when an imported
     /// change differs from the local one (deps or op content), and
     /// [`LoroError::DecodeError`] when a change skips counters of its peer (see
-    /// [`Self::check_changes_do_not_skip_counters`]). It reads the op log only, so a
-    /// caller can return the error before mutating anything.
+    /// [`Self::check_changes_do_not_skip_counters`]) or depends on an op of its own
+    /// peer other than the previous one (see [`Self::check_own_peer_deps`]). It reads
+    /// the op log only, so a caller can return the error before mutating anything.
     ///
     /// The comparison runs only when the import brings something new: that is what
     /// would be applied on top of a conflicting prefix. An import made only of
@@ -143,8 +144,36 @@ impl OpLog {
                 false
             }
         });
+        Self::check_own_peer_deps(&changes)?;
         self.check_changes_do_not_skip_counters(&changes)?;
         Ok(changes)
+    }
+
+    /// A change of peer `p` at counter `c` can depend on its own peer only through
+    /// `p@c-1`: a local commit depends on the doc's frontiers, which hold at most the
+    /// latest op of `p`. A crafted change of `p` whose dep is an older op of `p` gets
+    /// its lamport from that dep, but the DAG merges it into the last node of `p`, and
+    /// the lamports do not continue: `AppDag` failed the assertion "lamport is not
+    /// continuous" under the op log lock, poisoning the doc. A dep on `p@c` or a later
+    /// counter can never be met.
+    fn check_own_peer_deps(changes: &[Change]) -> LoroResult<()> {
+        for change in changes {
+            let id = change.id;
+            if let Some(dep) = change
+                .deps
+                .iter()
+                .find(|dep| dep.peer == id.peer && dep.counter != id.counter - 1)
+            {
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "Invalid change {id}: it depends on {dep}, an op of its own peer other than the previous one"
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// A change of peer `p` starting at counter `c > 0` is written after `p@c-1`, so

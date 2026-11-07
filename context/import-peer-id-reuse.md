@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-10-01.
+Verified against code 2026-10-28.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -26,7 +26,12 @@ path, which rolls back only the arena (decode may have registered containers).
    overlap. A mismatch returns `LoroError::UsedOpID { id }` with the first
    differing id.
 2. **Trim.** The known parts are dropped, as the decoders used to do.
-3. **Skipped counters.** A change whose deps are present but whose peer's
+3. **Own-peer deps.** A change of peer `p` at counter `c` may depend on `p` only
+   through `p@c-1`; any other dep on `p` is rejected with `DecodeError`
+   (`OpLog::check_own_peer_deps`). A dep on an older op of `p` gave the change a
+   lamport that does not continue `p`'s last DAG node, and the merge into that
+   node failed "lamport is not continuous" under the op log lock.
+4. **Skipped counters.** A change whose deps are present but whose peer's
    previous counter is not is rejected with `DecodeError`. The main pass of
    `import_changes_to_oplog` would apply it and trip the counter assertion in
    `AppDag::update_version_on_new_change` under the op log lock. The check replays
@@ -155,7 +160,7 @@ is per atom range, not per change:
   is a no-op and is not reported. This keeps a no-op re-import as cheap as before.
 - **Same-peer changes that are concurrent but contiguous** (for example `p@2`
   with deps `[]` on top of a local `p@0..=1`). They do not crash, and are still
-  accepted.
+  accepted. Deps `[p@0]` for `p@2` are rejected (step 3).
 - A peer id reused by a local commit after importing is outside import.
 
 ## Cost
@@ -196,6 +201,10 @@ universal ratio.
   and re-imports that must still succeed (piecewise vs merged change stores, every
   op kind including `NaN` and one-atom reversed deletes, shallow docs).
 - `crates/loro-wasm/tests/import_reused_peer_id.test.ts`.
+- `crates/loro/tests/import_own_peer_deps.rs`: deps on an older op of the own
+  peer (attached, detached, next to another peer's dep), on the own counter or a
+  later one, and on the own peer from a first change. The doc keeps its version
+  and value and stays usable.
 - `crates/loro/tests/import_json_relay.rs`: JSON-to-binary relays through full
   updates, snapshots and batch import using `ImportHistoryMode::JsonLossy`;
   binary values, mergeable text/counter, non-finite/integral doubles, rounded
