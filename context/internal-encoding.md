@@ -275,8 +275,9 @@ history can have holes and cannot satisfy the store's continuity contract.
 `PendingChange::Unknown` retains the Lamport supplied by the input even though
 the local DAG cannot yet resolve it. Export preserves that value (adjusted by a
 slice offset); it does not invent a Lamport or fill missing history. Import
-resolves Lamport values through the existing import path. An unrepresentable
-input Lamport range returns an encode error.
+resolves Lamport values through the existing import path. When the deps of a
+pending change arrive, its Lamport comes from the deps only. The supplied value
+is ignored. An unrepresentable input Lamport range returns an encode error.
 
 `PendingChanges::export_changes` sorts by operation ID and removes already
 applied prefixes and duplicate overlaps, independently of the missing-dependency
