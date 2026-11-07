@@ -4,7 +4,10 @@
 
 use loro_common::{IdSpan, LoroError, LoroResult, LoroValue};
 use loro_internal::{
-    cursor::PosType, loro::ExportMode, txn::Transaction, HandlerTrait, LoroDoc, ToJson,
+    cursor::PosType,
+    loro::{CommitOptions, ExportMode},
+    txn::Transaction,
+    HandlerTrait, LoroDoc, ToJson,
 };
 
 fn writer(peer: u64) -> LoroDoc {
@@ -130,6 +133,60 @@ fn every_import_entry_is_rejected_in_a_transaction() {
     );
 }
 
+/// An auto-commit doc with no pending auto-commit transaction, so a manual one can
+/// open: the barrier of each import then renews the auto-commit one. That used to
+/// panic in `auto_commit_txn`, poisoning the transaction lock.
+fn auto_commit_doc_without_its_transaction() -> LoroDoc {
+    let doc = LoroDoc::new_auto_commit();
+    doc.commit_with(CommitOptions::new().immediate_renew(false));
+    doc
+}
+
+#[test]
+fn import_in_a_transaction_of_an_auto_commit_doc_is_rejected() {
+    let other = writer(5);
+    other.get_map("m").insert("k", 2).unwrap();
+    other.commit_then_renew();
+    let updates = all_updates(&other);
+
+    let doc = auto_commit_doc_without_its_transaction();
+    let txn = doc.txn().unwrap();
+    assert_import_rejected(doc.import(&updates));
+    assert_import_rejected(doc.import_batch(&[updates.clone(), updates.clone()]));
+    match doc.get_map("m").insert("k", 1) {
+        Err(LoroError::DuplicatedTransactionError) => {}
+        other => panic!("expected DuplicatedTransactionError, got {other:?}"),
+    }
+    txn.commit().unwrap();
+
+    doc.import(&updates).unwrap();
+    doc.get_map("n").insert("k", 1).unwrap();
+    doc.commit_then_renew();
+}
+
+/// The batch used to detach and open its rollback scope first. Closing it renewed the
+/// peer id for detached editing, which a transaction forbids: a panic with the scope
+/// still open.
+#[test]
+fn batch_in_a_transaction_with_detached_editing_is_rejected() {
+    let other = writer(5);
+    other.get_map("m").insert("k", 2).unwrap();
+    other.commit_then_renew();
+    let updates = all_updates(&other);
+
+    for doc in [LoroDoc::new(), auto_commit_doc_without_its_transaction()] {
+        doc.set_detached_editing(true);
+        let txn = doc.txn().unwrap();
+        assert_import_rejected(doc.import_batch(&[updates.clone(), updates.clone()]));
+        assert!(!doc.is_detached());
+        txn.commit().unwrap();
+        let status = doc
+            .import_batch(&[updates.clone(), updates.clone()])
+            .unwrap();
+        assert!(status.pending.is_none());
+    }
+}
+
 /// A transaction cannot start under parked history, as an auto-commit write cannot.
 #[test]
 fn transaction_cannot_start_under_parked_ids() {
@@ -164,7 +221,8 @@ fn permutations(items: &[usize]) -> Vec<Vec<usize>> {
     all
 }
 
-/// A manual transaction, parked changes, conflicts and failed imports in every order.
+/// A manual transaction, parked changes, a batch with a conflict and the dep, and failed
+/// imports in every order, in a doc with and without auto-commit.
 /// Whatever each step returns, nothing may panic, and the doc must agree with a replay
 /// of its own history. `import_local_change` also asserts in debug builds that no
 /// commit lands under parked history.
@@ -196,9 +254,19 @@ fn manual_transaction_with_imports_in_every_order() {
     let error = LoroDoc::new().import_json_updates(failing).unwrap_err();
     assert!(error.to_string().contains("retains"), "{error}");
 
-    for parked_update in [&update, &many_deps] {
+    let batch = [conflicting.clone(), dep.clone()];
+    for (auto_commit, parked_update) in [
+        (false, &update),
+        (false, &many_deps),
+        (true, &update),
+        (true, &many_deps),
+    ] {
         for order in permutations(&[0, 1, 2, 3, 4, 5, 6]) {
-            let doc = LoroDoc::new();
+            let doc = if auto_commit {
+                auto_commit_doc_without_its_transaction()
+            } else {
+                LoroDoc::new()
+            };
             doc.set_peer_id(7).unwrap();
             let mut txn: Option<Transaction> = None;
             for &step in &order {
@@ -220,7 +288,7 @@ fn manual_transaction_with_imports_in_every_order() {
                         let _ = doc.import(parked_update);
                     }
                     4 => {
-                        let _ = doc.import(&conflicting);
+                        let _ = doc.import_batch(&batch);
                     }
                     5 => {
                         let _ = doc.import(&dep);
@@ -232,6 +300,10 @@ fn manual_transaction_with_imports_in_every_order() {
             }
             if let Some(txn) = txn.take() {
                 txn.commit().unwrap();
+            }
+            if auto_commit {
+                let _ = doc.get_map("m").insert("auto", 1);
+                doc.commit_then_renew();
             }
 
             let _ = doc.import(parked_update);
@@ -246,7 +318,7 @@ fn manual_transaction_with_imports_in_every_order() {
             assert_eq!(
                 replay.get_deep_value().to_json_value(),
                 doc.get_deep_value().to_json_value(),
-                "{order:?}"
+                "{order:?} auto_commit={auto_commit}"
             );
         }
     }

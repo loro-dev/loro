@@ -113,16 +113,40 @@ later one, or depend on one, the write forks the history they were written on:
 `Transaction::new_with_origin` through `PendingChanges::last_parked_at_or_after`, with
 `ConcurrentOpsWithSamePeerID`, in attached mode too.
 
-The check runs once, when the transaction starts, so parked history must not change
-until it commits. Imports stop the auto-commit transaction under the txn lock
-(`with_barrier`). A manual `Transaction` (`LoroDoc::txn`, `loro-internal` only) is not
-stopped by anything, so every import returns `ImportWhenInTxn` while one is open
-(`check_not_in_txn`, under the op log lock, which a transaction starts under). The same
-guard keeps imports from history they cannot see: the transaction's ops are in the
-version vector and not in the change store, so a comparison would skip them. An import
-that only parks never reached the state's own guard. Checking at commit instead would be
-too late: the ops are in the state by then, and a commit cannot take them back.
-`import_local_change` asserts in debug builds that nothing lands under parked history.
+### Imports and transactions
+
+The check runs once, when the transaction starts. That is enough only if these hold:
+
+1. **An import and a transaction start exclude each other.** Every import holds the
+   doc's transaction lock from start to end, one call or a whole `import_batch` with
+   all its blobs (`with_barrier`, `BatchImportGuard`). Every transaction starts under
+   that lock: auto-commit ones where the lock is already held (`txn_under_lock`), and
+   manual ones (`LoroDoc::txn`, also reachable as `loro::LoroDoc::inner().txn()`) take
+   it in `txn_with_origin`.
+2. **No import runs while a transaction is open.** The auto-commit one is committed by
+   the barrier. A manual one outlives the lock, so each import returns
+   `ImportWhenInTxn` before it changes anything: `import_batch` before it detaches or
+   opens its rollback scope, the others in `check_not_in_txn` under the op log lock.
+   Its ops are in the version vector and not in the change store, so a comparison could
+   not see them either.
+3. So **parked history does not change between a transaction's start and its commit**,
+   and what the start checked still holds at the commit, and **no local change lands in
+   an import's rollback scope**, which would undo it in the op log and not the state.
+4. **A refused side leaves no lock poisoned.** The barrier still renews the auto-commit
+   transaction after a refused import; with a manual one open, `auto_commit_txn` leaves
+   none (`DuplicatedTransactionError`), and the next write reports that.
+
+Checking at commit instead would be too late: the ops are in the state by then, and a
+commit cannot take them back. `import_local_change` asserts 3 in debug builds.
+
+Before 1 held, a manual transaction could start between two blobs of a batch: its
+check missed the later blobs, they applied on top of its write, and a failed batch took
+its change out of the op log and left it in the state (loom test
+`manual_transaction_during_batch_import`).
+
+Other operations that read history, such as `checkout`, do not check for an open manual
+transaction, and its uncommitted ops break them (`DAG node must have a change`). That is
+outside imports and not fixed here.
 
 `auto_commit_txn` then leaves
 no transaction, and the next write reports the error, the same as in detached editing

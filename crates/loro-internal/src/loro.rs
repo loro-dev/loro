@@ -1652,7 +1652,7 @@ impl LoroDoc {
             if rejected.is_some() {
                 return Ok(());
             }
-            *txn = Some(self.txn()?);
+            *txn = Some(self.txn_under_lock()?);
             let transaction = txn
                 .as_mut()
                 .ok_or_else(|| LoroError::TransactionError("undo transaction is missing".into()))?;
@@ -2727,6 +2727,14 @@ impl LoroDoc {
         });
 
         let (options, txn) = self.implicit_commit_then_stop();
+        // Before anything changes. Holding the transaction lock keeps a manual
+        // transaction from starting until the batch ends, so this is checked once.
+        if self.state.lock().is_in_txn() {
+            drop(txn);
+            self.renew_txn_if_auto_commit(options);
+            return Err(LoroError::ImportWhenInTxn);
+        }
+
         // Why we should keep locking `txn` here
         //
         // In a multi-threaded environment, `import_batch` used to drop the txn lock
