@@ -58,6 +58,86 @@ describe("importing history that reuses local op ids", () => {
     expect(doc.getText("t").toString()).toBe("hello");
   });
 
+  it("throws when the import brings no new op but differs from known ops", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId(7);
+    doc.getText("t").insert(0, "abc");
+    doc.commit();
+    const base = doc.frontiers();
+    doc.getText("t").insert(3, "de");
+    doc.commit();
+
+    const fork = doc.forkAt(base);
+    fork.setPeerId(7);
+    fork.getText("t").insert(1, "XY");
+    fork.commit();
+    expectRejected(doc, fork.export({ mode: "update" }));
+    expect(doc.getText("t").toString()).toBe("abcde");
+  });
+
+  it("throws when an update conflicts with one waiting for the same dep", () => {
+    const dep = new LoroDoc();
+    dep.setPeerId(1);
+    dep.getText("t").insert(0, "x");
+    dep.commit();
+    const depUpdate = dep.export({ mode: "update" });
+    const writer = (text: string) => {
+      const doc = dep.fork();
+      doc.setPeerId(7);
+      doc.getText("t").insert(1, text);
+      doc.commit();
+      return doc.export({ mode: "update", from: dep.version() });
+    };
+    const [a, b] = [writer("A"), writer("B")];
+
+    const doc = new LoroDoc();
+    doc.import(a);
+    doc.import(a); // Delivering the same update again is fine.
+    expect(() => doc.import(b)).toThrow(/has been used/);
+    expect(doc.import(depUpdate).pending).toBeNull();
+    expect(doc.getText("t").toString()).toBe("xA");
+  });
+
+  it("throws on a local write over a parked id and recovers with the dep", () => {
+    const dep = new LoroDoc();
+    dep.setPeerId(1);
+    dep.getText("t").insert(0, "x");
+    dep.commit();
+    const depUpdate = dep.export({ mode: "update" });
+    const writer = dep.fork();
+    writer.setPeerId(7);
+    writer.getText("t").insert(1, "ab");
+    writer.commit();
+    const update = writer.export({ mode: "update", from: dep.version() });
+
+    const doc = new LoroDoc();
+    doc.setPeerId(7);
+    expect(doc.import(update).pending).not.toBeNull();
+    expect(() => doc.getMap("m").set("k", 1)).toThrow(
+      /Concurrent ops with the same peer id/,
+    );
+    doc.commit();
+
+    expect(doc.import(depUpdate).pending).toBeNull();
+    expect(doc.getText("t").toString()).toBe("xab");
+    doc.getMap("m").set("k", 1);
+    doc.commit();
+    expect(doc.getMap("m").get("k")).toBe(1);
+  });
+
+  it("still accepts re-imports of what the doc already has", () => {
+    const doc = history();
+    const updates = doc.export({ mode: "update" });
+    const snapshot = doc.export({ mode: "snapshot" });
+    const version = doc.version().toJSON();
+    for (const bytes of [updates, snapshot, updates]) {
+      const status = doc.import(bytes);
+      expect(status.success.size).toBe(0);
+      expect(status.pending).toBeNull();
+    }
+    expect(doc.version().toJSON()).toEqual(version);
+  });
+
   it("still accepts overlapping re-imports of the same history", () => {
     const source = new LoroDoc();
     source.setPeerId(1);

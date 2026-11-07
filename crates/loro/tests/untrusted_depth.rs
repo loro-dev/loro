@@ -3,8 +3,8 @@
 //! Everything here runs on a 1 MiB stack. See `context/deep-value-stack-safety.md`.
 
 use loro::{
-    ContainerTrait, ExpandType, ExportMode, LoroDoc, LoroMap, LoroValue, StyleConfig,
-    StyleConfigMap, VersionVector,
+    ContainerTrait, ExpandType, ExportMode, ImportHistoryMode, LoroDoc, LoroError, LoroMap,
+    LoroValue, StyleConfig, StyleConfigMap, VersionVector,
 };
 
 fn on_small_stack(f: impl FnOnce() + Send + 'static) {
@@ -251,5 +251,55 @@ fn ensure_mergeable_fails_beyond_the_name_budget() {
         copy.import(&doc.export(ExportMode::Snapshot).unwrap())
             .unwrap();
         assert_eq!(copy.get_deep_value(), doc.get_deep_value());
+    });
+}
+
+/// The known-history comparison for `ImportHistoryMode::JsonLossy` walked values
+/// recursively. It also runs on repeated imports, which aborted the process here.
+#[test]
+fn json_lossy_reimport_compares_deep_values_without_recursion() {
+    on_small_stack(|| {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        doc.get_map("m").insert("v", nested_list(20_000)).unwrap();
+        doc.commit();
+        let known = doc.export(ExportMode::all_updates()).unwrap();
+        doc.get_map("m").insert("new", 1).unwrap();
+        doc.commit();
+        let with_new_op = doc.export(ExportMode::all_updates()).unwrap();
+
+        let reader = LoroDoc::new();
+        reader.import(&known).unwrap();
+        for mode in [ImportHistoryMode::JsonLossy, ImportHistoryMode::Exact] {
+            let status = reader.import_with_history_mode(&known, "", mode).unwrap();
+            assert!(status.success.is_empty() && status.pending.is_none());
+        }
+        let status = reader
+            .import_with_history_mode(&with_new_op, "", ImportHistoryMode::JsonLossy)
+            .unwrap();
+        assert!(!status.success.is_empty());
+    });
+}
+
+#[test]
+fn json_lossy_reimport_reports_a_conflict_deep_in_a_value() {
+    on_small_stack(|| {
+        let write = |value: LoroValue| {
+            let doc = LoroDoc::new();
+            doc.set_peer_id(1).unwrap();
+            doc.get_map("m").insert("v", value).unwrap();
+            doc.commit();
+            doc.export(ExportMode::all_updates()).unwrap()
+        };
+        let reader = LoroDoc::new();
+        reader.import(&write(nested_list(20_000))).unwrap();
+        let err = reader
+            .import_with_history_mode(
+                &write(nested_list(20_001)),
+                "",
+                ImportHistoryMode::JsonLossy,
+            )
+            .unwrap_err();
+        assert!(matches!(err, LoroError::UsedOpID { .. }));
     });
 }

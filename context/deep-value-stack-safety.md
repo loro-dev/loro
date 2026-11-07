@@ -1,6 +1,6 @@
 # Deep plain values and stack safety
 
-Verified against code 2026-11-03.
+Verified against code 2026-11-06.
 
 Issue [#1198](https://github.com/loro-dev/loro/issues/1198) constructs a plain
 `LoroValue::Map` chain with 20,000 levels. On main `3827945f`, its release-mode
@@ -27,6 +27,11 @@ this ordered path. Its layout test compares
 against the existing serde serializer, including container IDs and every scalar
 kind. Import stays lazy and the binary format is unchanged. There is no new
 failure after advancing the oplog: deep snapshot values remain valid and readable.
+
+Equality follows the same rule. `values_eq` in `loro-common/src/value.rs` and the
+`JsonLossy` comparison in `oplog/known_history.rs` (`ImportedValues::eq`) use a work
+list. Every comparison of value trees on an import path must, because imports run
+them on stored values of any depth, including when the import brings nothing new.
 
 The general `Deserialize for LoroValue` in `loro-common/src/value.rs` uses a
 `DeserializeSeed` budget of 128 collection levels, shared down both map and list

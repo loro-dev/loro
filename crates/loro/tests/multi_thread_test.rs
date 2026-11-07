@@ -298,6 +298,68 @@ mod loom_test {
         });
     }
 
+    /// A manual transaction used to start between two blobs of a batch: its check saw
+    /// only the blobs before it, its commit landed in the batch's rollback scope, and a
+    /// failed batch took the change out of the op log while the state kept it. Now it
+    /// waits for the batch. Either way the doc must agree with a replay of its history.
+    #[test]
+    fn manual_transaction_during_batch_import() {
+        let mut builder = loom::model::Builder::new();
+        builder.max_branches = 3000;
+        builder.check(move || {
+            let source = LoroDoc::new();
+            source.set_peer_id(5).unwrap();
+            source.get_map("m").insert("k", 1).unwrap();
+            source.commit();
+            let valid = source.export(ExportMode::all_updates()).unwrap();
+            // Decodes, and fails when the batch checks it out: a list insert past the end.
+            let failing = r#"{"schema_version":1,"start_version":{},"peers":["3"],"changes":[{
+                "id":"0@0","timestamp":0,"deps":[],"lamport":0,"msg":null,"ops":[{
+                "container":"cid:root-l:List","counter":0,
+                "content":{"type":"insert","pos":5,"value":[0]}}]}]}"#;
+            let failing = {
+                let doc = LoroDoc::new();
+                doc.set_detached_editing(true);
+                doc.detach();
+                doc.import_json_updates(failing).unwrap();
+                doc.export(ExportMode::all_updates()).unwrap()
+            };
+
+            let doc = LoroDoc::new();
+            doc.set_detached_editing(true);
+            doc.set_peer_id(4).unwrap();
+            let writer = doc.clone();
+            let h = loom::thread::spawn(move || {
+                let inner = writer.inner();
+                if let Ok(mut txn) = inner.txn() {
+                    let text = inner.get_text("t");
+                    text.insert_with_txn(
+                        &mut txn,
+                        0,
+                        "local",
+                        loro_internal::cursor::PosType::Unicode,
+                    )
+                    .unwrap();
+                    txn.commit().unwrap();
+                }
+            });
+            let _ = doc.import_batch(&[valid, failing]);
+            h.join().unwrap();
+
+            doc.checkout_to_latest();
+            let replay = LoroDoc::new();
+            replay
+                .import(&doc.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
+            for d in [&replay, &doc] {
+                d.get_text("t");
+                d.get_map("m");
+                d.get_list("l");
+            }
+            assert_eq!(replay.get_deep_value(), doc.get_deep_value());
+        });
+    }
+
     #[test]
     fn subscribe_local_update_while_another_thread_emits() {
         loom::model(|| {

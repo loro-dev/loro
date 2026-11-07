@@ -285,7 +285,10 @@ impl LoroDoc {
     /// # Important Notes:
     ///
     /// - This mode uses a different PeerID for each checkout.
-    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Ensure no concurrent operations share the same PeerID if set manually. While
+    ///   the PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check out
+    ///   another version to write again.
     /// - Importing does not affect the document's state or version; changes are
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     ///
@@ -320,7 +323,10 @@ impl LoroDoc {
     /// # Important Notes:
     ///
     /// - This mode uses a different PeerID for each checkout.
-    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Ensure no concurrent operations share the same PeerID if set manually. While
+    ///   the PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check out
+    ///   another version to write again.
     /// - Importing does not affect the document's state or version; changes are
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     #[inline]
@@ -804,6 +810,9 @@ impl LoroDoc {
     /// - Missing dependencies: check the returned [`ImportStatus`]. If `pending` is non-empty,
     ///   fetch those missing ranges (e.g., using `export(ExportMode::updates(&doc.oplog_vv()))`) and re-import.
     /// - Auto-commit: `import` finalizes the current transaction before applying incoming data.
+    /// - Reused peer ids: when `bytes` differ from this doc's ops with the same ids, the
+    ///   import returns [`LoroError::UsedOpID`] and changes nothing, even if it brings no
+    ///   new op. Repeating what this doc already has is a no-op.
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "".into())
@@ -989,6 +998,10 @@ impl LoroDoc {
     }
 
     /// Convert `VersionVector` into `Frontiers`
+    ///
+    /// Ops this doc does not have cannot be minimized, so the last id of every peer
+    /// is returned as it is, and using those frontiers reports them. Use
+    /// [`try_vv_to_frontiers`](Self::try_vv_to_frontiers) to get the error here.
     #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.doc.vv_to_frontiers(vv)
@@ -1700,12 +1713,19 @@ impl LoroDoc {
     /// let spans = doc.find_id_spans_between(&a, &b);
     /// assert!(!spans.forward.is_empty());
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// When a version is not in this doc, or is before its shallow root. The doc
+    /// stays usable. Use [`try_find_id_spans_between`](Self::try_find_id_spans_between)
+    /// for such input.
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
     }
 
-    /// Finds operation spans between versions, reporting unreadable history.
+    /// Finds operation spans between versions, reporting unreadable history, a version
+    /// that is not in this doc, or one before its shallow root.
     pub fn try_find_id_spans_between(
         &self,
         from: &Frontiers,
@@ -2869,6 +2889,9 @@ impl LoroText {
     /// assert_eq!(text.to_string(), "Hello World");
     /// ```
     ///
+    /// Returns [`UpdateTimeoutError::Timeout`] when `options.timeout_ms` passes, and
+    /// [`UpdateTimeoutError::Loro`] with the error of the edit when it cannot be
+    /// applied, for example because the container is deleted.
     pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
         self.handler.update(text, options)
     }
@@ -2876,6 +2899,7 @@ impl LoroText {
     /// Update the current text based on the provided text.
     ///
     /// This update calculation is line-based, which will be more efficient but less precise.
+    /// Errors are the same as [`update`](Self::update).
     pub fn update_by_line(
         &self,
         text: &str,

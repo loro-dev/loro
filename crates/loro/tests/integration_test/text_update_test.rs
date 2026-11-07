@@ -1,4 +1,4 @@
-use loro::LoroDoc;
+use loro::{LoroDoc, LoroError, LoroText, UpdateOptions, UpdateTimeoutError};
 
 #[test]
 fn test_text_update() -> anyhow::Result<()> {
@@ -155,5 +155,101 @@ fn test_failed_case_2() -> anyhow::Result<()> {
     assert_eq!(&text.to_string(), new);
     text.update_by_line(new1, Default::default()).unwrap();
     assert_eq!(&text.to_string(), new1);
+    Ok(())
+}
+
+fn assert_update_fails(
+    text: &LoroText,
+    expected: impl Fn(&LoroError) -> bool,
+) -> anyhow::Result<()> {
+    let by_char = text.update("abd", Default::default());
+    let by_line = text.update_by_line("abd\n", Default::default());
+    for result in [by_char, by_line] {
+        match result {
+            Err(UpdateTimeoutError::Loro(err)) if expected(&err) => {}
+            other => panic!("unexpected result {other:?}"),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn update_of_a_deleted_container_returns_the_error() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let text = map.insert_container("t", LoroText::new())?;
+    text.insert(0, "abc")?;
+    doc.commit();
+    map.delete("t")?;
+    doc.commit();
+
+    assert_update_fails(&text, |err| {
+        matches!(err, LoroError::ContainerDeleted { .. })
+    })?;
+
+    map.insert("k", 1)?;
+    doc.commit();
+    assert!(map.get("k").is_some());
+    Ok(())
+}
+
+#[test]
+fn update_while_read_only_detached_returns_the_error() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("t");
+    text.insert(0, "abc")?;
+    doc.commit();
+    doc.detach();
+
+    assert_update_fails(&text, |err| {
+        matches!(
+            err,
+            LoroError::AutoCommitNotStarted | LoroError::EditWhenDetached
+        )
+    })?;
+
+    doc.attach();
+    text.update("abd", Default::default())?;
+    assert_eq!(text.to_string(), "abd");
+    Ok(())
+}
+
+/// The edits are all skipped after the first failure, and a timeout does not hide it.
+#[test]
+fn update_reports_a_failed_edit_even_with_a_timeout_set() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let text = map.insert_container("t", LoroText::new())?;
+    text.insert(0, "one two three")?;
+    doc.commit();
+    map.delete("t")?;
+    doc.commit();
+
+    let options = UpdateOptions {
+        timeout_ms: Some(1000.0),
+        use_refined_diff: true,
+    };
+    let result = text.update("0 one 2 two 3 three", options);
+    assert!(matches!(
+        result,
+        Err(UpdateTimeoutError::Loro(LoroError::ContainerDeleted { .. }))
+    ));
+    Ok(())
+}
+
+#[test]
+fn update_to_the_same_text_of_a_deleted_container_edits_nothing() -> anyhow::Result<()> {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let text = map.insert_container("t", LoroText::new())?;
+    text.insert(0, "abc")?;
+    doc.commit();
+    map.delete("t")?;
+    doc.commit();
+
+    let vv = doc.oplog_vv();
+    text.update("abc", Default::default())?;
+    doc.commit();
+    assert_eq!(doc.oplog_vv(), vv);
     Ok(())
 }

@@ -310,12 +310,9 @@ impl ChangeStore {
             // PERF: this can be optimized by reusing the current encoded blocks
             // In the current method, it needs to parse and re-encode the blocks
             for c in self.iter_changes(span) {
-                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
-                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
+                // From `span`, not `start_vv`: a caller's counter can be negative.
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
 
                 if start == end {
                     continue;
@@ -1107,12 +1104,9 @@ impl ChangeStore {
                 return;
             };
             for c in changes {
-                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
-                let end = ((latest_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
+                // From `span`, not `start_vv`: a caller's counter can be negative.
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
 
                 assert_ne!(start, end);
                 let ch = c.slice(start, end);
@@ -1411,7 +1405,8 @@ mod mut_inner_kv {
         pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
             let block = self.get_parsed_block(id)?;
             Some(BlockChangeRef {
-                change_index: block.get_change_index_by_counter(id.counter).unwrap(),
+                // A caller's id can be below the block that was found for it.
+                change_index: block.get_change_index_by_counter(id.counter).ok()?,
                 block: block.clone(),
             })
         }

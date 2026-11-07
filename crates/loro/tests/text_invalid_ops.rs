@@ -3,7 +3,7 @@
 //! and leave the document untouched and usable, like out-of-bounds List and
 //! MovableList ops.
 
-use loro::{ExportMode, LoroDoc, LoroValue, VersionVector};
+use loro::{ExportMode, LoroDoc, LoroError, LoroValue, VersionVector};
 use serde_json::{json, Value};
 
 /// Peer 1 writes `"ab"` (counters/lamports 0..=1).
@@ -276,6 +276,13 @@ fn map_only_import_that_unlocks_parked_out_of_bounds_text_op_is_rejected() {
     // Its dep is missing, so the forged change is parked, not validated yet.
     let status = doc.import_json_updates(forged_text).unwrap();
     assert!(status.pending.is_some());
+    // It stays parked under this doc's own peer, which cannot write under it. The
+    // rejected import must leave the doc usable for any other peer.
+    assert!(matches!(
+        doc.get_text("t").insert(0, "z"),
+        Err(LoroError::ConcurrentOpsWithSamePeerID { peer: 1, .. })
+    ));
+    doc.set_peer_id(2).unwrap();
     // The map-only import unlocks it, so it must still get a rollback scope.
     assert_rejected(&doc, map_change);
 }
