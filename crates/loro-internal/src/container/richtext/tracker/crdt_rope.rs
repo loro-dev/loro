@@ -348,6 +348,31 @@ impl CrdtRope {
         on_diff_status: bool,
     ) -> Vec<LeafIndex> {
         updates.sort_by_key(|x| x.leaf);
+        // Coalesce adjacent updates that target the same leaf with the same
+        // effect and contiguous id spans. A single large op is stored as many
+        // fragments in `IdToCursor` (MAX_FRAGMENT_LEN each), so a checkout
+        // across it produces one `LeafUpdate` per fragment. Without merging
+        // them, the leaf below is split at every fragment boundary and then
+        // immediately re-merged, and the caller has to re-map every produced
+        // leaf over the whole op span - O(n^2) in the op length.
+        //
+        // Merging relies on the sort above being stable and on `IdToCursor`
+        // iteration yielding spans in ascending counter order: only then are
+        // contiguous fragments adjacent here. If either changed, updates
+        // would stop merging (a perf regression, not a correctness issue).
+        updates.dedup_by(|u, last| {
+            // `dedup_by` passes the later element first.
+            debug_assert!(!last.id_span.is_reversed() && !u.id_span.is_reversed());
+            let mergeable = last.leaf == u.leaf
+                && last.set_future == u.set_future
+                && last.delete_times_diff == u.delete_times_diff
+                && last.id_span.peer == u.id_span.peer
+                && last.id_span.ctr_end() == u.id_span.ctr_start();
+            if mergeable {
+                last.id_span.counter.end = u.id_span.ctr_end();
+            }
+            mergeable
+        });
         let mut tree_update_info = Vec::with_capacity(updates.len());
         for (leaf, group) in &updates.into_iter().group_by(|x| x.leaf) {
             let elem = self.tree.get_elem(leaf).unwrap();
