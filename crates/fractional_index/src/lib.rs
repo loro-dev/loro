@@ -72,38 +72,39 @@ pub(crate) fn new_after(bytes: &[u8]) -> Vec<u8> {
             return ans;
         }
     }
-    unreachable!()
+    // Every byte is 0xFF, which a jittered key can end with. Any extension of
+    // `bytes` sorts after it, and the caller appends the terminator.
+    bytes.into()
 }
 
 pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> Option<Vec<u8>> {
     let shorter_len = left.len().min(right.len()) - 1;
     for i in 0..shorter_len {
-        let left_byte = left[i];
-        let right_byte = right[i];
-        let diff = i16::from(right_byte) - i16::from(left_byte);
-        if diff > 1 {
-            let mut ans: Vec<u8> = left[0..=i].into();
-            ans[i] += (right_byte - left_byte) / 2;
-            return ans.into();
-        }
-        if diff == 1 {
-            let (prefix, suffix) = left.split_at(i + 1);
-            let new_suffix = new_after(suffix);
-            let mut ans = Vec::with_capacity(prefix.len() + new_suffix.len() + extra_capacity);
-            ans.extend_from_slice(prefix);
-            ans.extend_from_slice(&new_suffix);
-            return ans.into();
+        let diff = i16::from(right[i]) - i16::from(left[i]);
+        if diff > 0 {
+            return new_between_at(left, right, i, extra_capacity).into();
         }
         if diff < 0 {
             return None;
         }
     }
 
+    // The last byte of the shorter key. Without jitter it is the terminator,
+    // but a jittered key ends with a random byte, so it has to be compared.
+    let i = shorter_len;
     match left.len().cmp(&right.len()) {
         std::cmp::Ordering::Less => {
-            let (prefix, suffix) = right.split_at(shorter_len + 1);
-            if prefix.last().unwrap() < &TERMINATOR {
+            if right[i] < left[i] {
                 return None;
+            }
+            let (prefix, suffix) = right.split_at(shorter_len + 1);
+            if suffix.iter().all(|&b| b == u8::MIN) {
+                // No terminated key sorts before an all-zero suffix
+                return if left[i] < right[i] {
+                    new_between_at(left, right, i, extra_capacity).into()
+                } else {
+                    None
+                };
             }
             let new_suffix = new_before(suffix);
             let mut ans = Vec::with_capacity(new_suffix.len() + prefix.len() + extra_capacity);
@@ -111,12 +112,18 @@ pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> O
             ans.extend_from_slice(&new_suffix);
             ans.into()
         }
-        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Equal => {
+            if left[i] < right[i] {
+                new_between_at(left, right, i, extra_capacity).into()
+            } else {
+                None
+            }
+        }
         std::cmp::Ordering::Greater => {
-            let (prefix, suffix) = left.split_at(shorter_len + 1);
-            if prefix.last().unwrap() >= &TERMINATOR {
+            if left[i] >= right[i] {
                 return None;
             }
+            let (prefix, suffix) = left.split_at(shorter_len + 1);
             let new_suffix = new_after(suffix);
             let mut ans = Vec::with_capacity(new_suffix.len() + prefix.len() + extra_capacity);
             ans.extend_from_slice(prefix);
@@ -124,6 +131,23 @@ pub(crate) fn new_between(left: &[u8], right: &[u8], extra_capacity: usize) -> O
             ans.into()
         }
     }
+}
+
+/// `left` and `right` share their first `i` bytes and `left[i] < right[i]`.
+fn new_between_at(left: &[u8], right: &[u8], i: usize, extra_capacity: usize) -> Vec<u8> {
+    let left_byte = left[i];
+    let right_byte = right[i];
+    if right_byte - left_byte > 1 {
+        let mut ans: Vec<u8> = left[0..=i].into();
+        ans[i] += (right_byte - left_byte) / 2;
+        return ans;
+    }
+    let (prefix, suffix) = left.split_at(i + 1);
+    let new_suffix = new_after(suffix);
+    let mut ans = Vec::with_capacity(prefix.len() + new_suffix.len() + extra_capacity);
+    ans.extend_from_slice(prefix);
+    ans.extend_from_slice(&new_suffix);
+    ans
 }
 impl FractionalIndex {
     pub fn new(lower: Option<&FractionalIndex>, upper: Option<&FractionalIndex>) -> Option<Self> {
@@ -221,5 +245,83 @@ mod tests {
         assert!(lower < index);
         assert!(index < upper);
         assert_eq!(index.to_string(), "00817F80");
+    }
+
+    /// Every key `new_between_jitter` can make between `lower` and `upper`
+    /// with `jitter` random bytes, at both extremes of the random bytes
+    fn assert_jitter_between(lower: &str, upper: &str, jitter: u8) {
+        let lower = FractionalIndex::from_hex_string(lower);
+        let upper = FractionalIndex::from_hex_string(upper);
+        for byte in [u8::MIN, u8::MAX] {
+            let mut rng = ConstantByteRng(byte);
+            let index = FractionalIndex::new_between_jitter(&lower, &upper, &mut rng, jitter)
+                .unwrap_or_else(|| panic!("no index between {lower} and {upper}"));
+            assert!(lower < index, "{lower} < {index}");
+            assert!(index < upper, "{index} < {upper}");
+        }
+    }
+
+    struct ConstantByteRng(u8);
+
+    impl rand::RngCore for ConstantByteRng {
+        fn next_u32(&mut self) -> u32 {
+            u32::from(self.0) * 0x0101_0101
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            u64::from(self.0) * 0x0101_0101_0101_0101
+        }
+
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            dest.fill(self.0);
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn new_between_jittered_keys() {
+        // loro-dev/loro#1211: the bytes after the first difference are all 0xFF
+        assert_jitter_between("8180FF", "818180CB", 1);
+        assert_jitter_between("80FF", "8180", 1);
+        // Equal length, differing only in the last (random) byte
+        assert_jitter_between("8180AA", "8180CC", 1);
+        assert_jitter_between("8180AA", "8180AB", 1);
+        // The shorter key's last byte is a random byte above or below the terminator
+        assert_jitter_between("809011", "80A0", 1);
+        assert_jitter_between("8010", "8020", 1);
+        assert_jitter_between("8010", "80200000", 1);
+        assert_jitter_between("10", "1080", 1);
+    }
+
+    #[test]
+    fn new_between_random_jittered_keys() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1211);
+        let key = |rng: &mut rand::rngs::StdRng| {
+            let mut bytes: Vec<u8> = (0..rng.gen_range(0..3)).map(|_| rng.gen()).collect();
+            bytes.push(super::TERMINATOR);
+            bytes.extend((0..rng.gen_range(0..3)).map(|_| rng.gen::<u8>()));
+            FractionalIndex::from_bytes(bytes)
+        };
+        for _ in 0..100_000 {
+            let (a, b) = (key(&mut rng), key(&mut rng));
+            let (lower, upper) = match a.cmp(&b) {
+                std::cmp::Ordering::Less => (a, b),
+                std::cmp::Ordering::Equal => continue,
+                std::cmp::Ordering::Greater => (b, a),
+            };
+            let (l, u) = (lower.as_bytes(), upper.as_bytes());
+            if u.starts_with(l) && u[l.len()..].iter().all(|&b| b == 0) {
+                // Nothing that ends with a terminator lies between them
+                assert_eq!(FractionalIndex::new_between(&lower, &upper), None);
+                continue;
+            }
+            assert_jitter_between(&lower.to_string(), &upper.to_string(), 2);
+            assert!(FractionalIndex::new_between(&upper, &lower).is_none());
+        }
     }
 }

@@ -128,6 +128,14 @@ fn main() {
         ("0080", "0180"),
         ("0080", "008180"),
         ("FE80", "FF80"),
+        // Jittered indexes end with random bytes (loro-dev/loro#1211)
+        ("8180FF", "818180CB"),
+        ("8180AA", "8180CC"),
+        ("8180AA", "8180AB"),
+        ("809011", "80A0"),
+        ("8010", "8020"),
+        ("8010", "80200000"),
+        ("8010", "80100000"),
     ];
     let between = between_pairs
         .into_iter()
