@@ -6,6 +6,7 @@ use generic_btree::{
 };
 use loro_common::{Counter, HasId, HasIdSpan, IdFull, IdSpan, Lamport, PeerID, ID};
 use rle::HasLength as _;
+use rustc_hash::FxHashSet;
 use tracing::instrument;
 
 use crate::{cursor::AbsolutePosition, VersionVector};
@@ -186,7 +187,12 @@ impl Tracker {
             }
             _ => {
                 let mut updates = Vec::with_capacity(split.len());
+                let mut seen = FxHashSet::default();
                 for &new_leaf_idx in split {
+                    // The rope reports a leaf once per update that touched it; updating it once is enough.
+                    if !seen.insert(new_leaf_idx) {
+                        continue;
+                    }
                     let leaf = self.rope.tree().get_elem(new_leaf_idx).unwrap();
                     updates.push((leaf.id_span(), new_leaf_idx));
                 }
