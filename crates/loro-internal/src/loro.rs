@@ -742,10 +742,6 @@ impl LoroDoc {
         loro_common::info!("Importing with mode={:?}", &parsed.mode);
         match parsed.mode {
             EncodeMode::OutdatedRle => {
-                if self.state.lock().is_in_txn() {
-                    return Err(LoroError::ImportWhenInTxn);
-                }
-
                 let s = tracing::span!(
                     tracing::Level::INFO,
                     "Import updates ",
@@ -797,6 +793,19 @@ impl LoroDoc {
         }
     }
 
+    /// An open transaction has ops in the version vector that the change store does
+    /// not have, and it took its next id before the import. Comparing with history
+    /// cannot see them, and changes that park now would hold ids it is about to commit.
+    /// Barriers stop the auto-commit transaction, so this is a manual [`Transaction`].
+    /// Call it with the op log locked: a transaction starts under that lock, so none
+    /// can start before the import ends. See `context/import-peer-id-reuse.md`.
+    fn check_not_in_txn(state: &LoroMutex<DocState>) -> LoroResult<()> {
+        if state.lock().is_in_txn() {
+            return Err(LoroError::ImportWhenInTxn);
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(skip_all)]
     pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
@@ -804,6 +813,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        Self::check_not_in_txn(&self.state)?;
         // `import_batch` opens a rollback scope that spans the whole batch. Rollback
         // scopes cannot nest (the inner `begin` would clobber the outer journal), so
         // when one is already open we let the owner decide what to keep: the batch
@@ -889,6 +899,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        Self::check_not_in_txn(&self.state)?;
         oplog.check_history_parsable()?;
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
         let changes = match decode_changes(&mut oplog)

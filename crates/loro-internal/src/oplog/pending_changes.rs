@@ -48,6 +48,12 @@ pub(crate) struct PendingChanges {
     /// so which change came first decides what later imports are compared with. Import
     /// rollback undoes the edits in order, see [`PendingChangesRollback`].
     claims: FxHashMap<PeerID, ClaimedSpans<Arc<Change>>>,
+    /// The greatest counter of each peer that a parked change depends on. `changes` has
+    /// only the first missing dep of a change, and a local write under any of them
+    /// changes the base the parked change applies on. A change leaves parking only with
+    /// its deps in the op log, so an entry stops mattering by itself and is never
+    /// lowered, except by rollback.
+    awaited: FxHashMap<PeerID, Counter>,
 }
 
 /// Disjoint counter spans of one peer, keyed by their start, each with the change that
@@ -205,7 +211,7 @@ impl PendingChanges {
     /// The last counter of `peer` at or past `counter` that parked history holds or
     /// waits for, if any. A local write at `counter` would be a different history of
     /// `peer` from the one these changes were written on: a parked change holding the
-    /// id would be applied over the write, and one waiting for it would be applied on
+    /// id would be applied over the write, and one depending on it would be applied on
     /// top of it.
     pub(super) fn last_parked_at_or_after(
         &self,
@@ -217,11 +223,7 @@ impl PendingChanges {
             .get(&peer)
             .and_then(|spans| spans.spans.last_key_value())
             .map(|(_, claim)| claim.end - 1);
-        let awaited = self
-            .changes
-            .get(&peer)
-            .and_then(|tree| tree.last_key_value())
-            .map(|(&awaited, _)| awaited);
+        let awaited = self.awaited.get(&peer).copied();
         held.max(awaited).filter(|&last| last >= counter)
     }
 
@@ -229,6 +231,19 @@ impl PendingChanges {
     /// first parks: `try_apply_pending` moves parked changes between slots constantly,
     /// and they keep what they hold.
     fn claim(&mut self, change: &Change, mut rollback: Option<&mut PendingChangesRollback>) {
+        for dep in change.deps.iter() {
+            let previous = self.awaited.get(&dep.peer).copied();
+            if previous.is_none_or(|awaited| awaited < dep.counter) {
+                self.awaited.insert(dep.peer, dep.counter);
+                if let Some(rollback) = rollback.as_deref_mut() {
+                    rollback.claims.push(ClaimEdit::Awaited {
+                        peer: dep.peer,
+                        previous,
+                    });
+                }
+            }
+        }
+
         let (peer, start, end) = (change.id.peer, change.id.counter, change.ctr_end());
         let gaps = match self.claims.get(&peer) {
             Some(spans) => spans.gaps(start, end),
@@ -332,6 +347,10 @@ pub(crate) struct PendingChangesRollback {
 
 #[derive(Debug)]
 enum ClaimEdit {
+    Awaited {
+        peer: PeerID,
+        previous: Option<Counter>,
+    },
     Held {
         peer: PeerID,
         start: Counter,
@@ -422,6 +441,14 @@ impl PendingChangesRollback {
         let claims = &mut pending_changes.claims;
         for edit in self.claims.into_iter().rev() {
             match edit {
+                ClaimEdit::Awaited { peer, previous } => match previous {
+                    Some(counter) => {
+                        pending_changes.awaited.insert(peer, counter);
+                    }
+                    None => {
+                        pending_changes.awaited.remove(&peer);
+                    }
+                },
                 ClaimEdit::Held { peer, start } => {
                     if let Some(spans) = claims.get_mut(&peer) {
                         spans.spans.remove(&start);

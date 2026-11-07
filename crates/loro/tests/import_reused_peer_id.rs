@@ -592,6 +592,50 @@ fn local_write_is_rejected_when_a_parked_change_waits_for_its_id() -> LoroResult
     Ok(())
 }
 
+/// `9@0` depends on `5@0` and `7@0`, and sits in the slot of only one of them. A write
+/// under the other one used to succeed. The dep of the slot then applied `9@0` on top
+/// of it, which left the same version vector as the source and different values,
+/// with no error anywhere.
+#[test]
+fn local_write_is_rejected_under_every_dep_of_a_parked_change() -> LoroResult<()> {
+    let writer = |peer: u64, key: &str| -> LoroResult<LoroDoc> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer)?;
+        doc.get_map("m").insert(key, peer as i64)?;
+        doc.commit();
+        Ok(doc)
+    };
+    let (five, seven) = (writer(5, "a")?, writer(7, "b")?);
+    let source = LoroDoc::new();
+    source.set_peer_id(9)?;
+    source.import(&five.export(ExportMode::all_updates())?)?;
+    source.import(&seven.export(ExportMode::all_updates())?)?;
+    source.get_map("m").insert("x", 9)?;
+    source.commit();
+    let update = source.export(ExportMode::updates_in_range(vec![IdSpan::new(9, 0, 1)]))?;
+
+    let doc = LoroDoc::new();
+    assert_nothing_new(&doc.import(&update)?, true);
+    for peer in [5, 7] {
+        doc.set_peer_id(peer)?;
+        assert_write_is_rejected(doc.get_map("m").insert("k", 1), peer);
+    }
+
+    // One dep lets peer 5 write again, and the other one brings the change in.
+    doc.import(&five.export(ExportMode::all_updates())?)?;
+    doc.set_peer_id(5)?;
+    doc.get_map("n").insert("k", 1)?;
+    doc.commit();
+    doc.set_peer_id(7)?;
+    assert_write_is_rejected(doc.get_map("n").insert("k", 2), 7);
+    doc.import(&seven.export(ExportMode::all_updates())?)?;
+    assert_eq!(
+        doc.get_map("m").get_deep_value().to_json_value(),
+        source.get_map("m").get_deep_value().to_json_value()
+    );
+    Ok(())
+}
+
 /// Every path to a local commit reports it, and none of them hurts the doc.
 #[test]
 fn writes_of_every_kind_report_parked_ids() -> LoroResult<()> {
@@ -784,13 +828,15 @@ fn failed_import_leaves_no_claims_behind() -> LoroResult<()> {
     let other = map_change(8, 0, vec![ID::new(1, 5)], &[LoroValue::I64(2)]);
     assert_nothing_new(&doc.import_json_updates(json_of(vec![other]))?, true);
 
-    // So can a local write.
+    // So can a local write, also under the dep it had.
     let doc = LoroDoc::new();
     doc.import_json_updates(failing()?).unwrap_err();
-    doc.set_peer_id(8)?;
-    doc.get_map("m").insert("k", 1)?;
-    doc.commit();
-    assert_eq!(doc.oplog_vv().get(&8), Some(&1));
+    for peer in [8, 1] {
+        doc.set_peer_id(peer)?;
+        doc.get_map("m").insert("k", peer as i64)?;
+        doc.commit();
+        assert_eq!(doc.oplog_vv().get(&peer), Some(&1));
+    }
     Ok(())
 }
 

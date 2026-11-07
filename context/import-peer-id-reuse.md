@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-11-06.
+Verified against code 2026-11-07.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -94,7 +94,7 @@ compared exactly in both modes, so it cannot break the DAG.
 ## Local writes
 
 A local write takes the next id of its peer. When parked changes hold that id or any
-later one, or wait for one, the write forks the history they were written on:
+later one, or depend on one, the write forks the history they were written on:
 
 - A held id: the dep applies the rest of the parked change over the write. Its lamport
   was computed from its own deps, so `AppDag` asserts `lamport is not continuous` under
@@ -102,13 +102,29 @@ later one, or wait for one, the write forks the history they were written on:
 - A parked tail past the next id: the writes get there, and the tail is applied onto
   history it does not continue, or stays parked for good.
 - An awaited id (`1@0` waits for `7@0`, and the local `7@0` is something else): the
-  next import that has peer 7 applies `1@0` on the wrong base.
+  next import that has peer 7 applies `1@0` on the wrong base. This holds for every dep
+  of a parked change, and `changes` slots only the first missing one. With `9@0` on
+  `{5@0, 7@0}` a write under the other dep gave the same version vector as the source
+  and different values, with no error. So `claim` records the greatest counter each peer
+  is depended on in `PendingChanges::awaited`. A change leaves parking only with its
+  deps in the op log, so the entry stops mattering by itself.
 
 `check_change_greater_than_last_peer_id` reports all of them from
 `Transaction::new_with_origin` through `PendingChanges::last_parked_at_or_after`, with
-`ConcurrentOpsWithSamePeerID`, in attached mode too. This runs before the write, and
-imports stop the auto-commit transaction under the txn lock (`with_barrier`), so a
-transaction cannot start before ids park and commit after. `auto_commit_txn` then leaves
+`ConcurrentOpsWithSamePeerID`, in attached mode too.
+
+The check runs once, when the transaction starts, so parked history must not change
+until it commits. Imports stop the auto-commit transaction under the txn lock
+(`with_barrier`). A manual `Transaction` (`LoroDoc::txn`, `loro-internal` only) is not
+stopped by anything, so every import returns `ImportWhenInTxn` while one is open
+(`check_not_in_txn`, under the op log lock, which a transaction starts under). The same
+guard keeps imports from history they cannot see: the transaction's ops are in the
+version vector and not in the change store, so a comparison would skip them. An import
+that only parks never reached the state's own guard. Checking at commit instead would be
+too late: the ops are in the state by then, and a commit cannot take them back.
+`import_local_change` asserts in debug builds that nothing lands under parked history.
+
+`auto_commit_txn` then leaves
 no transaction, and the next write reports the error, the same as in detached editing
 (`context/version-input-contract.md`). The write works again once the dep arrives, or
 with another peer id.
@@ -228,6 +244,10 @@ is per atom range, not per change:
   the conflicting value (or its type) remains different, while unrelated matching
   values stay the same. `Exact` must not leave the documents with equal version
   vectors and different values.
+- **A dep this doc has for another reason.** A local `7@0` that exists before `9@0`
+  arrives satisfies its dep on another `7@0`. The content of that id is not in the
+  update, so it is the same case as delta sync, below. The same goes for the deps of a
+  dep that has not arrived.
 - **Delta sync.** If the conflicting prefix is not in the import (the sender
   exported from the receiver's version vector), nothing can be compared: the
   receiver's vv already claims those ids. A tail position past the end of a
@@ -349,6 +369,10 @@ the map. `text_stream` with a local seed (4,000 changes, about 700 us per import
 measured 1.02x and 1.04x in two rounds of 7. With the write check compiled out it was
 1.01x in the same round, and nothing else runs per import there, so this does not
 come from a code path of this check.
+
+`check_not_in_txn` and `PendingChanges::awaited` measured 0.96x to 1.01x on top of that
+in `pending_repeat`, `ooo`, `batch`, `batch_rev`, `local_commits` and `text_stream` with
+`SEEDSYNC=1` (5 interleaved process runs each).
 
 `pending_repeat` is quadratic with or without claims, which is why it stops at 4,000:
 4x the changes cost 16x. `try_apply_pending` is called with the ids of parked

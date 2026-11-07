@@ -588,6 +588,14 @@ impl OpLog {
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
     pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+        // Checked when the transaction starts, and imports are rejected until it ends.
+        debug_assert_eq!(
+            self.pending_changes
+                .last_parked_at_or_after(change.id.peer, change.id.counter),
+            None,
+            "local change {} under parked history",
+            change.id,
+        );
         self.insert_new_change(change, true);
         Ok(())
     }
