@@ -25,6 +25,14 @@ impl FractionalIndex {
     fn jitter<R: Rng>(mut bytes: Vec<u8>, rng: &mut R, jitter: u8) -> FractionalIndex {
         bytes.push(TERMINATOR);
         bytes.extend((0..jitter).map(|_| rng.gen::<u8>()));
+        // End at or above the terminator, as every unjittered index does. An index that is
+        // a prefix of a later sibling's (a run extended under it) then always leaves
+        // `new_between` room below that sibling; ending lower would make it return `None`.
+        if jitter > 0 {
+            if let Some(last) = bytes.last_mut() {
+                *last |= TERMINATOR;
+            }
+        }
         FractionalIndex(Arc::new(bytes))
     }
 
