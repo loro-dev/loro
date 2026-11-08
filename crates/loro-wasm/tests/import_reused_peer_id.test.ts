@@ -159,7 +159,9 @@ describe("importing history that reuses local op ids", () => {
     expect(doc.frontiers()).toEqual(before);
     expect(doc.getText("t").toString()).toBe("a");
     doc.checkout(before);
-    expect(doc.export({ mode: "snapshot" }).length).toBeGreaterThan(0);
+    expect(doc.export({ mode: "update" }).length).toBeGreaterThan(0);
+    // A snapshot holds the latest state, which cannot be built: it throws.
+    expect(() => doc.export({ mode: "snapshot" })).toThrow();
   });
 
     it("still accepts re-imports of what the doc already has", () => {
