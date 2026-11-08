@@ -711,6 +711,7 @@ impl LoroDoc {
         origin: InternalString,
         json_lossy: bool,
     ) -> Result<ImportStatus, LoroError> {
+        self.check_import_not_nested()?;
         let values = if json_lossy {
             ImportedValues::JsonLossy
         } else {
@@ -791,6 +792,16 @@ impl LoroDoc {
                 unreachable!()
             }
         }
+    }
+
+    /// An import called back on a thread that holds the transaction lock, from an
+    /// event or pre-commit callback, would wait for itself. A transaction or another
+    /// import is running there, so this is the same refusal as [`Self::check_not_in_txn`].
+    fn check_import_not_nested(&self) -> LoroResult<()> {
+        if self.txn.is_held_by_current_thread() {
+            return Err(LoroError::ImportWhenInTxn);
+        }
+        Ok(())
     }
 
     /// An open transaction has ops in the version vector that the change store does
@@ -1140,6 +1151,7 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
+        self.check_import_not_nested()?;
         self.with_barrier(|| {
             let result = self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
@@ -2702,6 +2714,7 @@ impl LoroDoc {
         bytes: &[Vec<u8>],
         json_lossy: bool,
     ) -> LoroResult<ImportStatus> {
+        self.check_import_not_nested()?;
         let values = if json_lossy {
             ImportedValues::JsonLossy
         } else {

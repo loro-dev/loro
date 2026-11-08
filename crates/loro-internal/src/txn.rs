@@ -63,7 +63,14 @@ impl crate::LoroDoc {
     /// transaction: a transaction must not start while an import runs, including
     /// between the blobs of an [`LoroDoc::import_batch`]. See
     /// `context/import-peer-id-reuse.md`.
+    ///
+    /// Called back on a thread that holds the lock, as in an event or pre-commit
+    /// callback, it returns [`LoroError::DuplicatedTransactionError`]: a transaction
+    /// or an import is running there.
     pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
+        if self.txn.is_held_by_current_thread() {
+            return Err(LoroError::DuplicatedTransactionError);
+        }
         let _guard = self.txn.lock();
         self.txn_with_origin_under_lock(origin)
     }

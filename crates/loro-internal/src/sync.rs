@@ -25,6 +25,16 @@ pub use loom::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicU
 #[cfg(not(loom))]
 pub use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize};
 
+/// A number that identifies the current thread among the live threads: the address
+/// of a thread local. Loom runs its threads on one OS thread, so it needs its own.
+pub(crate) fn thread_mark() -> usize {
+    #[cfg(loom)]
+    loom::thread_local!(static MARK: u8 = 0);
+    #[cfg(not(loom))]
+    std::thread_local!(static MARK: u8 = const { 0 });
+    MARK.with(|mark| mark as *const u8 as usize)
+}
+
 #[cfg(loom)]
 pub(crate) use my_thread_local::ThreadLocal;
 #[cfg(not(loom))]

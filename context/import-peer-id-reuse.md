@@ -135,6 +135,14 @@ The check runs once, when the transaction starts. That is enough only if these h
 4. **A refused side leaves no lock poisoned.** The barrier still renews the auto-commit
    transaction after a refused import; with a manual one open, `auto_commit_txn` leaves
    none (`DuplicatedTransactionError`), and the next write reports that.
+5. **A thread never waits for the lock it holds.** Event callbacks of an import, a
+   checkout and the closing checkout of a batch, and pre-commit callbacks, run under the
+   transaction lock, which is not reentrant. `LoroMutex` records the thread holding the
+   `Txn` lock in release builds too (`is_held_by_current_thread`), so `txn()` called back
+   on that thread returns `DuplicatedTransactionError` and an import returns
+   `ImportWhenInTxn` (`check_import_not_nested`), before they would wait. Other
+   operations that take the lock, such as `export` or `checkout`, still wait for
+   themselves when called back this way; that predates this and is not covered.
 
 Checking at commit instead would be too late: the ops are in the state by then, and a
 commit cannot take them back. `import_local_change` asserts 3 in debug builds.

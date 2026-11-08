@@ -323,3 +323,113 @@ fn manual_transaction_with_imports_in_every_order() {
         }
     }
 }
+
+/// What a callback got when it called back into the doc: `txn()` and `import()`.
+type Seen = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+fn call_back_into(doc: &LoroDoc, update: &[u8], seen: &Seen) {
+    let json = {
+        let source = LoroDoc::new();
+        source.import(update).unwrap();
+        source
+            .export_json_updates(&Default::default(), &source.oplog_vv(), false)
+            .unwrap()
+    };
+    let txn = doc.txn().map(|_| ());
+    let import = doc.import(update).map(|_| ());
+    let json = doc.import_json_updates(json).map(|_| ());
+    let batch = doc
+        .import_batch(&[update.to_vec(), update.to_vec()])
+        .map(|_| ());
+    seen.lock()
+        .unwrap()
+        .push(format!("{txn:?} {import:?} {json:?} {batch:?}"));
+}
+
+const REFUSED: &str =
+    "Err(DuplicatedTransactionError) Err(ImportWhenInTxn) Err(ImportWhenInTxn) Err(ImportWhenInTxn)";
+
+/// The transaction lock is not reentrant, and events run under it: from an import, a
+/// checkout and the closing checkout of a batch. A callback that started a transaction
+/// or an import on the same doc used to wait for itself, or panic on the lock order in
+/// debug builds.
+#[test]
+fn event_callbacks_get_errors_instead_of_waiting_for_themselves() {
+    let source = writer(5);
+    source.get_map("m").insert("k", 1).unwrap();
+    source.commit_then_renew();
+    let first = all_updates(&source);
+    source.get_map("m").insert("k", 2).unwrap();
+    source.commit_then_renew();
+    let second = source
+        .export(ExportMode::updates(&source.oplog_vv()))
+        .unwrap();
+    let all = all_updates(&source);
+    let other = {
+        let doc = writer(6);
+        doc.get_map("n").insert("k", 1).unwrap();
+        doc.commit_then_renew();
+        all_updates(&doc)
+    };
+
+    for auto_commit in [false, true] {
+        let doc = if auto_commit {
+            LoroDoc::new_auto_commit()
+        } else {
+            LoroDoc::new()
+        };
+        let seen = Seen::default();
+        let (d, s, o) = (doc.clone(), seen.clone(), other.clone());
+        let _sub = doc.subscribe_root(std::sync::Arc::new(move |_| call_back_into(&d, &o, &s)));
+
+        let calls = || seen.lock().unwrap().len();
+        let mut counts = Vec::new();
+        doc.import(&first).unwrap();
+        counts.push(calls());
+        doc.checkout(&Default::default()).unwrap();
+        counts.push(calls());
+        doc.checkout_to_latest();
+        counts.push(calls());
+        doc.detach();
+        doc.import_batch(&[second.clone(), all.clone()]).unwrap();
+        doc.checkout_to_latest();
+        counts.push(calls());
+        doc.attach();
+        doc.import_batch(&[second.clone(), other.clone()]).unwrap();
+        counts.push(calls());
+        // Every step ran a callback: import, checkout, checkout to latest, the closing
+        // checkout of a detached batch, and an attached batch.
+        assert_eq!(counts, [1, 2, 3, 4, 5], "auto_commit={auto_commit}");
+
+        let seen = seen.lock().unwrap();
+        assert!(seen.iter().all(|s| s == REFUSED), "{seen:?}");
+        drop(seen);
+        doc.import(&other).unwrap();
+        assert!(doc.txn().is_ok() || auto_commit);
+    }
+}
+
+/// Pre-commit callbacks run under the transaction lock too.
+#[test]
+fn pre_commit_callback_gets_errors_instead_of_waiting_for_itself() {
+    let other = {
+        let doc = writer(6);
+        doc.get_map("n").insert("k", 1).unwrap();
+        doc.commit_then_renew();
+        all_updates(&doc)
+    };
+    let doc = LoroDoc::new_auto_commit();
+    let seen = Seen::default();
+    let (d, s, o) = (doc.clone(), seen.clone(), other.clone());
+    let _sub = doc.subscribe_pre_commit(Box::new(move |_| {
+        call_back_into(&d, &o, &s);
+        true
+    }));
+    doc.get_map("m").insert("k", 1).unwrap();
+    doc.commit_then_renew();
+
+    assert_eq!(*seen.lock().unwrap(), vec![REFUSED.to_string()]);
+    doc.import(&other).unwrap();
+    doc.get_map("m").insert("k", 2).unwrap();
+    doc.commit_then_renew();
+}
