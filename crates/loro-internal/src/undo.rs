@@ -778,6 +778,11 @@ impl UndoManager {
             inner.undo_stack.clear();
             inner.redo_stack.clear();
             inner.next_counter = Some(id.counter);
+            if inner.group.is_some() {
+                // The stacks were cleared, so an active group starts over from
+                // the new peer's counter, like a group started now.
+                inner.group = Some(UndoGroup::new(id.counter));
+            }
             peer_clone2.store(id.peer, std::sync::atomic::Ordering::Relaxed);
             true
         }));

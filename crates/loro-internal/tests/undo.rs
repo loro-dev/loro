@@ -83,6 +83,33 @@ fn test_basic_undo_group_checkpoint() {
 }
 
 #[test]
+fn test_undo_group_survives_peer_id_change() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("text");
+    text.update("x", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+
+    let undo_manager = UndoManager::new(&doc);
+    undo_manager.set_merge_interval(0);
+    undo_manager.group_start().unwrap();
+    doc.set_peer_id(2).unwrap();
+    text.update("xa", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+    text.update("xab", UpdateOptions::default()).unwrap();
+    doc.commit_then_renew();
+    undo_manager.group_end();
+
+    undo_manager.undo().unwrap();
+    assert_eq!(
+        text.to_string(),
+        "x",
+        "undo should undo both edits the new peer made in the group"
+    );
+    assert!(!undo_manager.can_undo());
+}
+
+#[test]
 fn test_invalid_nested_group() {
     let doc = LoroDoc::new();
 
