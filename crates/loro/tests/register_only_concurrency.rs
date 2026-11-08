@@ -336,7 +336,7 @@ fn checkout_to_latest_with_register_only_concurrency() {
         .import(&b.export(ExportMode::updates(&base.oplog_vv())).unwrap())
         .unwrap();
     assert!(receiver.is_detached());
-    receiver.checkout_to_latest();
+    receiver.try_checkout_to_latest().unwrap();
 
     let reference = LoroDoc::new();
     reference

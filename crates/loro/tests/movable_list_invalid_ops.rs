@@ -144,7 +144,7 @@ fn assert_same_result_on_every_import_path(json: String, expected: Value) {
     docs[2].import_batch(&[update.clone()]).unwrap();
     docs[3].import_json_updates(json).unwrap();
     docs[4].import(&update).unwrap();
-    docs[4].attach();
+    docs[4].try_attach().unwrap();
     for doc in docs {
         assert_eq!(doc.get_deep_value(), replayed.get_deep_value());
         assert_eq!(doc.oplog_vv(), replayed.oplog_vv());
@@ -260,7 +260,7 @@ fn detached_import_of_unknown_element_is_rejected() {
     ))
     .unwrap_err();
     before.assert_unchanged(&doc);
-    doc.attach();
+    doc.try_attach().unwrap();
     assert_usable(&doc);
 }
 
@@ -503,7 +503,7 @@ fn forged_op_depending_on_a_change_in_the_same_import_is_rejected() {
             let before = Snapshot::of(&detached);
             detached.import_json_updates(json).unwrap_err();
             before.assert_unchanged(&detached);
-            detached.attach();
+            detached.try_attach().unwrap();
             assert_usable(&detached);
         }
     }

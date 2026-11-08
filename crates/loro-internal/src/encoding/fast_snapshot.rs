@@ -322,8 +322,9 @@ fn encode_snapshot_inner_with(
         let latest = oplog.frontiers().clone();
         drop(state);
         drop(oplog);
+        // The op log can hold history the state rejects, imported while detached.
         doc._checkout_without_emitting(&latest, false, true)
-            .unwrap();
+            .map_err(LoroEncodeError::from)?;
         state = doc.app_state().lock();
     }
     // Every container referenced by applied ops/diffs already has a store entry

@@ -357,7 +357,7 @@ fn checkout_diff_apply_diff_and_path_queries_follow_contract() -> anyhow::Result
     traveler.checkout(&v1)?;
     assert!(traveler.is_detached());
     assert_eq!(deep_json(&traveler), expected_v1);
-    traveler.checkout_to_latest();
+    traveler.try_checkout_to_latest().unwrap();
     assert_eq!(deep_json(&traveler), deep_json(&doc));
 
     Ok(())

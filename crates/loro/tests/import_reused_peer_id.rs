@@ -230,7 +230,7 @@ fn import_with_only_known_conflicting_changes_is_rejected_while_detached() -> Lo
         .import(&fork.export(ExportMode::all_updates())?)
         .unwrap_err();
     assert_used_op_id(err, ID::new(7, 3));
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_eq!(doc.get_text("t").to_string(), "abcde");
     Ok(())
 }
@@ -469,7 +469,7 @@ fn conflict_with_a_parked_update_is_found_on_every_import_path() -> LoroResult<(
         .import(&other.export(ExportMode::all_updates())?)
         .unwrap_err();
     assert_used_op_id(err, ID::new(7, 0));
-    doc.attach();
+    doc.try_attach().unwrap();
 
     doc.import(&fork.dep)?;
     assert_eq!(doc.get_text("t").to_string(), "xA");
@@ -954,7 +954,7 @@ fn parked_changes_local_writes_and_rollback_in_every_order() -> LoroResult<()> {
 
             doc.import(&update).ok();
             doc.import(&parked.dep).ok();
-            doc.checkout_to_latest();
+            doc.try_checkout_to_latest().unwrap();
             let replay = LoroDoc::new();
             replay.import(&doc.export(ExportMode::all_updates())?)?;
             // Asking for a root makes it visible, also while it is empty.

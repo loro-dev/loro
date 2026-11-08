@@ -125,7 +125,44 @@ describe("importing history that reuses local op ids", () => {
     expect(doc.getMap("m").get("k")).toBe(1);
   });
 
-  it("still accepts re-imports of what the doc already has", () => {
+  it("throws from attach and checkoutToLatest instead of trapping", () => {
+    const doc = new LoroDoc();
+    doc.getText("t").insert(0, "a");
+    doc.commit();
+    doc.detach();
+    // A list insert past the end: a detached import does not check it.
+    doc.importJsonUpdates({
+      schema_version: 1,
+      start_version: {},
+      peers: ["3"],
+      changes: [
+        {
+          id: "0@0",
+          timestamp: 0,
+          deps: [],
+          lamport: 0,
+          msg: null,
+          ops: [
+            {
+              container: "cid:root-l:List",
+              counter: 0,
+              content: { type: "insert", pos: 5, value: [0] },
+            },
+          ],
+        },
+      ],
+    } as any);
+    const before = doc.frontiers();
+    expect(() => doc.attach()).toThrow();
+    expect(() => doc.checkoutToLatest()).toThrow();
+    expect(doc.isDetached()).toBe(true);
+    expect(doc.frontiers()).toEqual(before);
+    expect(doc.getText("t").toString()).toBe("a");
+    doc.checkout(before);
+    expect(doc.export({ mode: "snapshot" }).length).toBeGreaterThan(0);
+  });
+
+    it("still accepts re-imports of what the doc already has", () => {
     const doc = history();
     const updates = doc.export({ mode: "update" });
     const snapshot = doc.export({ mode: "snapshot" });

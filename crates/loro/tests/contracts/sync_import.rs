@@ -171,7 +171,7 @@ fn detached_checkout_can_receive_remote_updates_and_return_to_latest() -> LoroRe
     remote.commit();
 
     doc.import(&remote.export(ExportMode::all_updates())?)?;
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
 
     assert_eq!(doc.get_text("text").to_string(), "Hello world!");
     assert_eq!(deep_json(&doc), deep_json(&remote));

@@ -204,7 +204,7 @@ fn long_mergeable_names_import_in_bounded_time() {
             let doc = LoroDoc::new();
             doc.detach();
             doc.import(&updates).unwrap();
-            doc.checkout_to_latest();
+            doc.try_checkout_to_latest().unwrap();
             let json = doc
                 .export_json_updates(&VersionVector::default(), &doc.oplog_vv())
                 .unwrap();

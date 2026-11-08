@@ -128,7 +128,7 @@ fn nested_state_roundtrips_through_snapshots_checkout_and_revert() -> LoroResult
 
     doc.checkout(&v2)?;
     assert_eq!(deep_json(&doc), expected_v2);
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
 
     doc.revert_to(&v1)?;
     assert_eq!(deep_json(&doc), expected_v1);

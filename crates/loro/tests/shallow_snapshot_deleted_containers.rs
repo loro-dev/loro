@@ -602,7 +602,7 @@ fn legacy_shallow_reexport_with_tree_revival_matches_full_history() {
                 "{mode} re-export, checkout {version:?}"
             );
         }
-        full.checkout_to_latest();
+        full.try_checkout_to_latest().unwrap();
     }
 }
 

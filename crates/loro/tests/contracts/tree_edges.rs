@@ -267,7 +267,7 @@ fn attached_tree_delete_checkout_and_restore_keep_tree_history_contracts() -> Lo
     assert!(tree.contains(roots[0]));
     assert!(!tree.is_empty());
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert!(tree.is_empty());
     assert_eq!(tree.get_nodes(false).len(), 0);
     assert_eq!(tree.children(TreeParentId::Root), Some(vec![]));

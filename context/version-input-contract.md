@@ -1,6 +1,6 @@
 # Versions and Peer Ids From Callers
 
-Verified against code 2026-11-06.
+Verified against code 2026-11-08.
 
 Frontiers, version vectors, id spans and peer ids reach the public API from
 callers, so they follow "invalid external input returns `Err`": no panic, and
@@ -34,7 +34,8 @@ through a span from `sub_iter`, not with raw `vv.get(..) - counter` arithmetic.
 | `cmp_with_frontiers` | `Less` |
 | `vv_to_frontiers` | the last id of each peer, not minimized; using them reports `FrontiersNotFound` |
 | `get_changed_containers_in` | the part of the range this doc holds |
-| `find_id_spans_between` | panics after releasing the locks; `try_find_id_spans_between` returns the error |
+| `find_id_spans_between` | deprecated; panics after releasing the locks; `try_find_id_spans_between` returns the error |
+| `checkout_to_latest`, `attach` | deprecated; panic after releasing the locks; `try_checkout_to_latest` and `try_attach` return the error |
 
 `find_id_spans_between` stays a panic because no value answers it, and an empty
 diff would claim the versions are equal. Releasing the locks first keeps the doc
@@ -42,10 +43,18 @@ usable only where the panic unwinds: in a `panic = "abort"` build it still ends 
 process. Code that takes versions from outside must call the `try_` form. `try_find_id_spans_between` also rejects
 a version before the shallow root, as `checkout` does.
 
-`checkout_to_latest` and `attach` have the same shape and are not fixed. A detached
-import does not touch the state, so an update the state would reject (a list insert
-past the end) gets into the op log, and their `expect` panics under the txn lock when
-it is applied. `checkout` with the op log's frontiers returns the error instead.
+`checkout_to_latest` and `attach` have the same shape. A detached import does not
+touch the state, so an update the state would reject (a list insert past the end)
+gets into the op log, and checking it out fails. The `try_` forms return that
+error and leave the doc detached at its version; the old forms panic after the
+locks are released, and are deprecated in `loro` since 1.18.0. Exporting a snapshot
+of such a doc returns the error too, where it panicked. In WASM, `attach` and
+`checkoutToLatest` throw it.
+
+`checkout` (and so these) returns `TransactionError` while a manual transaction is
+open: its ops are in the DAG and not the change store, and reading that history
+panicked with `DAG node must have a change`. Undo returns
+`DuplicatedTransactionError` in that state for the same reason.
 
 `minimize_frontiers` with a single id does not check that the id exists, despite
 its doc comment: `try_shrink_frontiers` returns early for fewer than two ids. No

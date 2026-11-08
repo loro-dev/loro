@@ -58,7 +58,7 @@ fn fork_and_fork_at_keep_default_and_explicit_text_styles() {
     let historical = doc.fork_at(&version).unwrap();
     doc.checkout(&version).unwrap();
     let detached = doc.fork();
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
 
     // Copies must also be independent of later source config changes.
     doc.config_default_text_style(None);

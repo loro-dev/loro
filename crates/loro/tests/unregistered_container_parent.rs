@@ -471,7 +471,7 @@ fn failed_import_that_loads_old_movable_list_values() {
         let value = |doc: &LoroDoc| doc.get_deep_value().to_json_value();
         assert_eq!(value(&dst), value(&reference), "{edit}");
         for doc in [&dst, &reference] {
-            doc.checkout_to_latest();
+            doc.try_checkout_to_latest().unwrap();
         }
         assert_eq!(value(&dst), value(&reference), "{edit}");
     }

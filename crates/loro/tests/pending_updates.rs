@@ -325,7 +325,7 @@ fn exporting_pending_preserves_detached_state() -> anyhow::Result<()> {
     assert!(doc.is_detached());
     assert_eq!(doc.get_text("text").to_string(), "base|");
     assert_no_pending(&doc)?;
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_eq!(doc.get_text("text").to_string(), "base|AB");
 
     let restored = LoroDoc::new();

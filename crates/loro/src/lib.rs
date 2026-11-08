@@ -394,9 +394,25 @@ impl LoroDoc {
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// # Panics
+    ///
+    /// When the latest version cannot be checked out, once no lock is held, so the doc
+    /// stays usable. Use [`try_attach`](Self::try_attach), which returns the error.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_attach`, which returns the error instead of panicking"
+    )]
     pub fn attach(&self) {
         self.doc.attach()
+    }
+
+    /// Attach the document state to the latest known version, as
+    /// [`try_checkout_to_latest`](Self::try_checkout_to_latest).
+    #[inline]
+    pub fn try_attach(&self) -> LoroResult<()> {
+        self.doc.try_attach()
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -409,6 +425,9 @@ impl LoroDoc {
     /// You should call `attach` (or `checkout_to_latest`) to reattach the `DocState` to the latest version of `OpLog`.
     /// If you need to edit while detached, enable [`set_detached_editing(true)`], but note it uses a different
     /// PeerID per checkout.
+    ///
+    /// Returns [`LoroError::TransactionError`] while a transaction opened through
+    /// [`inner`](Self::inner) is still uncommitted.
     #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
@@ -422,9 +441,31 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    ///
+    /// # Panics
+    ///
+    /// When the latest version cannot be checked out, once no lock is held, so the doc
+    /// stays usable. Use [`try_checkout_to_latest`](Self::try_checkout_to_latest), which
+    /// returns the error.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_checkout_to_latest`, which returns the error instead of panicking"
+    )]
     pub fn checkout_to_latest(&self) {
         self.doc.checkout_to_latest()
+    }
+
+    /// Checkout the `DocState` to the latest version and attach it.
+    ///
+    /// A detached import does not check ops against the state, so the op log can hold
+    /// history the state rejects, such as a list insert past the end from a forged
+    /// update. Checking it out then fails, and the doc stays detached at its version and
+    /// usable. It also fails while a transaction opened through [`inner`](Self::inner)
+    /// is uncommitted.
+    #[inline]
+    pub fn try_checkout_to_latest(&self) -> LoroResult<()> {
+        self.doc.try_checkout_to_latest()
     }
 
     /// Compare the frontiers with the current OpLog's version.
@@ -1720,6 +1761,10 @@ impl LoroDoc {
     /// stays usable. Use [`try_find_id_spans_between`](Self::try_find_id_spans_between)
     /// for such input.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_find_id_spans_between`, which returns the error instead of panicking"
+    )]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
     }

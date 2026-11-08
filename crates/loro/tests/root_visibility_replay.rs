@@ -77,7 +77,7 @@ fn every_import_path_agrees() {
     let detached = LoroDoc::new();
     detached.detach();
     detached.import(&updates).unwrap();
-    detached.attach();
+    detached.try_attach().unwrap();
     assert_eq!(value(&detached), expected, "detached import + attach");
 
     // Into a doc that already has content of its own.

@@ -186,7 +186,7 @@ fn checkout_detach_attach_fork_paths_and_frontiers_follow_contract() -> anyhow::
 
     doc.detach();
     assert!(doc.is_detached());
-    doc.attach();
+    doc.try_attach().unwrap();
     assert!(!doc.is_detached());
 
     let body_text =
@@ -203,7 +203,7 @@ fn checkout_detach_attach_fork_paths_and_frontiers_follow_contract() -> anyhow::
     assert_ne!(doc.peer_id(), 31);
 
     body_text.insert(0, "detached-")?;
-    doc.attach();
+    doc.try_attach().unwrap();
     assert!(!doc.is_detached());
     assert_eq!(body_text.to_string(), "detached-hello!");
 

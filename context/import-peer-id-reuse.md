@@ -152,9 +152,9 @@ check missed the later blobs, they applied on top of its write, and a failed bat
 its change out of the op log and left it in the state (loom test
 `manual_transaction_during_batch_import`).
 
-Other operations that read history, such as `checkout`, do not check for an open manual
-transaction, and its uncommitted ops break them (`DAG node must have a change`). That is
-outside imports and not fixed here.
+`checkout` (with `checkout_to_latest`, `attach` and snapshot export) and undo also
+return an error while a manual transaction is open, because its uncommitted ops break
+reading history (`DAG node must have a change`). See `context/version-input-contract.md`.
 
 `auto_commit_txn` then leaves
 no transaction, and the next write reports the error, the same as in detached editing

@@ -659,9 +659,20 @@ impl LoroDoc {
         self.with_barrier(|| self.set_detached(true));
     }
 
+    /// [`Self::try_attach`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     #[inline(always)]
     pub fn attach(&self) {
         self.checkout_to_latest()
+    }
+
+    /// Attach the state to the latest version, as [`Self::try_checkout_to_latest`].
+    #[inline(always)]
+    pub fn try_attach(&self) -> LoroResult<()> {
+        self.try_checkout_to_latest()
     }
 
     /// Get the timestamp of the current state.
@@ -1508,6 +1519,13 @@ impl LoroDoc {
         }
 
         let (options, mut txn) = self.implicit_commit_then_stop();
+        // Undo checks out earlier versions, which `checkout` refuses while a manual
+        // transaction is open. Say so before anything changes.
+        if self.state.lock().is_in_txn() {
+            drop(txn);
+            self.renew_txn_if_auto_commit(options);
+            return Err(LoroError::DuplicatedTransactionError);
+        }
         if !self.oplog().lock().vv().includes_id(id_span.id_last()) {
             self.renew_txn_if_auto_commit(options);
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
@@ -2923,19 +2941,37 @@ impl LoroDoc {
         self.state.lock().get_deep_value_with_id()
     }
 
+    /// [`Self::try_checkout_to_latest`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     pub fn checkout_to_latest(&self) {
-        let (options, _guard) = self.implicit_commit_then_stop();
+        self.try_checkout_to_latest()
+            .unwrap_or_else(|err| panic!("checkout to the latest version failed: {err}"));
+    }
+
+    /// Check the state out to the latest version of the op log and attach it.
+    ///
+    /// A detached import does not touch the state, so history that the state rejects,
+    /// such as a list insert past the end from a forged update, can be in the op log
+    /// and fail here. The doc then stays detached at its version and usable. It also
+    /// fails while a manual transaction is open, see [`Self::checkout`].
+    pub fn try_checkout_to_latest(&self) -> LoroResult<()> {
+        let (options, guard) = self.implicit_commit_then_stop();
         if !self.is_detached() {
-            drop(_guard);
+            drop(guard);
             self.renew_txn_if_auto_commit(options);
-            return;
+            return Ok(());
         }
 
-        self._checkout_to_latest_without_commit(true)
-            .expect("checkout to oplog frontiers should succeed");
-        self.emit_events();
-        drop(_guard);
+        let result = self._checkout_to_latest_without_commit(true);
+        if result.is_ok() {
+            self.emit_events();
+        }
+        drop(guard);
         self.renew_txn_if_auto_commit(options);
+        result
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None
@@ -2994,6 +3030,10 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
+    ///
+    /// Returns [`LoroError::TransactionError`] while a manual [`Transaction`] is open:
+    /// its ops are in the DAG and not in the change store yet, so the history cannot
+    /// be read. Commit it first.
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         // Checked here and not in `_checkout_without_emitting`: undo, `checkout_to_latest`
         // and the exporters call that and cannot return this error.
@@ -3049,6 +3089,14 @@ impl LoroDoc {
         if !self.txn.is_locked() {
             return Err(LoroError::TransactionError(
                 "checkout requires the transaction mutex to be held"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+        // Barriers end the auto-commit transaction, so this is a manual one.
+        if self.state.lock().is_in_txn() {
+            return Err(LoroError::TransactionError(
+                "cannot check out while a transaction is open; commit it first"
                     .to_string()
                     .into_boxed_str(),
             ));

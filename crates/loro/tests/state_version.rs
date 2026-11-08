@@ -26,7 +26,7 @@ fn state_vv_keeps_its_infallible_signature_and_tracks_checked_out_state() {
     assert_eq!(doc.try_state_vv().unwrap(), earlier_vv);
     assert_eq!(doc.oplog_vv(), latest_vv);
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_eq!(state_vv(&doc), latest_vv);
     assert_eq!(doc.try_state_vv().unwrap(), latest_vv);
 }

@@ -902,8 +902,13 @@ impl LoroDoc {
     /// doc.attach();
     /// text.insert(0, "Hi");
     /// ```
-    pub fn attach(&self) {
-        self.doc.attach();
+    ///
+    /// @throws When the latest version cannot be checked out, such as when a forged
+    /// update imported while detached is rejected by the state. The doc stays detached
+    /// and usable. It used to trap.
+    pub fn attach(&self) -> JsResult<()> {
+        self.doc.try_attach()?;
+        Ok(())
     }
 
     /// `detached` indicates that the `DocState` is not synchronized with the latest version of `OpLog`.
@@ -996,9 +1001,11 @@ impl LoroDoc {
     /// doc.checkoutToLatest();
     /// text.insert(0, "Hi");
     /// ```
+    ///
+    /// @throws When the latest version cannot be checked out, as `attach`.
     #[wasm_bindgen(js_name = "checkoutToLatest")]
     pub fn checkout_to_latest(&self) -> JsResult<()> {
-        self.doc.checkout_to_latest();
+        self.doc.try_checkout_to_latest()?;
         Ok(())
     }
 

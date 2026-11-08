@@ -455,7 +455,7 @@ fn checkout_accepts_non_minimal_frontiers_of_one_peer() {
         assert_eq!(doc.get_text("t").to_string(), "abcd");
         assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 3)));
 
-        doc.checkout_to_latest();
+        doc.try_checkout_to_latest().unwrap();
         doc.get_text("t").insert(0, "x").unwrap();
         doc.commit();
         assert_eq!(doc.get_text("t").to_string(), "xabcde");
@@ -477,7 +477,7 @@ fn fork_at_accepts_non_minimal_frontiers_of_one_peer() {
 }
 
 fn assert_still_writable(doc: &LoroDoc) {
-    doc.attach();
+    doc.try_attach().unwrap();
     doc.get_map("after").insert("k", 1).unwrap();
     doc.commit();
     doc.export(ExportMode::all_updates()).unwrap();
@@ -529,6 +529,7 @@ fn vv_to_frontiers_keeps_ids_it_cannot_minimize() {
 }
 
 #[test]
+#[allow(deprecated)] // checks that the deprecated call still panics without poisoning
 fn id_spans_of_versions_outside_the_history_are_an_error_that_keeps_the_doc() {
     let doc = five_ops_of_peer_1();
     let latest = doc.oplog_frontiers();
