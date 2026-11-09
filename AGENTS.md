@@ -101,7 +101,7 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - User callbacks that panic (subscribers, pre-commit, local updates): no poisoned
   locks, lost events or hangs: [context/callback-panics.md](context/callback-panics.md).
 - Where a long-lived `LoroDoc`'s memory goes, which operations expand lazy history,
-  release paths, and the ranked optimization list:
+  release paths, the ranked optimization list, and what has landed:
   [context/memory-analysis.md](context/memory-analysis.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 

@@ -1222,6 +1222,8 @@ impl OpLog {
         )
     }
 
+    /// `from` must be exactly the vv of `from_frontiers`: it can end up in the DAG as a node's
+    /// vv, see `context/memory-analysis.md`.
     #[allow(clippy::type_complexity)]
     pub(crate) fn try_iter_from_replay_base_causally_filtered(
         &self,
@@ -1246,6 +1248,17 @@ impl OpLog {
         ),
         LoroError,
     > {
+        // `from` is written into `AppDagNode::vv` when the replay base is `from_frontiers`.
+        // Resolve without `try_frontiers_to_vv`: that loads every ancestor into the DAG, and
+        // the cold-import tests assert those nodes stay unloaded. A truncated or unloaded
+        // block cannot be checked here; the read below returns that error.
+        #[cfg(debug_assertions)]
+        if let Some(resolved) = self.dag.debug_vv_of_frontiers(from_frontiers) {
+            debug_assert!(
+                from == &resolved,
+                "`from` must be the version vector of `from_frontiers`: from={from:?} frontiers={from_frontiers:?} resolved={resolved:?}"
+            );
+        }
         let mut merged_vv = from.clone();
         merged_vv.merge(to);
         loro_common::debug!("to_frontiers={:?} vv={:?}", &to_frontiers, to);
@@ -1333,10 +1346,17 @@ impl OpLog {
             }
         };
 
-        let mut replay_base_vv = self
-            .dag
-            .try_frontiers_to_vv(&replay_base_frontiers)?
-            .unwrap();
+        // The caller already knows the vv of `from`. Resolving it again walks to the root on a
+        // document that was just opened. Empty frontiers cost nothing to resolve, and keep a
+        // zero counter in `from` from making the empty base look non-empty below.
+        let mut replay_base_vv =
+            if !from_frontiers.is_empty() && &replay_base_frontiers == from_frontiers {
+                from.clone()
+            } else {
+                self.dag
+                    .try_frontiers_to_vv(&replay_base_frontiers)?
+                    .unwrap()
+            };
         replay_base_is_critical |= replay_base_vv.is_empty();
         if !replay_base_vv.includes_vv(&shallow_since_vv) {
             // The replay base cannot point before shallow history because those
@@ -1348,6 +1368,11 @@ impl OpLog {
                 .unwrap_or(shallow_since_vv);
             replay_base_is_critical = false;
         }
+
+        // Set after the shallow adjustment above: only then does `replay_base_vv` still
+        // describe `from_frontiers`.
+        let known_base =
+            (&replay_base_frontiers == from_frontiers).then(|| replay_base_frontiers.clone());
 
         // go from the replay base to merged_vv
         let diff = replay_base_vv.diff(&merged_vv).forward;
@@ -1397,6 +1422,9 @@ impl OpLog {
                             }
                             let mut inner_vv = vv.borrow_mut();
                             inner_vv.clear();
+                            if known_base.as_ref() == Some(&dag_node.deps) {
+                                self.dag.seed_vv_of_deps(&dag_node, &replay_base_vv)?;
+                            }
                             self.dag.try_ensure_vv_for(&dag_node)?;
                             inner_vv.extend_to_include_vv(dag_node.vv.get().unwrap().iter());
                             inner_vv.extend_to_include_end_id(change.id);

@@ -78,6 +78,12 @@ impl<T: ?Sized> Mutex<T> {
     pub(crate) fn is_locked(&self) -> bool {
         self.inner.try_lock().is_err()
     }
+
+    /// `None` when the mutex is held or poisoned. Does not panic.
+    #[cfg(debug_assertions)]
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        self.inner.try_lock().ok()
+    }
 }
 
 impl<T: Default> Default for Mutex<T> {
