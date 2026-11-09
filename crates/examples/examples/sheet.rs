@@ -17,7 +17,7 @@ pub fn main() {
         doc.has_history_cache()
     );
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     let after_checkout = get_mem_usage();
     println!("Allocated bytes after checkout: {after_checkout}");
 

@@ -599,7 +599,8 @@ impl AppDag {
     }
 
     fn ensure_lazy_load_node(&self, id: ID) -> LoroResult<()> {
-        if self.shallow_since_vv.includes_id(id) {
+        // A negative counter is below every node, however much of the peer is loaded.
+        if id.counter < 0 || self.shallow_since_vv.includes_id(id) {
             return Ok(());
         }
 
@@ -1526,8 +1527,15 @@ impl AppDag {
         shrink_frontiers(&last_ids, self).unwrap()
     }
 
+    /// [`Self::try_vv_to_frontiers`] for a caller that cannot report an absent id:
+    /// ids outside this history cannot be minimized, so the last id of every peer
+    /// is returned as it is. Using such frontiers reports `FrontiersNotFound`.
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
-        self.try_vv_to_frontiers(vv).unwrap()
+        match self.try_vv_to_frontiers(vv) {
+            Ok(frontiers) => frontiers,
+            Err(LoroError::FrontiersNotFound(_)) => self.last_ids_of_vv(vv),
+            Err(err) => panic!("{err}"),
+        }
     }
 
     pub fn try_vv_to_frontiers(&self, vv: &VersionVector) -> LoroResult<Frontiers> {
@@ -1539,9 +1547,16 @@ impl AppDag {
             return Ok(Default::default());
         }
 
-        let this = vv;
-        let last_ids: Frontiers = this
-            .iter()
+        let last_ids = self.last_ids_of_vv(vv);
+        if last_ids.is_empty() {
+            return Ok(self.shallow_since_frontiers.clone());
+        }
+
+        crate::version::try_shrink_frontiers(&last_ids, self)
+    }
+
+    fn last_ids_of_vv(&self, vv: &VersionVector) -> Frontiers {
+        vv.iter()
             .filter_map(|(client_id, cnt)| {
                 if *cnt <= 0 {
                     return None;
@@ -1556,13 +1571,7 @@ impl AppDag {
 
                 Some(ID::new(*client_id, cnt - 1))
             })
-            .collect();
-
-        if last_ids.is_empty() {
-            return Ok(self.shallow_since_frontiers.clone());
-        }
-
-        crate::version::try_shrink_frontiers(&last_ids, self)
+            .collect()
     }
 
     pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {

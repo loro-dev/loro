@@ -13,7 +13,7 @@ pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
-pub use loro_internal::encoding::ImportStatus;
+pub use loro_internal::encoding::{ImportBatchDetail, ImportBlobOutcome, ImportStatus};
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
 pub use loro_internal::pre_commit::{
@@ -285,7 +285,10 @@ impl LoroDoc {
     /// # Important Notes:
     ///
     /// - This mode uses a different PeerID for each checkout.
-    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Ensure no concurrent operations share the same PeerID if set manually. While
+    ///   the PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check out
+    ///   another version to write again.
     /// - Importing does not affect the document's state or version; changes are
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     ///
@@ -305,7 +308,7 @@ impl LoroDoc {
     /// doc.set_detached_editing(true);
     /// doc.get_text("t").insert(0, "old").unwrap();
     /// // Later, re-attach to see latest again
-    /// doc.attach();
+    /// doc.try_attach().unwrap();
     /// ```
     #[inline]
     pub fn set_detached_editing(&self, enable: bool) {
@@ -320,7 +323,10 @@ impl LoroDoc {
     /// # Important Notes:
     ///
     /// - This mode uses a different PeerID for each checkout.
-    /// - Ensure no concurrent operations share the same PeerID if set manually.
+    /// - Ensure no concurrent operations share the same PeerID if set manually. While
+    ///   the PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check out
+    ///   another version to write again.
     /// - Importing does not affect the document's state or version; changes are
     ///   recorded in the [OpLog] only. Call `checkout` to apply changes.
     #[inline]
@@ -388,9 +394,25 @@ impl LoroDoc {
     /// > Being `detached` implies that the `DocState` is not synchronized with the latest version of the `OpLog`.
     /// > In a detached state, the document is not editable, and any `import` operations will be
     /// > recorded in the `OpLog` without being applied to the `DocState`.
+    ///
+    /// # Panics
+    ///
+    /// When the latest version cannot be checked out, once no lock is held, so the doc
+    /// stays usable. Use [`try_attach`](Self::try_attach), which returns the error.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_attach`, which returns the error instead of panicking"
+    )]
     pub fn attach(&self) {
         self.doc.attach()
+    }
+
+    /// Attach the document state to the latest known version, as
+    /// [`try_checkout_to_latest`](Self::try_checkout_to_latest).
+    #[inline]
+    pub fn try_attach(&self) -> LoroResult<()> {
+        self.doc.try_attach()
     }
 
     /// Checkout the `DocState` to a specific version.
@@ -400,9 +422,13 @@ impl LoroDoc {
     /// In a detached state, the document is not editable, and any `import` operations will be
     /// recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` (or `checkout_to_latest`) to reattach the `DocState` to the latest version of `OpLog`.
+    /// You should call [`try_attach`](Self::try_attach) (or [`try_checkout_to_latest`](Self::try_checkout_to_latest))
+    /// to reattach the `DocState` to the latest version of `OpLog`.
     /// If you need to edit while detached, enable [`set_detached_editing(true)`], but note it uses a different
     /// PeerID per checkout.
+    ///
+    /// Returns [`LoroError::TransactionError`] while a transaction opened through
+    /// [`inner`](Self::inner) is still uncommitted.
     #[inline]
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         self.doc.checkout(frontiers)
@@ -416,9 +442,31 @@ impl LoroDoc {
     /// > recorded in the `OpLog` without being applied to the `DocState`.
     ///
     /// This has the same effect as `attach`.
+    ///
+    /// # Panics
+    ///
+    /// When the latest version cannot be checked out, once no lock is held, so the doc
+    /// stays usable. Use [`try_checkout_to_latest`](Self::try_checkout_to_latest), which
+    /// returns the error.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_checkout_to_latest`, which returns the error instead of panicking"
+    )]
     pub fn checkout_to_latest(&self) {
         self.doc.checkout_to_latest()
+    }
+
+    /// Checkout the `DocState` to the latest version and attach it.
+    ///
+    /// A detached import does not check ops against the state, so the op log can hold
+    /// history the state rejects, such as a list insert past the end from a forged
+    /// update. Checking it out then fails, and the doc stays detached at its version and
+    /// usable. It also fails while a transaction opened through [`inner`](Self::inner)
+    /// is uncommitted.
+    #[inline]
+    pub fn try_checkout_to_latest(&self) -> LoroResult<()> {
+        self.doc.try_checkout_to_latest()
     }
 
     /// Compare the frontiers with the current OpLog's version.
@@ -456,6 +504,25 @@ impl LoroDoc {
     /// The data can be in arbitrary order. The import result will be the same.
     /// Auto-commit: same as [`import`], this finalizes the current transaction first.
     ///
+    /// # Partial success
+    ///
+    /// A batch is not all-or-nothing. When a blob fails on its own, for example with
+    /// [`LoroError::UsedOpID`] or bytes that do not decode, the other blobs are still
+    /// imported and stay in the document, including a dependency that lets pending
+    /// updates apply. The batch then returns the error of one failed blob. So an `Err`
+    /// does not mean that nothing was applied, and it does not say which blob failed.
+    /// Use [`import_batch_detailed`](Self::import_batch_detailed) to get the result of
+    /// each blob.
+    ///
+    /// An `Err` leaves the document unchanged only when the batch failed as a whole:
+    ///
+    /// - [`LoroError::ImportWhenInTxn`]: the call was refused before any blob was tried.
+    /// - A blob whose metadata does not decode
+    ///   ([`decode_import_blob_meta`](Self::decode_import_blob_meta)) fails the batch
+    ///   before anything is imported.
+    /// - The closing checkout, which applies the batch to the state, failed and rolled
+    ///   the whole batch back.
+    ///
     /// # Example
     /// ```
     /// use loro::{LoroDoc, ExportMode};
@@ -485,6 +552,88 @@ impl LoroDoc {
     ) -> LoroResult<ImportStatus> {
         self.doc
             .import_batch_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
+    }
+
+    /// Import a batch of updates/snapshot and report what happened to each blob.
+    ///
+    /// It imports as [`import_batch`](Self::import_batch) does: any order, one state
+    /// update and one event for the whole batch, and the same partial success. Where
+    /// `import_batch` returns the error of one blob, this returns an
+    /// [`ImportBatchDetail`]:
+    ///
+    /// - `blobs[i]` is the [`ImportBlobOutcome`] of `bytes[i]`:
+    ///   - `Imported(status)`: the blob is in the document. `status` is what its import
+    ///     returned at its turn. Its `pending` changes wait for a dependency, which a
+    ///     later blob of the same batch may have brought.
+    ///   - `Failed(error)`: the blob failed on its own, and the others were imported
+    ///     without it.
+    ///   - `RolledBack`: see below.
+    /// - `status` is the batch as a whole: `success` is everything its blobs imported,
+    ///   and `pending` is everything the document still waits for when the batch ends.
+    /// - `rollback_error` is `None` unless the whole batch was rolled back.
+    ///
+    /// # When the whole batch is rolled back
+    ///
+    /// The blobs of a batch reach the state together, in one closing checkout. When
+    /// the state rejects it, such as a list insert past the end from a forged update,
+    /// the whole batch is rolled back: the document is as it was before the call and
+    /// stays attached, and no event is emitted. Then:
+    ///
+    /// - `rollback_error` is `Some` with the error of that checkout,
+    /// - every blob that had imported is `RolledBack`, so no blob is `Imported`,
+    /// - a blob that failed on its own keeps its `Failed(error)`,
+    /// - `status.success` is empty.
+    ///
+    /// The checkout checks the batch as a whole and cannot say which blob it rejected.
+    /// To find it, import the `RolledBack` blobs one by one.
+    ///
+    /// # Errors
+    ///
+    /// `Err` means the call was refused and no blob was tried:
+    /// [`LoroError::ImportWhenInTxn`] while a transaction opened through
+    /// [`inner`](Self::inner) is uncommitted, or when called from an event or
+    /// pre-commit callback of this document. A blob that fails is not an `Err`.
+    ///
+    /// # Differences from `import_batch`
+    ///
+    /// - A blob whose metadata does not decode
+    ///   ([`decode_import_blob_meta`](Self::decode_import_blob_meta)) is `Failed`, and the
+    ///   others are imported. `import_batch` returns that error before it imports anything.
+    ///   When every blob fails this way, nothing is imported and the document is left as
+    ///   it was, including an uncommitted local change.
+    /// - A batch of one blob is a plain [`import`](Self::import) in both, which the
+    ///   state checks at once. Its failure is `Failed`, never a rollback.
+    /// - A detached document has no closing checkout, so nothing is rolled back there.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{ExportMode, ImportBlobOutcome, LoroDoc};
+    /// let a = LoroDoc::new();
+    /// a.get_text("t").insert(0, "A").unwrap();
+    /// let update = a.export(ExportMode::all_updates()).unwrap();
+    ///
+    /// let b = LoroDoc::new();
+    /// let detail = b.import_batch_detailed(&[update, b"not an update".to_vec()]).unwrap();
+    /// assert!(matches!(detail.blobs[0], ImportBlobOutcome::Imported(_)));
+    /// assert!(matches!(detail.blobs[1], ImportBlobOutcome::Failed(_)));
+    /// assert!(detail.rollback_error.is_none());
+    /// assert_eq!(b.get_text("t").to_string(), "A");
+    /// ```
+    #[inline]
+    pub fn import_batch_detailed(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportBatchDetail> {
+        self.doc.import_batch_detailed(bytes)
+    }
+
+    /// Like [`import_batch_detailed`](Self::import_batch_detailed), with the same history
+    /// mode as [`import_with_history_mode`](Self::import_with_history_mode).
+    #[inline]
+    pub fn import_batch_detailed_with_history_mode(
+        &self,
+        bytes: &[Vec<u8>],
+        mode: ImportHistoryMode,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.doc
+            .import_batch_detailed_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
     }
 
     /// Get a [Container] by container id.
@@ -804,6 +953,9 @@ impl LoroDoc {
     /// - Missing dependencies: check the returned [`ImportStatus`]. If `pending` is non-empty,
     ///   fetch those missing ranges (e.g., using `export(ExportMode::updates(&doc.oplog_vv()))`) and re-import.
     /// - Auto-commit: `import` finalizes the current transaction before applying incoming data.
+    /// - Reused peer ids: when `bytes` differ from this doc's ops with the same ids, the
+    ///   import returns [`LoroError::UsedOpID`] and changes nothing, even if it brings no
+    ///   new op. Repeating what this doc already has is a no-op.
     #[inline]
     pub fn import(&self, bytes: &[u8]) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, "".into())
@@ -989,6 +1141,10 @@ impl LoroDoc {
     }
 
     /// Convert `VersionVector` into `Frontiers`
+    ///
+    /// Ops this doc does not have cannot be minimized, so the last id of every peer
+    /// is returned as it is, and using those frontiers reports them. Use
+    /// [`try_vv_to_frontiers`](Self::try_vv_to_frontiers) to get the error here.
     #[inline]
     pub fn vv_to_frontiers(&self, vv: &VersionVector) -> Frontiers {
         self.doc.vv_to_frontiers(vv)
@@ -1700,12 +1856,23 @@ impl LoroDoc {
     /// let spans = doc.find_id_spans_between(&a, &b);
     /// assert!(!spans.forward.is_empty());
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// When a version is not in this doc, or is before its shallow root. The doc
+    /// stays usable. Use [`try_find_id_spans_between`](Self::try_find_id_spans_between)
+    /// for such input.
     #[inline]
+    #[deprecated(
+        since = "1.18.0",
+        note = "use `try_find_id_spans_between`, which returns the error instead of panicking"
+    )]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
         self.doc.find_id_spans_between(from, to)
     }
 
-    /// Finds operation spans between versions, reporting unreadable history.
+    /// Finds operation spans between versions, reporting unreadable history, a version
+    /// that is not in this doc, or one before its shallow root.
     pub fn try_find_id_spans_between(
         &self,
         from: &Frontiers,
@@ -2869,6 +3036,9 @@ impl LoroText {
     /// assert_eq!(text.to_string(), "Hello World");
     /// ```
     ///
+    /// Returns [`UpdateTimeoutError::Timeout`] when `options.timeout_ms` passes, and
+    /// [`UpdateTimeoutError::Loro`] with the error of the edit when it cannot be
+    /// applied, for example because the container is deleted.
     pub fn update(&self, text: &str, options: UpdateOptions) -> Result<(), UpdateTimeoutError> {
         self.handler.update(text, options)
     }
@@ -2876,6 +3046,7 @@ impl LoroText {
     /// Update the current text based on the provided text.
     ///
     /// This update calculation is line-based, which will be more efficient but less precise.
+    /// Errors are the same as [`update`](Self::update).
     pub fn update_by_line(
         &self,
         text: &str,

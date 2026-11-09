@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 
 use loro::{
-    CounterSpan, ExportMode, Frontiers, ImVersionVector, LoroDoc, VersionRange, VersionVector,
-    VersionVectorDiff, ID,
+    ContainerTrait, CounterSpan, ExportMode, Frontiers, ImVersionVector, LoroDoc, VersionRange,
+    VersionVector, VersionVectorDiff, ID,
 };
 use loro_common::{FxHashMap, IdSpanVector};
 
@@ -414,4 +414,212 @@ fn frontiers_contracts_follow_semantics() -> anyhow::Result<()> {
     assert!(minimized.len() <= doc_frontiers.len());
 
     Ok(())
+}
+
+/// A doc with `1@0..=4`, committed as `1@0..=2` and `1@3..=4`.
+fn five_ops_of_peer_1() -> LoroDoc {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let text = doc.get_text("t");
+    text.insert(0, "abc").unwrap();
+    doc.commit();
+    text.insert(3, "de").unwrap();
+    doc.commit();
+    doc
+}
+
+#[test]
+fn frontiers_keep_the_greatest_id_of_a_peer_in_every_constructor() {
+    let ids = vec![ID::new(1, 1), ID::new(1, 3)];
+    let expected = Frontiers::from(ID::new(1, 3));
+    assert_eq!(Frontiers::from(ids.clone()), expected);
+    assert_eq!(Frontiers::from(&ids), expected);
+    assert_eq!(Frontiers::from(ids.as_slice()), expected);
+    assert_eq!(Frontiers::from([ids[0], ids[1]]), expected);
+    assert_eq!(ids.iter().copied().collect::<Frontiers>(), expected);
+
+    let duplicated = Frontiers::from(vec![ID::new(1, 2), ID::new(1, 2)]);
+    assert_eq!(duplicated, Frontiers::from(ID::new(1, 2)));
+    assert_eq!(duplicated.as_single(), Some(ID::new(1, 2)));
+}
+
+/// `checkout` panicked in `Frontiers::eq` and left the doc's locks poisoned.
+#[test]
+fn checkout_accepts_non_minimal_frontiers_of_one_peer() {
+    for frontiers in [
+        Frontiers::from(vec![ID::new(1, 1), ID::new(1, 3)]),
+        Frontiers::from(vec![ID::new(1, 3), ID::new(1, 3)]),
+    ] {
+        let doc = five_ops_of_peer_1();
+        doc.checkout(&frontiers).unwrap();
+        assert_eq!(doc.get_text("t").to_string(), "abcd");
+        assert_eq!(doc.state_frontiers(), Frontiers::from(ID::new(1, 3)));
+
+        doc.try_checkout_to_latest().unwrap();
+        doc.get_text("t").insert(0, "x").unwrap();
+        doc.commit();
+        assert_eq!(doc.get_text("t").to_string(), "xabcde");
+    }
+}
+
+#[test]
+fn fork_at_accepts_non_minimal_frontiers_of_one_peer() {
+    let doc = five_ops_of_peer_1();
+    let fork = doc
+        .fork_at(&Frontiers::from(vec![ID::new(1, 1), ID::new(1, 3)]))
+        .unwrap();
+    assert_eq!(fork.get_text("t").to_string(), "abcd");
+    assert_eq!(fork.oplog_frontiers(), Frontiers::from(ID::new(1, 3)));
+
+    doc.get_text("t").insert(0, "x").unwrap();
+    doc.commit();
+    assert_eq!(doc.get_text("t").to_string(), "xabcde");
+}
+
+fn assert_still_writable(doc: &LoroDoc) {
+    doc.try_attach().unwrap();
+    doc.get_map("after").insert("k", 1).unwrap();
+    doc.commit();
+    doc.export(ExportMode::all_updates()).unwrap();
+}
+
+/// A negative counter passed the "is it loaded" check of the lazy dag and was taken
+/// for a corrupt change store, under the op log lock.
+#[test]
+fn negative_counters_in_frontiers_are_not_in_history() {
+    let negative = Frontiers::from(ID::new(1, -1));
+    let mixed = Frontiers::from(vec![ID::new(1, 1), ID::new(2, -5)]);
+    for frontiers in [&negative, &mixed] {
+        let doc = five_ops_of_peer_1();
+        assert_eq!(doc.frontiers_to_vv(frontiers), None);
+        assert_eq!(doc.try_frontiers_to_vv(frontiers).unwrap(), None);
+        assert!(doc.cmp_frontiers(frontiers, &Frontiers::new()).is_err());
+        assert!(doc.checkout(frontiers).is_err());
+        assert!(doc.fork_at(frontiers).is_err());
+        assert!(doc.diff(frontiers, &doc.oplog_frontiers()).is_err());
+        assert!(doc.revert_to(frontiers).is_err());
+        assert_still_writable(&doc);
+    }
+
+    let doc = five_ops_of_peer_1();
+    assert_eq!(
+        doc.minimize_frontiers(&Frontiers::from(vec![ID::new(1, 1), ID::new(1, -5)])),
+        Ok(Frontiers::from(ID::new(1, 1)))
+    );
+    let other = Frontiers::from(vec![ID::new(1, 1), ID::new(2, -5)]);
+    assert_eq!(doc.minimize_frontiers(&other), Err(ID::new(2, -5)));
+    assert_still_writable(&doc);
+}
+
+#[test]
+fn vv_to_frontiers_keeps_ids_it_cannot_minimize() {
+    let doc = five_ops_of_peer_1();
+    let unknown = vv_pairs(&[(1, 3), (9, 1)]);
+
+    assert_eq!(
+        sorted_ids(&doc.vv_to_frontiers(&unknown)),
+        vec![(1, 2), (9, 0)]
+    );
+    assert!(matches!(
+        doc.try_vv_to_frontiers(&unknown),
+        Err(loro::LoroError::FrontiersNotFound(id)) if id == ID::new(9, 0)
+    ));
+    assert!(doc.checkout(&doc.vv_to_frontiers(&unknown)).is_err());
+    assert_still_writable(&doc);
+}
+
+#[test]
+#[allow(deprecated)] // checks that the deprecated call still panics without poisoning
+fn id_spans_of_versions_outside_the_history_are_an_error_that_keeps_the_doc() {
+    let doc = five_ops_of_peer_1();
+    let latest = doc.oplog_frontiers();
+    for unknown in [
+        Frontiers::from(ID::new(9, 0)),
+        Frontiers::from(ID::new(1, 100)),
+        Frontiers::from(vec![ID::new(1, 1), ID::new(9, 0)]),
+    ] {
+        assert!(doc.try_find_id_spans_between(&unknown, &latest).is_err());
+        assert!(doc.try_find_id_spans_between(&latest, &unknown).is_err());
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            doc.find_id_spans_between(&unknown, &latest)
+        }));
+        assert!(panicked.is_err());
+        assert_still_writable(&doc);
+    }
+}
+
+fn shallow_doc_since_1_at_3() -> LoroDoc {
+    let source = five_ops_of_peer_1();
+    let doc = LoroDoc::new();
+    doc.import(
+        &source
+            .export(ExportMode::shallow_snapshot(&Frontiers::from(ID::new(
+                1, 3,
+            ))))
+            .unwrap(),
+    )
+    .unwrap();
+    doc
+}
+
+#[test]
+fn id_spans_from_before_the_shallow_root_are_an_error() {
+    let doc = shallow_doc_since_1_at_3();
+    let latest = doc.oplog_frontiers();
+    for before in [Frontiers::new(), Frontiers::from(ID::new(1, 1))] {
+        assert_eq!(
+            doc.try_find_id_spans_between(&before, &latest),
+            Err(loro::LoroError::SwitchToVersionBeforeShallowRoot)
+        );
+        assert_eq!(
+            doc.try_find_id_spans_between(&latest, &before),
+            Err(loro::LoroError::SwitchToVersionBeforeShallowRoot)
+        );
+        // No distance between a version and itself, wherever it is.
+        assert!(doc
+            .try_find_id_spans_between(&before, &before)
+            .unwrap()
+            .forward
+            .is_empty());
+    }
+    assert_still_writable(&doc);
+}
+
+#[test]
+fn change_lookup_with_a_negative_counter_finds_nothing() {
+    for doc in [five_ops_of_peer_1(), shallow_doc_since_1_at_3()] {
+        assert!(doc.get_change(ID::new(1, -1)).is_none());
+        assert!(doc.try_get_change(ID::new(1, -1)).unwrap().is_none());
+    }
+}
+
+#[test]
+fn updates_from_a_negative_version_start_at_the_beginning() {
+    let doc = five_ops_of_peer_1();
+    for counter in [-1, i32::MIN] {
+        let bytes = doc
+            .export(ExportMode::updates(&vv_pairs(&[(1, counter)])))
+            .unwrap();
+        let copy = LoroDoc::new();
+        copy.import(&bytes).unwrap();
+        assert_eq!(copy.get_text("t").to_string(), "abcde");
+    }
+}
+
+#[test]
+fn changed_containers_cover_the_part_of_the_range_in_the_doc() {
+    for doc in [five_ops_of_peer_1(), shallow_doc_since_1_at_3()] {
+        let text = doc.get_text("t").id();
+        for (id, len) in [
+            (ID::new(1, 3), 100),
+            (ID::new(1, 3), usize::MAX),
+            (ID::new(1, -1), 100),
+        ] {
+            assert!(doc.get_changed_containers_in(id, len).contains(&text));
+        }
+        assert!(doc.get_changed_containers_in(ID::new(1, 100), 1).is_empty());
+        assert!(doc.get_changed_containers_in(ID::new(9, 0), 100).is_empty());
+        assert_still_writable(&doc);
+    }
 }

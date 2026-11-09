@@ -48,6 +48,12 @@ pub struct LoroMutex<T> {
     /// Used only by the `Txn` lock. Stored inline so the writer check reads the
     /// same allocation (usually the same cache line) as the mutex itself.
     txn_gate: TxnGate,
+    /// The [`crate::sync::thread_mark`] of the thread holding the `Txn` lock, or 0.
+    /// Kept in release builds too, unlike the order tracking: code that runs under
+    /// the lock, such as event and pre-commit callbacks, can call back into the doc,
+    /// and must get an error rather than wait for itself. A plain std atomic like
+    /// `TxnGate::active`: only the holder writes its own mark.
+    holder: std::sync::atomic::AtomicUsize,
 }
 
 /// Keeps other threads' transaction writers out while one thread runs a
@@ -193,6 +199,7 @@ impl LoroLockGroup {
             currently_locked_in_this_thread: self.g.clone(),
             kind: kind as u8,
             txn_gate: TxnGate::new(),
+            holder: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -292,6 +299,7 @@ impl<T> LoroMutex<T> {
             }
 
             let guard = self.acquire();
+            self.mark_holder();
             *v.lock() = this;
             LoroMutexGuard {
                 guard,
@@ -305,11 +313,39 @@ impl<T> LoroMutex<T> {
         #[cfg(not(debug_assertions))]
         {
             let guard = self.acquire();
+            self.mark_holder();
             LoroMutexGuard {
                 guard,
                 _inner: LoroMutexGuardInner { inner: self },
             }
         }
+    }
+
+    fn mark_holder(&self) {
+        if self.kind == LockKind::Txn as u8 {
+            self.holder
+                .store(crate::sync::thread_mark(), Ordering::SeqCst);
+        }
+    }
+
+    /// Clear the mark if it is still this thread's. The mutex may already be released
+    /// and taken by another thread, whose mark must stay.
+    fn unmark_holder(&self) {
+        if self.kind == LockKind::Txn as u8 {
+            let _ = self.holder.compare_exchange(
+                crate::sync::thread_mark(),
+                0,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
+    }
+
+    /// Whether this thread holds the `Txn` lock, in release builds too. Waiting for
+    /// it on this thread would never end.
+    pub(crate) fn is_held_by_current_thread(&self) -> bool {
+        debug_assert_eq!(self.kind, LockKind::Txn as u8);
+        self.holder.load(Ordering::SeqCst) == crate::sync::thread_mark()
     }
 
     /// Returns whether the mutex appears locked at this instant.
@@ -407,10 +443,13 @@ impl<'a, T> LoroMutexGuard<'a, T> {
 
 impl<T> Drop for LoroMutexGuardInner<'_, T> {
     #[cfg(not(debug_assertions))]
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        self.inner.unmark_holder();
+    }
 
     #[cfg(debug_assertions)]
     fn drop(&mut self) {
+        self.inner.unmark_holder();
         let cur = self.inner.currently_locked_in_this_thread.get_or_default();
         let current_lock_info = *cur.lock();
         if current_lock_info.kind != self.this.kind {

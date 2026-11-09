@@ -20,7 +20,8 @@ use crate::{
         export_fast_updates_in_range, export_shallow_snapshot, export_snapshot_at,
         export_state_only_snapshot,
         json_schema::{encode_change_to_json, json::JsonSchema},
-        parse_header_and_body, EncodeMode, ImportBlobMetadata, ImportStatus, ParsedHeaderAndBody,
+        parse_header_and_body, EncodeMode, ImportBatchDetail, ImportBlobMetadata,
+        ImportBlobOutcome, ImportStatus, ParsedHeaderAndBody,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -233,7 +234,10 @@ impl LoroDoc {
     /// - After enabling this mode, the document will use a different PeerID. Each
     ///   time you call checkout, a new PeerID will be used.
     /// - If you set a custom PeerID while this mode is enabled, ensure that
-    ///   concurrent operations with the same PeerID are not possible.
+    ///   concurrent operations with the same PeerID are not possible. While the
+    ///   PeerID has ops after the current version, writes return
+    ///   [`LoroError::ConcurrentOpsWithSamePeerID`]; use another PeerID or check
+    ///   out another version to write again.
     /// - On detached mode, importing will not change the state of the document.
     ///   It also doesn't change the version of the [DocState]. The changes will be
     ///   recorded into [OpLog] only. You need to call `checkout` to make it take effect.
@@ -443,11 +447,7 @@ impl LoroDoc {
                 }
             }
             if config.immediate_renew && self.can_edit() {
-                let mut t = self.txn().unwrap();
-                if let Some(options) = options.as_ref() {
-                    t.set_options(options.clone());
-                }
-                *txn_guard = Some(t);
+                *txn_guard = self.auto_commit_txn(options.clone());
             }
 
             if let Some(on_commit) = on_commit {
@@ -660,9 +660,20 @@ impl LoroDoc {
         self.with_barrier(|| self.set_detached(true));
     }
 
+    /// [`Self::try_attach`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     #[inline(always)]
     pub fn attach(&self) {
         self.checkout_to_latest()
+    }
+
+    /// Attach the state to the latest version, as [`Self::try_checkout_to_latest`].
+    #[inline(always)]
+    pub fn try_attach(&self) -> LoroResult<()> {
+        self.try_checkout_to_latest()
     }
 
     /// Get the timestamp of the current state.
@@ -712,6 +723,7 @@ impl LoroDoc {
         origin: InternalString,
         json_lossy: bool,
     ) -> Result<ImportStatus, LoroError> {
+        self.check_import_not_nested()?;
         let values = if json_lossy {
             ImportedValues::JsonLossy
         } else {
@@ -743,10 +755,6 @@ impl LoroDoc {
         loro_common::info!("Importing with mode={:?}", &parsed.mode);
         match parsed.mode {
             EncodeMode::OutdatedRle => {
-                if self.state.lock().is_in_txn() {
-                    return Err(LoroError::ImportWhenInTxn);
-                }
-
                 let s = tracing::span!(
                     tracing::Level::INFO,
                     "Import updates ",
@@ -798,6 +806,29 @@ impl LoroDoc {
         }
     }
 
+    /// An import called back on a thread that holds the transaction lock, from an
+    /// event or pre-commit callback, would wait for itself. A transaction or another
+    /// import is running there, so this is the same refusal as [`Self::check_not_in_txn`].
+    fn check_import_not_nested(&self) -> LoroResult<()> {
+        if self.txn.is_held_by_current_thread() {
+            return Err(LoroError::ImportWhenInTxn);
+        }
+        Ok(())
+    }
+
+    /// An open transaction has ops in the version vector that the change store does
+    /// not have, and it took its next id before the import. Comparing with history
+    /// cannot see them, and changes that park now would hold ids it is about to commit.
+    /// Barriers stop the auto-commit transaction, so this is a manual [`Transaction`].
+    /// Call it with the op log locked: a transaction starts under that lock, so none
+    /// can start before the import ends. See `context/import-peer-id-reuse.md`.
+    fn check_not_in_txn(state: &LoroMutex<DocState>) -> LoroResult<()> {
+        if state.lock().is_in_txn() {
+            return Err(LoroError::ImportWhenInTxn);
+        }
+        Ok(())
+    }
+
     #[tracing::instrument(skip_all)]
     pub(crate) fn update_oplog_and_apply_delta_to_state_if_needed(
         &self,
@@ -805,6 +836,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        Self::check_not_in_txn(&self.state)?;
         // `import_batch` opens a rollback scope that spans the whole batch. Rollback
         // scopes cannot nest (the inner `begin` would clobber the outer journal), so
         // when one is already open we let the owner decide what to keep: the batch
@@ -890,6 +922,7 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         let mut oplog = self.oplog.lock();
+        Self::check_not_in_txn(&self.state)?;
         oplog.check_history_parsable()?;
         let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
         let changes = match decode_changes(&mut oplog)
@@ -1130,6 +1163,7 @@ impl LoroDoc {
     #[tracing::instrument(skip_all)]
     pub fn import_json_updates<T: TryInto<JsonSchema>>(&self, json: T) -> LoroResult<ImportStatus> {
         let json = json.try_into().map_err(|_| LoroError::InvalidJsonSchema)?;
+        self.check_import_not_nested()?;
         self.with_barrier(|| {
             let result = self.import_changes_and_apply_delta_to_state_if_needed(
                 |oplog| crate::encoding::json_schema::decode_json_changes(json, &oplog.arena),
@@ -1486,6 +1520,13 @@ impl LoroDoc {
         }
 
         let (options, mut txn) = self.implicit_commit_then_stop();
+        // Undo checks out earlier versions, which `checkout` refuses while a manual
+        // transaction is open. Say so before anything changes.
+        if self.state.lock().is_in_txn() {
+            drop(txn);
+            self.renew_txn_if_auto_commit(options);
+            return Err(LoroError::DuplicatedTransactionError);
+        }
         if !self.oplog().lock().vv().includes_id(id_span.id_last()) {
             self.renew_txn_if_auto_commit(options);
             return Err(LoroError::UndoInvalidIdSpan(id_span.id_last()));
@@ -1642,7 +1683,7 @@ impl LoroDoc {
             if rejected.is_some() {
                 return Ok(());
             }
-            *txn = Some(self.txn()?);
+            *txn = Some(self.txn_under_lock()?);
             let transaction = txn
                 .as_mut()
                 .ok_or_else(|| LoroError::TransactionError("undo transaction is missing".into()))?;
@@ -2679,6 +2720,14 @@ impl LoroDoc {
         sub
     }
 
+    /// Import a batch of updates or snapshots, in any order.
+    ///
+    /// This is not all-or-nothing. A blob that fails on its own does not undo the
+    /// others: the batch returns the error of the last blob that failed, and keeps what
+    /// the other blobs imported, including a dep that lets parked changes apply. Only a
+    /// failure of the closing checkout rolls the whole batch back. So an `Err` does not
+    /// mean that nothing was applied. [`Self::import_batch_detailed`] returns what
+    /// happened to each blob.
     // PERF: opt
     #[tracing::instrument(skip_all)]
     pub fn import_batch(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportStatus> {
@@ -2692,6 +2741,7 @@ impl LoroDoc {
         bytes: &[Vec<u8>],
         json_lossy: bool,
     ) -> LoroResult<ImportStatus> {
+        self.check_import_not_nested()?;
         let values = if json_lossy {
             ImportedValues::JsonLossy
         } else {
@@ -2705,18 +2755,195 @@ impl LoroDoc {
             return self.import_with_history_mode(&bytes[0], Default::default(), json_lossy);
         }
 
-        let mut success = VersionRange::default();
-        let mut meta_arr = bytes
+        // Metadata that does not decode fails the batch before anything is imported.
+        let blobs = bytes
             .iter()
-            .map(|b| Ok((LoroDoc::decode_import_blob_meta(b, false)?, b)))
-            .collect::<LoroResult<Vec<(ImportBlobMetadata, &Vec<u8>)>>>()?;
-        meta_arr.sort_by(|a, b| {
-            a.0.mode
-                .cmp(&b.0.mode)
-                .then(b.0.change_num.cmp(&a.0.change_num))
+            .enumerate()
+            .map(|(index, blob)| {
+                let meta = LoroDoc::decode_import_blob_meta(blob, false)?;
+                Ok((index, meta, blob.as_slice()))
+            })
+            .collect::<LoroResult<Vec<_>>>()?;
+        let run = self.import_blobs_as_batch(blobs, values)?;
+        if let Some(err) = run.rollback_error {
+            return Err(err);
+        }
+        // The last blob to fail, in the order they were imported.
+        if let Some(err) = run
+            .results
+            .into_iter()
+            .rev()
+            .find_map(|(_, result)| result.err())
+        {
+            return Err(err);
+        }
+
+        Ok(ImportStatus {
+            success: run.success,
+            pending: non_empty(run.pending),
+        })
+    }
+
+    /// Import a batch as [`Self::import_batch`] does, and return what happened to each
+    /// blob instead of the error of one of them.
+    ///
+    /// - `Err`: the call was refused and no blob was tried. That is
+    ///   [`LoroError::ImportWhenInTxn`], while a manual [`Transaction`] is open or when
+    ///   called from an event or pre-commit callback of this doc.
+    /// - `Ok`: [`ImportBatchDetail::blobs`] has one [`ImportBlobOutcome`] per blob, in
+    ///   the order of `bytes`. A blob that fails on its own is `Failed` and the others
+    ///   are imported.
+    ///
+    /// Only the closing checkout applies a batch to the state. When it fails, the whole
+    /// batch is rolled back and the doc is as it was before the call. The error is then
+    /// in [`ImportBatchDetail::rollback_error`], and every blob that had imported is
+    /// `RolledBack`. That checkout checks the batch as a whole, so it cannot say which
+    /// blob it rejected: import them one by one to find it. A blob that failed on its
+    /// own keeps `Failed`.
+    ///
+    /// It differs from `import_batch` for one input: a blob whose metadata does not
+    /// decode ([`Self::decode_import_blob_meta`]) is `Failed` and the others are imported,
+    /// where `import_batch` returns that error before it imports anything. When none of
+    /// them decode, this returns before [`Self::import_blobs_as_batch`], as
+    /// `import_batch` does: that section would commit the local transaction and, with
+    /// detached editing, renew the peer id. A batch of one is a plain import in both,
+    /// which the state checks at once, so its failure is `Failed` and never a rollback.
+    pub fn import_batch_detailed(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportBatchDetail> {
+        self.import_batch_detailed_with_history_mode(bytes, false)
+    }
+
+    /// Like [`Self::import_batch_detailed`]. `json_lossy` is the same opt-in as
+    /// [`Self::import_with_history_mode`].
+    pub fn import_batch_detailed_with_history_mode(
+        &self,
+        bytes: &[Vec<u8>],
+        json_lossy: bool,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.check_import_not_nested()?;
+        let values = if json_lossy {
+            ImportedValues::JsonLossy
+        } else {
+            ImportedValues::Exact
+        };
+        if bytes.is_empty() {
+            let pending = self.oplog.lock().pending_changes.version_range();
+            return Ok(ImportBatchDetail {
+                blobs: Vec::new(),
+                status: ImportStatus {
+                    success: Default::default(),
+                    pending: non_empty(pending),
+                },
+                rollback_error: None,
+            });
+        }
+
+        if bytes.len() == 1 {
+            // A plain import, as in `import_batch`. The pending range is read under
+            // the same transaction lock.
+            let (result, pending) = self.with_barrier(|| {
+                let result = self._import_with(&bytes[0], Default::default(), values);
+                (result, self.oplog.lock().pending_changes.version_range())
+            });
+            let (blob, success) = match result {
+                Ok(status) => {
+                    let success = status.success.clone();
+                    (ImportBlobOutcome::Imported(status), success)
+                }
+                // Only the transaction checks return this, before the blob is tried.
+                Err(LoroError::ImportWhenInTxn) => return Err(LoroError::ImportWhenInTxn),
+                Err(err) => (ImportBlobOutcome::Failed(err), Default::default()),
+            };
+            return Ok(ImportBatchDetail {
+                blobs: vec![blob],
+                status: ImportStatus {
+                    success,
+                    pending: non_empty(pending),
+                },
+                rollback_error: None,
+            });
+        }
+
+        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
+        let mut blobs = Vec::with_capacity(bytes.len());
+        for (index, blob) in bytes.iter().enumerate() {
+            match LoroDoc::decode_import_blob_meta(blob, false) {
+                Ok(meta) => {
+                    blobs.push((index, meta, blob.as_slice()));
+                    outcomes.push(None);
+                }
+                // Unlike `import_batch`, the other blobs are still imported.
+                Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
+            }
+        }
+
+        // Nothing decoded, so there is nothing to import. `import_batch` returns
+        // before this critical section; entering it would commit the local
+        // transaction and, when detached editing is on, renew the peer id.
+        if blobs.is_empty() {
+            let pending = self.oplog.lock().pending_changes.version_range();
+            return Ok(ImportBatchDetail {
+                blobs: outcomes
+                    .into_iter()
+                    .map(|outcome| outcome.expect("every blob failed to decode"))
+                    .collect(),
+                status: ImportStatus {
+                    success: Default::default(),
+                    pending: non_empty(pending),
+                },
+                rollback_error: None,
+            });
+        }
+
+        let run = self.import_blobs_as_batch(blobs, values)?;
+        let rolled_back = run.rollback_error.is_some();
+        for (index, result) in run.results {
+            outcomes[index] = Some(match result {
+                Err(err) => ImportBlobOutcome::Failed(err),
+                // Nothing of the batch is left, so this blob is not in the doc either.
+                Ok(_) if rolled_back => ImportBlobOutcome::RolledBack,
+                Ok(status) => ImportBlobOutcome::Imported(status),
+            });
+        }
+
+        Ok(ImportBatchDetail {
+            blobs: outcomes
+                .into_iter()
+                .map(|outcome| outcome.expect("the batch imports every blob it is given"))
+                .collect(),
+            status: ImportStatus {
+                success: run.success,
+                pending: non_empty(run.pending),
+            },
+            rollback_error: run.rollback_error,
+        })
+    }
+
+    /// The critical section of a batch import, for blobs whose metadata decoded:
+    /// `(index in the caller's input, metadata, bytes)`.
+    ///
+    /// Returns `Err` only when the batch is refused before anything changes. A blob
+    /// that fails, and a failed closing checkout, are in the [`BatchRun`].
+    fn import_blobs_as_batch(
+        &self,
+        mut blobs: Vec<(usize, ImportBlobMetadata, &[u8])>,
+        values: ImportedValues,
+    ) -> LoroResult<BatchRun> {
+        let mut success = VersionRange::default();
+        blobs.sort_by(|a, b| {
+            a.1.mode
+                .cmp(&b.1.mode)
+                .then(b.1.change_num.cmp(&a.1.change_num))
         });
 
         let (options, txn) = self.implicit_commit_then_stop();
+        // Before anything changes. Holding the transaction lock keeps a manual
+        // transaction from starting until the batch ends, so this is checked once.
+        if self.state.lock().is_in_txn() {
+            drop(txn);
+            self.renew_txn_if_auto_commit(options);
+            return Err(LoroError::ImportWhenInTxn);
+        }
+
         // Why we should keep locking `txn` here
         //
         // In a multi-threaded environment, `import_batch` used to drop the txn lock
@@ -2753,7 +2980,9 @@ impl LoroDoc {
         // Keep the pre-snapshot arena checkpoint so a failed closing checkout
         // can discard the snapshot's state as well as the following updates.
         let snapshot_checkpoint = if was_attached
-            && meta_arr[0].0.mode == encoding::EncodedBlobMode::Snapshot
+            && blobs
+                .first()
+                .is_some_and(|blob| blob.1.mode == encoding::EncodedBlobMode::Snapshot)
         {
             let oplog = self.oplog.lock();
             let mut state = self.state.lock();
@@ -2794,12 +3023,12 @@ impl LoroDoc {
         // has stopped. Under `panic = "abort"` (e.g. wasm) a genuine panic still
         // terminates execution; only returned errors can be recovered there.
         let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut err = None;
-            for (index, (_meta, data)) in meta_arr.into_iter().enumerate() {
+            let mut results = Vec::with_capacity(blobs.len());
+            for (order, (index, _meta, data)) in blobs.into_iter().enumerate() {
                 #[cfg(test)]
                 take_panic_at_batch_import_blob_for_test();
                 let result = if let Some(checkpoint) =
-                    guard.snapshot_checkpoint.as_ref().filter(|_| index == 0)
+                    guard.snapshot_checkpoint.as_ref().filter(|_| order == 0)
                 {
                     // Do not emit the snapshot event until the closing checkout
                     // succeeds. Its state is part of the batch's rollback scope.
@@ -2825,29 +3054,25 @@ impl LoroDoc {
                         .doc
                         .import_without_emitting(data, Default::default(), values)
                 };
-                match result {
-                    Ok(s) => {
-                        for (peer, (start, end)) in s.success.iter() {
-                            match success.0.entry(*peer) {
-                                Entry::Occupied(mut e) => {
-                                    e.get_mut().1 = *end.max(&e.get().1);
-                                }
-                                Entry::Vacant(e) => {
-                                    e.insert((*start, *end));
-                                }
+                if let Ok(s) = &result {
+                    for (peer, (start, end)) in s.success.iter() {
+                        match success.0.entry(*peer) {
+                            Entry::Occupied(mut e) => {
+                                e.get_mut().1 = *end.max(&e.get().1);
+                            }
+                            Entry::Vacant(e) => {
+                                e.insert((*start, *end));
                             }
                         }
                     }
-                    Err(e) => {
-                        err = Some(e);
-                    }
                 }
+                results.push((index, result));
             }
-            err
+            results
         }));
 
-        let err = match loop_result {
-            Ok(err) => err,
+        let results = match loop_result {
+            Ok(results) => results,
             Err(payload) => {
                 // Reattach first, then re-raise the original panic. `finish` can panic
                 // itself when the interrupted blob poisoned a doc lock; that document
@@ -2859,18 +3084,15 @@ impl LoroDoc {
             }
         };
 
-        let pending = guard.finish()?;
-        if let Some(err) = err {
-            return Err(err);
+        let (rollback_error, pending) = guard.finish();
+        if rollback_error.is_some() {
+            success = VersionRange::default();
         }
-
-        Ok(ImportStatus {
+        Ok(BatchRun {
+            results,
             success,
-            pending: if pending.is_empty() {
-                None
-            } else {
-                Some(pending)
-            },
+            pending,
+            rollback_error,
         })
     }
 
@@ -2892,19 +3114,37 @@ impl LoroDoc {
         self.state.lock().get_deep_value_with_id()
     }
 
+    /// [`Self::try_checkout_to_latest`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     pub fn checkout_to_latest(&self) {
-        let (options, _guard) = self.implicit_commit_then_stop();
+        self.try_checkout_to_latest()
+            .unwrap_or_else(|err| panic!("checkout to the latest version failed: {err}"));
+    }
+
+    /// Check the state out to the latest version of the op log and attach it.
+    ///
+    /// A detached import does not touch the state, so history that the state rejects,
+    /// such as a list insert past the end from a forged update, can be in the op log
+    /// and fail here. The doc then stays detached at its version and usable. It also
+    /// fails while a manual transaction is open, see [`Self::checkout`].
+    pub fn try_checkout_to_latest(&self) -> LoroResult<()> {
+        let (options, guard) = self.implicit_commit_then_stop();
         if !self.is_detached() {
-            drop(_guard);
+            drop(guard);
             self.renew_txn_if_auto_commit(options);
-            return;
+            return Ok(());
         }
 
-        self._checkout_to_latest_without_commit(true)
-            .expect("checkout to oplog frontiers should succeed");
-        self.emit_events();
-        drop(_guard);
+        let result = self._checkout_to_latest_without_commit(true);
+        if result.is_ok() {
+            self.emit_events();
+        }
+        drop(guard);
         self.renew_txn_if_auto_commit(options);
+        result
     }
 
     /// NOTE: The caller of this method should ensure the txn is locked and set to None
@@ -2963,6 +3203,10 @@ impl LoroDoc {
     ///
     /// This will make the current [DocState] detached from the latest version of [OpLog].
     /// Any further import will not be reflected on the [DocState], until user call [LoroDoc::attach()]
+    ///
+    /// Returns [`LoroError::TransactionError`] while a manual [`Transaction`] is open:
+    /// its ops are in the DAG and not in the change store yet, so the history cannot
+    /// be read. Commit it first.
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
         // Checked here and not in `_checkout_without_emitting`: undo, `checkout_to_latest`
         // and the exporters call that and cannot return this error.
@@ -3018,6 +3262,14 @@ impl LoroDoc {
         if !self.txn.is_locked() {
             return Err(LoroError::TransactionError(
                 "checkout requires the transaction mutex to be held"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+        // Barriers end the auto-commit transaction, so this is a manual one.
+        if self.state.lock().is_in_txn() {
+            return Err(LoroError::TransactionError(
+                "cannot check out while a transaction is open; commit it first"
                     .to_string()
                     .into_boxed_str(),
             ));
@@ -3596,9 +3848,15 @@ impl LoroDoc {
         }
     }
 
+    /// [`Self::try_find_id_spans_between`] for a caller that cannot handle an error.
+    ///
+    /// # Panics
+    ///
+    /// Where that method returns an error, once no lock is held, so the doc stays usable.
     #[inline]
     pub fn find_id_spans_between(&self, from: &Frontiers, to: &Frontiers) -> VersionVectorDiff {
-        self.oplog().lock().dag.find_path(from, to)
+        self.try_find_id_spans_between(from, to)
+            .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Finds operation spans between versions, reporting unreadable history.
@@ -3613,6 +3871,11 @@ impl LoroDoc {
             if !oplog.vv().includes_id(id) {
                 return Err(LoroError::FrontiersNotFound(id));
             }
+        }
+        if from != to
+            && (oplog.dag.is_before_shallow_root(from) || oplog.dag.is_before_shallow_root(to))
+        {
+            return Err(LoroError::SwitchToVersionBeforeShallowRoot);
         }
         oplog.dag.try_find_path(from, to)
     }
@@ -3892,18 +4155,18 @@ impl LoroDoc {
             let len = i64::try_from(len).unwrap_or(i64::MAX);
             let start = i64::from(id.counter);
             let end = start.saturating_add(len);
-            if end <= 0 {
-                return set;
-            }
-
-            let start = start.max(0).min(i64::from(i32::MAX));
-            let end = end.max(0).min(i64::from(i32::MAX));
-            if start >= end {
-                return set;
-            }
 
             {
                 let oplog = self.oplog().lock();
+                // The part of the range this doc holds.
+                let first = oplog.shallow_since_vv().get(&id.peer).copied().unwrap_or(0);
+                let last = oplog.vv().get(&id.peer).copied().unwrap_or(0);
+                let start = start.max(i64::from(first));
+                let end = end.min(i64::from(last));
+                if start >= end {
+                    return set;
+                }
+
                 let span = IdSpan::new(id.peer, start as i32, end as i32);
                 for op in oplog.iter_ops(span) {
                     let id = oplog.arena.get_container_id(op.container()).unwrap();
@@ -4049,6 +4312,23 @@ struct BatchImportGuard<'a> {
     finished: bool,
 }
 
+/// What [`LoroDoc::import_blobs_as_batch`] did.
+struct BatchRun {
+    /// `(index in the caller's input, what the import of that blob returned)`, in the
+    /// order the blobs were imported.
+    results: Vec<(usize, LoroResult<ImportStatus>)>,
+    /// Everything the blobs imported. Empty after a rollback.
+    success: VersionRange,
+    /// Everything the doc waits for when the batch ends.
+    pending: VersionRange,
+    /// The closing checkout failed and the whole batch was rolled back.
+    rollback_error: Option<LoroError>,
+}
+
+fn non_empty(range: VersionRange) -> Option<VersionRange> {
+    (!range.is_empty()).then_some(range)
+}
+
 struct BatchSnapshotRollback {
     arena: SharedArenaRollback,
     // Even an empty doc may expose empty containers acquired through getters.
@@ -4086,12 +4366,13 @@ fn recalc_in_checkout_mode_if_needed(
 impl BatchImportGuard<'_> {
     /// Leave batch-import mode, reattach if the doc was attached, and renew the txn.
     ///
-    /// Returns the still-pending version range on success. If the accumulated changes
-    /// cannot be applied to `DocState` (malformed remote ops reach state validation
-    /// only here, because the blobs were imported while detached), the whole batch is
-    /// rolled back out of the `OpLog` so the document stays attached and unchanged,
-    /// and the state-apply error is returned.
-    fn finish(&mut self) -> LoroResult<VersionRange> {
+    /// If the accumulated changes cannot be applied to `DocState` (malformed remote ops
+    /// reach state validation only here, because the blobs were imported while
+    /// detached), the whole batch is rolled back out of the `OpLog` so the document
+    /// stays attached and unchanged, and the state-apply error is returned. The range
+    /// is what the doc still holds as pending afterwards: after a rollback, what was
+    /// parked before the batch.
+    fn finish(&mut self) -> (Option<LoroError>, VersionRange) {
         #[cfg(debug_assertions)]
         {
             self.finished = true;
@@ -4100,11 +4381,7 @@ impl BatchImportGuard<'_> {
         let txn = self.txn.take().expect("finish called twice");
         let options = self.options.take();
 
-        let pending = {
-            let mut oplog = doc.oplog.lock();
-            oplog.batch_importing = false;
-            oplog.pending_changes.version_range()
-        };
+        doc.oplog.lock().batch_importing = false;
 
         // The txn guard must stay held across the checkout, and the renew below must
         // reuse it: dropping it first and re-locking would panic when this runs after
@@ -4146,8 +4423,9 @@ impl BatchImportGuard<'_> {
             }
         }
 
+        let pending = doc.oplog.lock().pending_changes.version_range();
         doc._renew_txn_if_auto_commit_with_guard(options, txn);
-        checkout.map(|()| pending)
+        (checkout.err(), pending)
     }
 }
 

@@ -607,3 +607,50 @@ fn genuine_value_conflicts_are_rejected_on_json_and_binary_imports() {
         }
     }
 }
+
+/// The detailed batch has the same history mode opt-in as `import_batch_with_history_mode`.
+#[test]
+fn detailed_batch_takes_the_history_mode() {
+    let a = source();
+    a.get_map("m")
+        .insert("number", LoroValue::Double(2.0))
+        .unwrap();
+    a.commit();
+    let b = json_copy(&a);
+    b.get_map("relay").insert("extra", 1).unwrap();
+    b.commit();
+    let other = LoroDoc::new();
+    other.set_peer_id(9).unwrap();
+    other.get_map("other").insert("k", 1).unwrap();
+    other.commit();
+    let batch = [
+        b.export(ExportMode::all_updates()).unwrap(),
+        other.export(ExportMode::all_updates()).unwrap(),
+    ];
+
+    let exact = a.fork();
+    let detail = exact.import_batch_detailed(&batch).unwrap();
+    assert!(
+        matches!(
+            detail.blobs[..],
+            [
+                loro::ImportBlobOutcome::Failed(LoroError::UsedOpID { .. }),
+                loro::ImportBlobOutcome::Imported(_)
+            ]
+        ),
+        "{detail:?}"
+    );
+
+    let detail = a
+        .import_batch_detailed_with_history_mode(&batch, ImportHistoryMode::JsonLossy)
+        .unwrap();
+    assert!(
+        detail
+            .blobs
+            .iter()
+            .all(|blob| matches!(blob, loro::ImportBlobOutcome::Imported(_))),
+        "{detail:?}"
+    );
+    assert_eq!(map_value(&a, "number"), LoroValue::Double(2.0));
+    assert_eq!(a.get_map("relay").get_value()["extra"], LoroValue::I64(1));
+}

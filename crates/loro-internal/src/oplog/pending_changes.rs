@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map::Entry, BTreeMap},
     ops::Deref,
+    sync::Arc,
 };
 
 use crate::{
@@ -37,6 +38,83 @@ impl Deref for PendingChange {
 #[derive(Debug, Default)]
 pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
+    /// Which parked change holds each parked op id, because `changes` is keyed by the
+    /// dep a change waits for. The first change to park an id holds it: imports that
+    /// overlap it were compared with it, so one holder per id is enough. Dropped once
+    /// the op log has the ids.
+    ///
+    /// Not derivable from `changes`. `ImportedValues::JsonLossy` equality is not
+    /// transitive (null matches both NaN and infinity, which differ from each other),
+    /// so which change came first decides what later imports are compared with. Import
+    /// rollback undoes the edits in order, see [`PendingChangesRollback`].
+    claims: FxHashMap<PeerID, ClaimedSpans<Arc<Change>>>,
+    /// The greatest counter of each peer that a parked change depends on. `changes` has
+    /// only the first missing dep of a change, and a local write under any of them
+    /// changes the base the parked change applies on. A change leaves parking only with
+    /// its deps in the op log, so an entry stops mattering by itself and is never
+    /// lowered, except by rollback.
+    awaited: FxHashMap<PeerID, Counter>,
+}
+
+/// Disjoint counter spans of one peer, keyed by their start, each with the change that
+/// claimed it first.
+#[derive(Debug)]
+pub(super) struct ClaimedSpans<C> {
+    spans: BTreeMap<Counter, Claim<C>>,
+}
+
+#[derive(Debug)]
+struct Claim<C> {
+    end: Counter,
+    change: C,
+}
+
+impl<C> Default for ClaimedSpans<C> {
+    fn default() -> Self {
+        Self {
+            spans: BTreeMap::new(),
+        }
+    }
+}
+
+impl<C: Deref<Target = Change>> ClaimedSpans<C> {
+    /// The spans overlapping `start..end`, in order, each with its holder.
+    pub(super) fn overlapping(
+        &self,
+        start: Counter,
+        end: Counter,
+    ) -> impl Iterator<Item = (Counter, Counter, &Change)> {
+        let first = self
+            .spans
+            .range(..=start)
+            .next_back()
+            .filter(|(_, claim)| claim.end > start)
+            .map_or(start, |(&claim_start, _)| claim_start);
+        self.spans
+            .range(first..end)
+            .map(|(&claim_start, claim)| (claim_start, claim.end, &*claim.change))
+    }
+
+    /// The parts of `start..end` that nothing holds yet.
+    pub(super) fn gaps(&self, start: Counter, end: Counter) -> Vec<(Counter, Counter)> {
+        let mut gaps = Vec::new();
+        let mut ctr = start;
+        for (claim_start, claim_end, _) in self.overlapping(start, end) {
+            if ctr < claim_start {
+                gaps.push((ctr, claim_start));
+            }
+            ctr = ctr.max(claim_end);
+        }
+        if ctr < end {
+            gaps.push((ctr, end));
+        }
+        gaps
+    }
+
+    /// Record `change` as the holder of `start..end`, a gap from [`Self::gaps`].
+    pub(super) fn hold(&mut self, start: Counter, end: Counter, change: C) {
+        self.spans.insert(start, Claim { end, change });
+    }
 }
 
 impl PendingChanges {
@@ -116,6 +194,101 @@ impl PendingChanges {
         self.changes.is_empty()
     }
 
+    /// The claimed spans of `peer` overlapping `start..end`, in order, each with the
+    /// parked change that holds it.
+    pub(super) fn claims_in(
+        &self,
+        peer: PeerID,
+        start: Counter,
+        end: Counter,
+    ) -> impl Iterator<Item = (Counter, Counter, &Change)> {
+        self.claims
+            .get(&peer)
+            .into_iter()
+            .flat_map(move |spans| spans.overlapping(start, end))
+    }
+
+    /// The last counter of `peer` at or past `counter` that parked history holds or
+    /// waits for, if any. A local write at `counter` would be a different history of
+    /// `peer` from the one these changes were written on: a parked change holding the
+    /// id would be applied over the write, and one depending on it would be applied on
+    /// top of it.
+    pub(super) fn last_parked_at_or_after(
+        &self,
+        peer: PeerID,
+        counter: Counter,
+    ) -> Option<Counter> {
+        let held = self
+            .claims
+            .get(&peer)
+            .and_then(|spans| spans.spans.last_key_value())
+            .map(|(_, claim)| claim.end - 1);
+        let awaited = self.awaited.get(&peer).copied();
+        held.max(awaited).filter(|&last| last >= counter)
+    }
+
+    /// Record `change` as the holder of its ids that nothing holds yet. Called when it
+    /// first parks: `try_apply_pending` moves parked changes between slots constantly,
+    /// and they keep what they hold.
+    fn claim(&mut self, change: &Change, mut rollback: Option<&mut PendingChangesRollback>) {
+        for dep in change.deps.iter() {
+            let previous = self.awaited.get(&dep.peer).copied();
+            if previous.is_none_or(|awaited| awaited < dep.counter) {
+                self.awaited.insert(dep.peer, dep.counter);
+                if let Some(rollback) = rollback.as_deref_mut() {
+                    rollback.claims.push(ClaimEdit::Awaited {
+                        peer: dep.peer,
+                        previous,
+                    });
+                }
+            }
+        }
+
+        let (peer, start, end) = (change.id.peer, change.id.counter, change.ctr_end());
+        let gaps = match self.claims.get(&peer) {
+            Some(spans) => spans.gaps(start, end),
+            None => vec![(start, end)],
+        };
+        if gaps.is_empty() {
+            return;
+        }
+
+        let change = Arc::new(change.clone());
+        let spans = self.claims.entry(peer).or_default();
+        for (start, end) in gaps {
+            spans.hold(start, end, change.clone());
+            if let Some(rollback) = rollback.as_deref_mut() {
+                rollback.claims.push(ClaimEdit::Held { peer, start });
+            }
+        }
+    }
+
+    /// Drop the spans of `peer` the op log has now: its own history answers for them.
+    fn release_claims_below(
+        &mut self,
+        peer: PeerID,
+        known_end: Counter,
+        mut rollback: Option<&mut PendingChangesRollback>,
+    ) {
+        let Some(claims) = self.claims.get_mut(&peer) else {
+            return;
+        };
+        while let Some(entry) = claims.spans.first_entry() {
+            if entry.get().end > known_end {
+                break;
+            }
+            let (start, claim) = entry.remove_entry();
+            if let Some(rollback) = rollback.as_deref_mut() {
+                rollback
+                    .claims
+                    .push(ClaimEdit::Released { peer, start, claim });
+            }
+        }
+        if claims.spans.is_empty() {
+            self.claims.remove(&peer);
+        }
+    }
+
     /// Number of changes parked under `[peer][counter]`, or `None` if nothing is.
     fn slot_len(&self, peer: PeerID, counter: Counter) -> Option<usize> {
         Some(self.changes.get(&peer)?.get(&counter)?.len())
@@ -162,9 +335,31 @@ impl PendingChanges {
 /// content that predates the scope, which is exactly what rollback cannot otherwise
 /// reconstruct — an out-of-order batch parks everything it later unlocks, so it
 /// clones nothing.
+///
+/// Claims are the opposite: an edit log, undone in reverse. A snapshot of the peer's
+/// claims per scope would make out-of-order delivery quadratic, and they cannot be
+/// rebuilt from the restored slots, see [`PendingChanges::claims`].
 #[derive(Debug, Default)]
 pub(crate) struct PendingChangesRollback {
     slots: FxHashMap<(PeerID, Counter), PendingSlot>,
+    claims: Vec<ClaimEdit>,
+}
+
+#[derive(Debug)]
+enum ClaimEdit {
+    Awaited {
+        peer: PeerID,
+        previous: Option<Counter>,
+    },
+    Held {
+        peer: PeerID,
+        start: Counter,
+    },
+    Released {
+        peer: PeerID,
+        start: Counter,
+        claim: Claim<Arc<Change>>,
+    },
 }
 
 #[derive(Debug)]
@@ -242,6 +437,31 @@ impl PendingChangesRollback {
         }
 
         pending_changes.changes.retain(|_, tree| !tree.is_empty());
+
+        let claims = &mut pending_changes.claims;
+        for edit in self.claims.into_iter().rev() {
+            match edit {
+                ClaimEdit::Awaited { peer, previous } => match previous {
+                    Some(counter) => {
+                        pending_changes.awaited.insert(peer, counter);
+                    }
+                    None => {
+                        pending_changes.awaited.remove(&peer);
+                    }
+                },
+                ClaimEdit::Held { peer, start } => {
+                    if let Some(spans) = claims.get_mut(&peer) {
+                        spans.spans.remove(&start);
+                        if spans.spans.is_empty() {
+                            claims.remove(&peer);
+                        }
+                    }
+                }
+                ClaimEdit::Released { peer, start, claim } => {
+                    claims.entry(peer).or_default().spans.insert(start, claim);
+                }
+            }
+        }
     }
 }
 
@@ -288,6 +508,8 @@ impl OpLog {
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
                     parked.push(local_change.id_span());
+                    let rollback = self.import_rollback.as_mut().map(|r| &mut r.pending);
+                    self.pending_changes.claim(&local_change, rollback);
                     self.push_pending_change(miss_dep, local_change);
                 }
                 ChangeState::Applied => {}
@@ -338,6 +560,10 @@ impl OpLog {
         mut would_affect: Option<&mut VersionRange>,
     ) {
         while let Some(id) = new_ids.pop() {
+            let known_end = self.vv().get(&id.peer).copied().unwrap_or(0);
+            let rollback = self.import_rollback.as_mut().map(|r| &mut r.pending);
+            self.pending_changes
+                .release_claims_below(id.peer, known_end, rollback);
             let Some(tree) = self.pending_changes.changes.get_mut(&id.peer) else {
                 continue;
             };

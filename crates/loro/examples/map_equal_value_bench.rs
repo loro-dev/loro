@@ -136,7 +136,7 @@ fn map_benches() {
             },
         );
     }
-    d.checkout_to_latest();
+    d.try_checkout_to_latest().unwrap();
     for (label, updates) in [("equal", &f.to_c), ("changed", &f.to_b)] {
         bench(
             &format!("map_import_linear_{label}"),

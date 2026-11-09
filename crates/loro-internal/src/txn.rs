@@ -58,7 +58,29 @@ impl crate::LoroDoc {
     ///
     /// The origin will be propagated to the events.
     /// There can only be one active transaction at a time for a [LoroDoc].
+    ///
+    /// It waits for the doc's transaction lock, like every import and auto-commit
+    /// transaction: a transaction must not start while an import runs, including
+    /// between the blobs of an [`LoroDoc::import_batch`]. See
+    /// `context/import-peer-id-reuse.md`.
+    ///
+    /// Called back on a thread that holds the lock, as in an event or pre-commit
+    /// callback, it returns [`LoroError::DuplicatedTransactionError`]: a transaction
+    /// or an import is running there.
     pub fn txn_with_origin(&self, origin: &str) -> Result<Transaction, LoroError> {
+        if self.txn.is_held_by_current_thread() {
+            return Err(LoroError::DuplicatedTransactionError);
+        }
+        let _guard = self.txn.lock();
+        self.txn_with_origin_under_lock(origin)
+    }
+
+    /// [`Self::txn_with_origin`] for a caller that holds the doc's transaction lock.
+    pub(crate) fn txn_under_lock(&self) -> Result<Transaction, LoroError> {
+        self.txn_with_origin_under_lock("")
+    }
+
+    fn txn_with_origin_under_lock(&self, origin: &str) -> Result<Transaction, LoroError> {
         if !self.can_edit() {
             return Err(LoroError::TransactionError(
                 String::from("LoroDoc is in readonly detached mode. To make it writable in detached mode, call `set_detached_editing(true)`.").into_boxed_str(),
@@ -102,10 +124,46 @@ impl crate::LoroDoc {
             return;
         }
 
-        let txn = self
-            .txn()
-            .expect("auto-commit should be able to create a transaction");
-        self_txn.replace(txn);
+        *self_txn = self.auto_commit_txn(None);
+    }
+
+    /// [`Self::start_auto_commit`] for a caller about to write: it returns why the
+    /// transaction cannot start, see [`Self::auto_commit_txn`].
+    pub(crate) fn try_start_auto_commit(&self) -> LoroResult<()> {
+        self.auto_commit
+            .store(true, std::sync::atomic::Ordering::Release);
+        let mut self_txn = self.txn.lock();
+        if self_txn.is_none() && self.can_edit() {
+            *self_txn = Some(self.txn_under_lock()?);
+        }
+
+        Ok(())
+    }
+
+    /// The next auto-commit transaction, or `None` when the peer cannot write here.
+    ///
+    /// In detached editing, a custom peer id that already has ops after the state
+    /// version cannot start a transaction. That is no fault of the commit, export
+    /// or import that renews it, so they go on with no pending transaction. The
+    /// next write tries again in `with_txn` and reports
+    /// [`LoroError::ConcurrentOpsWithSamePeerID`] to its caller.
+    ///
+    /// The same goes for a manual transaction that is still open: the next write
+    /// reports [`LoroError::DuplicatedTransactionError`].
+    pub(crate) fn auto_commit_txn(&self, options: Option<CommitOptions>) -> Option<Transaction> {
+        match self.txn_under_lock() {
+            Ok(mut txn) => {
+                if let Some(options) = options {
+                    txn.set_options(options);
+                }
+                Some(txn)
+            }
+            Err(
+                LoroError::ConcurrentOpsWithSamePeerID { .. }
+                | LoroError::DuplicatedTransactionError,
+            ) => None,
+            Err(err) => panic!("auto-commit should be able to create a transaction: {err}"),
+        }
     }
 
     #[inline]
@@ -116,13 +174,7 @@ impl crate::LoroDoc {
                 return;
             }
 
-            let mut txn = self
-                .txn()
-                .expect("auto-commit should be able to renew a transaction");
-            if let Some(options) = options {
-                txn.set_options(options);
-            }
-            self_txn.replace(txn);
+            *self_txn = self.auto_commit_txn(options);
         }
     }
 
@@ -137,13 +189,7 @@ impl crate::LoroDoc {
                 return;
             }
 
-            let mut txn = self
-                .txn()
-                .expect("auto-commit should be able to renew a transaction");
-            if let Some(options) = options {
-                txn.set_options(options);
-            }
-            guard.replace(txn);
+            *guard = self.auto_commit_txn(options);
         }
     }
 }
@@ -598,7 +644,9 @@ impl Transaction {
         drop(state);
         drop(oplog);
         if let Some(on_commit) = self.on_commit.take() {
-            assert!(!doc.txn.is_locked());
+            // Not under this thread's transaction lock. Another thread may hold it: a
+            // manual transaction commits without it.
+            debug_assert!(doc.txn.can_lock_in_this_thread());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
         Ok(None)

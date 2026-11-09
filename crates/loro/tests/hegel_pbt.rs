@@ -397,7 +397,7 @@ fn test_checkout_reproduces_recorded_states(tc: TestCase) {
         doc.checkout(frontiers).unwrap();
         assert_eq!(*expected, doc.get_deep_value());
     }
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_eq!(latest, doc.get_deep_value());
     assert!(!doc.is_detached());
 }

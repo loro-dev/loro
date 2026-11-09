@@ -25,7 +25,7 @@ fn main() {
 
     doc.import(&decoded_update).unwrap();
     println!("Imported update");
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     doc.check_state_correctness_slow();
     let res = doc
         .export_json_updates(&Default::default(), &doc.oplog_vv())

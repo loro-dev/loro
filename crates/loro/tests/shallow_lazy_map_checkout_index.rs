@@ -106,7 +106,7 @@ fn merge_concurrent_row_edits(bytes: &[u8]) -> Outcome {
     let after_undo = receiver.get_deep_value();
     receiver.checkout(&local_edit).unwrap();
     let at_local_edit = receiver.get_deep_value();
-    receiver.checkout_to_latest();
+    receiver.try_checkout_to_latest().unwrap();
     let mut events = events.lock().unwrap().clone();
     events.sort();
     Outcome {

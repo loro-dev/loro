@@ -15,6 +15,7 @@
 //! The implementation of this algorithm is based on the implementation by
 //! Brandon Williams.
 use crate::change::get_sys_timestamp;
+use loro_common::LoroError;
 use rustc_hash::FxHashMap;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -44,6 +45,9 @@ impl Default for UpdateOptions {
 pub enum UpdateTimeoutError {
     #[error("Timeout")]
     Timeout,
+    /// The edit itself failed: the container is deleted, the doc is read-only, ...
+    #[error(transparent)]
+    Loro(#[from] LoroError),
 }
 
 /// Utility function to check if a range is empty that works on older rust versions
@@ -109,8 +113,7 @@ impl<D: DiffHandler> OperateProxy<D> {
         self.handler.insert(old_index, new_index, new_len);
     }
 
-    #[allow(unused)]
-    fn unwrap(self) -> D {
+    pub fn unwrap(self) -> D {
         self.handler
     }
 }

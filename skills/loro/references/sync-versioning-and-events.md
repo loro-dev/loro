@@ -13,6 +13,7 @@
   - `subscribeLocalUpdates(...)` for push-based transport.
   - `export({ mode: "update", from })` when you track a known sync point.
 - Use `importBatch(...)` for multiple updates or mixed snapshot/update payloads. It performs one diff calculation and emits one combined event.
+- An error from `importBatch(...)` does not mean nothing was applied. `importBatchDetailed(...)` imports the same way and returns one outcome per payload instead of throwing.
 - `EphemeralStore` local updates should be transported separately from persisted document updates.
 
 ## Version Representations

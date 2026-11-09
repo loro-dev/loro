@@ -244,7 +244,7 @@ fn imported_revival_emits_create_for_every_child() {
         doc.checkout(f).unwrap();
         assert_mirror_matches(&mut mirror, &tree);
     }
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_mirror_matches(&mut mirror, &tree);
 }
 

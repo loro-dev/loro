@@ -111,7 +111,7 @@ fn import(bytes: &[u8]) -> LoroDoc {
 fn value_at(doc: &LoroDoc, version: &Frontiers) -> LoroValue {
     doc.checkout(version).unwrap();
     let value = doc.get_deep_value();
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     value
 }
 
@@ -172,7 +172,7 @@ fn shallow_reexport_keeps_values_rewritten_after_root() {
             // Checking out first leaves the root-time state in the store, as
             // an export that goes through a checkout would.
             shallow.checkout(&f.root).unwrap();
-            shallow.checkout_to_latest();
+            shallow.try_checkout_to_latest().unwrap();
             shallow = import(
                 &shallow
                     .export(ExportMode::shallow_snapshot(&f.root))
@@ -296,7 +296,7 @@ fn checkout_reports_root_time_winner_of_equal_value() {
                 "{ctx}"
             );
             assert_eq!(replica.get_deep_value(), expected, "{ctx}");
-            replica.checkout_to_latest();
+            replica.try_checkout_to_latest().unwrap();
             // A state-only replica's latest version is the root itself.
             let latest_writer = if name == "state-only" { 1 } else { 2 };
             assert_eq!(

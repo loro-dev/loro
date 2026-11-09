@@ -211,7 +211,7 @@ fn checkout_revives_metadata_after_is_deleted_query() {
     assert!(!s.tree.is_node_deleted(&s.grandchild).unwrap());
     assert!(!s.meta.is_deleted());
 
-    s.doc.checkout_to_latest();
+    s.doc.try_checkout_to_latest().unwrap();
     assert!(s.meta.is_deleted());
 }
 
@@ -298,8 +298,8 @@ fn forward_checkout_revives_containers_created_after_the_old_version() {
     doc.commit();
 
     for forward in [
-        |doc: &LoroDoc, _: &Frontiers| doc.checkout_to_latest(),
-        |doc: &LoroDoc, _: &Frontiers| doc.attach(),
+        |doc: &LoroDoc, _: &Frontiers| doc.try_checkout_to_latest().unwrap(),
+        |doc: &LoroDoc, _: &Frontiers| doc.try_attach().unwrap(),
         |doc: &LoroDoc, v2: &Frontiers| doc.checkout(v2).unwrap(),
     ] {
         doc.checkout(&v1).unwrap();
@@ -310,7 +310,7 @@ fn forward_checkout_revives_containers_created_after_the_old_version() {
         assert!(!title.is_deleted());
     }
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     child.insert("x", 1).unwrap();
     title.insert(0, "x").unwrap();
     doc.commit();
@@ -337,7 +337,7 @@ fn attach_after_detached_import_revives_containers_queried_while_detached() {
         .unwrap();
     let in_b = b.get_text(text.id());
     assert!(in_b.is_deleted(), "not in b's detached state yet");
-    b.attach();
+    b.try_attach().unwrap();
     assert!(!in_b.is_deleted());
     in_b.insert(0, "x").unwrap();
     b.commit();
