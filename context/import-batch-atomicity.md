@@ -1,6 +1,6 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-09.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) stops the auto-commit txn,
 keeps the txn mutex for the whole critical section, force-detaches with
@@ -151,6 +151,62 @@ These are local medians under concurrent machine load, not the issue author's
 document or browser measurements. The deterministic lazy-state regression below
 pins the mechanism independently of timing.
 
+## Partial success and `import_batch_detailed`
+
+`import_batch` is not all-or-nothing. A blob that fails on its own (a conflict with
+known ids, bytes that do not decode, a bad checksum) does not stop the loop and does
+not undo the others. The batch then returns the error of the **last blob to fail in
+import order** and keeps everything else, including a dep that unlocked parked
+changes. Only the closing checkout rolls the whole batch back. The owner kept this
+(loro-dev/loro#1258) and asked for a call that reports each blob.
+
+Both calls run `LoroDoc::import_blobs_as_batch` (`crates/loro-internal/src/loro.rs`),
+so `import_batch_detailed` holds the transaction lock, checks for an open manual
+transaction before it detaches, and owns the rollback scope exactly as `import_batch`
+does. `check_import_not_nested` runs first in both. These refusals are the outer
+`Err(ImportWhenInTxn)`: no blob was tried, so there is no detail to give.
+
+The result is `ImportBatchDetail { blobs, status, rollback_error }` (`src/encoding.rs`),
+with one `ImportBlobOutcome` per input blob:
+
+- Blobs are imported sorted by mode and change count, not in input order. `blobs` is
+  in **input order**, and each `Imported(status)` holds what that blob's import
+  returned at its turn. Its `pending` can be gone by the end of the batch, and the dep
+  that unlocked it counts those changes in its own `success`.
+- `status.success` is the union over the imported blobs. `status.pending` is
+  `pending_changes.version_range()` when the batch ends: everything the doc waits
+  for, updates parked before the batch included. The batch of one computes it the same
+  way, so the field means one thing. (`import_batch` of one blob returns that blob's
+  own pending instead. That is the plain `import` it forwards to, and it is unchanged.)
+- **Three outcomes, not `Result`.** After a rollback nothing of the batch is in the
+  doc, so a blob that imported cleanly cannot stay `Ok`: that would tell the caller its
+  ops are in the doc, the lie this PR removes from `import`. It cannot become the
+  checkout error either. The checkout validates the batch as a whole and does not know
+  which blob it rejected, so a copy of its error on every blob would blame the good
+  ones, and a caller that drops failed blobs would drop them. `RolledBack` carries no
+  error for that reason; the one error is in `rollback_error`. A blob that failed on
+  its own keeps `Failed`: it was never part of what was rolled back.
+- `rollback_error.is_some()` implies no `Imported` entry, `status.success` empty, the
+  doc at its pre-batch version and attached, and no event.
+- Metadata that does not decode (`decode_import_blob_meta`, which reads the header
+  and part of the body but skips the checksum) is `Failed` for that blob alone, and
+  the rest is imported. `import_batch` returns that error before it imports
+  anything, and has to keep doing so. This is the one input where the two calls leave
+  different documents.
+- A batch of one is a plain attached import in both calls. The state validates it at
+  once, so its failure is `Failed`, never `RolledBack`. The detailed call maps the
+  import's `ImportWhenInTxn` to the outer `Err`; only the transaction checks produce
+  that error.
+- A detached doc has no closing checkout and no batch scope, so `rollback_error` stays
+  `None` and history the state would reject is `Imported`, as with `import`.
+- `Failed` does not promise that nothing of the blob is left. The usual failures are
+  found before anything is applied, but the weaker guarantee of the nested scope below
+  (a legacy blob that fails mid-decode keeps its prefix) applies here too.
+
+In `loro-crdt`, `importBatchDetailed` returns plain objects (`{ type: "imported" |
+"failed" | "rolledBack" }`, errors as the strings `import` throws) and is in the
+`decorateMethods` allowlist of `index.ts`, because the closing checkout emits events.
+
 ## Tests
 
 - `crates/loro-internal/src/tests/import_atomicity.rs`:
@@ -168,6 +224,12 @@ pins the mechanism independently of timing.
   `failed_import_batch_reparks_prebatch_pending_changes`,
   `failed_import_batch_trims_only_its_own_entry_from_a_shared_pending_slot`,
   `failed_import_reparks_only_preexisting_pending_changes`.
+- `crates/loro/tests/import_batch_detailed.rs`: the outcome of each blob for a
+  conflict in the middle of a batch, a parked blob and its dep, a rolled-back batch,
+  unreadable metadata, a batch of one and a detached doc, each next to what
+  `import_batch` does with the same input. `crates/loro-internal/tests/import_in_txn.rs`
+  covers the refusals (manual transaction, callbacks).
+  `crates/loro-wasm/tests/import_batch_detailed.test.ts` covers the JS shape.
 - `crates/loro/tests/contracts/sync_import.rs`:
   `snapshot_batch_matches_split_import_with_overlapping_and_concurrent_updates`
   (1/20 updates, reversed order, duplicates, concurrent peer, snapshot roundtrip),

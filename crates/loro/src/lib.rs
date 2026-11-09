@@ -13,7 +13,7 @@ pub use loro_internal::cursor::CannotFindRelativePosition;
 use loro_internal::cursor::Cursor;
 use loro_internal::cursor::PosQueryResult;
 use loro_internal::cursor::Side;
-pub use loro_internal::encoding::ImportStatus;
+pub use loro_internal::encoding::{ImportBatchDetail, ImportBlobOutcome, ImportStatus};
 use loro_internal::handler::{HandlerTrait, ValueOrHandler};
 pub use loro_internal::loro::ChangeTravelError;
 pub use loro_internal::pre_commit::{
@@ -503,6 +503,25 @@ impl LoroDoc {
     /// The data can be in arbitrary order. The import result will be the same.
     /// Auto-commit: same as [`import`], this finalizes the current transaction first.
     ///
+    /// # Partial success
+    ///
+    /// A batch is not all-or-nothing. When a blob fails on its own, for example with
+    /// [`LoroError::UsedOpID`] or bytes that do not decode, the other blobs are still
+    /// imported and stay in the document, including a dependency that lets pending
+    /// updates apply. The batch then returns the error of one failed blob. So an `Err`
+    /// does not mean that nothing was applied, and it does not say which blob failed.
+    /// Use [`import_batch_detailed`](Self::import_batch_detailed) to get the result of
+    /// each blob.
+    ///
+    /// An `Err` leaves the document unchanged only when the batch failed as a whole:
+    ///
+    /// - [`LoroError::ImportWhenInTxn`]: the call was refused before any blob was tried.
+    /// - A blob whose metadata does not decode
+    ///   ([`decode_import_blob_meta`](Self::decode_import_blob_meta)) fails the batch
+    ///   before anything is imported.
+    /// - The closing checkout, which applies the batch to the state, failed and rolled
+    ///   the whole batch back.
+    ///
     /// # Example
     /// ```
     /// use loro::{LoroDoc, ExportMode};
@@ -532,6 +551,86 @@ impl LoroDoc {
     ) -> LoroResult<ImportStatus> {
         self.doc
             .import_batch_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
+    }
+
+    /// Import a batch of updates/snapshot and report what happened to each blob.
+    ///
+    /// It imports as [`import_batch`](Self::import_batch) does: any order, one state
+    /// update and one event for the whole batch, and the same partial success. Where
+    /// `import_batch` returns the error of one blob, this returns an
+    /// [`ImportBatchDetail`]:
+    ///
+    /// - `blobs[i]` is the [`ImportBlobOutcome`] of `bytes[i]`:
+    ///   - `Imported(status)`: the blob is in the document. `status` is what its import
+    ///     returned at its turn. Its `pending` changes wait for a dependency, which a
+    ///     later blob of the same batch may have brought.
+    ///   - `Failed(error)`: the blob failed on its own, and the others were imported
+    ///     without it.
+    ///   - `RolledBack`: see below.
+    /// - `status` is the batch as a whole: `success` is everything its blobs imported,
+    ///   and `pending` is everything the document still waits for when the batch ends.
+    /// - `rollback_error` is `None` unless the whole batch was rolled back.
+    ///
+    /// # When the whole batch is rolled back
+    ///
+    /// The blobs of a batch reach the state together, in one closing checkout. When
+    /// the state rejects it, such as a list insert past the end from a forged update,
+    /// the whole batch is rolled back: the document is as it was before the call and
+    /// stays attached, and no event is emitted. Then:
+    ///
+    /// - `rollback_error` is `Some` with the error of that checkout,
+    /// - every blob that had imported is `RolledBack`, so no blob is `Imported`,
+    /// - a blob that failed on its own keeps its `Failed(error)`,
+    /// - `status.success` is empty.
+    ///
+    /// The checkout checks the batch as a whole and cannot say which blob it rejected.
+    /// To find it, import the `RolledBack` blobs one by one.
+    ///
+    /// # Errors
+    ///
+    /// `Err` means the call was refused and no blob was tried:
+    /// [`LoroError::ImportWhenInTxn`] while a transaction opened through
+    /// [`inner`](Self::inner) is uncommitted, or when called from an event or
+    /// pre-commit callback of this document. A blob that fails is not an `Err`.
+    ///
+    /// # Differences from `import_batch`
+    ///
+    /// - A blob whose metadata does not decode
+    ///   ([`decode_import_blob_meta`](Self::decode_import_blob_meta)) is `Failed`, and the
+    ///   others are imported. `import_batch` returns that error before it imports anything.
+    /// - A batch of one blob is a plain [`import`](Self::import) in both, which the
+    ///   state checks at once. Its failure is `Failed`, never a rollback.
+    /// - A detached document has no closing checkout, so nothing is rolled back there.
+    ///
+    /// # Example
+    /// ```
+    /// use loro::{ExportMode, ImportBlobOutcome, LoroDoc};
+    /// let a = LoroDoc::new();
+    /// a.get_text("t").insert(0, "A").unwrap();
+    /// let update = a.export(ExportMode::all_updates()).unwrap();
+    ///
+    /// let b = LoroDoc::new();
+    /// let detail = b.import_batch_detailed(&[update, b"not an update".to_vec()]).unwrap();
+    /// assert!(matches!(detail.blobs[0], ImportBlobOutcome::Imported(_)));
+    /// assert!(matches!(detail.blobs[1], ImportBlobOutcome::Failed(_)));
+    /// assert!(detail.rollback_error.is_none());
+    /// assert_eq!(b.get_text("t").to_string(), "A");
+    /// ```
+    #[inline]
+    pub fn import_batch_detailed(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportBatchDetail> {
+        self.doc.import_batch_detailed(bytes)
+    }
+
+    /// Like [`import_batch_detailed`](Self::import_batch_detailed), with the same history
+    /// mode as [`import_with_history_mode`](Self::import_with_history_mode).
+    #[inline]
+    pub fn import_batch_detailed_with_history_mode(
+        &self,
+        bytes: &[Vec<u8>],
+        mode: ImportHistoryMode,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.doc
+            .import_batch_detailed_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
     }
 
     /// Get a [Container] by container id.

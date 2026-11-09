@@ -75,8 +75,9 @@ over graceful degradation.
 - Imported changes that reuse local op ids are checked against local history
   before anything is applied (`src/oplog/known_history.rs`):
   [../../context/import-peer-id-reuse.md](../../context/import-peer-id-reuse.md).
-- `import_batch` force-detach, its batch-wide rollback scope, and the
-  never-exit-detached invariant:
+- `import_batch` force-detach, its batch-wide rollback scope, the
+  never-exit-detached invariant, partial success, and `import_batch_detailed`
+  (both run `import_blobs_as_batch`):
   [../../context/import-batch-atomicity.md](../../context/import-batch-atomicity.md).
 
 ## Commands

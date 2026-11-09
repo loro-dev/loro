@@ -8,8 +8,8 @@
 mod container_tree;
 
 use convert::{
-    import_blob_metadata_to_js, import_status_to_js_value, js_diff_to_inner_diff,
-    js_json_schema_to_loro_json_schema, js_to_id_span, js_to_version_vector,
+    import_batch_detail_to_js_value, import_blob_metadata_to_js, import_status_to_js_value,
+    js_diff_to_inner_diff, js_json_schema_to_loro_json_schema, js_to_id_span, js_to_version_vector,
     js_value_to_loro_value, loro_json_schema_to_js_json_schema, resolved_diff_to_js,
 };
 use js_sys::{Array, Object, Promise, Reflect, Uint8Array};
@@ -417,6 +417,8 @@ extern "C" {
     pub type JsCommitOption;
     #[wasm_bindgen(typescript_type = "ImportStatus")]
     pub type JsImportStatus;
+    #[wasm_bindgen(typescript_type = "ImportBatchDetail")]
+    pub type JsImportBatchDetail;
     #[wasm_bindgen(typescript_type = "(change: Change) => boolean")]
     pub type JsTravelChangeFunction;
     #[wasm_bindgen(typescript_type = "(string|number)[]")]
@@ -518,6 +520,11 @@ fn update_error_to_js(err: UpdateTimeoutError) -> JsValue {
         UpdateTimeoutError::Timeout => JsError::new("Update timeout").into(),
         UpdateTimeoutError::Loro(err) => JsError::new(&err.to_string()).into(),
     }
+}
+
+fn js_binary_array_to_vec(data: JsBinaryArray) -> JsResult<Vec<Vec<u8>>> {
+    let data: Array = data.dyn_into()?;
+    Ok(data.iter().map(|x| Uint8Array::new(&x).to_vec()).collect())
 }
 
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
@@ -1913,6 +1920,16 @@ impl LoroDoc {
     ///
     /// It's more efficient than importing updates one by one.
     ///
+    /// A batch is not all-or-nothing. When an update fails on its own, for example
+    /// with `UsedOpID` or bytes that do not decode, this throws, but the other updates
+    /// are still imported and stay in the document. So an error does not mean that
+    /// nothing was applied, and it does not say which update failed. Use
+    /// `importBatchDetailed` to get the result of each update. An error leaves the
+    /// document unchanged only when the batch failed as a whole: an update whose
+    /// metadata does not decode (`decodeImportBlobMeta` throws for it) fails the batch
+    /// before anything is imported, and a failure of the final checkout, which applies
+    /// the batch to the state, rolls the whole batch back.
+    ///
     /// @example
     /// ```ts
     /// import { LoroDoc } from "loro-crdt";
@@ -1927,17 +1944,60 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "importBatch")]
     pub fn import_batch(&self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
-        let data: Array = data.dyn_into()?;
-        let data = data
-            .iter()
-            .map(|x| {
-                let arr: Uint8Array = Uint8Array::new(&x);
-                arr.to_vec()
-            })
-            .collect::<Vec<_>>();
-
+        let data = js_binary_array_to_vec(data)?;
         let status = self.doc.import_batch(&data)?;
         Ok(import_status_to_js_value(status)?.into())
+    }
+
+    /// Import a batch of updates or snapshots and report what happened to each of them.
+    ///
+    /// It imports as `importBatch` does: any order, one state update and one event for
+    /// the whole batch. Where `importBatch` throws when an update fails, this returns
+    /// an `ImportBatchDetail`:
+    ///
+    /// - `blobs[i]` is the outcome of `data[i]`:
+    ///   - `{ type: "imported", status }`: the update is in the document. `status` is
+    ///     the `ImportStatus` of that update. Its `pending` ops wait for a dependency,
+    ///     which a later update of the same batch may have brought.
+    ///   - `{ type: "failed", error }`: the update failed on its own, and the others
+    ///     were imported without it. `error` is the message `import` would throw.
+    ///   - `{ type: "rolledBack" }`: see below.
+    /// - `status` is the batch as a whole: `success` is everything it imported, and
+    ///   `pending` is everything the document still waits for when the batch ends.
+    /// - `rollbackError` is `null` unless the whole batch was rolled back.
+    ///
+    /// The updates of a batch reach the document state together, in one final
+    /// checkout. When the state rejects it, such as a list insert past the end from a
+    /// forged update, the whole batch is rolled back: the document is as it was before
+    /// the call, and no event is emitted. `rollbackError` then holds the error, every
+    /// update that had imported is `rolledBack`, none is `imported`, and
+    /// `status.success` is empty. An update that failed on its own keeps its `failed`
+    /// entry. The checkout checks the batch as a whole and cannot say which update it
+    /// rejected: import the `rolledBack` ones one at a time to find it.
+    ///
+    /// Two differences from `importBatch`: an update whose metadata does not decode
+    /// (`decodeImportBlobMeta` throws for it) is `failed` and the others are imported,
+    /// where `importBatch` throws before it imports anything. And a batch of one update is a plain `import`, which the state
+    /// checks at once, so its failure is `failed` and never a rollback.
+    ///
+    /// @example
+    /// ```ts
+    /// import { LoroDoc } from "loro-crdt";
+    ///
+    /// const doc = new LoroDoc();
+    /// doc.getText("text").insert(0, "Hello");
+    /// const updates = doc.export({ mode: "update" });
+    /// const doc2 = new LoroDoc();
+    /// const detail = doc2.importBatchDetailed([updates, new Uint8Array([1, 2, 3])]);
+    /// console.log(detail.blobs[0].type); // "imported"
+    /// console.log(detail.blobs[1].type); // "failed"
+    /// console.log(detail.rollbackError); // null
+    /// ```
+    #[wasm_bindgen(js_name = "importBatchDetailed")]
+    pub fn import_batch_detailed(&self, data: JsBinaryArray) -> JsResult<JsImportBatchDetail> {
+        let data = js_binary_array_to_vec(data)?;
+        let detail = self.doc.import_batch_detailed(&data)?;
+        Ok(import_batch_detail_to_js_value(detail)?.into())
     }
 
     /// Get the shallow json format of the document state.
@@ -7212,6 +7272,37 @@ export type CounterSpan = { start: number, end: number };
 export type ImportStatus = {
   success: Map<PeerID, CounterSpan>,
   pending: Map<PeerID, CounterSpan> | null
+}
+
+/**
+ * What happened to one update of `LoroDoc.importBatchDetailed`.
+ *
+ * - `imported`: the update is in the document, with its own `ImportStatus`.
+ * - `failed`: the update failed on its own; `error` is the message `import` would throw.
+ * - `rolledBack`: the update imported, but the final checkout failed and the whole
+ *   batch was rolled back. The error is in `ImportBatchDetail.rollbackError`.
+ */
+export type ImportBlobOutcome =
+  | { type: "imported", status: ImportStatus }
+  | { type: "failed", error: string }
+  | { type: "rolledBack" };
+
+/**
+ * The result of `LoroDoc.importBatchDetailed`.
+ */
+export type ImportBatchDetail = {
+  /** One outcome per update, in the order they were passed. */
+  blobs: ImportBlobOutcome[],
+  /**
+   * The batch as a whole: `success` is everything it imported, and `pending` is
+   * everything the document still waits for when the batch ends.
+   */
+  status: ImportStatus,
+  /**
+   * The error of the final checkout when it failed and the whole batch was rolled
+   * back, otherwise `null`. When set, no update is `imported`.
+   */
+  rollbackError: string | null
 }
 
 export type Frontiers = OpId[];

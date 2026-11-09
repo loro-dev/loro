@@ -26,8 +26,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/internal-encoding.md](context/internal-encoding.md).
 - Mergeable container model, marker/cid rules, tests, and common pitfalls:
   [context/mergeable-containers.md](context/mergeable-containers.md).
-- `import_batch` force-detach, batch-wide rollback scope, and the never-exit-detached
-  invariant: [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
+- `import_batch` force-detach, batch-wide rollback scope, the never-exit-detached
+  invariant, partial success and the per-blob outcomes of `import_batch_detailed`:
+  [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
 - Which root containers are visible (history-touched vs handle-acquired), and
   why replays materialize empty roots:
   [context/root-container-visibility.md](context/root-container-visibility.md).

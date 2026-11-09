@@ -67,6 +67,7 @@
 
 - `import(...)`: one payload at a time.
 - `importBatch(...)`: preferred for multiple updates or mixed snapshot/update payloads because diffing and event emission are coalesced.
+- `importBatch(...)` is not all-or-nothing: when one payload fails it throws, but the other payloads stay imported. Use `importBatchDetailed(...)` (Rust: `import_batch_detailed`) when you need the result of each payload: `imported`, `failed` with its error, or `rolledBack` when the final checkout failed and nothing of the batch was kept (`rollbackError` is then set).
 - Imports can succeed partially when dependencies are missing. Pending ranges mean the document knows about those operations but cannot apply them yet.
 
 ## Persistence Pattern

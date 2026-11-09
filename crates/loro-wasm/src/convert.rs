@@ -2,7 +2,9 @@ use js_sys::{Array, Map, Object, Reflect, Uint8Array};
 use loro_common::{ContainerID, IdLp, LoroListValue, LoroMapValue, LoroValue};
 use loro_delta::{array_vec, DeltaRopeBuilder};
 use loro_internal::delta::{ResolvedMapDelta, ResolvedMapValue};
-use loro_internal::encoding::{ImportBlobMetadata, ImportStatus};
+use loro_internal::encoding::{
+    ImportBatchDetail, ImportBlobMetadata, ImportBlobOutcome, ImportStatus,
+};
 use loro_internal::event::{Diff, ListDeltaMeta, ListDiff, TextDiff, TextMeta};
 use loro_internal::handler::{Handler, TextDelta, ValueOrHandler};
 use loro_internal::json::JsonSchema;
@@ -456,6 +458,41 @@ pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsResult<JsValu
             None => JsValue::null(),
             Some(pending) => id_span_vector_to_js_value(pending),
         },
+    )?;
+    Ok(obj.into())
+}
+
+pub(crate) fn import_batch_detail_to_js_value(detail: ImportBatchDetail) -> JsResult<JsValue> {
+    let set = |obj: &Object, key: &str, value: &JsValue| -> JsResult<()> {
+        Reflect::set(obj, &JsValue::from_str(key), value)?;
+        Ok(())
+    };
+    let blobs = Array::new();
+    for blob in detail.blobs {
+        let obj = Object::new();
+        match blob {
+            ImportBlobOutcome::Imported(status) => {
+                set(&obj, "type", &JsValue::from_str("imported"))?;
+                set(&obj, "status", &import_status_to_js_value(status)?)?;
+            }
+            ImportBlobOutcome::Failed(err) => {
+                set(&obj, "type", &JsValue::from_str("failed"))?;
+                set(&obj, "error", &JsValue::from(err))?;
+            }
+            ImportBlobOutcome::RolledBack => {
+                set(&obj, "type", &JsValue::from_str("rolledBack"))?;
+            }
+        }
+        blobs.push(&obj);
+    }
+
+    let obj = Object::new();
+    set(&obj, "blobs", &blobs)?;
+    set(&obj, "status", &import_status_to_js_value(detail.status)?)?;
+    set(
+        &obj,
+        "rollbackError",
+        &detail.rollback_error.map_or(JsValue::NULL, JsValue::from),
     )?;
     Ok(obj.into())
 }

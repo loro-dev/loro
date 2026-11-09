@@ -119,6 +119,10 @@ fn every_import_entry_is_rejected_in_a_transaction() {
     assert_import_rejected(doc.import_json_updates(json));
     assert_import_rejected(doc.import_batch(&[updates.clone(), snapshot.clone()]));
     assert_import_rejected(doc.import_batch(&[updates.clone()]));
+    // The detailed batch is refused as a call: no blob was tried, so there is no detail.
+    assert_import_rejected(doc.import_batch_detailed(&[updates.clone(), snapshot.clone()]));
+    assert_import_rejected(doc.import_batch_detailed(&[updates.clone()]));
+    assert_import_rejected(doc.import_batch_detailed(&[updates.clone(), vec![1, 2, 3]]));
     doc.get_map("m")
         .insert_with_txn(&mut txn, "local", LoroValue::from(1))
         .unwrap();
@@ -153,6 +157,8 @@ fn import_in_a_transaction_of_an_auto_commit_doc_is_rejected() {
     let txn = doc.txn().unwrap();
     assert_import_rejected(doc.import(&updates));
     assert_import_rejected(doc.import_batch(&[updates.clone(), updates.clone()]));
+    assert_import_rejected(doc.import_batch_detailed(&[updates.clone(), updates.clone()]));
+    assert_import_rejected(doc.import_batch_detailed(&[updates.clone()]));
     match doc.get_map("m").insert("k", 1) {
         Err(LoroError::DuplicatedTransactionError) => {}
         other => panic!("expected DuplicatedTransactionError, got {other:?}"),
@@ -178,12 +184,17 @@ fn batch_in_a_transaction_with_detached_editing_is_rejected() {
         doc.set_detached_editing(true);
         let txn = doc.txn().unwrap();
         assert_import_rejected(doc.import_batch(&[updates.clone(), updates.clone()]));
+        assert_import_rejected(doc.import_batch_detailed(&[updates.clone(), updates.clone()]));
         assert!(!doc.is_detached());
         txn.commit().unwrap();
         let status = doc
             .import_batch(&[updates.clone(), updates.clone()])
             .unwrap();
         assert!(status.pending.is_none());
+        let detail = doc
+            .import_batch_detailed(&[updates.clone(), updates.clone()])
+            .unwrap();
+        assert!(detail.rollback_error.is_none() && detail.status.pending.is_none());
     }
 }
 
@@ -341,13 +352,17 @@ fn call_back_into(doc: &LoroDoc, update: &[u8], seen: &Seen) {
     let batch = doc
         .import_batch(&[update.to_vec(), update.to_vec()])
         .map(|_| ());
-    seen.lock()
-        .unwrap()
-        .push(format!("{txn:?} {import:?} {json:?} {batch:?}"));
+    let detailed = doc
+        .import_batch_detailed(&[update.to_vec(), update.to_vec()])
+        .map(|_| ());
+    let detailed_one = doc.import_batch_detailed(&[update.to_vec()]).map(|_| ());
+    seen.lock().unwrap().push(format!(
+        "{txn:?} {import:?} {json:?} {batch:?} {detailed:?} {detailed_one:?}"
+    ));
 }
 
-const REFUSED: &str =
-    "Err(DuplicatedTransactionError) Err(ImportWhenInTxn) Err(ImportWhenInTxn) Err(ImportWhenInTxn)";
+const REFUSED: &str = "Err(DuplicatedTransactionError) Err(ImportWhenInTxn) Err(ImportWhenInTxn) \
+     Err(ImportWhenInTxn) Err(ImportWhenInTxn) Err(ImportWhenInTxn)";
 
 /// The transaction lock is not reentrant, and events run under it: from an import, a
 /// checkout and the closing checkout of a batch. A callback that started a transaction
@@ -368,6 +383,12 @@ fn event_callbacks_get_errors_instead_of_waiting_for_themselves() {
     let other = {
         let doc = writer(6);
         doc.get_map("n").insert("k", 1).unwrap();
+        doc.commit_then_renew();
+        all_updates(&doc)
+    };
+    let third = {
+        let doc = writer(8);
+        doc.get_map("o").insert("k", 1).unwrap();
         doc.commit_then_renew();
         all_updates(&doc)
     };
@@ -397,9 +418,12 @@ fn event_callbacks_get_errors_instead_of_waiting_for_themselves() {
         doc.attach();
         doc.import_batch(&[second.clone(), other.clone()]).unwrap();
         counts.push(calls());
+        doc.import_batch_detailed(&[second.clone(), third.clone()])
+            .unwrap();
+        counts.push(calls());
         // Every step ran a callback: import, checkout, checkout to latest, the closing
-        // checkout of a detached batch, and an attached batch.
-        assert_eq!(counts, [1, 2, 3, 4, 5], "auto_commit={auto_commit}");
+        // checkout of a detached batch, an attached batch, and a detailed batch.
+        assert_eq!(counts, [1, 2, 3, 4, 5, 6], "auto_commit={auto_commit}");
 
         let seen = seen.lock().unwrap();
         assert!(seen.iter().all(|s| s == REFUSED), "{seen:?}");

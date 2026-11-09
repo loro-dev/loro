@@ -16,14 +16,25 @@ To recover: import the missing dependency, after which the waiting updates apply
 
 **`import` returns `UsedOpID` for conflicting data that brings no new ops.** Bytes whose ops reuse ids the document already has with different content used to return `Ok` and drop them silently. They now throw `UsedOpID`, as do updates that conflict with updates still waiting for a dependency, and a single update that contradicts itself. Importing what the document already has, or already holds as pending, is still a no-op. Data relayed through JSON can differ in representation only (numbers, binary, non-finite doubles): `importJsonUpdates` accepts that, and in Rust so do `import_with_history_mode` and `import_batch_with_history_mode` with `ImportHistoryMode::JsonLossy`.
 
-**`importBatch` is not all-or-nothing.** When one update in a batch fails on its own, the batch throws and keeps what the other updates imported, including a dependency that lets pending updates apply. Only a failure of the final checkout rolls the whole batch back. An error from `importBatch` does not mean nothing was applied.
+**`importBatch` is not all-or-nothing.** When one update in a batch fails on its own, the batch throws and keeps what the other updates imported, including a dependency that lets pending updates apply. Only a failure of the final checkout rolls the whole batch back. An error from `importBatch` does not mean nothing was applied, and it does not say which update failed.
+
+**New `importBatchDetailed` reports each update of a batch.** It imports as `importBatch` does and, instead of throwing for an update that fails, returns `{ blobs, status, rollbackError }`. `blobs[i]` is the outcome of the i-th update you passed:
+
+- `{ type: "imported", status }`: the update is in the document. `status` is the `ImportStatus` of that update: its `pending` ops wait for a dependency, which a later update of the same batch may have brought.
+- `{ type: "failed", error }`: the update failed on its own, for example with `UsedOpID` or a checksum mismatch. The other updates are not affected.
+- `{ type: "rolledBack" }`: the update imported, but the final checkout failed and the whole batch was rolled back.
+
+`status.success` is everything the batch imported and `status.pending` is everything the document still waits for when the batch ends. `rollbackError` is `null` unless the final checkout failed. Then it holds the error, the document is as it was before the call, no entry is `imported`, and no event is emitted. The checkout checks the batch as a whole, so it cannot say which update it rejected: import the updates one at a time to find it. Updates that failed on their own keep their `failed` entry in that case.
+
+Two differences from `importBatch`: an update whose metadata does not decode (`decodeImportBlobMeta` throws for it) is `failed` and the others are imported, where `importBatch` throws before it imports anything. And a batch of one is a plain import, so the state checks it at once and its failure is `failed`, never `rolledBack`. In Rust this is `LoroDoc::import_batch_detailed` and `import_batch_detailed_with_history_mode`, returning `ImportBatchDetail` with one `ImportBlobOutcome` per blob. They return `Err(ImportWhenInTxn)` when the call is refused as a whole, as `import_batch` does. Nothing was tried then.
 
 **Rust: `UpdateTimeoutError` gains `Loro(LoroError)`.** `LoroText::update` and `update_by_line` return the edit's own error, such as a deleted container or a read-only document, instead of panicking. Exhaustive `match`es on `UpdateTimeoutError` need the new arm.
 
 **New and deprecated APIs.**
 
 - Rust: new `LoroDoc::try_attach` and `LoroDoc::try_checkout_to_latest` return the error, and the doc stays detached at its version and usable. `attach`, `checkout_to_latest` and `find_id_spans_between` are deprecated in favor of `try_attach`, `try_checkout_to_latest` and `try_find_id_spans_between`. They still panic on that input, now after releasing the document's locks.
-- JS: `attach()` and `checkoutToLatest()` now throw where they trapped the WASM instance. `findIdSpansBetween` already threw. No JS API is added or deprecated.
+- JS: `attach()` and `checkoutToLatest()` now throw where they trapped the WASM instance. `findIdSpansBetween` already threw. No JS API is deprecated.
+- New `importBatchDetailed` (Rust: `import_batch_detailed`, `import_batch_detailed_with_history_mode`, `ImportBatchDetail`, `ImportBlobOutcome`), described above.
 - Rust: `checkout` returns `TransactionError` while a transaction opened through `inner().txn()` is uncommitted, where it used to panic.
 - `export({ mode: "snapshot" })` of a detached document throws when its latest version cannot be checked out, where it panicked.
 
