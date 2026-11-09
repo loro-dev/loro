@@ -44,7 +44,7 @@ pub fn main() {
     println!("Memory cost after checkout {}", get_mem_usage());
     println!("Time cost {:?}", start.elapsed());
     let start = Instant::now();
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     println!("Checkout to latest time cost {:?}", start.elapsed());
 
     let start = Instant::now();

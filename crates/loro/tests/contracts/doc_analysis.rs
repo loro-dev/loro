@@ -114,7 +114,7 @@ fn checkout_history_cache_and_diff_application_follow_contract() -> anyhow::Resu
     assert!(!doc.has_history_cache());
     doc.free_diff_calculator();
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert!(!doc.is_detached());
     assert_eq!(json_value(&doc), expected_v2);
 
@@ -176,7 +176,9 @@ fn change_traversal_exposes_changed_containers_and_id_spans() -> anyhow::Result<
         .get_changed_containers_in(ID::new(first_change.id.peer, i32::MAX), 1)
         .is_empty());
 
-    let between = doc.find_id_spans_between(&Frontiers::from_id(first), &Frontiers::from_id(third));
+    let between = doc
+        .try_find_id_spans_between(&Frontiers::from_id(first), &Frontiers::from_id(third))
+        .unwrap();
     assert_eq!(
         between.forward.get(&103).map(|span| (span.start, span.end)),
         Some((first.counter + 1, third.counter + 1))

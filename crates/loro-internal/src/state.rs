@@ -2282,9 +2282,7 @@ impl DocState {
 
     pub(crate) fn check_before_decode_snapshot(&self) -> LoroResult<()> {
         if self.is_in_txn() {
-            return Err(LoroError::DecodeError(
-                "State is in txn".to_string().into_boxed_str(),
-            ));
+            return Err(LoroError::ImportWhenInTxn);
         }
 
         if !self.can_import_snapshot() {

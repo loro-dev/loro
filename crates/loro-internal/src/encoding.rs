@@ -235,6 +235,43 @@ pub struct ImportStatus {
     pub pending: Option<VersionRange>,
 }
 
+/// What happened to one blob of [`LoroDoc::import_batch_detailed`](crate::LoroDoc::import_batch_detailed).
+#[derive(Debug, PartialEq)]
+pub enum ImportBlobOutcome {
+    /// The blob was imported, and its changes are in the document.
+    ///
+    /// This is the status its import returned at its turn in the batch. Changes in
+    /// `pending` wait for a dependency, which a later blob of the same batch may have
+    /// brought: the status of that blob then counts them in its `success`.
+    Imported(ImportStatus),
+    /// The blob failed on its own, and the other blobs were imported without it.
+    ///
+    /// Conflicting ids ([`LoroError::UsedOpID`]), bytes that do not decode and a bad
+    /// checksum are found before anything of the blob is applied.
+    Failed(LoroError),
+    /// The blob imported, but the closing checkout of the batch failed and the whole
+    /// batch was rolled back, so nothing of this blob is in the document.
+    ///
+    /// The error is in [`ImportBatchDetail::rollback_error`]. The checkout checks the
+    /// batch as a whole and cannot say which blob it rejected.
+    RolledBack,
+}
+
+/// The result of [`LoroDoc::import_batch_detailed`](crate::LoroDoc::import_batch_detailed).
+#[derive(Debug, PartialEq)]
+pub struct ImportBatchDetail {
+    /// One outcome per blob, in the order the blobs were passed.
+    pub blobs: Vec<ImportBlobOutcome>,
+    /// The batch as a whole: `success` is everything its blobs imported, and `pending`
+    /// is everything the document still waits for when the batch ends, updates
+    /// parked before the batch included.
+    pub status: ImportStatus,
+    /// The error of the closing checkout, when it failed and the whole batch was
+    /// rolled back. The document is then as it was before the call, no blob is
+    /// [`ImportBlobOutcome::Imported`], and `status.success` is empty.
+    pub rollback_error: Option<LoroError>,
+}
+
 pub(crate) fn decode_oplog(
     oplog: &mut OpLog,
     parsed: ParsedHeaderAndBody,

@@ -75,7 +75,7 @@ loro = "^1"
 
 - Containers: [`get_text`](struct.LoroDoc.html#method.get_text), [`get_map`](struct.LoroDoc.html#method.get_map), [`get_list`](struct.LoroDoc.html#method.get_list), [`get_movable_list`](struct.LoroDoc.html#method.get_movable_list), [`get_tree`](struct.LoroDoc.html#method.get_tree)
 - Import/Export: [`export(ExportMode::…)`](struct.LoroDoc.html#method.export), [`import`](struct.LoroDoc.html#method.import), [`from_snapshot`](struct.LoroDoc.html#method.from_snapshot)
-- Versioning: [`oplog_vv`](struct.LoroDoc.html#method.oplog_vv), [`state_frontiers`](struct.LoroDoc.html#method.state_frontiers), [`checkout`/`checkout_to_latest`](struct.LoroDoc.html#method.checkout), [`revert_to`](struct.LoroDoc.html#method.revert_to), [`fork`](struct.LoroDoc.html#method.fork)
+- Versioning: [`oplog_vv`](struct.LoroDoc.html#method.oplog_vv), [`state_frontiers`](struct.LoroDoc.html#method.state_frontiers), [`checkout`](struct.LoroDoc.html#method.checkout)/[`try_checkout_to_latest`](struct.LoroDoc.html#method.try_checkout_to_latest), [`revert_to`](struct.LoroDoc.html#method.revert_to), [`fork`](struct.LoroDoc.html#method.fork)
 - Events: [`subscribe`](struct.LoroDoc.html#method.subscribe), [`subscribe_root`](struct.LoroDoc.html#method.subscribe_root), [`subscribe_local_update`](struct.LoroDoc.html#method.subscribe_local_update) (send deltas to peers)
 - Paths/JSON: [`get_path_to_container`](struct.LoroDoc.html#method.get_path_to_container), [`get_deep_value`](struct.LoroDoc.html#method.get_deep_value) / [`ToJson`](trait.ToJson.html) (`to_json_value()`), optional [`jsonpath` (feature)](struct.LoroDoc.html#method.jsonpath)
 
@@ -130,7 +130,7 @@ doc.checkout(&v0).unwrap();
 assert_eq!(text.to_string(), "Hello");
 
 // Return to latest and revert
-doc.checkout_to_latest();
+doc.try_checkout_to_latest().unwrap();
 doc.revert_to(&v0).unwrap();
 assert_eq!(text.to_string(), "Hello");
 ```

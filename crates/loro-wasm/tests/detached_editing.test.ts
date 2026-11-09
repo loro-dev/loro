@@ -92,4 +92,43 @@ describe("detached editing", () => {
         undo.redo();
         expect(doc.getText("text").toString()).toBe("Hello alice!");
     });
+
+    it("a peer with later ops gets an error from the write, not a trap", () => {
+        const doc = new LoroDoc();
+        doc.setPeerId(7);
+        const text = doc.getText("text");
+        text.insert(0, "abc");
+        doc.commit();
+        const base = doc.frontiers();
+        text.insert(3, "de");
+        doc.commit();
+
+        doc.setDetachedEditing(true);
+        doc.checkout(base);
+        doc.setPeerId(7);
+        expect(() => text.insert(1, "XY")).toThrow(/Concurrent ops with the same peer id/);
+        expect(() => text.update("aXbc")).toThrow(/Concurrent ops with the same peer id/);
+        expect(text.toString()).toBe("abc");
+
+        doc.setPeerId(8);
+        text.insert(1, "XY");
+        doc.commit();
+        expect(text.toString()).toBe("aXYbc");
+    });
+
+    it("update of a deleted text throws the edit's error", () => {
+        const doc = new LoroDoc();
+        const map = doc.getMap("m");
+        const text = map.setContainer("t", new LoroText());
+        text.insert(0, "abc");
+        doc.commit();
+        map.delete("t");
+        doc.commit();
+
+        expect(() => text.update("abd")).toThrow(/deleted/);
+        expect(() => text.updateByLine("abd\n")).toThrow(/deleted/);
+        map.set("k", 1);
+        doc.commit();
+        expect(doc.toJSON()).toEqual({ m: { k: 1 } });
+    });
 })

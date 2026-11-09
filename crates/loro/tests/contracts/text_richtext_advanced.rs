@@ -300,7 +300,7 @@ fn cursor_editor_and_checkout_survive_remote_imports() -> LoroResult<()> {
     assert_eq!(text.get_editor_at_unicode_pos(1), Some(1));
     assert_eq!(text.get_editor_at_unicode_pos(2), Some(1));
 
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
     assert_eq!(
         doc.get_cursor_pos(&cursor)
             .expect("cursor should resolve")

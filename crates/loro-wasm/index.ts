@@ -510,6 +510,7 @@ decorateMethods(LoroDoc.prototype, [
   "import",
   "importUpdateBatch",
   "importBatch",
+  "importBatchDetailed",
   "travelChangeAncestors",
   "getChangedContainersIn",
   "diff",

@@ -161,8 +161,8 @@ fn rollback_after_concurrent_imports_matches_fresh_replica() {
         fresh.checkout(f).unwrap();
         assert_eq!(text_a.to_string(), fresh_text.to_string());
     }
-    doc_a.checkout_to_latest();
-    fresh.checkout_to_latest();
+    doc_a.try_checkout_to_latest().unwrap();
+    fresh.try_checkout_to_latest().unwrap();
     assert_eq!(text_a.to_string(), fresh_text.to_string());
 }
 
@@ -307,7 +307,7 @@ fn checkout_before_first_import() {
     a.commit();
     // checkout on the persistent calculator, before any import
     a.checkout(&f0).unwrap();
-    a.checkout_to_latest();
+    a.try_checkout_to_latest().unwrap();
 
     let b = LoroDoc::new();
     b.set_peer_id(2).unwrap();
@@ -346,8 +346,8 @@ fn checkout_before_first_import() {
         fresh.checkout(f).unwrap();
         assert_eq!(ta.to_string(), ft.to_string());
     }
-    a.checkout_to_latest();
-    fresh.checkout_to_latest();
+    a.try_checkout_to_latest().unwrap();
+    fresh.try_checkout_to_latest().unwrap();
     assert_eq!(ta.to_string(), ft.to_string());
 }
 
@@ -660,8 +660,8 @@ fn styles_with_checkout_history() {
             "checkout richtext mismatch"
         );
     }
-    a.checkout_to_latest();
-    fresh.checkout_to_latest();
+    a.try_checkout_to_latest().unwrap();
+    fresh.try_checkout_to_latest().unwrap();
     assert_eq!(
         ta.get_richtext_value().to_json(),
         ft.get_richtext_value().to_json()
@@ -704,7 +704,7 @@ fn detached_import_and_checkout() {
             a.checkout(cps.last().unwrap()).unwrap();
             let more = b.export(ExportMode::all_updates()).unwrap();
             a.import(&more).unwrap();
-            a.checkout_to_latest();
+            a.try_checkout_to_latest().unwrap();
         }
     }
     let fresh = LoroDoc::new();

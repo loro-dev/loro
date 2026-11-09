@@ -205,7 +205,7 @@ fn tree_import_batch_and_checkout_to_latest_preserve_divergent_history() -> Loro
         json!("base")
     );
 
-    merged.checkout_to_latest();
+    merged.try_checkout_to_latest().unwrap();
     assert!(!merged.is_detached());
     assert_eq!(merged_tree.children(root), Some(vec![gamma, alpha]));
     assert_eq!(merged_tree.parent(beta), Some(TreeParentId::Deleted));

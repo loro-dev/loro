@@ -31,7 +31,7 @@ fn fork_and_detached_editing_follow_contract() -> anyhow::Result<()> {
     doc.set_detached_editing(true);
     assert_ne!(doc.peer_id(), 1);
     text.insert(0, "X")?;
-    doc.attach();
+    doc.try_attach().unwrap();
     assert!(!doc.is_detached());
     assert_eq!(doc.get_text("text").to_string(), "Xhello");
 
@@ -69,7 +69,7 @@ fn checkout_and_history_cache_follow_contract() -> anyhow::Result<()> {
     doc.free_history_cache();
     assert!(!doc.has_history_cache());
 
-    doc.attach();
+    doc.try_attach().unwrap();
     assert!(!doc.is_detached());
     assert_eq!(deep_json(&doc), json!({"meta": {"a": 1, "b": 2, "c": 3}}));
 

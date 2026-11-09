@@ -201,7 +201,7 @@ fn check(setup: impl Fn(&LoroDoc), mutate: impl Fn(&LoroDoc), reuses_children: b
     assert_eq!(json(&r), expected_a, "checkout a");
     r.checkout(&b).unwrap();
     assert_eq!(json(&r), expected_b, "checkout b");
-    r.checkout_to_latest();
+    r.try_checkout_to_latest().unwrap();
     assert_eq!(json(&r), expected_b, "checkout latest");
 
     // undo / redo

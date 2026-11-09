@@ -26,14 +26,18 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/internal-encoding.md](context/internal-encoding.md).
 - Mergeable container model, marker/cid rules, tests, and common pitfalls:
   [context/mergeable-containers.md](context/mergeable-containers.md).
-- `import_batch` force-detach, batch-wide rollback scope, and the never-exit-detached
-  invariant: [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
+- `import_batch` force-detach, batch-wide rollback scope, the never-exit-detached
+  invariant, partial success and the per-blob outcomes of `import_batch_detailed`:
+  [context/import-batch-atomicity.md](context/import-batch-atomicity.md).
 - Which root containers are visible (history-touched vs handle-acquired), and
   why replays materialize empty roots:
   [context/root-container-visibility.md](context/root-container-visibility.md).
 - Imports that reuse local op ids (a shared peer id): the known-history check,
-  what counts as equal, and what it cannot catch:
+  parked changes, local writes, what counts as equal, and what it cannot catch:
   [context/import-peer-id-reuse.md](context/import-peer-id-reuse.md).
+- Frontiers, version vectors and peer ids from callers: normalization, APIs with
+  no error in their signature, a peer that cannot write in detached editing:
+  [context/version-input-contract.md](context/version-input-contract.md).
 - `apply_diff`/`revert_to` rollback of a failed batch, reused op ids, other
   threads: [context/apply-diff-atomicity.md](context/apply-diff-atomicity.md).
 - Movable-list `Move`/`Set` import validation, and why a move of a deleted element

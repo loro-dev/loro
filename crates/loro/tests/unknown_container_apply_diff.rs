@@ -300,7 +300,7 @@ fn existing_unknown_containers_keep_working() {
     let v1 = doc.state_frontiers();
     doc.checkout(&v0).unwrap();
     assert_eq!(json(&doc), serde_json::json!({"mlist": [null, "a", "b"]}));
-    doc.checkout_to_latest();
+    doc.try_checkout_to_latest().unwrap();
 
     doc.revert_to(&v0).unwrap();
     doc.commit();
@@ -391,7 +391,7 @@ fn import_and_checkout_unknown_container_created_and_edited_together() {
         assert_eq!(doc.get_deep_value().to_json_value(), expected);
         doc.checkout(&Default::default()).unwrap();
         assert!(doc.get_map("map").get("k").is_none());
-        doc.checkout_to_latest();
+        doc.try_checkout_to_latest().unwrap();
         assert_eq!(doc.get_deep_value().to_json_value(), expected);
     }
 }

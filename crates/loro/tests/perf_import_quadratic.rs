@@ -76,7 +76,7 @@ fn perf_import_insert_split_quadratic_e2e() {
     doc_d.import(&updates_b).unwrap();
     let detached_elapsed = start.elapsed();
     let start = Instant::now();
-    doc_d.checkout_to_latest();
+    doc_d.try_checkout_to_latest().unwrap();
     let attach_elapsed = start.elapsed();
     assert_eq!(text_d.len_unicode(), doc_len + (fragments - 1));
     println!(
