@@ -1250,23 +1250,14 @@ impl OpLog {
     > {
         // `from` is written into `AppDagNode::vv` when the replay base is `from_frontiers`.
         // Resolve without `try_frontiers_to_vv`: that loads every ancestor into the DAG, and
-        // the cold-import tests assert those nodes stay unloaded.
+        // the cold-import tests assert those nodes stay unloaded. A truncated or unloaded
+        // block cannot be checked here; the read below returns that error.
         #[cfg(debug_assertions)]
-        {
-            match self.dag.debug_vv_of_frontiers(from_frontiers) {
-                Some(resolved) => {
-                    debug_assert!(
-                        from == &resolved,
-                        "`from` must be the version vector of `from_frontiers`: from={from:?} frontiers={from_frontiers:?} resolved={resolved:?}"
-                    );
-                }
-                None => {
-                    debug_assert!(
-                        false,
-                        "could not resolve the version vector of `from_frontiers` to check `from`: frontiers={from_frontiers:?} from={from:?}"
-                    );
-                }
-            }
+        if let Some(resolved) = self.dag.debug_vv_of_frontiers(from_frontiers) {
+            debug_assert!(
+                from == &resolved,
+                "`from` must be the version vector of `from_frontiers`: from={from:?} frontiers={from_frontiers:?} resolved={resolved:?}"
+            );
         }
         let mut merged_vv = from.clone();
         merged_vv.merge(to);

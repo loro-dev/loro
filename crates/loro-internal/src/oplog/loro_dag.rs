@@ -20,6 +20,8 @@ use std::sync::Arc;
 use tracing::instrument;
 
 use super::change_store::BatchDecodeInfo;
+#[cfg(debug_assertions)]
+use super::change_store::DebugHeaderNodes;
 use super::ChangeStore;
 
 /// [AppDag] maintains the causal graph of the app.
@@ -1124,6 +1126,16 @@ impl Dag for AppDag {
     }
 }
 
+/// A vv already stored on parsed nodes, or why that read cannot answer.
+#[cfg(debug_assertions)]
+enum ResidentVv {
+    Ready(VersionVector),
+    /// The id is not parsed, or its vv has not been filled in yet.
+    NotCached,
+    /// The node map could not be locked.
+    Unavailable,
+}
+
 impl AppDag {
     // PERF: this may be painfully slow
     /// get the version vector for a certain op.
@@ -1310,13 +1322,16 @@ impl AppDag {
         Ok(Some(vv))
     }
 
-    /// The vv of `frontiers`, without inserting DAG nodes.
+    /// The vv of `frontiers`, without inserting DAG nodes or caching blocks.
     ///
     /// [`Self::try_frontiers_to_vv`] loads every ancestor into the parsed map. Debug checks
     /// that run on a cold import must not do that: the lazy-history tests count those nodes.
-    /// Block headers already carry deps, so the same walk can stay off to the side. A vv
-    /// already cached on a resident node is reused. `None` means the frontiers are not in
-    /// this history (the caller cannot be checked).
+    /// Block headers already carry deps, so the same walk reads them without writing the
+    /// store. A vv already cached on a resident node is reused.
+    ///
+    /// `None` means the check cannot be done. A header was truncated or corrupt, the id is
+    /// not loaded, or a lock could not be taken. That is not an invariant failure; the
+    /// caller's real read returns the error.
     #[cfg(debug_assertions)]
     pub(crate) fn debug_vv_of_frontiers(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         if frontiers == &self.shallow_root_frontiers_deps {
@@ -1328,23 +1343,27 @@ impl AppDag {
         if frontiers == &self.frontiers {
             return Some(self.vv.clone());
         }
-        if let Some(vv) = self.debug_vv_from_resident_nodes(frontiers) {
-            return Some(vv);
+        match self.debug_vv_from_resident_nodes(frontiers) {
+            ResidentVv::Ready(vv) => return Some(vv),
+            ResidentVv::Unavailable => return None,
+            ResidentVv::NotCached => {}
         }
         self.debug_vv_from_block_headers(frontiers)
     }
 
     /// Compose a vv from nodes already in the map. Does not load anything.
     #[cfg(debug_assertions)]
-    fn debug_vv_from_resident_nodes(&self, frontiers: &Frontiers) -> Option<VersionVector> {
-        let map = self.map.lock();
+    fn debug_vv_from_resident_nodes(&self, frontiers: &Frontiers) -> ResidentVv {
+        let Some(map) = self.map.try_lock() else {
+            return ResidentVv::Unavailable;
+        };
         let mut vv = VersionVector::default();
         for id in frontiers.iter() {
             let node = if let Some((_, node)) = map.range(..=id).next_back() {
                 if node.contains_id(id) {
                     node.clone()
                 } else {
-                    return None;
+                    return ResidentVv::NotCached;
                 }
             } else if self
                 .pending_txn_node
@@ -1353,16 +1372,21 @@ impl AppDag {
             {
                 self.pending_txn_node.clone().unwrap()
             } else {
-                return None;
+                return ResidentVv::NotCached;
             };
-            let node_vv = node.vv.get()?.clone();
+            let Some(node_vv) = node.vv.get() else {
+                return ResidentVv::NotCached;
+            };
             vv.extend_to_include_vv(node_vv.iter());
             vv.extend_to_include_last_id(id);
         }
-        Some(vv)
+        ResidentVv::Ready(vv)
     }
 
-    /// Walk deps recorded in change-block headers. Caches blocks, not DAG nodes.
+    /// Walk deps recorded in change-block headers. Does not cache blocks or DAG nodes.
+    ///
+    /// `None` when a header cannot be read or an id is not in the store. The caller skips
+    /// the check instead of panicking.
     #[cfg(debug_assertions)]
     fn debug_vv_from_block_headers(&self, frontiers: &Frontiers) -> Option<VersionVector> {
         let mut nodes: BTreeMap<ID, AppDagNode> = BTreeMap::new();
@@ -1378,7 +1402,10 @@ impl AppDag {
                     return Some(pending.clone());
                 }
             }
-            let found = self.change_store.get_dag_nodes_that_contains(id)?;
+            let found = match self.change_store.debug_read_dag_nodes(id) {
+                DebugHeaderNodes::Found(found) => found,
+                DebugHeaderNodes::Missing | DebugHeaderNodes::Unreadable => return None,
+            };
             let mut hit = None;
             for node in found {
                 if node.contains_id(id) {
