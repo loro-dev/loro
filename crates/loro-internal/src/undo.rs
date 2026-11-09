@@ -649,9 +649,7 @@ impl UndoManagerInner {
         let this: &mut Self = &mut this;
         // A backwards wall clock must not merge otherwise separate undo items.
         let elapsed = now - this.last_undo_time;
-        let in_merge_interval = this.merge_interval_in_ms > 0
-            && elapsed >= 0
-            && elapsed < this.merge_interval_in_ms;
+        let in_merge_interval = (0..this.merge_interval_in_ms).contains(&elapsed);
 
         // If group is active, but there is nothing in the group, don't merge
         // If the group is active and it's not the first push in the group, merge
