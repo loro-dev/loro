@@ -599,6 +599,8 @@ impl LoroDoc {
     /// - A blob whose metadata does not decode
     ///   ([`decode_import_blob_meta`](Self::decode_import_blob_meta)) is `Failed`, and the
     ///   others are imported. `import_batch` returns that error before it imports anything.
+    ///   When every blob fails this way, nothing is imported and the document is left as
+    ///   it was, including an uncommitted local change.
     /// - A batch of one blob is a plain [`import`](Self::import) in both, which the
     ///   state checks at once. Its failure is `Failed`, never a rollback.
     /// - A detached document has no closing checkout, so nothing is rolled back there.

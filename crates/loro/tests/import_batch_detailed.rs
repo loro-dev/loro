@@ -405,3 +405,218 @@ fn a_detached_doc_stays_detached_and_never_rolls_back() -> LoroResult<()> {
     assert!(doc.is_detached());
     Ok(())
 }
+
+fn failed_to_decode(outcome: &ImportBlobOutcome) -> bool {
+    matches!(
+        outcome,
+        ImportBlobOutcome::Failed(LoroError::DecodeError(_))
+    )
+}
+
+/// Two or more blobs, and none of them decode. `import_batch` returns before the
+/// batch critical section, so an uncommitted local change stays uncommitted.
+/// `import_batch_detailed` must do the same and only report `Failed`.
+#[test]
+fn undecodable_blobs_do_not_commit_a_local_draft() -> LoroResult<()> {
+    // The op is already in the oplog version vector. Committing it is visible as
+    // the pending transaction closing and a local update being published.
+    let doc = LoroDoc::new();
+    let emitted = Arc::new(AtomicUsize::new(0));
+    let emitted_in_callback = emitted.clone();
+    let _sub = doc.subscribe_local_update(Box::new(move |_| {
+        emitted_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    doc.get_text("t").insert(0, "draft")?;
+    let vv = doc.oplog_vv();
+    let pending = doc.get_pending_txn_len();
+    assert!(pending > 0);
+    assert_eq!(emitted.load(Ordering::SeqCst), 0);
+
+    let detail = doc.import_batch_detailed(&[vec![1, 2, 3], vec![]])?;
+    assert_eq!(detail.blobs.len(), 2);
+    assert!(
+        detail.blobs.iter().all(failed_to_decode),
+        "{:?}",
+        detail.blobs
+    );
+    assert_eq!(detail.status, ImportStatus::default());
+    assert_eq!(detail.rollback_error, None);
+    assert_eq!(doc.oplog_vv(), vv);
+    assert_eq!(doc.get_pending_txn_len(), pending);
+    assert_eq!(doc.get_text("t").to_string(), "draft");
+    assert!(!doc.is_detached());
+    assert_eq!(emitted.load(Ordering::SeqCst), 0);
+
+    let doc2 = LoroDoc::new();
+    let emitted2 = Arc::new(AtomicUsize::new(0));
+    let emitted2_in_callback = emitted2.clone();
+    let _sub2 = doc2.subscribe_local_update(Box::new(move |_| {
+        emitted2_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    doc2.get_text("t").insert(0, "draft")?;
+    let pending2 = doc2.get_pending_txn_len();
+    assert!(matches!(
+        doc2.import_batch(&[vec![1, 2, 3], vec![]]),
+        Err(LoroError::DecodeError(_))
+    ));
+    assert_eq!(doc2.get_pending_txn_len(), pending2);
+    assert_eq!(emitted2.load(Ordering::SeqCst), 0);
+    Ok(())
+}
+
+/// The closing checkout of a batch renews the peer id when detached editing is on.
+/// A batch whose metadata never decodes must not reach that checkout.
+#[test]
+fn undecodable_blobs_do_not_renew_the_peer_id() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(7)?;
+    doc.set_detached_editing(true);
+    assert_eq!(doc.peer_id(), 7);
+    assert!(!doc.is_detached());
+
+    let detail = doc.import_batch_detailed(&[vec![1], vec![2]])?;
+    assert_eq!(detail.blobs.len(), 2);
+    assert!(
+        detail.blobs.iter().all(failed_to_decode),
+        "{:?}",
+        detail.blobs
+    );
+    assert_eq!(detail.status, ImportStatus::default());
+    assert_eq!(detail.rollback_error, None);
+    assert_eq!(doc.peer_id(), 7);
+    assert!(!doc.is_detached());
+    Ok(())
+}
+
+/// One blob that decodes is still imported, and the batch still commits a local
+/// draft. `import_batch` keeps refusing the whole call before that.
+#[test]
+fn one_decodable_blob_still_imports_the_rest_and_commits() -> LoroResult<()> {
+    let other = LoroDoc::new();
+    other.set_peer_id(8)?;
+    other.get_map("m").insert("k", true)?;
+    other.commit();
+    let good = other.export(ExportMode::all_updates())?;
+
+    let doc = LoroDoc::new();
+    let emitted = Arc::new(AtomicUsize::new(0));
+    let emitted_in_callback = emitted.clone();
+    let _sub = doc.subscribe_local_update(Box::new(move |_| {
+        emitted_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    doc.set_peer_id(7)?;
+    doc.set_detached_editing(true);
+    doc.get_text("t").insert(0, "draft")?;
+    let pending = doc.get_pending_txn_len();
+    assert!(pending > 0);
+    assert_eq!(doc.peer_id(), 7);
+    assert_eq!(emitted.load(Ordering::SeqCst), 0);
+
+    let detail = doc.import_batch_detailed(&[good.clone(), vec![1, 2, 3]])?;
+    assert!(
+        matches!(detail.blobs[0], ImportBlobOutcome::Imported(_)),
+        "{:?}",
+        detail.blobs[0]
+    );
+    assert!(failed_to_decode(&detail.blobs[1]), "{:?}", detail.blobs[1]);
+    assert_eq!(detail.rollback_error, None);
+    assert_eq!(doc.get_text("t").to_string(), "draft");
+    assert_eq!(deep_json(&doc)["m"], serde_json::json!({"k": true}));
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    assert_eq!(emitted.load(Ordering::SeqCst), 1);
+    // Still the batch critical section: detached editing renews the peer id.
+    assert_ne!(doc.peer_id(), 7);
+    assert!(!doc.is_detached());
+
+    let twin = LoroDoc::new();
+    let emitted_twin = Arc::new(AtomicUsize::new(0));
+    let emitted_twin_in_callback = emitted_twin.clone();
+    let _sub_twin = twin.subscribe_local_update(Box::new(move |_| {
+        emitted_twin_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    twin.set_peer_id(7)?;
+    twin.set_detached_editing(true);
+    twin.get_text("t").insert(0, "draft")?;
+    let twin_pending = twin.get_pending_txn_len();
+    assert!(matches!(
+        twin.import_batch(&[good, vec![1, 2, 3]]),
+        Err(LoroError::DecodeError(_))
+    ));
+    assert_eq!(twin.get_pending_txn_len(), twin_pending);
+    assert_eq!(emitted_twin.load(Ordering::SeqCst), 0);
+    assert_eq!(twin.peer_id(), 7);
+    assert!(deep_json(&twin).get("m").is_none());
+    Ok(())
+}
+
+/// A batch of one is the plain import shortcut. It commits first, in both calls.
+#[test]
+fn a_single_undecodable_blob_still_commits_like_import_batch() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    let emitted = Arc::new(AtomicUsize::new(0));
+    let emitted_in_callback = emitted.clone();
+    let _sub = doc.subscribe_local_update(Box::new(move |_| {
+        emitted_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    doc.set_peer_id(7)?;
+    doc.get_text("t").insert(0, "draft")?;
+    let vv = doc.oplog_vv();
+    let pending = doc.get_pending_txn_len();
+    assert!(pending > 0);
+    let detail = doc.import_batch_detailed(&[vec![1, 2, 3]])?;
+    assert_eq!(detail.blobs.len(), 1);
+    assert!(failed_to_decode(&detail.blobs[0]), "{:?}", detail.blobs[0]);
+    assert_eq!(detail.rollback_error, None);
+    // The shortcut commits. The version vector already held the op.
+    assert_eq!(doc.oplog_vv(), vv);
+    assert_eq!(doc.get_pending_txn_len(), 0);
+    assert_eq!(emitted.load(Ordering::SeqCst), 1);
+    assert_eq!(doc.get_text("t").to_string(), "draft");
+
+    let twin = LoroDoc::new();
+    let emitted_twin = Arc::new(AtomicUsize::new(0));
+    let emitted_twin_in_callback = emitted_twin.clone();
+    let _sub_twin = twin.subscribe_local_update(Box::new(move |_| {
+        emitted_twin_in_callback.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    twin.set_peer_id(7)?;
+    twin.get_text("t").insert(0, "draft")?;
+    let twin_vv = twin.oplog_vv();
+    assert!(matches!(
+        twin.import_batch(&[vec![1, 2, 3]]),
+        Err(LoroError::DecodeError(_))
+    ));
+    assert_eq!(twin.oplog_vv(), twin_vv);
+    assert_eq!(twin.oplog_vv(), doc.oplog_vv());
+    assert_eq!(twin.get_pending_txn_len(), 0);
+    assert_eq!(emitted_twin.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+/// Parked updates stay parked, and `status.pending` still names them, when the new
+/// blobs all fail to decode.
+#[test]
+fn an_undecodable_batch_still_reports_updates_parked_before_it() -> LoroResult<()> {
+    let fork = Fork::new()?;
+    let doc = LoroDoc::new();
+    assert!(doc.import(&fork.update("A")?)?.pending.is_some());
+    let vv = doc.oplog_vv();
+    let detail = doc.import_batch_detailed(&[vec![1, 2, 3], vec![]])?;
+    assert_eq!(detail.blobs.len(), 2);
+    assert!(
+        detail.blobs.iter().all(failed_to_decode),
+        "{:?}",
+        detail.blobs
+    );
+    assert!(detail.status.success.is_empty());
+    assert_eq!(detail.status.pending, Some(range(&[(7, 0, 1)])));
+    assert_eq!(detail.rollback_error, None);
+    assert_eq!(doc.oplog_vv(), vv);
+    Ok(())
+}

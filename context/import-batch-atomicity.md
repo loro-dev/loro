@@ -160,11 +160,15 @@ import order** and keeps everything else, including a dep that unlocked parked
 changes. Only the closing checkout rolls the whole batch back. The owner kept this
 (loro-dev/loro#1258) and asked for a call that reports each blob.
 
-Both calls run `LoroDoc::import_blobs_as_batch` (`crates/loro-internal/src/loro.rs`),
-so `import_batch_detailed` holds the transaction lock, checks for an open manual
-transaction before it detaches, and owns the rollback scope exactly as `import_batch`
-does. `check_import_not_nested` runs first in both. These refusals are the outer
-`Err(ImportWhenInTxn)`: no blob was tried, so there is no detail to give.
+Once a blob's metadata has decoded, both calls run `LoroDoc::import_blobs_as_batch`
+(`crates/loro-internal/src/loro.rs`), so `import_batch_detailed` holds the transaction
+lock, checks for an open manual transaction before it detaches, and owns the rollback
+scope exactly as `import_batch` does. When none of the blobs decode, the detailed call
+returns each one as `Failed` before that section, as `import_batch` returns the decode
+error before it. The section commits the local transaction and, with detached editing,
+renews the peer id, so an empty decoded list must not enter it. `check_import_not_nested`
+runs first in both. These refusals are the outer `Err(ImportWhenInTxn)`: no blob was
+tried, so there is no detail to give.
 
 The result is `ImportBatchDetail { blobs, status, rollback_error }` (`src/encoding.rs`),
 with one `ImportBlobOutcome` per input blob:
@@ -192,7 +196,8 @@ with one `ImportBlobOutcome` per input blob:
   and part of the body but skips the checksum) is `Failed` for that blob alone, and
   the rest is imported. `import_batch` returns that error before it imports
   anything, and has to keep doing so. This is the one input where the two calls leave
-  different documents.
+  different documents. When every blob fails to decode, both leave the document
+  unchanged: the detailed call returns before the critical section too.
 - A batch of one is a plain attached import in both calls. The state validates it at
   once, so its failure is `Failed`, never `RolledBack`. The detailed call maps the
   import's `ImportWhenInTxn` to the outer `Err`; only the transaction checks produce

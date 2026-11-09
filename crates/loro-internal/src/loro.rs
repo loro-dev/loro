@@ -2803,8 +2803,11 @@ impl LoroDoc {
     ///
     /// It differs from `import_batch` for one input: a blob whose metadata does not
     /// decode ([`Self::decode_import_blob_meta`]) is `Failed` and the others are imported,
-    /// where `import_batch` returns that error before it imports anything. A batch of one is a plain import in both, which the
-    /// state checks at once, so its failure is `Failed` and never a rollback.
+    /// where `import_batch` returns that error before it imports anything. When none of
+    /// them decode, this returns before [`Self::import_blobs_as_batch`], as
+    /// `import_batch` does: that section would commit the local transaction and, with
+    /// detached editing, renew the peer id. A batch of one is a plain import in both,
+    /// which the state checks at once, so its failure is `Failed` and never a rollback.
     pub fn import_batch_detailed(&self, bytes: &[Vec<u8>]) -> LoroResult<ImportBatchDetail> {
         self.import_batch_detailed_with_history_mode(bytes, false)
     }
@@ -2871,6 +2874,24 @@ impl LoroDoc {
                 // Unlike `import_batch`, the other blobs are still imported.
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
+        }
+
+        // Nothing decoded, so there is nothing to import. `import_batch` returns
+        // before this critical section; entering it would commit the local
+        // transaction and, when detached editing is on, renew the peer id.
+        if blobs.is_empty() {
+            let pending = self.oplog.lock().pending_changes.version_range();
+            return Ok(ImportBatchDetail {
+                blobs: outcomes
+                    .into_iter()
+                    .map(|outcome| outcome.expect("every blob failed to decode"))
+                    .collect(),
+                status: ImportStatus {
+                    success: Default::default(),
+                    pending: non_empty(pending),
+                },
+                rollback_error: None,
+            });
         }
 
         let run = self.import_blobs_as_batch(blobs, values)?;

@@ -1977,8 +1977,10 @@ impl LoroDoc {
     ///
     /// Two differences from `importBatch`: an update whose metadata does not decode
     /// (`decodeImportBlobMeta` throws for it) is `failed` and the others are imported,
-    /// where `importBatch` throws before it imports anything. And a batch of one update is a plain `import`, which the state
-    /// checks at once, so its failure is `failed` and never a rollback.
+    /// where `importBatch` throws before it imports anything. When every update fails
+    /// that way, nothing is imported and the document is left as it was, including an
+    /// uncommitted local change. And a batch of one update is a plain `import`, which
+    /// the state checks at once, so its failure is `failed` and never a rollback.
     ///
     /// @example
     /// ```ts
