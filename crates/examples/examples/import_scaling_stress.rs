@@ -810,7 +810,7 @@ fn detached(n: usize, rounds: usize) {
         for b in &blobs {
             doc.import(b).unwrap();
         }
-        doc.attach();
+        doc.try_attach().unwrap();
         doc.get_text("t").to_string()
     };
     let mut import_times = Vec::with_capacity(rounds + 1);
@@ -824,7 +824,7 @@ fn detached(n: usize, rounds: usize) {
         }
         let import_elapsed = start.elapsed();
         let start = Instant::now();
-        doc.attach();
+        doc.try_attach().unwrap();
         let attach_elapsed = start.elapsed();
         assert_eq!(doc.get_text("t").to_string(), expected);
         assert!(!doc.is_detached());
@@ -1238,7 +1238,7 @@ fn detached_equals_attached() {
     for b in &blobs {
         detached.import(b).unwrap();
     }
-    detached.attach();
+    detached.try_attach().unwrap();
     assert_eq!(
         attached.get_text("t").to_string(),
         detached.get_text("t").to_string()

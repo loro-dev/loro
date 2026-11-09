@@ -308,7 +308,7 @@ impl LoroDoc {
     /// doc.set_detached_editing(true);
     /// doc.get_text("t").insert(0, "old").unwrap();
     /// // Later, re-attach to see latest again
-    /// doc.attach();
+    /// doc.try_attach().unwrap();
     /// ```
     #[inline]
     pub fn set_detached_editing(&self, enable: bool) {
@@ -422,7 +422,8 @@ impl LoroDoc {
     /// In a detached state, the document is not editable, and any `import` operations will be
     /// recorded in the `OpLog` without being applied to the `DocState`.
     ///
-    /// You should call `attach` (or `checkout_to_latest`) to reattach the `DocState` to the latest version of `OpLog`.
+    /// You should call [`try_attach`](Self::try_attach) (or [`try_checkout_to_latest`](Self::try_checkout_to_latest))
+    /// to reattach the `DocState` to the latest version of `OpLog`.
     /// If you need to edit while detached, enable [`set_detached_editing(true)`], but note it uses a different
     /// PeerID per checkout.
     ///
