@@ -4020,6 +4020,70 @@ impl LoroMovableList {
     pub fn get_last_editor_at(&self, pos: usize) -> Option<PeerID> {
         self.handler.get_last_editor_at(pos)
     }
+
+    /// Id of the element currently visible at `index`.
+    ///
+    /// The id is the [`IdLp`] of the op that inserted the element
+    /// (`L{lamport}@{peer}`). [`mov`](Self::mov) and [`set`](Self::set) do not
+    /// change it, so the same element keeps one id after it moves and after
+    /// concurrent moves converge. This is not the list-item id that
+    /// [`get_cursor`](Self::get_cursor) anchors: a move allocates a new list
+    /// item and leaves the element id in place.
+    ///
+    /// The result is taken from the document state at its current version:
+    ///
+    /// - After [`LoroDoc::checkout`], or while the document is
+    ///   [detached](LoroDoc::detach), the ids are the elements visible at
+    ///   that version. Imports into a detached document stay in the oplog
+    ///   until the state is attached again.
+    /// - A document loaded from [`ExportMode::state_only`] or a shallow
+    ///   snapshot returns the ids stored for the elements visible in that
+    ///   state, including when the insert op is no longer in the oplog.
+    /// - A container created with [`new`](Self::new) and not inserted into a
+    ///   document has no ops, so every index returns `None`.
+    ///
+    /// An index past the last visible element returns `None`. This method does
+    /// not panic.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use loro::LoroDoc;
+    ///
+    /// let doc = LoroDoc::new();
+    /// let list = doc.get_movable_list("ml");
+    /// list.push("a").unwrap();
+    /// list.push("b").unwrap();
+    /// let id = list.get_id_at(0).unwrap();
+    /// list.mov(0, 1).unwrap();
+    /// assert_eq!(list.get_id_at(1), Some(id));
+    /// assert_eq!(list.get_index_of_id(id), Some(1));
+    /// assert_eq!(list.get_ids()[1], id);
+    /// assert_eq!(list.get_id_at(2), None);
+    /// ```
+    pub fn get_id_at(&self, index: usize) -> Option<IdLp> {
+        self.handler.get_id_at(index)
+    }
+
+    /// User index of the visible element `id`, if the current state contains it.
+    ///
+    /// See [`get_id_at`](Self::get_id_at) for which version's elements are
+    /// visible. An unknown id, the id of an element that is deleted at this
+    /// version, and an id with `lamport == u32::MAX` return `None`. This
+    /// method does not panic.
+    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+        self.handler.get_index_of_id(id)
+    }
+
+    /// Element ids of the values visible in the current state, in user order.
+    ///
+    /// `get_ids()[i]` is `get_id_at(i)` for every in-range `i`. See
+    /// [`get_id_at`](Self::get_id_at) for checkout, detached documents,
+    /// state-only snapshots, and shallow documents. A detached container
+    /// returns an empty vector. This method does not panic.
+    pub fn get_ids(&self) -> Vec<IdLp> {
+        self.handler.get_ids()
+    }
 }
 
 impl Default for LoroMovableList {

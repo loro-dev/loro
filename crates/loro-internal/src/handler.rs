@@ -20,8 +20,8 @@ use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
 use generic_btree::rle::HasLength;
 use loro_common::{
-    ContainerID, ContainerType, IdFull, InternalString, LoroError, LoroResult, LoroValue, PeerID,
-    TreeID, ID,
+    CompactIdLp, ContainerID, ContainerType, IdFull, IdLp, InternalString, LoroError, LoroResult,
+    LoroValue, PeerID, TreeID, ID,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
@@ -4391,6 +4391,69 @@ impl MovableListHandler {
 
     pub fn clear_with_txn(&self, txn: &mut Transaction) -> LoroResult<()> {
         self.delete_with_txn(txn, 0, self.len())
+    }
+
+    /// Id of the element currently visible at `pos`.
+    ///
+    /// The id is assigned from the insert op and does not change when the
+    /// element is moved or its value is set. This is not the list-item id that
+    /// [`Self::get_cursor`] anchors.
+    ///
+    /// Returns `None` when the container is not attached to a document, or when
+    /// `pos` is past the last visible element. Does not panic.
+    pub fn get_id_at(&self, pos: usize) -> Option<IdLp> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let list = state.as_movable_list_state().unwrap();
+                // The length query treats `len` as the end cursor and can
+                // land on the last leaf. A user index is only valid below `len`.
+                if pos >= list.len() {
+                    return None;
+                }
+                list.get_elem_id_at(pos, IndexType::ForUser)
+                    .map(|id| id.to_id())
+            }),
+        }
+    }
+
+    /// User index of the visible element `id`, if it is in the current state.
+    ///
+    /// An unknown id, a deleted element's id, and an id that cannot be a
+    /// lamport id (`lamport == u32::MAX`) return `None`. A detached container
+    /// has no element ids and returns `None`. Does not panic.
+    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+        let elem_id = CompactIdLp::try_from(id).ok()?;
+        match &self.inner {
+            MaybeDetached::Detached(_) => None,
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                state
+                    .as_movable_list_state()
+                    .unwrap()
+                    .get_index_of_elem(elem_id)
+            }),
+        }
+    }
+
+    /// Element ids of the values visible in the current state, in user order.
+    ///
+    /// A document checked out to an old version, a detached document, a
+    /// state-only snapshot, and a shallow document all report the elements
+    /// visible at the version their state is on. A detached container is not
+    /// in a document and returns an empty vec. Does not panic.
+    pub fn get_ids(&self) -> Vec<IdLp> {
+        match &self.inner {
+            MaybeDetached::Detached(_) => Vec::new(),
+            MaybeDetached::Attached(a) => a.with_state(|state| {
+                let list = state.as_movable_list_state().unwrap();
+                (0..list.len())
+                    .filter_map(|index| {
+                        list.get_elem_id_at(index, IndexType::ForUser)
+                            .map(|id| id.to_id())
+                    })
+                    .collect()
+            }),
+        }
     }
 
     pub fn get_creator_at(&self, pos: usize) -> Option<PeerID> {
