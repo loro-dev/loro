@@ -30,9 +30,10 @@ use loro_internal::{
     loro_common::{check_root_container_name, IdSpanVector},
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
     version::{Frontiers, VersionRange},
-    ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdSpan, LoroDoc as LoroDocInner, LoroResult,
-    LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription, TreeNodeWithChildren,
-    TreeParentId, UndoManager as InnerUndoManager, VersionVector as InternalVersionVector,
+    ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdLp, IdSpan, LoroDoc as LoroDocInner,
+    LoroResult, LoroValue, MovableListHandler, SubscriberSetWithQueue, Subscription,
+    TreeNodeWithChildren, TreeParentId, UndoManager as InnerUndoManager,
+    VersionVector as InternalVersionVector,
 };
 use parking_lot::lock_api::ReentrantMutex;
 use rle::HasLength;
@@ -325,6 +326,14 @@ extern "C" {
     pub type JsID;
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }[]")]
     pub type JsIDs;
+    /// Stable MovableList element id. `lamport` is the insert op's lamport, not an op counter.
+    ///
+    /// `ElemId.peer` is `PeerID` (`${number}`), the same decimal string this
+    /// value is passed back into `getIndexOfElemId`.
+    #[wasm_bindgen(typescript_type = "ElemId")]
+    pub type JsIdLp;
+    #[wasm_bindgen(typescript_type = "ElemId[]")]
+    pub type JsIdLps;
     #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
     #[wasm_bindgen(typescript_type = "number|bool|string|null")]
@@ -542,6 +551,29 @@ fn id_to_js(id: &ID) -> JsResult<JsValue> {
     Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into())?;
     Reflect::set(&obj, &"counter".into(), &id.counter.into())?;
     Ok(obj.into())
+}
+
+fn idlp_to_js(id: &IdLp) -> JsResult<JsValue> {
+    let obj = Object::new();
+    Reflect::set(&obj, &"peer".into(), &id.peer.to_string().into())?;
+    Reflect::set(&obj, &"lamport".into(), &(id.lamport as f64).into())?;
+    Ok(obj.into())
+}
+
+fn js_to_idlp(id: JsIdLp) -> JsResult<IdLp> {
+    let value: JsValue = id.into();
+    let peer = js_peer_to_peer(Reflect::get(&value, &"peer".into())?)?;
+    let lamport_value = Reflect::get(&value, &"lamport".into())?;
+    let Some(lamport) = lamport_value.as_f64() else {
+        return Err(JsValue::from_str("lamport must be a number"));
+    };
+    if !lamport.is_finite() || lamport < 0.0 || lamport > u32::MAX as f64 || lamport.fract() != 0.0
+    {
+        return Err(JsValue::from_str(
+            "lamport must be an integer in 0..=4294967295",
+        ));
+    }
+    Ok(IdLp::new(peer, lamport as u32))
 }
 
 fn peer_id_to_js(peer: PeerID) -> JsStrPeerID {
@@ -4918,6 +4950,53 @@ impl LoroMovableList {
         self.handler.get_last_editor_at(pos).map(peer_id_to_js)
     }
 
+    /// Id of the element visible at `pos`.
+    ///
+    /// The id is assigned when the element is inserted (`{ peer, lamport }`).
+    /// `move` and `set` do not change it.
+    ///
+    /// This is not the slot id a cursor anchors. `getCursor` anchors the list
+    /// item at a position (`{ peer, counter }`), which is what
+    /// `LoroList.getIdAt` returns. A move allocates a new list item and leaves
+    /// this element id in place.
+    ///
+    /// The ids are those of the elements visible in the current document
+    /// state: after `checkout`, while the document is detached, and after
+    /// importing a shallow snapshot. A container that is not attached to a
+    /// document has no element ids. An index past the end returns `undefined`.
+    /// This does not throw for an out-of-range index.
+    pub fn getElemIdAt(&self, pos: usize) -> JsResult<Option<JsIdLp>> {
+        match self.handler.get_elem_id_at(pos) {
+            Some(id) => Ok(Some(idlp_to_js(&id)?.into())),
+            None => Ok(None),
+        }
+    }
+
+    /// User index of the visible element `id`, or `undefined` when this state
+    /// does not contain it.
+    ///
+    /// `id` is an element id (`{ peer, lamport }`), not the slot id from
+    /// `getCursor` or `LoroList.getIdAt`. An unknown id and the id of an
+    /// element deleted at this version return `undefined`. A malformed id
+    /// throws a readable error.
+    pub fn getIndexOfElemId(&self, id: JsIdLp) -> JsResult<Option<usize>> {
+        Ok(self.handler.get_index_of_elem_id(js_to_idlp(id)?))
+    }
+
+    /// Element ids of the values visible in the current state, in user order.
+    ///
+    /// `getElemIds()[i]` is `getElemIdAt(i)`. A detached container returns
+    /// `[]`. These are element ids, not the slot ids `getCursor` anchors or
+    /// `LoroList.getIdAt` returns.
+    pub fn getElemIds(&self) -> JsResult<JsIdLps> {
+        let arr = Array::new();
+        for id in self.handler.get_elem_ids() {
+            arr.push(&idlp_to_js(&id)?);
+        }
+        let value: JsValue = arr.into();
+        Ok(value.into())
+    }
+
     /// Check if the container is deleted
     pub fn isDeleted(&self) -> bool {
         self.handler.is_deleted()
@@ -6877,6 +6956,18 @@ export type Delta<T> =
  * The unique id of each operation.
  */
 export type OpId = { peer: PeerID, counter: number };
+
+/**
+ * Stable id of one movable-list element.
+ *
+ * Assigned when the element is inserted. `peer` is the decimal `PeerID`
+ * string (`${number}`). `getElemIdAt` and `getElemIds` return this type, and
+ * `getIndexOfElemId` accepts it. `move` and `set` do not change it.
+ *
+ * This is not the slot id a cursor anchors. That id is `OpId`
+ * (`{ peer, counter }`), which is what `LoroList.getIdAt` returns.
+ */
+export type ElemId = { peer: PeerID, lamport: number };
 
 /**
  * Change is a group of continuous operations
