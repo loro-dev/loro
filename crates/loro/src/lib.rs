@@ -4026,9 +4026,12 @@ impl LoroMovableList {
     /// The id is the [`IdLp`] of the op that inserted the element
     /// (`L{lamport}@{peer}`). [`mov`](Self::mov) and [`set`](Self::set) do not
     /// change it, so the same element keeps one id after it moves and after
-    /// concurrent moves converge. This is not the list-item id that
-    /// [`get_cursor`](Self::get_cursor) anchors: a move allocates a new list
-    /// item and leaves the element id in place.
+    /// concurrent moves converge.
+    ///
+    /// This is not the slot id a cursor anchors. [`get_cursor`](Self::get_cursor)
+    /// anchors the list item at a position (`{ peer, counter }`).
+    /// [`LoroList::get_id_at`] returns that same kind of slot id for a list.
+    /// A move allocates a new list item and leaves this element id in place.
     ///
     /// The result is taken from the document state at its current version:
     ///
@@ -4054,35 +4057,38 @@ impl LoroMovableList {
     /// let list = doc.get_movable_list("ml");
     /// list.push("a").unwrap();
     /// list.push("b").unwrap();
-    /// let id = list.get_id_at(0).unwrap();
+    /// let id = list.get_elem_id_at(0).unwrap();
     /// list.mov(0, 1).unwrap();
-    /// assert_eq!(list.get_id_at(1), Some(id));
-    /// assert_eq!(list.get_index_of_id(id), Some(1));
-    /// assert_eq!(list.get_ids()[1], id);
-    /// assert_eq!(list.get_id_at(2), None);
+    /// assert_eq!(list.get_elem_id_at(1), Some(id));
+    /// assert_eq!(list.get_index_of_elem_id(id), Some(1));
+    /// assert_eq!(list.get_elem_ids()[1], id);
+    /// assert_eq!(list.get_elem_id_at(2), None);
     /// ```
-    pub fn get_id_at(&self, index: usize) -> Option<IdLp> {
-        self.handler.get_id_at(index)
+    pub fn get_elem_id_at(&self, index: usize) -> Option<IdLp> {
+        self.handler.get_elem_id_at(index)
     }
 
     /// User index of the visible element `id`, if the current state contains it.
     ///
-    /// See [`get_id_at`](Self::get_id_at) for which version's elements are
-    /// visible. An unknown id, the id of an element that is deleted at this
+    /// See [`get_elem_id_at`](Self::get_elem_id_at) for which version's elements
+    /// are visible. An unknown id, the id of an element that is deleted at this
     /// version, and an id with `lamport == u32::MAX` return `None`. This
-    /// method does not panic.
-    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
-        self.handler.get_index_of_id(id)
+    /// method does not panic. `id` is an element id, not the slot id from
+    /// [`get_cursor`](Self::get_cursor) or [`LoroList::get_id_at`].
+    pub fn get_index_of_elem_id(&self, id: IdLp) -> Option<usize> {
+        self.handler.get_index_of_elem_id(id)
     }
 
     /// Element ids of the values visible in the current state, in user order.
     ///
-    /// `get_ids()[i]` is `get_id_at(i)` for every in-range `i`. See
-    /// [`get_id_at`](Self::get_id_at) for checkout, detached documents,
+    /// `get_elem_ids()[i]` is `get_elem_id_at(i)` for every in-range `i`. See
+    /// [`get_elem_id_at`](Self::get_elem_id_at) for checkout, detached documents,
     /// state-only snapshots, and shallow documents. A detached container
-    /// returns an empty vector. This method does not panic.
-    pub fn get_ids(&self) -> Vec<IdLp> {
-        self.handler.get_ids()
+    /// returns an empty vector. This method does not panic. These are element
+    /// ids, not the slot ids [`get_cursor`](Self::get_cursor) anchors or
+    /// [`LoroList::get_id_at`] returns.
+    pub fn get_elem_ids(&self) -> Vec<IdLp> {
+        self.handler.get_elem_ids()
     }
 }
 

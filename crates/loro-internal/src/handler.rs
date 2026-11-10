@@ -4396,12 +4396,17 @@ impl MovableListHandler {
     /// Id of the element currently visible at `pos`.
     ///
     /// The id is assigned from the insert op and does not change when the
-    /// element is moved or its value is set. This is not the list-item id that
-    /// [`Self::get_cursor`] anchors.
+    /// element is moved or its value is set.
+    ///
+    /// This is not the slot id a cursor anchors. [`Self::get_cursor`] anchors
+    /// the list item at a position (`{ peer, counter }`), which is the same
+    /// kind of id [`crate::handler::ListHandler::get_id_at`] returns for a
+    /// list. A move allocates a new list item and leaves this element id in
+    /// place.
     ///
     /// Returns `None` when the container is not attached to a document, or when
     /// `pos` is past the last visible element. Does not panic.
-    pub fn get_id_at(&self, pos: usize) -> Option<IdLp> {
+    pub fn get_elem_id_at(&self, pos: usize) -> Option<IdLp> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
             MaybeDetached::Attached(a) => a.with_state(|state| {
@@ -4419,10 +4424,12 @@ impl MovableListHandler {
 
     /// User index of the visible element `id`, if it is in the current state.
     ///
-    /// An unknown id, a deleted element's id, and an id that cannot be a
-    /// lamport id (`lamport == u32::MAX`) return `None`. A detached container
-    /// has no element ids and returns `None`. Does not panic.
-    pub fn get_index_of_id(&self, id: IdLp) -> Option<usize> {
+    /// `id` is an element id, not the slot id from [`Self::get_cursor`] or
+    /// [`crate::handler::ListHandler::get_id_at`]. An unknown id, a deleted
+    /// element's id, and an id that cannot be a lamport id
+    /// (`lamport == u32::MAX`) return `None`. A detached container has no
+    /// element ids and returns `None`. Does not panic.
+    pub fn get_index_of_elem_id(&self, id: IdLp) -> Option<usize> {
         let elem_id = CompactIdLp::try_from(id).ok()?;
         match &self.inner {
             MaybeDetached::Detached(_) => None,
@@ -4440,8 +4447,10 @@ impl MovableListHandler {
     /// A document checked out to an old version, a detached document, a
     /// state-only snapshot, and a shallow document all report the elements
     /// visible at the version their state is on. A detached container is not
-    /// in a document and returns an empty vec. Does not panic.
-    pub fn get_ids(&self) -> Vec<IdLp> {
+    /// in a document and returns an empty vec. Does not panic. These are
+    /// element ids, not the slot ids [`Self::get_cursor`] anchors or
+    /// [`crate::handler::ListHandler::get_id_at`] returns.
+    pub fn get_elem_ids(&self) -> Vec<IdLp> {
         match &self.inner {
             MaybeDetached::Detached(_) => Vec::new(),
             MaybeDetached::Attached(a) => a.with_state(|state| {

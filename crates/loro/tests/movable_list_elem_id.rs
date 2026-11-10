@@ -38,18 +38,18 @@ fn sync(a: &LoroDoc, b: &LoroDoc) {
 }
 
 fn assert_ids_roundtrip(list: &LoroMovableList) {
-    let ids = list.get_ids();
+    let ids = list.get_elem_ids();
     assert_eq!(ids.len(), list.len());
     for (index, id) in ids.iter().copied().enumerate() {
-        assert_eq!(list.get_id_at(index), Some(id));
-        assert_eq!(list.get_index_of_id(id), Some(index));
+        assert_eq!(list.get_elem_id_at(index), Some(id));
+        assert_eq!(list.get_index_of_elem_id(id), Some(index));
     }
     let mut unique = ids.clone();
     unique.sort();
     unique.dedup();
     assert_eq!(unique.len(), ids.len(), "visible element ids are unique");
-    assert_eq!(list.get_id_at(list.len()), None);
-    assert_eq!(list.get_id_at(usize::MAX), None);
+    assert_eq!(list.get_elem_id_at(list.len()), None);
+    assert_eq!(list.get_elem_id_at(usize::MAX), None);
 }
 
 fn movable_insert_ops(doc: &LoroDoc) -> usize {
@@ -72,44 +72,44 @@ fn movable_insert_ops(doc: &LoroDoc) -> usize {
 fn ids_follow_the_element_through_move_and_set_and_reject_out_of_range() {
     let doc = peer_doc(1);
     let list = doc.get_movable_list("mq");
-    assert!(list.get_ids().is_empty());
-    assert_eq!(list.get_id_at(0), None);
+    assert!(list.get_elem_ids().is_empty());
+    assert_eq!(list.get_elem_id_at(0), None);
 
     for value in ["a", "b", "c"] {
         list.push(value).unwrap();
     }
     doc.commit();
     let created = vec![lp(0, 1), lp(1, 1), lp(2, 1)];
-    assert_eq!(list.get_ids(), created);
+    assert_eq!(list.get_elem_ids(), created);
     assert_ids_roundtrip(&list);
 
-    let moved = list.get_id_at(0).unwrap();
+    let moved = list.get_elem_id_at(0).unwrap();
     list.mov(0, 2).unwrap();
     doc.commit();
     list.set(2, "A").unwrap();
     doc.commit();
 
     assert_eq!(strings(&list), vec!["b", "c", "A"]);
-    assert_eq!(list.get_ids(), vec![lp(1, 1), lp(2, 1), moved]);
+    assert_eq!(list.get_elem_ids(), vec![lp(1, 1), lp(2, 1), moved]);
     assert_eq!(moved, lp(0, 1));
-    assert_eq!(list.get_index_of_id(moved), Some(2));
+    assert_eq!(list.get_index_of_elem_id(moved), Some(2));
     assert_ids_roundtrip(&list);
 
     let cursor = list.get_cursor(2, Side::Middle).unwrap();
     let cursor_id = cursor.id.map(|id| id.to_string()).unwrap_or_default();
     assert_ne!(cursor_id, moved.to_string());
 
-    let deleted = list.get_id_at(0).unwrap();
+    let deleted = list.get_elem_id_at(0).unwrap();
     list.delete(0, 1).unwrap();
     doc.commit();
-    assert_eq!(list.get_index_of_id(deleted), None);
-    assert!(!list.get_ids().contains(&deleted));
+    assert_eq!(list.get_index_of_elem_id(deleted), None);
+    assert!(!list.get_elem_ids().contains(&deleted));
     assert_eq!(
-        list.get_index_of_id(IdLp::new(1, u32::MAX)),
+        list.get_index_of_elem_id(IdLp::new(1, u32::MAX)),
         None,
         "a lamport that cannot be a compact id is not an element"
     );
-    assert_eq!(list.get_index_of_id(lp(9, 4)), None);
+    assert_eq!(list.get_index_of_elem_id(lp(9, 4)), None);
 }
 
 #[test]
@@ -118,10 +118,10 @@ fn detached_container_has_no_element_ids() {
     list.push("a").unwrap();
     list.push("b").unwrap();
     assert_eq!(strings(&list), vec!["a", "b"]);
-    assert!(list.get_ids().is_empty());
-    assert_eq!(list.get_id_at(0), None);
-    assert_eq!(list.get_id_at(1), None);
-    assert_eq!(list.get_index_of_id(lp(0, 1)), None);
+    assert!(list.get_elem_ids().is_empty());
+    assert_eq!(list.get_elem_id_at(0), None);
+    assert_eq!(list.get_elem_id_at(1), None);
+    assert_eq!(list.get_index_of_elem_id(lp(0, 1)), None);
 }
 
 #[test]
@@ -133,22 +133,22 @@ fn checkout_and_a_detached_document_show_the_visible_version() {
     doc.commit();
     let at_insert = doc.state_frontiers();
     let inserted = vec![lp(0, 1), lp(1, 1)];
-    assert_eq!(list.get_ids(), inserted);
+    assert_eq!(list.get_elem_ids(), inserted);
 
     list.mov(0, 1).unwrap();
     doc.commit();
     let moved = vec![lp(1, 1), lp(0, 1)];
-    assert_eq!(list.get_ids(), moved);
+    assert_eq!(list.get_elem_ids(), moved);
 
     doc.checkout(&at_insert).unwrap();
     assert!(doc.is_detached());
-    assert_eq!(list.get_ids(), inserted);
+    assert_eq!(list.get_elem_ids(), inserted);
     assert_eq!(strings(&list), vec!["a", "b"]);
     assert_ids_roundtrip(&list);
 
     doc.try_checkout_to_latest().unwrap();
     assert!(!doc.is_detached());
-    assert_eq!(list.get_ids(), moved);
+    assert_eq!(list.get_elem_ids(), moved);
 
     let other = peer_doc(2);
     other
@@ -158,17 +158,17 @@ fn checkout_and_a_detached_document_show_the_visible_version() {
     assert!(doc.is_detached());
     other.get_movable_list("mq").push("c").unwrap();
     other.commit();
-    let with_c = other.get_movable_list("mq").get_ids();
+    let with_c = other.get_movable_list("mq").get_elem_ids();
     doc.import(&other.export(ExportMode::all_updates()).unwrap())
         .unwrap();
     assert_eq!(
-        list.get_ids(),
+        list.get_elem_ids(),
         moved,
         "an import into a detached document does not change the visible ids"
     );
     assert_eq!(strings(&list), vec!["b", "a"]);
     doc.try_attach().unwrap();
-    assert_eq!(list.get_ids(), with_c);
+    assert_eq!(list.get_elem_ids(), with_c);
     assert_eq!(with_c.len(), 3);
     assert_eq!(strings(&list), vec!["b", "a", "c"]);
 }
@@ -189,7 +189,7 @@ fn state_only_snapshot_keeps_ids_of_the_loaded_version() {
     let latest =
         LoroDoc::from_snapshot(&doc.export(ExportMode::state_only(None)).unwrap()).unwrap();
     assert!(latest.is_shallow());
-    assert_eq!(latest.get_movable_list("mq").get_ids(), moved);
+    assert_eq!(latest.get_movable_list("mq").get_elem_ids(), moved);
     assert_eq!(strings(&latest.get_movable_list("mq")), vec!["b", "a"]);
     assert_eq!(
         movable_insert_ops(&latest),
@@ -203,7 +203,7 @@ fn state_only_snapshot_keeps_ids_of_the_loaded_version() {
     )
     .unwrap();
     assert!(old.is_shallow());
-    assert_eq!(old.get_movable_list("mq").get_ids(), inserted);
+    assert_eq!(old.get_movable_list("mq").get_elem_ids(), inserted);
     assert_eq!(strings(&old.get_movable_list("mq")), vec!["a", "b"]);
 }
 
@@ -224,7 +224,7 @@ fn shallow_document_returns_ids_visible_at_the_checked_out_version() {
 
     list.push("c").unwrap();
     doc.commit();
-    let latest = list.get_ids();
+    let latest = list.get_elem_ids();
     assert_eq!(latest.len(), 3);
     assert_eq!(&latest[..2], &moved[..]);
 
@@ -235,20 +235,20 @@ fn shallow_document_returns_ids_visible_at_the_checked_out_version() {
     shallow.import(&bytes).unwrap();
     assert!(shallow.is_shallow());
     let shallow_list = shallow.get_movable_list("mq");
-    assert_eq!(shallow_list.get_ids(), latest);
+    assert_eq!(shallow_list.get_elem_ids(), latest);
     assert_ids_roundtrip(&shallow_list);
 
     shallow.checkout(&at_insert).unwrap();
     assert!(shallow.is_detached());
-    assert_eq!(shallow_list.get_ids(), inserted);
+    assert_eq!(shallow_list.get_elem_ids(), inserted);
     assert_eq!(strings(&shallow_list), vec!["a", "b"]);
 
     shallow.checkout(&at_move).unwrap();
-    assert_eq!(shallow_list.get_ids(), moved);
+    assert_eq!(shallow_list.get_elem_ids(), moved);
     assert_eq!(strings(&shallow_list), vec!["b", "a"]);
 
     shallow.try_checkout_to_latest().unwrap();
-    assert_eq!(shallow_list.get_ids(), latest);
+    assert_eq!(shallow_list.get_elem_ids(), latest);
 
     let trimmed = LoroDoc::new();
     trimmed
@@ -258,7 +258,7 @@ fn shallow_document_returns_ids_visible_at_the_checked_out_version() {
         )
         .unwrap();
     assert!(trimmed.is_shallow());
-    assert_eq!(trimmed.get_movable_list("mq").get_ids(), latest);
+    assert_eq!(trimmed.get_movable_list("mq").get_elem_ids(), latest);
 }
 
 #[test]
@@ -282,8 +282,8 @@ fn concurrent_moves_of_one_element_keep_a_single_id() {
     let ids = vec![lp(1, 1), lp(0, 1), lp(2, 1)];
     assert_eq!(strings(&a.get_movable_list("mq")), vec!["b", "a", "c"]);
     assert_eq!(strings(&b.get_movable_list("mq")), vec!["b", "a", "c"]);
-    assert_eq!(a.get_movable_list("mq").get_ids(), ids);
-    assert_eq!(b.get_movable_list("mq").get_ids(), ids);
+    assert_eq!(a.get_movable_list("mq").get_elem_ids(), ids);
+    assert_eq!(b.get_movable_list("mq").get_elem_ids(), ids);
     assert_eq!(
         ids.iter().filter(|id| **id == lp(0, 1)).count(),
         1,
@@ -302,7 +302,7 @@ fn concurrent_rotations_of_equal_values_keep_the_created_ids() {
     list.push("x").unwrap();
     a.commit();
     let created = vec![lp(0, 1), lp(1, 1), lp(2, 1)];
-    assert_eq!(list.get_ids(), created);
+    assert_eq!(list.get_elem_ids(), created);
     let b = peer_doc(2);
     b.import(&a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
@@ -315,8 +315,8 @@ fn concurrent_rotations_of_equal_values_keep_the_created_ids() {
 
     let ids = vec![lp(2, 1), lp(1, 1), lp(0, 1)];
     assert_eq!(strings(&a.get_movable_list("mq")), vec!["x", "x", "x"]);
-    assert_eq!(a.get_movable_list("mq").get_ids(), ids);
-    assert_eq!(b.get_movable_list("mq").get_ids(), ids);
+    assert_eq!(a.get_movable_list("mq").get_elem_ids(), ids);
+    assert_eq!(b.get_movable_list("mq").get_elem_ids(), ids);
     let mut sorted = ids.clone();
     sorted.sort();
     let mut created_sorted = created.clone();
@@ -336,7 +336,7 @@ fn concurrent_delete_and_move_does_not_duplicate_the_id() {
         list.push(value).unwrap();
     }
     a.commit();
-    let created = list.get_ids();
+    let created = list.get_elem_ids();
     let b = peer_doc(2);
     b.import(&a.export(ExportMode::all_updates()).unwrap())
         .unwrap();
@@ -353,11 +353,11 @@ fn concurrent_delete_and_move_does_not_duplicate_the_id() {
         strings(&b.get_movable_list("mq")),
         strings(&a.get_movable_list("mq"))
     );
-    assert_eq!(a.get_movable_list("mq").get_ids(), ids);
-    assert_eq!(b.get_movable_list("mq").get_ids(), ids);
+    assert_eq!(a.get_movable_list("mq").get_elem_ids(), ids);
+    assert_eq!(b.get_movable_list("mq").get_elem_ids(), ids);
     assert_eq!(ids.iter().filter(|id| **id == created[0]).count(), 1);
     assert_eq!(
-        a.get_movable_list("mq").get_index_of_id(created[0]),
+        a.get_movable_list("mq").get_index_of_elem_id(created[0]),
         Some(2)
     );
     assert_ids_roundtrip(&a.get_movable_list("mq"));

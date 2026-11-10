@@ -4950,16 +4950,20 @@ impl LoroMovableList {
     /// Id of the element visible at `pos`.
     ///
     /// The id is assigned when the element is inserted (`{ peer, lamport }`).
-    /// `move` and `set` do not change it. This is not the list-item id that
-    /// `getCursor` anchors.
+    /// `move` and `set` do not change it.
+    ///
+    /// This is not the slot id a cursor anchors. `getCursor` anchors the list
+    /// item at a position (`{ peer, counter }`), which is what
+    /// `LoroList.getIdAt` returns. A move allocates a new list item and leaves
+    /// this element id in place.
     ///
     /// The ids are those of the elements visible in the current document
     /// state: after `checkout`, while the document is detached, and after
     /// importing a shallow snapshot. A container that is not attached to a
     /// document has no element ids. An index past the end returns `undefined`.
     /// This does not throw for an out-of-range index.
-    pub fn getIdAt(&self, pos: usize) -> JsResult<Option<JsIdLp>> {
-        match self.handler.get_id_at(pos) {
+    pub fn getElemIdAt(&self, pos: usize) -> JsResult<Option<JsIdLp>> {
+        match self.handler.get_elem_id_at(pos) {
             Some(id) => Ok(Some(idlp_to_js(&id)?.into())),
             None => Ok(None),
         }
@@ -4968,18 +4972,22 @@ impl LoroMovableList {
     /// User index of the visible element `id`, or `undefined` when this state
     /// does not contain it.
     ///
-    /// An unknown id and the id of an element deleted at this version return
-    /// `undefined`. A malformed id throws a readable error.
-    pub fn getIndexOfId(&self, id: JsIdLp) -> JsResult<Option<usize>> {
-        Ok(self.handler.get_index_of_id(js_to_idlp(id)?))
+    /// `id` is an element id (`{ peer, lamport }`), not the slot id from
+    /// `getCursor` or `LoroList.getIdAt`. An unknown id and the id of an
+    /// element deleted at this version return `undefined`. A malformed id
+    /// throws a readable error.
+    pub fn getIndexOfElemId(&self, id: JsIdLp) -> JsResult<Option<usize>> {
+        Ok(self.handler.get_index_of_elem_id(js_to_idlp(id)?))
     }
 
     /// Element ids of the values visible in the current state, in user order.
     ///
-    /// `getIds()[i]` is `getIdAt(i)`. A detached container returns `[]`.
-    pub fn getIds(&self) -> JsResult<JsIdLps> {
+    /// `getElemIds()[i]` is `getElemIdAt(i)`. A detached container returns
+    /// `[]`. These are element ids, not the slot ids `getCursor` anchors or
+    /// `LoroList.getIdAt` returns.
+    pub fn getElemIds(&self) -> JsResult<JsIdLps> {
         let arr = Array::new();
-        for id in self.handler.get_ids() {
+        for id in self.handler.get_elem_ids() {
             arr.push(&idlp_to_js(&id)?);
         }
         let value: JsValue = arr.into();

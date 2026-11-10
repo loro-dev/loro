@@ -4,7 +4,7 @@ import { LoroDoc, LoroMovableList } from "../bundler/index";
 type ElemId = { peer: string; lamport: number };
 
 function idsOf(list: LoroMovableList): ElemId[] {
-  return list.getIds().map((id) => ({ peer: id.peer, lamport: id.lamport }));
+  return list.getElemIds().map((id) => ({ peer: id.peer, lamport: id.lamport }));
 }
 
 describe("movable list element ids", () => {
@@ -12,8 +12,8 @@ describe("movable list element ids", () => {
     const doc = new LoroDoc();
     doc.setPeerId(1);
     const list = doc.getMovableList("mq");
-    expect(list.getIds()).toEqual([]);
-    expect(list.getIdAt(0)).toBeUndefined();
+    expect(list.getElemIds()).toEqual([]);
+    expect(list.getElemIdAt(0)).toBeUndefined();
 
     list.push("a");
     list.push("b");
@@ -25,22 +25,22 @@ describe("movable list element ids", () => {
       { peer: "1", lamport: 1 },
       { peer: "1", lamport: 2 },
     ]);
-    expect(list.getIdAt(0)).toEqual(created[0]);
-    expect(list.getIndexOfId(created[0]!)).toBe(0);
+    expect(list.getElemIdAt(0)).toEqual(created[0]);
+    expect(list.getIndexOfElemId(created[0]!)).toBe(0);
 
     list.move(0, 2);
     list.set(2, "A");
     doc.commit();
     expect(list.toJSON()).toEqual(["b", "c", "A"]);
     expect(idsOf(list)).toEqual([created[1], created[2], created[0]]);
-    expect(list.getIndexOfId(created[0]!)).toBe(2);
-    expect(list.getIdAt(3)).toBeUndefined();
-    expect(list.getIndexOfId({ peer: "1", lamport: 9 })).toBeUndefined();
+    expect(list.getIndexOfElemId(created[0]!)).toBe(2);
+    expect(list.getElemIdAt(3)).toBeUndefined();
+    expect(list.getIndexOfElemId({ peer: "1", lamport: 9 })).toBeUndefined();
 
-    const deleted = list.getIdAt(0)!;
+    const deleted = list.getElemIdAt(0)!;
     list.delete(0, 1);
     doc.commit();
-    expect(list.getIndexOfId(deleted)).toBeUndefined();
+    expect(list.getIndexOfElemId(deleted)).toBeUndefined();
     expect(idsOf(list).some((id) => id.lamport === deleted.lamport)).toBe(false);
   });
 
@@ -49,9 +49,9 @@ describe("movable list element ids", () => {
     list.push("a");
     list.push("b");
     expect(list.toJSON()).toEqual(["a", "b"]);
-    expect(list.getIds()).toEqual([]);
-    expect(list.getIdAt(0)).toBeUndefined();
-    expect(list.getIndexOfId({ peer: "1", lamport: 0 })).toBeUndefined();
+    expect(list.getElemIds()).toEqual([]);
+    expect(list.getElemIdAt(0)).toBeUndefined();
+    expect(list.getIndexOfElemId({ peer: "1", lamport: 0 })).toBeUndefined();
   });
 
   it("checkout and a shallow snapshot report the ids visible at that version", () => {
@@ -83,7 +83,7 @@ describe("movable list element ids", () => {
     expect(shallow.isShallow()).toBe(true);
     const shallowList = shallow.getMovableList("mq");
     expect(idsOf(shallowList)).toEqual(moved);
-    expect(shallowList.getIndexOfId(moved[1]!)).toBe(1);
+    expect(shallowList.getIndexOfElemId(moved[1]!)).toBe(1);
 
     shallow.checkout(atInsert);
     expect(shallow.isDetached()).toBe(true);
@@ -110,7 +110,7 @@ describe("movable list element ids", () => {
     const list = doc.getMovableList("mq");
     list.push("a");
     expect(() =>
-      list.getIndexOfId({ peer: "1", lamport: 1.5 } as ElemId),
+      list.getIndexOfElemId({ peer: "1", lamport: 1.5 } as ElemId),
     ).toThrow(/lamport/);
   });
 });
