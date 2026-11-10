@@ -327,9 +327,12 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "{ peer: PeerID, counter: number }[]")]
     pub type JsIDs;
     /// Stable MovableList element id. `lamport` is the insert op's lamport, not an op counter.
-    #[wasm_bindgen(typescript_type = "{ peer: PeerID, lamport: number }")]
+    ///
+    /// `ElemId.peer` is `PeerID` (`${number}`), the same decimal string this
+    /// value is passed back into `getIndexOfElemId`.
+    #[wasm_bindgen(typescript_type = "ElemId")]
     pub type JsIdLp;
-    #[wasm_bindgen(typescript_type = "{ peer: PeerID, lamport: number }[]")]
+    #[wasm_bindgen(typescript_type = "ElemId[]")]
     pub type JsIdLps;
     #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
@@ -6953,6 +6956,18 @@ export type Delta<T> =
  * The unique id of each operation.
  */
 export type OpId = { peer: PeerID, counter: number };
+
+/**
+ * Stable id of one movable-list element.
+ *
+ * Assigned when the element is inserted. `peer` is the decimal `PeerID`
+ * string (`${number}`). `getElemIdAt` and `getElemIds` return this type, and
+ * `getIndexOfElemId` accepts it. `move` and `set` do not change it.
+ *
+ * This is not the slot id a cursor anchors. That id is `OpId`
+ * (`{ peer, counter }`), which is what `LoroList.getIdAt` returns.
+ */
+export type ElemId = { peer: PeerID, lamport: number };
 
 /**
  * Change is a group of continuous operations

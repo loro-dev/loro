@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LoroDoc, LoroMovableList } from "../bundler/index";
-
-type ElemId = { peer: string; lamport: number };
+import { type ElemId, LoroDoc, LoroMovableList } from "../bundler/index";
 
 function idsOf(list: LoroMovableList): ElemId[] {
   return list.getElemIds().map((id) => ({ peer: id.peer, lamport: id.lamport }));
@@ -110,7 +108,7 @@ describe("movable list element ids", () => {
     const list = doc.getMovableList("mq");
     list.push("a");
     expect(() =>
-      list.getIndexOfElemId({ peer: "1", lamport: 1.5 } as ElemId),
+      list.getIndexOfElemId({ peer: "1", lamport: 1.5 }),
     ).toThrow(/lamport/);
   });
 });
