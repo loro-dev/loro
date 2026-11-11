@@ -598,11 +598,32 @@ pub struct ValueWriter {
 
 pub struct ValueReader<'a> {
     raw: &'a [u8],
+    remaining_collection_slots: usize,
 }
 
 impl<'a> ValueReader<'a> {
     pub fn new(raw: &'a [u8]) -> Self {
-        ValueReader { raw }
+        ValueReader {
+            raw,
+            remaining_collection_slots: raw.len(),
+        }
+    }
+
+    #[inline]
+    fn read_collection_len(&mut self, minimum_entry_bytes: usize) -> LoroResult<usize> {
+        let len = self.read_usize()?;
+        if len > MAX_COLLECTION_SIZE
+            || len > self.raw.len() / minimum_entry_bytes
+            || len > self.remaining_collection_slots
+        {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
+        // Each child has a distinct kind byte; map entries also need a key byte.
+        // Charge once across nested and successive collections: their remaining
+        // input slices overlap, so checking each slice alone reuses the budget.
+        self.remaining_collection_slots -= len;
+        Ok(len)
     }
 
     pub fn read_value_type_and_content(
@@ -629,10 +650,7 @@ impl<'a> ValueReader<'a> {
             LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
             LoroValueKind::Str => LoroValue::String((self.read_str()?.to_owned()).into()),
             LoroValueKind::List => {
-                let len = self.read_usize()?;
-                if len > MAX_COLLECTION_SIZE {
-                    return Err(LoroError::DecodeDataCorruptionError);
-                }
+                let len = self.read_collection_len(1)?;
                 let mut ans = Vec::with_capacity(len);
                 for i in 0..len {
                     ans.push(self.recursive_read_value_type_and_content(keys, id.inc(i as i32))?);
@@ -640,10 +658,7 @@ impl<'a> ValueReader<'a> {
                 ans.into()
             }
             LoroValueKind::Map => {
-                let len = self.read_usize()?;
-                if len > MAX_COLLECTION_SIZE {
-                    return Err(LoroError::DecodeDataCorruptionError);
-                }
+                let len = self.read_collection_len(2)?;
                 let mut ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
                 for _ in 0..len {
                     let key_idx = self.read_usize()?;
@@ -739,10 +754,7 @@ impl<'a> ValueReader<'a> {
                     LoroValueKind::F64 => LoroValue::Double(self.read_f64()?),
                     LoroValueKind::Str => LoroValue::String((self.read_str()?.to_owned()).into()),
                     LoroValueKind::List => {
-                        let len = self.read_usize()?;
-                        if len > MAX_COLLECTION_SIZE {
-                            return Err(LoroError::DecodeDataCorruptionError);
-                        }
+                        let len = self.read_collection_len(1)?;
                         let ans = Vec::with_capacity(len);
                         stack.push(task);
                         stack.push(Task::ReadList {
@@ -753,11 +765,7 @@ impl<'a> ValueReader<'a> {
                         continue;
                     }
                     LoroValueKind::Map => {
-                        let len = self.read_usize()?;
-                        if len > MAX_COLLECTION_SIZE {
-                            return Err(LoroError::DecodeDataCorruptionError);
-                        }
-
+                        let len = self.read_collection_len(2)?;
                         let ans = FxHashMap::with_capacity_and_hasher(len, Default::default());
                         stack.push(task);
                         stack.push(Task::ReadMap {
@@ -868,9 +876,7 @@ impl<'a> ValueReader<'a> {
 
     #[allow(unused)]
     pub fn read_i32(&mut self) -> LoroResult<i32> {
-        leb128::read::signed(&mut self.raw)
-            .map(|x| x as i32)
-            .map_err(|_| LoroError::DecodeDataCorruptionError)
+        i32::try_from(self.read_i64()?).map_err(|_| LoroError::DecodeDataCorruptionError)
     }
 
     pub fn read_f64(&mut self) -> LoroResult<f64> {
@@ -1482,6 +1488,50 @@ mod tests {
     }
 
     #[test]
+    fn delta_int_decoding_rejects_out_of_range_signed_values() {
+        let arenas = TestArenas {
+            keys: Vec::new(),
+            peers: Vec::new(),
+        };
+        let cases: &[&[u8]] = &[
+            &[0x80, 0x80, 0x80, 0x80, 0x08], // i32::MAX + 1
+            &[0xff, 0xff, 0xff, 0xff, 0x77], // i32::MIN - 1
+            &[0x80, 0x80, 0x80, 0x80, 0x10], // 1 << 32, previously narrowed to zero
+            &[0x80],                         // truncated signed varint
+        ];
+
+        for bytes in cases {
+            let mut reader = ValueReader::new(bytes);
+            assert!(matches!(
+                Value::decode(ValueKind::DeltaInt, &mut reader, &arenas, ID::new(9, 1)),
+                Err(LoroError::DecodeDataCorruptionError)
+            ));
+        }
+    }
+
+    #[test]
+    fn delta_int_decoding_preserves_i32_bounds_and_nonminimal_values() {
+        let arenas = TestArenas {
+            keys: Vec::new(),
+            peers: Vec::new(),
+        };
+        let cases: &[(&[u8], i32)] = &[
+            (&[0x80, 0x80, 0x80, 0x80, 0x78], i32::MIN),
+            (&[0xff, 0xff, 0xff, 0xff, 0x07], i32::MAX),
+            (&[0x80, 0x00], 0),
+            (&[0xff, 0x7f], -1),
+        ];
+
+        for &(bytes, expected) in cases {
+            let mut reader = ValueReader::new(bytes);
+            let value = Value::decode(ValueKind::DeltaInt, &mut reader, &arenas, ID::new(9, 1))
+                .unwrap()
+                .into_owned();
+            assert_eq!(value, OwnedValue::DeltaInt(expected));
+        }
+    }
+
+    #[test]
     fn loro_value_writer_reader_roundtrips_nested_scalars_collections_and_containers() {
         let container = ContainerID::new_normal(ID::new(7, 2), ContainerType::Tree);
         let value: LoroValue = fx_map!(
@@ -1513,6 +1563,68 @@ mod tests {
             .read_value_type_and_content(&keys, ID::new(7, 2))
             .unwrap();
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn reader_preserves_compact_nested_and_repeated_collection_encodings() {
+        // Root kinds are supplied separately. Lengths/key indices may use
+        // non-minimal varints, and duplicate map keys retain their last value.
+        let bytes = [
+            0x81, 0x00, 7, 2, 0, 1, // [[null, true]]
+            0, // []
+            0x82, 0x00, 0x80, 0x00, 2, 0, 1, // {key: false, key: true}
+            2, 7, 0, 8, 0, // [[], {}]
+        ];
+        let keys = vec![InternalString::from("key")];
+        let expected: [LoroValue; 4] = [
+            vec![LoroValue::from(vec![LoroValue::Null, true.into()])].into(),
+            Vec::<LoroValue>::new().into(),
+            fx_map!("key".to_string() => true.into()).into(),
+            vec![
+                LoroValue::from(Vec::<LoroValue>::new()),
+                LoroValue::from(FxHashMap::<String, LoroValue>::default()),
+            ]
+            .into(),
+        ];
+        let kinds = [
+            LoroValueKind::List,
+            LoroValueKind::List,
+            LoroValueKind::Map,
+            LoroValueKind::List,
+        ];
+        let mut reader = ValueReader::new(&bytes);
+        for (kind, expected) in kinds.into_iter().zip(expected) {
+            assert_eq!(
+                reader
+                    .read_value_content(kind, &keys, ID::new(7, 0))
+                    .unwrap(),
+                expected
+            );
+        }
+        assert!(reader.raw.is_empty());
+    }
+
+    #[test]
+    fn reader_reports_corruption_for_impossible_collection_counts() {
+        // A declared 4,096 entries with no children exercises each reservation
+        // path without requiring a large allocation in the original decoder.
+        for kind in [LoroValueKind::List, LoroValueKind::Map] {
+            assert!(matches!(
+                ValueReader::new(&[0x80, 0x20]).read_value_content(kind, &[], ID::new(1, 0)),
+                Err(LoroError::DecodeDataCorruptionError)
+            ));
+        }
+        for nested_kind in [7, 8] {
+            let bytes = [1, nested_kind, 0x80, 0x20];
+            assert!(matches!(
+                ValueReader::new(&bytes).read_value_content(
+                    LoroValueKind::List,
+                    &[],
+                    ID::new(1, 0)
+                ),
+                Err(LoroError::DecodeDataCorruptionError)
+            ));
+        }
     }
 
     #[test]

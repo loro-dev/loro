@@ -479,6 +479,20 @@ Malformed JSON schema should return `Err` without partial import. Look at
 [crates/loro-internal/src/tests/import_atomicity.rs](../crates/loro-internal/src/tests/import_atomicity.rs)
 when changing JSON import validation or rollback behavior.
 
+## Signed DeltaInt bounds
+
+Verified against code 2026-11-06. `value.rs::ValueReader::read_i32` uses the
+existing signed i64 LEB128 parser, then checks conversion to i32. Its only
+production caller is `Value::decode` for `ValueKind::DeltaInt`; the matching
+writer starts from an i32. Out-of-range signed values return the existing
+`DecodeDataCorruptionError` instead of wrapping. In-range values, including
+nonminimal encodings accepted by that parser, retain their decoded value and
+byte consumption. Primitive parser errors keep the same corruption mapping;
+the range check does not rewind the reader. The two `delta_int_decoding_*`
+module tests cover literal oversized values, both bounds, nonminimal zero and
+minus one, and a truncated varint. `read_usize`, raw-tree counters and other
+integer fields are separate paths and are unchanged by this fix.
+
 ## Validation Shortcuts
 
 - Binary malformed input or rollback: `cargo test -p loro-internal import_atomicity`
