@@ -13,11 +13,19 @@
 //!
 //!
 //!
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
 
 use crate::{
-    change::Change, encoding::shallow_snapshot, oplog::ChangeStore, version::Frontiers, LoroDoc,
-    OpLog, VersionVector,
+    change::Change,
+    configure::{DefaultRandom, SecureRandomGenerator},
+    encoding::shallow_snapshot,
+    oplog::ChangeStore,
+    sync::AtomicUsize,
+    version::Frontiers,
+    LoroDoc, OpLog, VersionVector,
 };
 use bytes::{Buf, Bytes};
 use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroEncodeError, LoroError, LoroResult};
@@ -553,6 +561,14 @@ mod tests {
     }
 }
 
+fn new_metadata_oplog() -> OpLog {
+    let oplog = OpLog::new(Arc::new(AtomicUsize::new(0)));
+    // Preserve the peer-ID draw made by the former temporary LoroDoc, including
+    // entropy failures and deterministic test/loom random sequences.
+    let _ = DefaultRandom.next_u64();
+    oplog
+}
+
 pub(crate) fn decode_snapshot_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
@@ -563,8 +579,7 @@ pub(crate) fn decode_snapshot_blob_meta(
         EncodedBlobMode::Snapshot
     };
 
-    let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock();
+    let mut oplog = new_metadata_oplog();
     oplog.decode_change_store(oplog_bytes.to_vec().into())?;
     let timestamp = oplog.get_greatest_timestamp(oplog.dag.frontiers());
     let f = oplog.dag.shallow_since_frontiers().clone();
@@ -585,8 +600,7 @@ pub(crate) fn decode_snapshot_blob_meta(
 pub(crate) fn decode_updates_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
-    let doc = LoroDoc::new();
-    let mut oplog = doc.oplog.lock();
+    let mut oplog = new_metadata_oplog();
     let changes = decode_updates(&mut oplog, parsed.body.to_vec().into())?;
     let mut start_vv = VersionVector::new();
     let mut end_vv = VersionVector::new();
