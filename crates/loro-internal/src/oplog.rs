@@ -75,6 +75,15 @@ pub(crate) struct ImportRollback {
     /// Movable-list `Move`/`Set` element references inserted in this scope and not
     /// validated yet (`OpLog::validate_movable_list_elem_refs_in_import_scope`).
     movable_list_refs: Vec<MovableListElemRef>,
+    /// Text `StyleEnd` ops inserted in this scope whose `StyleStart` is not the
+    /// previous op of the same change, not validated yet
+    /// (`OpLog::validate_style_end_anchors_in_import_scope`).
+    style_end_refs: Vec<StyleEndRef>,
+}
+
+struct StyleEndRef {
+    container: ContainerIdx,
+    op_id: ID,
 }
 
 #[derive(Clone, Copy)]
@@ -163,17 +172,24 @@ pub(crate) fn state_apply_can_reject(ty: ContainerType) -> bool {
     )
 }
 
-/// Detached imports do not apply state. Only Move/Set element validation can
-/// reject after adding history; an enclosing batch still owns its full scope.
+/// Detached imports do not apply state. Only Move/Set element validation and
+/// style end anchor validation can reject after adding history; an enclosing
+/// batch still owns its full scope.
 pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
     if detached {
-        op.container.get_type() == ContainerType::MovableList
-            && matches!(
+        match op.container.get_type() {
+            ContainerType::MovableList => matches!(
                 op.content,
                 InnerContent::List(
                     list_op::InnerListOp::Move { .. } | list_op::InnerListOp::Set { .. }
                 )
-            )
+            ),
+            ContainerType::Text => matches!(
+                op.content,
+                InnerContent::List(list_op::InnerListOp::StyleEnd)
+            ),
+            _ => false,
+        }
     } else {
         state_apply_can_reject(op.container.get_type())
     }
@@ -327,7 +343,30 @@ impl OpLog {
         }
         self.register_container_and_parent_link(&change);
         if let Some(rollback) = self.import_rollback.as_mut() {
+            let mut prev_op: Option<&crate::op::Op> = None;
             for op in change.ops.iter() {
+                let prev = prev_op.replace(op);
+                if op.container.get_type() == ContainerType::Text
+                    && matches!(op.content, InnerContent::List(list_op::InnerListOp::StyleEnd))
+                {
+                    // Honest peers emit the `StyleStart` right before its `StyleEnd`,
+                    // so this is the common case and needs no history lookup.
+                    let paired = prev.is_some_and(|p| {
+                        p.container == op.container
+                            && p.counter + 1 == op.counter
+                            && matches!(
+                                p.content,
+                                InnerContent::List(list_op::InnerListOp::StyleStart { .. })
+                            )
+                    });
+                    if !paired {
+                        rollback.style_end_refs.push(StyleEndRef {
+                            container: op.container,
+                            op_id: ID::new(change.id.peer, op.counter),
+                        });
+                    }
+                    continue;
+                }
                 if op.container.get_type() != ContainerType::MovableList {
                     continue;
                 }
@@ -379,6 +418,7 @@ impl OpLog {
             change_store: ChangeStoreRollback::new(old_vv),
             pending: Default::default(),
             movable_list_refs: Vec::new(),
+            style_end_refs: Vec::new(),
         });
     }
 
@@ -1513,6 +1553,65 @@ impl OpLog {
             change.id.peer,
             (id.lamport - change.lamport) as Counter + change.id.counter,
         ))
+    }
+
+    /// Run every op reference check of the open import rollback scope:
+    /// [`Self::validate_style_end_anchors_in_import_scope`] and
+    /// [`Self::validate_movable_list_elem_refs_in_import_scope`].
+    pub(crate) fn validate_op_refs_in_import_scope(&mut self) -> Result<(), LoroError> {
+        self.validate_style_end_anchors_in_import_scope()?;
+        self.validate_movable_list_elem_refs_in_import_scope()
+    }
+
+    /// Reject the text `StyleEnd` ops inserted since the open import rollback scope
+    /// began whose previous op (`id - 1`) is not a `StyleStart` in the same text.
+    ///
+    /// Honest peers always emit a mark as a `StyleStart` immediately followed by its
+    /// `StyleEnd`, and the richtext diff calculator relies on it
+    /// (`RichtextDiffCalculator::style_for_end_anchor`): a malformed update that broke
+    /// it used to panic there while the doc held its locks (loro-dev/loro#1254).
+    /// `insert_new_change` only records the ends that are not paired inside their own
+    /// change, so this rarely reads the history.
+    pub(crate) fn validate_style_end_anchors_in_import_scope(&mut self) -> Result<(), LoroError> {
+        let Some(rollback) = self.import_rollback.as_mut() else {
+            return Ok(());
+        };
+        let refs = std::mem::take(&mut rollback.style_end_refs);
+        for r in refs {
+            if !self.style_end_has_start(&r)? {
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "Text style end anchor {} is not preceded by a style start anchor \
+                         in the same text",
+                        r.op_id
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn style_end_has_start(&self, r: &StyleEndRef) -> Result<bool, LoroError> {
+        if r.op_id.counter == 0 {
+            return Ok(false);
+        }
+        let start_id = r.op_id.inc(-1);
+        let Some(start_op) = self.get_op_that_includes(start_id) else {
+            self.check_history_parsable()?;
+            // History before a shallow root is trimmed; the diff calculator then
+            // finds the style in the shallow root state.
+            return Ok(!self.dag.shallow_since_vv().is_empty()
+                && self.with_history_cache(|h| {
+                    h.find_text_style_end_in_shallow_root(r.container, start_id).is_some()
+                }));
+        };
+        Ok(start_op.container == r.container
+            && matches!(
+                start_op.content,
+                InnerContent::List(list_op::InnerListOp::StyleStart { .. })
+            ))
     }
 
     /// Reject the movable-list `Move`/`Set` ops inserted since the open import rollback

@@ -968,7 +968,7 @@ impl LoroDoc {
                 }
             };
             if owns_rollback {
-                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
+                if let Err(e) = oplog.validate_op_refs_in_import_scope() {
                     oplog.rollback_import(&mut self.state.lock());
                     return Err(e);
                 }
@@ -1039,9 +1039,9 @@ impl LoroDoc {
         };
         if old_vv.as_ref() != oplog.vv() {
             // The preflight enables rollback whenever the imported or unlocked
-            // pending changes hold movable-list ops, so other imports skip the scan.
+            // pending changes hold movable-list or text ops, so other imports skip the scan.
             if rollback_enabled {
-                if let Err(e) = oplog.validate_movable_list_elem_refs_in_import_scope() {
+                if let Err(e) = oplog.validate_op_refs_in_import_scope() {
                     oplog.rollback_import(&mut self.state.lock());
                     return Err(e);
                 }
@@ -4390,11 +4390,12 @@ impl BatchImportGuard<'_> {
         let mut checkout = Ok(());
         if self.was_attached {
             // The blobs were imported while detached inside this scope, so their
-            // movable-list element references are validated here, once per batch.
+            // op references (movable-list elements, style end anchors) are validated
+            // here, once per batch.
             let validation = doc
                 .oplog
                 .lock()
-                .validate_movable_list_elem_refs_in_import_scope();
+                .validate_op_refs_in_import_scope();
             checkout = validation.and_then(|()| doc._checkout_to_latest_without_commit(true));
             if let Err(e) = &checkout {
                 // Validation precedes mutation: state is still at its pre-batch
