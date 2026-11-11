@@ -7,4 +7,5 @@ pub use subscription::SubscribeJsonPathCallback;
 pub mod parser;
 
 pub use ast::Query;
+pub use jsonpath_impl::ParsedJsonPath;
 pub use parser::JSONPathParser;

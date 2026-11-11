@@ -309,6 +309,17 @@ impl InnerStore {
         Ok(None)
     }
 
+    /// Unlike a handler read, this does not load KV bytes, enqueue a wrapper,
+    /// mark a cache reference, or materialize a LoroValue.
+    pub(super) fn resident_map_is_empty(&self, idx: ContainerIdx) -> Option<bool> {
+        if idx.get_type() != ContainerType::Map {
+            return None;
+        }
+        let entry = self.store.get(Self::slot(idx))?.as_ref()?;
+        debug_assert_eq!(entry.kind(), idx.get_type());
+        entry.resident_map_is_empty()
+    }
+
     /// Read a container's current value without retaining a wrapper loaded only for this read.
     ///
     /// Mirrors [`Self::try_get_parent_and_value_ephemeral`]: routing the kv branch through

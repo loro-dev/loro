@@ -4689,6 +4689,40 @@ impl MapHandler {
         }
     }
 
+    /// Snapshot map values for JSONPath without allocating owned key strings.
+    /// Keep key-bound marker translation and release the state lock before callbacks.
+    #[cfg(feature = "jsonpath")]
+    pub(crate) fn for_each_value_for_path<I>(&self, mut f: I)
+    where
+        I: FnMut(ValueOrHandler),
+    {
+        match &self.inner {
+            // Detached callbacks retain the public iterator's original lock behavior.
+            MaybeDetached::Detached(_) => self.for_each(|_, value| f(value)),
+            MaybeDetached::Attached(inner) => {
+                let temp = inner.with_doc_state(|state| {
+                    state
+                        .get_map_entries(inner.container_idx)
+                        .into_iter()
+                        .map(|(key, value)| {
+                            let translated = loro_common::translate_mergeable_marker_value(
+                                &inner.id,
+                                key.as_ref(),
+                                value,
+                            );
+                            value_to_value_or_handler(inner, translated)
+                        })
+                        .collect::<Vec<_>>()
+                });
+
+                // Preserve the original value clone/drop sequence around each callback.
+                for value in temp.into_iter() {
+                    f(value.clone());
+                }
+            }
+        }
+    }
+
     pub fn get_child_handler(&self, key: &str) -> LoroResult<Handler> {
         match &self.inner {
             MaybeDetached::Detached(m) => {

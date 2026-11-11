@@ -7,6 +7,32 @@ fn to_json(v: Vec<ValueOrContainer>) -> serde_json::Value {
         .collect()
 }
 
+#[test]
+fn test_filter_node_sets_preserve_empty_single_multiple_and_duplicate_results() {
+    let doc = LoroDoc::new();
+    doc.get_map("data")
+        .insert(
+            "items",
+            json!([
+                {"a": 1, "b": 2, "nested": {"value": 5}},
+                {"b": 4, "nested": {"value": 6}},
+                {"a": 3, "b": 2, "nested": {"value": 7}}
+            ]),
+        )
+        .unwrap();
+    let cases = [
+        ("$.data.items[?@.missing == 1]", json!([])),
+        ("$.data.items[?@.a == 1].nested.value", json!([5])),
+        ("$.data.items[?@['a','b']].nested.value", json!([5, 6, 7])),
+        ("$.data.items[?@.nested.value >= 6].b", json!([4, 2])),
+        ("$.data.items[0,0,2].nested.value", json!([5, 5, 7])),
+        ("$.data.items[*].nested.value", json!([5, 6, 7])),
+    ];
+    for (query, expected) in cases {
+        assert_eq!(to_json(doc.jsonpath(query).unwrap()), expected, "{query}");
+    }
+}
+
 fn create_map_from_json(json: serde_json::Value) -> LoroMap {
     let map = LoroMap::new();
     for (key, value) in json.as_object().unwrap().iter() {
@@ -313,4 +339,84 @@ fn test_jsonpath_wildcard() -> anyhow::Result<()> {
     let ans = doc.jsonpath("$.root.*").unwrap();
     assert_eq!(to_json(ans), serde_json::json!([1, 2, 3]));
     Ok(())
+}
+
+
+#[test]
+fn parsed_queries_match_string_queries_and_preserve_duplicates() {
+    use loro::jsonpath::ParsedJsonPath;
+
+    let doc = setup_test_doc();
+    for path in [
+        "$", "$.missing", "$.store.book[0].author", "$.store.book[*].author",
+        "$.store.book[0,0,2].author", "$.store.book[-2:].title",
+        "$.store.book[0:4:2].title", "$..author",
+        "$.store.book[?@.price < 10].title",
+        "$.store.book[?@.price < $.store.expensive].title",
+        "$.store.book[?@.missing].title",
+        "$.store.book[0]['title','author','title']",
+    ] {
+        let query = ParsedJsonPath::parse(path).unwrap();
+        assert_eq!(to_json(doc.jsonpath_parsed(&query)), to_json(doc.jsonpath(path).unwrap()), "{path}");
+    }
+    let query = ParsedJsonPath::parse("$.store.book[0,0,2].author").unwrap();
+    assert_eq!(to_json(doc.jsonpath_parsed(&query)), json!(["Nigel Rees", "Nigel Rees", "Herman Melville"]));
+}
+
+#[test]
+fn parsed_query_observes_mutations_and_can_be_reused_across_documents() {
+    use loro::jsonpath::ParsedJsonPath;
+
+    let query = ParsedJsonPath::parse("$.data.items[?@.rank >= $.data.minimum].name").unwrap();
+    let first = LoroDoc::new();
+    let data = first.get_map("data");
+    data.insert("items", json!([{"rank":1,"name":"a"},{"rank":2,"name":"b"}])).unwrap();
+    data.insert("minimum", 2).unwrap();
+    assert_eq!(to_json(first.jsonpath_parsed(&query)), json!(["b"]));
+    data.insert("minimum", 1).unwrap();
+    assert_eq!(to_json(first.jsonpath_parsed(&query)), json!(["a", "b"]));
+    data.insert("items", json!([{"rank":3,"name":"updated"}])).unwrap();
+    assert_eq!(to_json(first.jsonpath_parsed(&query)), json!(["updated"]));
+    let second = LoroDoc::new();
+    second.get_map("data").insert("minimum", 4).unwrap();
+    second.get_map("data").insert("items", json!([{"rank":5,"name":"other"}])).unwrap();
+    assert_eq!(to_json(second.jsonpath_parsed(&query)), json!(["other"]));
+    assert_eq!(to_json(first.jsonpath_parsed(&query)), json!(["updated"]));
+}
+
+#[test]
+fn parsed_query_constructor_preserves_string_api_parse_errors() {
+    use loro::jsonpath::ParsedJsonPath;
+
+    let doc = LoroDoc::new();
+    for path in ["$[", "$.data[?unknown(@.rank)]", "$[9007199254740992]"] {
+        let parsed_error = ParsedJsonPath::parse(path).err().expect("invalid standard query");
+        let string_error = doc.jsonpath(path).err().expect("invalid standard query");
+        assert_eq!(parsed_error.to_string(), string_error.to_string(), "{path}");
+    }
+}
+
+
+#[test]
+fn jsonpath_root_names_are_literal_even_when_they_look_like_indexes_or_ids() {
+    for name in ["42", "01", "1@2", "", "plain", "a/b"] {
+        let doc = LoroDoc::new();
+        doc.get_map(name).insert("value", name).unwrap();
+        let path = format!("$[{}].value", serde_json::to_string(name).unwrap());
+        assert_eq!(to_json(doc.jsonpath(&path).unwrap()), json!([name]), "{name:?}");
+    }
+}
+
+#[test]
+fn quoted_slash_root_does_not_alias_a_nested_path() {
+    let doc = LoroDoc::new();
+    doc.get_map("a/b").insert("value", "literal root").unwrap();
+    doc.get_map("a").insert("b", json!({"value":"nested path"})).unwrap();
+    assert_eq!(to_json(doc.jsonpath("$['a/b'].value").unwrap()), json!(["literal root"]));
+    assert_eq!(to_json(doc.jsonpath("$.a.b.value").unwrap()), json!(["nested path"]));
+    // The independent slash-path API retains its original meaning.
+    assert_eq!(doc.get_by_str_path("a/b").unwrap().get_deep_value().to_json_value(), json!({"value":"nested path"}));
+    let absent = LoroDoc::new();
+    absent.get_map("a").insert("b", json!({"value":"nested only"})).unwrap();
+    assert!(absent.jsonpath("$['a/b']").unwrap().is_empty());
 }

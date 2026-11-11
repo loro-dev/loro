@@ -1779,6 +1779,31 @@ impl LoroDoc {
             .map(|vec| vec.into_iter().map(ValueOrContainer::from).collect())
     }
 
+    /// Evaluate a previously parsed JSONPath query against the current document.
+    ///
+    /// Parse once with [`jsonpath::ParsedJsonPath::parse`] when executing the same
+    /// query repeatedly. The query retains syntax only: it can be reused across
+    /// documents and observes their current values on every call. Results retain
+    /// the same ordering and duplicates as [`Self::jsonpath`].
+    ///
+    /// ```
+    /// use loro::{jsonpath::ParsedJsonPath, LoroDoc};
+    ///
+    /// let query = ParsedJsonPath::parse("$.users.alice").unwrap();
+    /// let doc = LoroDoc::new();
+    /// doc.get_map("users").insert("alice", 30).unwrap();
+    /// assert_eq!(doc.jsonpath_parsed(&query).len(), 1);
+    /// ```
+    #[inline]
+    #[cfg(feature = "jsonpath")]
+    pub fn jsonpath_parsed(&self, query: &jsonpath::ParsedJsonPath) -> Vec<ValueOrContainer> {
+        self.doc
+            .jsonpath_parsed(query)
+            .into_iter()
+            .map(ValueOrContainer::from)
+            .collect()
+    }
+
     /// Subscribe to updates that might affect the given JSONPath query.
     ///
     /// The callback:

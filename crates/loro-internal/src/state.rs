@@ -1700,6 +1700,11 @@ impl DocState {
     }
 
     fn root_container_is_empty(&mut self, idx: ContainerIdx) -> bool {
+        // Avoid constructing a whole root map just to choose a visible root.
+        // Cold/undecoded containers retain the existing ephemeral read below.
+        if let Some(is_empty) = self.store.resident_map_is_empty(idx) {
+            return is_empty;
+        }
         let value = self
             .store
             .get_value_ephemeral(idx)

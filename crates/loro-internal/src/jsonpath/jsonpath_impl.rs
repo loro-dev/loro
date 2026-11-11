@@ -4,9 +4,10 @@ use crate::handler::{
 use crate::jsonpath::ast::{
     ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
 };
-use crate::jsonpath::JSONPathParser;
+use crate::jsonpath::{Query, JSONPathParser};
 use crate::{HandlerTrait, LoroDoc};
 use loro_common::{ContainerID, LoroValue};
+use smallvec::SmallVec;
 use std::ops::ControlFlow;
 use thiserror::Error;
 
@@ -17,34 +18,67 @@ pub enum JsonPathError {
     #[error("JSONPath evaluation error: {0}")]
     EvaluationError(String),
 }
+/// An immutable JSONPath parsed with the standard parser.
+///
+/// Stores syntax only and can be reused across documents. Evaluation uses the
+/// same evaluator and supported-function behavior as the string API.
+/// Its AST is private so constructed or custom-parser ASTs cannot bypass the
+/// standard parser's validation through this API.
+#[derive(Debug, Clone)]
+pub struct ParsedJsonPath {
+    query: Query,
+}
+
+impl ParsedJsonPath {
+    pub fn parse(path: &str) -> Result<Self, JsonPathError> {
+        JSONPathParser::new()
+            .parse(path)
+            .map(|query| Self { query })
+            .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))
+    }
+}
+
 impl LoroDoc {
     #[inline]
     pub fn jsonpath(&self, jsonpath: &str) -> Result<Vec<ValueOrHandler>, JsonPathError> {
         evaluate_jsonpath(self, jsonpath)
     }
+
+    /// Evaluate an already parsed query against the current document state.
+    #[inline]
+    pub fn jsonpath_parsed(&self, query: &ParsedJsonPath) -> Vec<ValueOrHandler> {
+        evaluate_parsed_jsonpath(self, query)
+    }
 }
+
+// Relative field queries usually yield zero or one node. Keep that common case
+// inline while preserving arbitrary multi-node selectors and their order.
+type NodeSet = SmallVec<[ValueOrHandler; 1]>;
 
 enum ExprValue {
     Bool(bool),
     Value(LoroValue),
-    Nodes(Vec<ValueOrHandler>),
+    Nodes(NodeSet),
 }
 
 pub fn evaluate_jsonpath(
     root: &dyn PathValue,
     jsonpath: &str,
 ) -> Result<Vec<ValueOrHandler>, JsonPathError> {
-    let parser = JSONPathParser::new();
-    let query = parser
-        .parse(jsonpath)
-        .map_err(|e| JsonPathError::InvalidJsonPath(e.to_string()))?;
+    let query = ParsedJsonPath::parse(jsonpath)?;
 
-    let mut results = Vec::new();
-    evaluate_segment(root, &query.segments, &mut results);
-    Ok(results)
+    Ok(evaluate_parsed_jsonpath(root, &query))
 }
 
-fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<ValueOrHandler>) {
+/// Evaluate a reusable query without parsing it or retaining document values.
+/// Every invocation traverses the supplied root and returns fresh owned results.
+fn evaluate_parsed_jsonpath(root: &dyn PathValue, query: &ParsedJsonPath) -> Vec<ValueOrHandler> {
+    let mut results = NodeSet::new();
+    evaluate_segment(root, &query.query.segments, &mut results);
+    results.into_vec()
+}
+
+fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut NodeSet) {
     match segment {
         Segment::Root {} => {
             if let Ok(cloned) = root.clone_this() {
@@ -55,7 +89,7 @@ fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<V
             if left.is_singular() && matches!(**left, Segment::Root {}) {
                 apply_selectors(root, root, selectors, results);
             } else {
-                let mut intermediate = Vec::new();
+                let mut intermediate = NodeSet::new();
                 evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     apply_selectors(root, &node, selectors, results);
@@ -66,7 +100,7 @@ fn evaluate_segment(root: &dyn PathValue, segment: &Segment, results: &mut Vec<V
             if left.is_singular() && matches!(**left, Segment::Root {}) {
                 recursive_descent(root, root, selectors, results);
             } else {
-                let mut intermediate = Vec::new();
+                let mut intermediate = NodeSet::new();
                 evaluate_segment(root, left, &mut intermediate);
                 for node in intermediate {
                     recursive_descent(root, &node, selectors, results);
@@ -80,7 +114,7 @@ fn apply_selectors(
     root: &dyn PathValue,
     node: &dyn PathValue,
     selectors: &[Selector],
-    results: &mut Vec<ValueOrHandler>,
+    results: &mut NodeSet,
 ) {
     for sel in selectors {
         match sel {
@@ -168,7 +202,7 @@ fn recursive_descent(
     root: &dyn PathValue,
     node: &dyn PathValue,
     selectors: &[Selector],
-    results: &mut Vec<ValueOrHandler>,
+    results: &mut NodeSet,
 ) {
     // 1. apply selectors to the *current* node
     apply_selectors(root, node, selectors, results);
@@ -244,12 +278,12 @@ fn eval_expr(root: &dyn PathValue, current: &dyn PathValue, expr: &FilterExpress
             ExprValue::Bool(compare_expr(l, operator, r))
         }
         FilterExpression::RelativeQuery { query } => {
-            let mut query_results = Vec::new();
+            let mut query_results = NodeSet::new();
             evaluate_segment(current, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
         FilterExpression::RootQuery { query } => {
-            let mut query_results = Vec::new();
+            let mut query_results = NodeSet::new();
             evaluate_segment(root, &query.segments, &mut query_results);
             ExprValue::Nodes(query_results)
         }
@@ -520,7 +554,8 @@ impl PathValue for ValueOrHandler {
 // Implement PathValue for LoroDoc
 impl PathValue for LoroDoc {
     fn get_by_key(&self, key: &str) -> Option<ValueOrHandler> {
-        self.get_by_str_path(key)
+        // JSONPath names are literal keys, not slash-separated document paths.
+        self.get_by_path(&[crate::event::Index::Key(key.into())])
     }
 
     fn get_by_index(&self, _index: isize) -> Option<ValueOrHandler> {
@@ -618,7 +653,7 @@ impl PathValue for MapHandler {
 
     fn for_each_for_path(&self, f: &mut dyn FnMut(ValueOrHandler) -> ControlFlow<()>) {
         let mut done = false;
-        self.for_each(|_, v| {
+        self.for_each_value_for_path(|v| {
             if done {
                 return;
             }
@@ -844,6 +879,158 @@ impl PathValue for LoroValue {
 mod tests {
     use super::*;
     use crate::{ListHandler, LoroDoc, LoroValue, MapHandler};
+
+    mod value_iteration_contract {
+        use super::*;
+
+        fn ordered_public_values(map: &MapHandler) -> Vec<LoroValue> {
+            let mut values = Vec::new();
+            map.for_each(|_, value| values.push(get_value(&value)));
+            values
+        }
+
+        fn ordered_path_values(map: &MapHandler) -> Vec<LoroValue> {
+            let mut values = Vec::new();
+            map.for_each_for_path(&mut |value| {
+                values.push(get_value(&value));
+                ControlFlow::Continue(())
+            });
+            values
+        }
+
+        fn fixture(n: usize) -> (LoroDoc, MapHandler) {
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(1).unwrap();
+            let map = doc.get_map("scope");
+            for index in 0..n {
+                map.insert(&format!("κ/{index:02}"), index as i64).unwrap();
+            }
+            (doc, map)
+        }
+
+        #[test]
+        fn ordered_mixed_map_values_match_public_iteration() {
+            for n in [0, 1, 16] {
+                let (_doc, map) = fixture(n);
+                if n > 1 {
+                    map.insert("raw", loro_common::loro_value!({"x": [1, true, "v"]})).unwrap();
+                    map.insert_container("normal", MapHandler::new_detached()).unwrap().insert("x", 2).unwrap();
+                    map.ensure_mergeable_map("merge").unwrap().insert("x", 3).unwrap();
+                    let wrong_key = loro_common::mergeable_marker(&map.id(), "original-key", loro_common::ContainerType::Map);
+                    let wrong_parent = loro_common::mergeable_marker(&ContainerID::new_root("other", loro_common::ContainerType::Map), "wrong-parent", loro_common::ContainerType::Map);
+                    map.insert("wrong-key", wrong_key.clone()).unwrap();
+                    map.insert("wrong-parent", wrong_parent.clone()).unwrap();
+                    assert_eq!(get_value(&map.get_("wrong-key").unwrap()), wrong_key);
+                    assert_eq!(get_value(&map.get_("wrong-parent").unwrap()), wrong_parent);
+                }
+                assert_eq!(ordered_path_values(&map), ordered_public_values(&map));
+            }
+        }
+
+        #[test]
+        fn attached_iteration_snapshots_scalars_before_reentrant_edits() {
+            let (doc, map) = fixture(0);
+            map.insert("alpha", 1).unwrap();
+            map.insert("beta", 2).unwrap();
+            map.insert("gamma", 3).unwrap();
+            let expected = ordered_public_values(&map);
+            let mut seen = Vec::new();
+            map.for_each_for_path(&mut |value| {
+                if seen.is_empty() {
+                    map.insert("alpha", 100).unwrap();
+                    map.delete("beta").unwrap();
+                    map.insert("later", 9).unwrap();
+                }
+                seen.push(get_value(&value));
+                ControlFlow::Continue(())
+            });
+            assert_eq!(seen, expected);
+            assert_eq!(get_value(&map.get_("later").unwrap()), LoroValue::I64(9));
+            assert!(map.get_("beta").is_none());
+            drop(doc);
+        }
+
+        #[test]
+        fn child_handlers_remain_live_during_iteration() {
+            let (_doc, map) = fixture(0);
+            let normal = map.insert_container("normal", MapHandler::new_detached()).unwrap();
+            let merged = map.ensure_mergeable_map("merge").unwrap();
+            normal.insert("fresh", false).unwrap();
+            merged.insert("fresh", false).unwrap();
+            let mut seen = Vec::new();
+            map.for_each_for_path(&mut |value| {
+                normal.insert("fresh", true).unwrap();
+                merged.insert("fresh", true).unwrap();
+                match &value {
+                    ValueOrHandler::Handler(handler) => seen.push(handler.id()),
+                    _ => panic!("child must remain a translated handler"),
+                }
+                assert_eq!(get_value(&value).get_by_key("fresh"), Some(&LoroValue::Bool(true)));
+                ControlFlow::Continue(())
+            });
+            assert_eq!(seen.len(), 2);
+            assert!(seen.contains(&normal.id()) && seen.contains(&merged.id()));
+        }
+
+        #[test]
+        fn break_and_panic_keep_attached_document_usable() {
+            let (doc, map) = fixture(16);
+            let before = (doc.oplog_vv(), doc.state_vv());
+            let mut count = 0;
+            map.for_each_for_path(&mut |_| {
+                count += 1;
+                ControlFlow::Break(())
+            });
+            assert_eq!(count, 1);
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                map.for_each_for_path(&mut |_| -> ControlFlow<()> { panic!("iteration callback probe") });
+            }));
+            assert!(caught.is_err());
+            assert_eq!((doc.oplog_vv(), doc.state_vv()), before);
+            map.insert("after", 7).unwrap();
+            assert_eq!(get_value(&map.get_("after").unwrap()), LoroValue::I64(7));
+        }
+
+        #[test]
+        fn detached_iteration_keeps_value_order_and_break() {
+            for n in [0, 1, 16] {
+                let map = MapHandler::new_detached();
+                for index in 0..n { map.insert(&format!("key{index}"), index as i64).unwrap(); }
+                assert_eq!(ordered_path_values(&map), ordered_public_values(&map));
+                let mut count = 0;
+                map.for_each_for_path(&mut |_| { count += 1; ControlFlow::Break(()) });
+                assert_eq!(count, usize::from(n > 0));
+            }
+        }
+
+        #[test]
+        fn independent_restores_keep_cold_warm_and_edited_parity() {
+            let (source, _) = fixture(16);
+            let bytes = source.export(crate::encoding::ExportMode::Snapshot).unwrap();
+            for limit in [0, 8] {
+                for preparation in 0..3 {
+                    let restore = || {
+                        let doc = LoroDoc::new_auto_commit();
+                        doc.set_peer_id(2).unwrap();
+                        doc.import(&bytes).unwrap();
+                        doc.set_decoded_value_cache_limit(limit);
+                        let map = doc.get_map("scope");
+                        if preparation > 0 { assert!(map.get_("κ/00").is_some()); }
+                        if preparation > 1 { map.insert("local", 7).unwrap(); }
+                        (doc, map)
+                    };
+                    let (expected_doc, expected_map) = restore();
+                    let (actual_doc, actual_map) = restore();
+                    let expected_versions = (expected_doc.oplog_vv(), expected_doc.state_vv());
+                    let actual_versions = (actual_doc.oplog_vv(), actual_doc.state_vv());
+                    let expected = ordered_public_values(&expected_map);
+                    assert_eq!(ordered_path_values(&actual_map), expected);
+                    assert_eq!((expected_doc.oplog_vv(), expected_doc.state_vv()), expected_versions);
+                    assert_eq!((actual_doc.oplog_vv(), actual_doc.state_vv()), actual_versions);
+                }
+            }
+        }
+    }
 
     fn setup_test_doc() -> LoroDoc {
         let doc = LoroDoc::new();

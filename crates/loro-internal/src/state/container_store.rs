@@ -135,6 +135,11 @@ impl ContainerStore {
             .with_container_for_read(idx, |c| c.get_value(idx, ctx!(self)))
     }
 
+    /// Query only already resident map metadata, without decoding or retaining a value.
+    pub(crate) fn resident_map_is_empty(&self, idx: ContainerIdx) -> Option<bool> {
+        self.store.resident_map_is_empty(idx)
+    }
+
     pub(crate) fn get_value_ephemeral(&mut self, idx: ContainerIdx) -> Option<LoroValue> {
         self.try_get_value_ephemeral(idx)
             .expect("snapshot-backed container should decode")
@@ -574,6 +579,271 @@ mod test {
         assert_eq!(parent, None);
         assert_eq!(value.as_map().map(|map| map.len()), Some(2));
         assert!(!store.store.has_cached_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn root_map_emptiness_tracks_live_entries_not_retained_tombstones() {
+        let doc = LoroDoc::new_auto_commit();
+        let map = doc.get_map("map");
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        let check = |expected| {
+            let mut state = doc.app_state().lock();
+            let idx = state.store.arena.register_container(&map_id);
+            assert_eq!(state.root_container_is_empty(idx), expected);
+        };
+
+        map.insert("first", 1).unwrap();
+        map.insert("second", 2).unwrap();
+        check(false);
+        map.delete("first").unwrap();
+        check(false);
+        map.delete("second").unwrap();
+        check(true);
+        map.insert("first", 3).unwrap();
+        check(false);
+    }
+
+    #[test]
+    fn root_map_emptiness_preserves_cold_and_cached_lazy_ownership() {
+        let source = init_doc();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+        let map_id = ContainerID::new_root("map", ContainerType::Map);
+        {
+            let mut state = imported.app_state().lock();
+            let idx = state.store.arena.register_container(&map_id);
+            assert!(!state.store.store.has_cached_value_for_test(idx));
+            assert!(!state.root_container_is_empty(idx));
+            assert!(!state.store.store.has_cached_value_for_test(idx));
+        }
+
+        // A real key read establishes the ordinary bounded lazy cache, without
+        // constructing the full map value. Root selection must keep that state.
+        assert_eq!(imported.get_map("map").get("key"), Some("value".into()));
+        {
+            let mut state = imported.app_state().lock();
+            let idx = state.store.arena.register_container(&map_id);
+            let count = state.store.store.cached_value_count_for_test();
+            assert!(state.store.store.has_cached_value_for_test(idx));
+            assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            for _ in 0..32 {
+                assert!(!state.root_container_is_empty(idx));
+            }
+            assert_eq!(state.store.store.cached_value_count_for_test(), count);
+            assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+
+            // If an ordinary value read already materialized it, keep it so.
+            assert_eq!(state.store.get_value(idx).unwrap().as_map().unwrap().len(), 2);
+            assert!(state.store.store.has_materialized_map_value_for_test(idx));
+            assert!(!state.root_container_is_empty(idx));
+            assert!(state.store.store.has_materialized_map_value_for_test(idx));
+
+            let text_idx = state.store.arena.register_container(&ContainerID::new_root(
+                "text",
+                ContainerType::Text,
+            ));
+            assert!(!state.root_container_is_empty(text_idx));
+        }
+    }
+
+    #[test]
+    fn cached_empty_root_map_keeps_same_name_nonempty_text_preferred() {
+        let source = LoroDoc::new_auto_commit();
+        let map = source.get_map("shared");
+        map.insert("gone", 1).unwrap();
+        map.delete("gone").unwrap();
+        source
+            .get_text("shared")
+            .insert(0, "live", PosType::Unicode)
+            .unwrap();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new();
+        imported.import(&snapshot).unwrap();
+
+        // Decode the empty/tombstone-only map through its ordinary key API.
+        assert_eq!(imported.get_map("shared").get("gone"), None);
+        let map_id = ContainerID::new_root("shared", ContainerType::Map);
+        let text_id = ContainerID::new_root("shared", ContainerType::Text);
+        let mut state = imported.app_state().lock();
+        let map_idx = state.store.arena.register_container(&map_id);
+        let text_idx = state.store.arena.register_container(&text_id);
+        let count = state.store.store.cached_value_count_for_test();
+        assert!(state.store.store.has_cached_value_for_test(map_idx));
+        assert!(!state.store.store.has_materialized_map_value_for_test(map_idx));
+        for _ in 0..32 {
+            assert!(state.root_container_is_empty(map_idx));
+            assert!(!state.root_container_is_empty(text_idx));
+            assert_eq!(
+                state.preferred_root_container_idx_by_key(&"shared".into()),
+                Some(text_idx)
+            );
+            assert_eq!(
+                state.get_value_by_path(&[crate::event::Index::Key("shared".into())]),
+                Some(LoroValue::Container(text_id.clone()))
+            );
+            let roots = state.preferred_root_containers();
+            assert!(roots.contains(&text_idx));
+            assert!(!roots.contains(&map_idx));
+        }
+        assert_eq!(state.store.store.cached_value_count_for_test(), count);
+        assert!(!state.store.store.has_materialized_map_value_for_test(map_idx));
+    }
+
+    #[test]
+    fn root_map_emptiness_survives_zero_cache_and_limit_transitions() {
+        let source = LoroDoc::new_auto_commit();
+        source.get_map("live").insert("keep", 17).unwrap();
+        let empty = source.get_map("shared");
+        empty.insert("gone", 1).unwrap();
+        empty.delete("gone").unwrap();
+        source
+            .get_text("shared")
+            .insert(0, "present", PosType::Unicode)
+            .unwrap();
+        source.get_map("edited").insert("seed", 9).unwrap();
+        let snapshot = source
+            .export(crate::encoding::ExportMode::Snapshot)
+            .unwrap();
+        let imported = LoroDoc::new_auto_commit();
+        imported.set_decoded_value_cache_limit(8);
+        imported.import(&snapshot).unwrap();
+
+        let live_id = ContainerID::new_root("live", ContainerType::Map);
+        let empty_id = ContainerID::new_root("shared", ContainerType::Map);
+        let text_id = ContainerID::new_root("shared", ContainerType::Text);
+        let edited_id = ContainerID::new_root("edited", ContainerType::Map);
+        let (live_idx, empty_idx, text_idx, edited_idx) = {
+            let state = imported.app_state().lock();
+            (
+                state.store.arena.register_container(&live_id),
+                state.store.arena.register_container(&empty_id),
+                state.store.arena.register_container(&text_id),
+                state.store.arena.register_container(&edited_id),
+            )
+        };
+        let check_roots = |state: &mut crate::state::DocState| {
+            for _ in 0..8 {
+                assert!(!state.root_container_is_empty(live_idx));
+                assert!(state.root_container_is_empty(empty_idx));
+                assert!(!state.root_container_is_empty(text_idx));
+                assert!(!state.root_container_is_empty(edited_idx));
+                assert_eq!(
+                    state.preferred_root_container_idx_by_key(&"shared".into()),
+                    Some(text_idx)
+                );
+                assert_eq!(
+                    state.get_value_by_path(&[crate::event::Index::Key("shared".into())]),
+                    Some(LoroValue::Container(text_id.clone()))
+                );
+                let roots = state.preferred_root_containers();
+                assert!(roots.contains(&live_idx));
+                assert!(roots.contains(&edited_idx));
+                assert!(roots.contains(&text_idx));
+                assert!(!roots.contains(&empty_idx));
+            }
+        };
+
+        // Establish ordinary decoded lazy values before lowering the limit.
+        assert_eq!(imported.get_map("live").get("keep"), Some(17.into()));
+        assert_eq!(imported.get_map("shared").get("gone"), None);
+        assert_eq!(imported.get_map("edited").get("seed"), Some(9.into()));
+        {
+            let mut state = imported.app_state().lock();
+            assert_eq!(state.store.store.cached_value_count_for_test(), 3);
+            for idx in [live_idx, empty_idx, edited_idx] {
+                assert!(state.store.store.has_cached_value_for_test(idx));
+                assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            }
+            check_roots(&mut state);
+            assert_eq!(state.store.store.cached_value_count_for_test(), 3);
+            for idx in [live_idx, empty_idx, edited_idx] {
+                assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            }
+        }
+
+        // Use the real setter: zero immediately trims flushed lazy wrappers.
+        // Root probes must use their cold path without recreating a cache entry.
+        imported.set_decoded_value_cache_limit(0);
+        {
+            let mut state = imported.app_state().lock();
+            assert_eq!(state.store.store.cached_value_count_for_test(), 0);
+            for idx in [live_idx, empty_idx, edited_idx] {
+                assert!(!state.store.store.has_cached_value_for_test(idx));
+            }
+            check_roots(&mut state);
+            assert_eq!(state.store.store.cached_value_count_for_test(), 0);
+            for idx in [live_idx, empty_idx, edited_idx] {
+                assert!(!state.store.store.has_cached_value_for_test(idx));
+                assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            }
+        }
+
+        // A successful ordinary key read at zero may be immediately evicted.
+        assert_eq!(imported.get_map("live").get("keep"), Some(17.into()));
+        assert_eq!(imported.get_map("shared").get("gone"), None);
+        assert_eq!(imported.get_map("edited").get("seed"), Some(9.into()));
+        {
+            let mut state = imported.app_state().lock();
+            check_roots(&mut state);
+            assert_eq!(state.store.store.cached_value_count_for_test(), 0);
+            for idx in [live_idx, empty_idx, edited_idx] {
+                assert!(!state.store.store.has_cached_value_for_test(idx));
+            }
+        }
+
+        // Dirty full state is outside the evictable-value budget. It must stay
+        // visible at zero, including deletion of the original snapshot value.
+        let edited = imported.get_map("edited");
+        edited.insert("local", 23).unwrap();
+        edited.delete("seed").unwrap();
+        assert_eq!(edited.get("local"), Some(23.into()));
+        assert_eq!(edited.get("seed"), None);
+        {
+            let mut state = imported.app_state().lock();
+            assert!(state.store.store.has_cached_value_for_test(edited_idx));
+            assert_eq!(state.store.store.cached_value_count_for_test(), 0);
+            check_roots(&mut state);
+            assert!(state.store.store.has_cached_value_for_test(edited_idx));
+            assert!(!state.store.store.has_cached_value_for_test(live_idx));
+            assert!(!state.store.store.has_cached_value_for_test(empty_idx));
+            assert_eq!(state.store.store.cached_value_count_for_test(), 0);
+        }
+
+        // Re-enable caching and repeat normal key reads and root selection.
+        imported.set_decoded_value_cache_limit(8);
+        assert_eq!(imported.get_map("live").get("keep"), Some(17.into()));
+        assert_eq!(imported.get_map("shared").get("gone"), None);
+        assert_eq!(edited.get("local"), Some(23.into()));
+        {
+            let mut state = imported.app_state().lock();
+            assert_eq!(state.store.store.cached_value_count_for_test(), 2);
+            for idx in [live_idx, empty_idx] {
+                assert!(state.store.store.has_cached_value_for_test(idx));
+                assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            }
+            check_roots(&mut state);
+            assert_eq!(state.store.store.cached_value_count_for_test(), 2);
+            for idx in [live_idx, empty_idx] {
+                assert!(!state.store.store.has_materialized_map_value_for_test(idx));
+            }
+        }
+
+        // Full usable snapshot restoration is an output check after the cache
+        // assertions, because export/deep reads can change state residency.
+        let restored = LoroDoc::new();
+        restored
+            .import(&imported.export(crate::encoding::ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert_eq!(restored.get_map("live").get("keep"), Some(17.into()));
+        assert_eq!(restored.get_map("shared").get("gone"), None);
+        assert_eq!(restored.get_map("edited").get("local"), Some(23.into()));
+        assert_eq!(restored.get_map("edited").get("seed"), None);
+        assert_eq!(restored.get_deep_value(), imported.get_deep_value());
     }
 
     #[test]
