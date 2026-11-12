@@ -322,18 +322,20 @@ pub(crate) fn apply_decoded_changes_to_oplog(
     } = import_changes_to_oplog(changes, oplog)?;
 
     // TODO: PERF: should we use hashmap to filter latest_ids with the same peer first?
-    oplog.try_apply_pending(latest_ids, Some(&mut imported));
+    let dropped_trimmed = oplog.try_apply_pending(latest_ids, Some(&mut imported))?;
     // Applying previously parked pending ops can unlock deps of `pending_changes`.
     // Those are applied here (and counted in `imported`); only still-blocked ones
     // remain in the returned pending range.
-    let pending =
-        oplog.import_unknown_lamport_pending_changes(pending_changes, Some(&mut imported));
+    let (pending, dropped_unknown) =
+        oplog.import_unknown_lamport_pending_changes(pending_changes, Some(&mut imported))?;
     Ok(ApplyDecodedChangesResult {
         status: ImportStatus {
             success: imported,
             pending: (!pending.is_empty()).then_some(pending),
         },
-        has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty(),
+        has_deps_before_shallow_root: !changes_that_have_deps_before_shallow_root.is_empty()
+            || dropped_trimmed
+            || dropped_unknown,
     })
 }
 
