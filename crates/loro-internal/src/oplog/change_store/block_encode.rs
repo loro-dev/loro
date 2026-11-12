@@ -77,10 +77,10 @@ use loro_common::{
 use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
-use serde_columnar::{columnar, AnyRleDecoder, DeltaOfDeltaDecoder, Itertools};
+use serde_columnar::{columnar, AnyRleDecoder, Itertools};
 use tracing::info;
 
-use super::block_meta_encode::decode_changes_header;
+use super::block_meta_encode::{decode_changes_header, decode_delta_of_delta};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::container::list::list_op::InnerListOp;
@@ -284,8 +284,10 @@ fn encode_keys(keys: Vec<loro_common::InternalString>) -> Vec<u8> {
 fn decode_keys(mut bytes: &[u8]) -> LoroResult<Vec<InternalString>> {
     let mut keys = Vec::new();
     while !bytes.is_empty() {
-        let len = leb128::read::unsigned(&mut bytes)
-            .map_err(|_| LoroError::DecodeDataCorruptionError)? as usize;
+        let len = usize::try_from(
+            leb128::read::unsigned(&mut bytes).map_err(|_| LoroError::DecodeDataCorruptionError)?,
+        )
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
         if bytes.len() < len {
             return Err(LoroError::DecodeDataCorruptionError);
         }
@@ -400,8 +402,8 @@ fn decode_header_from_doc(doc: &EncodedBlock) -> Result<ChangesBlockHeader, Loro
     let ans: ChangesBlockHeader = decode_changes_header(
         header,
         *n_changes as usize,
-        *counter_start as Counter,
-        *counter_len as Counter,
+        Counter::try_from(*counter_start).map_err(|_| LoroError::DecodeDataCorruptionError)?,
+        Counter::try_from(*counter_len).map_err(|_| LoroError::DecodeDataCorruptionError)?,
         *lamport_start,
         *lamport_len,
     )?;
@@ -632,12 +634,13 @@ pub fn decode_block(
         ..
     } = doc;
     let n_changes = n_changes as usize;
+    // A cached header must never allow the count in the bytes to bypass the
+    // header's byte-derived bound before decoding metadata columns.
+    if n_changes != header.n_changes || n_changes == 0 || n_changes - 1 > doc.header.len() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
     let mut changes = Vec::with_capacity(n_changes);
-    let timestamp_decoder = DeltaOfDeltaDecoder::<i64>::new(&change_meta)
-        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
-    let (timestamps, bytes) = timestamp_decoder
-        .take_n_finalize(n_changes)
-        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let (timestamps, bytes) = decode_delta_of_delta::<i64>(&change_meta, n_changes)?;
     let commit_msg_len_decoder = AnyRleDecoder::<u32>::new(bytes);
     let (commit_msg_lens, commit_msgs) = commit_msg_len_decoder
         .take_n_finalize(n_changes)
@@ -807,6 +810,78 @@ mod test {
     use crate::{cursor::PosType, delta::DeltaValue, loro::ExportMode, LoroDoc};
 
     use super::*;
+
+    #[test]
+    fn cached_header_does_not_trust_modified_metadata_count() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.get_text("text").insert_unicode(0, "x").unwrap();
+        source.commit_then_renew();
+        let oplog = source.oplog().lock();
+        let change = oplog.change_store().get_change(ID::new(1, 0)).unwrap();
+        let bytes = encode_block(std::slice::from_ref(&*change), &oplog.arena);
+        let header = decode_header(&bytes).unwrap();
+        let mut block: EncodedBlock<'_> = postcard::from_bytes(&bytes).unwrap();
+        block.n_changes = u32::MAX;
+        let damaged = postcard::to_allocvec(&block).unwrap();
+        assert!(decode_block(&damaged, &SharedArena::new(), Some(&header)).is_err());
+        assert!(decode_header(&damaged).is_err());
+    }
+
+    #[test]
+    fn damaged_header_and_metadata_columns_return_without_panicking() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        source.get_text("text").insert_unicode(0, "a").unwrap();
+        source.commit_then_renew();
+        source.get_text("text").insert_unicode(1, "b").unwrap();
+        source.commit_then_renew();
+        let oplog = source.oplog().lock();
+        let changes: Vec<_> = [0, 1]
+            .into_iter()
+            .map(|counter| {
+                (*oplog
+                    .change_store()
+                    .get_change(ID::new(1, counter))
+                    .unwrap())
+                .clone()
+            })
+            .collect();
+        let bytes = encode_block(&changes, &oplog.arena);
+        for metadata in [false, true] {
+            let block: EncodedBlock<'_> = postcard::from_bytes(&bytes).unwrap();
+            let column = if metadata {
+                &block.change_meta
+            } else {
+                &block.header
+            };
+            for end in 0..column.len() {
+                let mut damaged: EncodedBlock<'_> = postcard::from_bytes(&bytes).unwrap();
+                if metadata {
+                    damaged.change_meta = column[..end].into();
+                } else {
+                    damaged.header = column[..end].into();
+                }
+                let damaged = postcard::to_allocvec(&damaged).unwrap();
+                assert!(decode_block(&damaged, &SharedArena::new(), None).is_err());
+            }
+            for index in 0..column.len() {
+                for value in [0, 1, 0x7f, 0x80, 0xff] {
+                    let mut mutated = column.to_vec();
+                    mutated[index] = value;
+                    let mut damaged: EncodedBlock<'_> = postcard::from_bytes(&bytes).unwrap();
+                    if metadata {
+                        damaged.change_meta = mutated.into();
+                    } else {
+                        damaged.header = mutated.into();
+                    }
+                    let damaged = postcard::to_allocvec(&damaged).unwrap();
+                    // Some mutations remain valid; neither outcome may panic.
+                    let _ = decode_block(&damaged, &SharedArena::new(), None);
+                }
+            }
+        }
+    }
 
     #[test]
     fn decoded_changes_keep_no_spare_op_capacity() {
