@@ -681,3 +681,59 @@ describe("richtext", () => {
     expect(text.toString()).toBe("");
   });
 });
+
+describe.each(["none", "after", "before", "both"] as const)(
+  "unmark static runs (expand=%s)",
+  (expand) => {
+    it.each([false, true])(
+      "merges runs and preserves unmark events (italic=%s)",
+      (italic) => {
+        const doc = new LoroDoc();
+        doc.configTextStyle({ bold: { expand }, italic: { expand } });
+        const text = doc.getText("text");
+        text.insert(0, "The ford is upstream.");
+        if (italic) text.mark({ start: 0, end: 21 }, "italic", true);
+        text.mark({ start: 18, end: 21 }, "bold", true);
+        doc.commit();
+        const events: TextDiff[] = [];
+        const unsubscribe = text.subscribe((event) => {
+          for (const e of event.events) {
+            if (e.diff.type === "text") events.push(e.diff);
+          }
+        });
+        text.unmark({ start: 18, end: 21 }, "bold");
+        doc.commit();
+        expect(events).toEqual([
+          {
+            type: "text",
+            diff: [{ retain: 18 }, { retain: 3, attributes: { bold: null } }],
+          },
+        ]);
+        unsubscribe();
+        const expected = [
+          italic
+            ? { insert: "The ford is upstream.", attributes: { italic: true } }
+            : { insert: "The ford is upstream." },
+        ];
+        expect(text.toDelta()).toEqual(expected);
+        const restored = new LoroDoc();
+        restored.import(doc.export({ mode: "snapshot" }));
+        expect(restored.getText("text").toDelta()).toEqual(expected);
+      },
+    );
+
+    it("merges a partially unmarked tail with its unstyled neighbor", () => {
+      const doc = new LoroDoc();
+      doc.configTextStyle({ bold: { expand } });
+      const text = doc.getText("text");
+      text.insert(0, "abcdef");
+      text.mark({ start: 1, end: 4 }, "bold", true);
+      text.unmark({ start: 2, end: 4 }, "bold");
+      expect(text.toDelta()).toEqual([
+        { insert: "a" },
+        { insert: "b", attributes: { bold: true } },
+        { insert: "cdef" },
+      ]);
+    });
+  },
+);

@@ -85,3 +85,16 @@ spanning several insert runs):
 - Re-create cursors on text that such a delete removed (`getCursor` after
   loading) instead of resolving stored ones, or store positions for these
   documents.
+
+## Static delta reads versus incremental events (#1241)
+
+Verified against code 2026-11-12.
+
+`state::richtext_state::RichtextState::get_delta` and the detached branch of
+`TextHandler::get_delta` filter null style values before comparing neighboring
+runs, using `StyleMeta::to_option_map_without_null_value`. A removed style and an
+absent style represent the same static state. `get_richtext_value` already does
+this through `StyleMeta::to_value`. Keep the null-valued anchors in the document,
+and keep `to_option_map` in incremental diff/event conversion: a retain with
+`{ bold: null }` tells the consumer to remove bold. Regression coverage lives in
+`tests/richtext_unmark_runs.rs` and WASM `tests/richtext.test.ts`.
