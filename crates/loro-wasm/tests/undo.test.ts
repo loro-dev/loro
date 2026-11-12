@@ -187,6 +187,77 @@ describe("undo", () => {
     expect(doc.getText("text").length).toBe(100);
   });
 
+  test("redo respects a reduced undo limit (#1232)", () => {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+    text.insert(0, "a");
+    doc.commit();
+    text.insert(1, "b");
+    doc.commit();
+    expect(undo.undo()).toBe(true);
+    undo.setMaxUndoSteps(1);
+    expect(undo.redo()).toBe(true);
+    expect(undo.undo()).toBe(true);
+    expect(text.toString()).toBe("a");
+    expect(undo.canUndo()).toBe(false);
+    undo.free();
+  });
+
+  test.each([0, 1])("shrinking to %s keeps callbacks aligned", (limit) => {
+    const doc = new LoroDoc();
+    const text = doc.getText("text");
+    let nextId = 0;
+    const popped: { isUndo: boolean; value: unknown; cursors: number }[] = [];
+    const undo = new UndoManager(doc, {
+      mergeInterval: 0,
+      onPush: () => ({
+        value: ++nextId,
+        cursors: [expectDefined(text.getCursor(0, -1))],
+      }),
+      onPop: (isUndo, meta) => {
+        popped.push({
+          isUndo,
+          value: meta.value,
+          cursors: meta.cursors.length,
+        });
+        for (const cursor of meta.cursors) {
+          expect(expectDefined(doc.getCursorPos(cursor)).offset).toBe(0);
+        }
+      },
+    });
+    for (let i = 0; i < 3; i++) {
+      text.insert(i, "x");
+      doc.commit();
+    }
+    expect(undo.undo()).toBe(true); // Retain a redo item while shrinking.
+    expect(popped).toEqual([{ isUndo: true, value: 3, cursors: 1 }]);
+    undo.setMaxUndoSteps(limit);
+    expect(undo.canUndo()).toBe(limit > 0);
+    expect(popped).toHaveLength(1); // Eviction is not an undo/pop callback.
+    expect(undo.redo()).toBe(true);
+    expect(popped[1]).toEqual({ isUndo: false, value: 4, cursors: 1 });
+    expect(text.toString()).toBe("xxx");
+    expect(undo.undo()).toBe(limit > 0);
+    expect(undo.canUndo()).toBe(false);
+    if (limit > 0) {
+      expect(popped[2]).toEqual({ isUndo: true, value: 5, cursors: 1 });
+    } else {
+      expect(popped).toHaveLength(2);
+      text.insert(3, "y");
+      doc.commit();
+      expect(undo.canUndo()).toBe(false);
+      undo.setMaxUndoSteps(1);
+      text.insert(4, "z");
+      doc.commit();
+      expect(undo.undo()).toBe(true);
+      expect(popped[2]).toEqual({ isUndo: true, value: 7, cursors: 1 });
+      expect(text.toString()).toBe("xxxy");
+      expect(undo.canUndo()).toBe(false);
+    }
+    undo.free();
+  });
+
   test("onPush metadata survives eviction at the undo limit", () => {
     const doc = new LoroDoc();
     const text = doc.getText("text");
