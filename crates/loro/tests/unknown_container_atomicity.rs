@@ -1051,3 +1051,42 @@ fn undo_after_a_rejected_move_matches_a_remote_move() {
     };
     assert_eq!(undo_all(true), undo_all(false));
 }
+
+// #1255: moving a child's edits before marker deletion must also move the
+// unknown-container preflight; it must reject rather than skip this insertion.
+#[test]
+fn mergeable_removal_checks_descendant_unknown_creation_before_hiding() {
+    for nested_normal in [false, true] {
+        let doc = forge(|doc| {
+            let parent = doc.get_map("m").ensure_mergeable_map("child").unwrap();
+            let parent = if nested_normal {
+                parent.insert_container("normal", LoroMap::new()).unwrap()
+            } else {
+                parent
+            };
+            edited_counter(parent.insert_container("u", counter()).unwrap());
+        });
+        let root = doc.get_map("m");
+        let parent = root.ensure_mergeable_map("child").unwrap();
+        let parent = if nested_normal {
+            doc.get_map(match parent.get("normal").unwrap() {
+                loro::ValueOrContainer::Container(c) => c.id(),
+                _ => unreachable!(),
+            })
+        } else {
+            parent
+        };
+        let before = doc.state_frontiers();
+        parent.delete("u").unwrap();
+        doc.commit();
+        let restore = doc.diff(&doc.state_frontiers(), &before).unwrap();
+        let mut edits = vec![(
+            root.id(),
+            Diff::Map(MapDelta {
+                updated: [(Cow::Borrowed("child"), None)].into_iter().collect(),
+            }),
+        )];
+        edits.extend(restore.iter().map(|(id, edit)| (id.clone(), edit.clone())));
+        assert_rejected_atomically(&doc, |d| d.apply_diff(batch(edits)));
+    }
+}

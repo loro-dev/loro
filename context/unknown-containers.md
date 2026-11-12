@@ -1,6 +1,6 @@
 # Unknown Container Types
 
-Verified against code 2026-10-17 (including identity-aware MovableList undo, #1185).
+Verified against code 2026-11-12 (including mergeable creation undo, #1255).
 
 A container whose type this version doesn't know (`ContainerType::Unknown(k)`,
 written by a newer Loro) can be imported, exported, checked out, moved in a
@@ -45,6 +45,13 @@ from the whole batch:
 - *removed*: deleting a child container (map key overwrite/delete, list delete
   not re-inserted as a MovableList move, tree node delete) makes it and its
   descendants unreachable for the later entries, which the loop then skips.
+
+Before prediction, `LoroDoc::order_mergeable_removals` moves edits of initially
+reachable mergeable subtrees before the map entry that hides them. The loop
+uses that same order, so descendant edits (including ordinary descendants)
+are checked rather than predicted as skipped. This also keeps those writes
+valid under the transaction's deleted-container check; see
+[mergeable creation undo](mergeable-containers.md#undoing-creation-and-content-together-1255).
 
 Ancestors come from arena parents (`LoroDoc::arena_ancestors_and_self`), not
 from `get_path_to_container`: a hidden mergeable container has no path, but a

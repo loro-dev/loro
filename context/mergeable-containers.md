@@ -1,6 +1,6 @@
 # Mergeable Container Context
 
-Verified against code 2026-11-03.
+Verified against code 2026-11-12.
 
 Mergeable containers let two peers independently create the same child container
 under a map key and converge to one deterministic container id. The source of
@@ -212,6 +212,38 @@ Known limitations:
 
 Covered by `crates/loro/tests/mergeable_revert.rs`, `tests/mergeable_container/delete.rs`,
 and `crates/loro-wasm/tests/mergeable.test.ts`.
+
+## Undoing creation and content together (#1255)
+
+Undoing a step that both ensures a mergeable child and writes its content must
+undo the content before hiding the marker. Hiding alone retains state at the
+deterministic id, so a later ensure would bring the undone content back.
+
+There are two boundaries in the Rust implementation:
+
+- `DocState::diffs_to_event` keeps hidden changes for internal `record_changes_only`
+  batches (undo/revert), provided every broken edge in the arena chain is
+  mergeable (`is_hidden_only_by_mergeable_edges`). Their paths are unused;
+  these batches are ordered by arena depth. A broken ordinary edge still
+  omits the entry: its replacement receives full state under a fresh id.
+  Public subscription events still omit unreachable containers.
+- `LoroDoc::order_mergeable_removals` orders edits of initially reachable
+  children and descendants before the map entry that removes or replaces
+  their mergeable marker. It runs before unknown-container preflight and
+  application, including undo's early preflight. Other entries keep their
+  order unless a dependency requires moving them. Already hidden containers
+  keep the normal reachability checks. `Transaction::apply_local_op` and
+  handlers still reject writes to deleted containers; no exception is needed.
+
+Only actual inverse changes are applied. Pre-existing hidden content and
+concurrent remote edits survive. Ordinary map deletion still hides content;
+this does not turn deletion into a recursive clear.
+
+Regression coverage: `crates/loro/tests/mergeable_revert.rs` checks all six
+container kinds, nested mergeable/ordinary descendants, repeated undo/redo,
+remote re-ensure, replay and concurrent text edits. The marker-removal test in
+`unknown_container_atomicity.rs` checks that reordered descendant entries
+cannot bypass the unknown-container rejection.
 
 ## Snapshot And Retention Rules
 
