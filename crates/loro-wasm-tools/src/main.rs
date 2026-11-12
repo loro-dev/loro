@@ -82,7 +82,10 @@ fn generate_sourcemap(wasm_path: PathBuf, map_path: PathBuf, url: String) -> Res
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
-    let map_contents = wasm.map_v3();
+    // wasm2map writes source paths into the JSON unescaped. On Windows they
+    // contain backslashes, which makes the map invalid JSON; a forward slash
+    // names the same file there.
+    let map_contents = wasm.map_v3().replace('\\', "/");
     fs::write(&map_path, map_contents)
         .with_context(|| format!("failed to write source map {}", map_path.display()))?;
 

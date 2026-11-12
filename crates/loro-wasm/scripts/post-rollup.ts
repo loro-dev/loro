@@ -123,7 +123,8 @@ async function transform(dir: string) {
       match: [/index\.(js|d\.ts)$/],
     })) {
       if (FILES_TO_PROCESS.includes(entry.name)) {
-        await replaceInFile(entry.path);
+        // The path checks below expect "/" separators; Windows gives "\".
+        await replaceInFile(entry.path.replaceAll("\\", "/"));
       }
     }
   } catch (error) {
@@ -132,9 +133,12 @@ async function transform(dir: string) {
 }
 
 async function rollupBase64() {
-  const command = new Deno.Command("rollup", {
-    args: ["--config", "./rollup.base64.config.mjs"],
-  });
+  // On Windows the package's `rollup` is a .cmd shim, which only a shell runs.
+  const rollupArgs = ["--config", "./rollup.base64.config.mjs"];
+  const command =
+    Deno.build.os === "windows"
+      ? new Deno.Command("cmd", { args: ["/c", "rollup", ...rollupArgs] })
+      : new Deno.Command("rollup", { args: rollupArgs });
 
   try {
     const { code, stdout, stderr } = await command.output();
