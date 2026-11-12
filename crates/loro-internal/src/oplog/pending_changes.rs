@@ -177,6 +177,21 @@ impl PendingChanges {
         Ok(changes)
     }
 
+    /// Candidates that an arriving id span can unlock, including slots waiting on
+    /// earlier counters of the same peer not yet scanned in this pass.
+    pub(super) fn waiting_on_range(
+        &self,
+        peer: PeerID,
+        from_inclusive: Counter,
+        to_inclusive: Counter,
+    ) -> impl Iterator<Item = &Change> {
+        self.changes
+            .get(&peer)
+            .into_iter()
+            .flat_map(move |slots| slots.range(from_inclusive..=to_inclusive))
+            .flat_map(|(_, changes)| changes.iter().map(|c| &**c))
+    }
+
     pub(crate) fn has_import_rollback_ops(&self, detached: bool) -> bool {
         self.changes.values().any(|tree| {
             tree.values().any(|changes| {
