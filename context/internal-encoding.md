@@ -248,6 +248,37 @@ overflow, and truncated block payloads, then sorts decoded changes by lamport.
 changes, applies newly-unlocked pending changes, and rejects dependencies before
 a shallow root.
 
+### Change-header allocation and malformed columns (#1262)
+
+Verified against code 2026-11-12. In
+`oplog/change_store/block_meta_encode.rs::decode_changes_header`, the peer table
+must fit its bytes before allocation. The `n_changes - 1` explicit length
+varints bound every change-sized allocation. Each external dependency count is
+less than the peer-table size (the block's own peer has a separate boolean),
+and the total uses `checked_add`. The dependency counters use delta-of-delta:
+after the first value each needs at least one bit, so the remaining header
+bytes also bound the total before either dependency vector is allocated. A
+peer-count bound alone would still permit quadratic RLE expansion.
+
+`decode_delta_of_delta` reads this existing wire format with checked bit reads,
+checked signed arithmetic, output conversion, and a count/byte bound. It is
+used for dependency counters, Lamports and timestamps; the upstream decoder's
+unchecked reads can panic on truncated prefixes. Trailing header bytes return
+a decoding error rather than a debug assertion. In `block_encode.rs::decode_block`,
+the count must agree with the cached header and fit the raw header before
+allocating changes or decoding metadata columns.
+
+Batch metadata still uses `decode_import_blob_meta(_, false)` for sorting.
+Checksum verification is not an allocation bound: public-seed checksums can be
+recomputed. These decoder checks apply before the checksum-free metadata path
+can reserve memory from hostile counts, without changing batch partial-success
+semantics or hashing every blob twice. See
+`crates/loro/tests/import_header_allocation.rs`: six issue reproduction paths
+run in child processes with a 1 MiB single-allocation cap, then check unchanged
+history/state, continued editing and a later valid import. Module tests cover
+single-change hostile dependency lengths, RLE-amplified totals, cached-header
+count mismatch, all delta prefix widths, truncation and arithmetic overflow.
+
 ### Persisting remote pending updates
 
 Normal snapshot/update exports cover applied history and exclude remote changes
