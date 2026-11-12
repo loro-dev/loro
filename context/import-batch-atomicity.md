@@ -1,6 +1,6 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-11-09.
+Verified against code 2026-11-12.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) stops the auto-commit txn,
 keeps the txn mutex for the whole critical section, force-detaches with
@@ -8,15 +8,20 @@ keeps the txn mutex for the whole critical section, force-detaches with
 `_checkout_to_latest_without_commit` at the end. Usually every blob updates only the
 `OpLog`, so a batch of N blobs costs one state apply instead of N.
 
-For an empty, attached document, the first full snapshot after mode sorting uses
-the same `decode_snapshot` as standalone `import` (loro-dev/loro#1193). Its state
-stays lazy; only the following updates need checkout. Pre-existing pending changes,
-non-empty state/history, explicitly detached documents, and shallow snapshots keep
-the ordinary path. The snapshot installs a new DAG, so the suffix rollback journal
+For an attached document with no applied history and snapshot-compatible state,
+the first full or shallow snapshot after mode sorting uses the same
+`init_snapshot_preserving_pending` bootstrap as standalone `import`
+(loro-dev/loro#1193, #1215). A full snapshot's state stays lazy; only unlocked pending
+changes and following updates need checkout. Shallow snapshots load their root and
+optional overlay, replaying the retained tail when the overlay is omitted. The
+bootstrap temporarily removes pre-existing pending changes and re-imports their
+original claimed spans after initialization; invalid/pruned dependencies reject the
+blob and restore its original pending set. Non-empty state/history and explicitly
+detached documents keep the ordinary path. The snapshot installs a new DAG, so the suffix rollback journal
 begins **after** snapshot decoding. `BatchImportGuard::snapshot_checkpoint` keeps the
-pre-snapshot arena checkpoint: if the closing validation/checkout fails, the guard
-resets both state and history to empty, including the snapshot, and clears the diff
-calculator. Container indices remain valid for existing handles. Snapshot events
+pre-snapshot arena checkpoint and original pending claims: if the closing
+validation/checkout fails, the guard resets both state and history to empty,
+including the snapshot, restores the pending set, and clears the diff calculator. Container indices remain valid for existing handles. Snapshot events
 stay queued until the closing checkout succeeds; per-blob imports do not emit them.
 
 ## The invariant

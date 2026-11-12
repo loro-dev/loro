@@ -219,15 +219,23 @@ fn snapshot_import_preserves_pending_instead_of_trimming_its_deps() {
     let pending = fork.export(ExportMode::updates(&base)).unwrap();
     source.get_map("m").insert("root", 3).unwrap();
     source.commit();
+    let root_update = source.export(ExportMode::updates(&base)).unwrap();
     let snapshot = source
         .export(ExportMode::shallow_snapshot(&source.oplog_frontiers()))
         .unwrap();
     let target = LoroDoc::new();
     assert!(target.import(&pending).unwrap().pending.is_some());
-    target.import(&snapshot).unwrap();
-    // Current main deliberately imports history only when pending changes exist.
+    assert_eq!(
+        target.import(&snapshot).unwrap_err(),
+        LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+    );
+    // Snapshot bootstrap rolls back cleanly and preserves parked changes when
+    // the shallow cut trims their dependencies.
+    assert!(target.oplog_vv().is_empty());
     assert!(target.shallow_since_frontiers().is_empty());
+    assert!(target.export_pending_updates().unwrap().is_some());
     target.import(&base_update).unwrap();
+    target.import(&root_update).unwrap();
     source.import(&pending).unwrap();
     assert_eq!(target.get_deep_value(), source.get_deep_value());
     assert_eq!(target.state_frontiers(), target.oplog_frontiers());

@@ -14,7 +14,8 @@ use std::sync::Arc;
 use tracing::trace_span;
 
 use self::change_store::iter::MergedChangeIter;
-use self::pending_changes::{PendingChanges, PendingChangesRollback};
+pub(crate) use self::pending_changes::PendingChanges;
+use self::pending_changes::PendingChangesRollback;
 use super::arena::{SharedArena, SharedArenaRollback};
 use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;

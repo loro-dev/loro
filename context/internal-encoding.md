@@ -104,6 +104,33 @@ crate version themselves. Regressions: `test_from_snapshot_bytes` in
 document. If a snapshot is imported into a non-empty document,
 `LoroDoc::_import_with` routes through decoded oplog changes instead. Failed
 direct snapshot import must reset both state and oplog.
+“Empty” here means no applied DAG history and snapshot-compatible state; parked
+changes alone do not rule out initialization. `LoroDoc::init_snapshot_preserving_pending`
+takes the original parking set aside, loads both snapshot state and history, then
+imports its claimed spans through the ordinary known-id, dependency, reference and
+state validation paths. Each id uses its original claimant, so overlaps previously
+accepted with JSON-lossy equality do not become conflicting duplicates during replay.
+Only the newly unlocked suffix needs a diff; a full snapshot's untouched state stays
+lazy, and snapshot-only empty roots remain visible. Shallow snapshots keep both their
+root state and optional latest-state overlay (or replay the retained tail for `E`).
+Pending changes whose dependencies precede the shallow root return an error and
+restore the pre-import document, rather than silently disappearing or preventing the
+snapshot from ever becoming applicable. Pending changes still missing valid deps
+remain parked, and the returned status includes them.
+
+The bootstrap owns a checkpoint outside the suffix import's rollback scope. On any
+returned decode/replay error it resets both stores, restores original pending claims
+and pre-existing empty handles, clears the diff calculator, and drops all queued
+events. Shallow tail replay must not emit events internally: the enclosing import
+emits them only after pending replay succeeds. In `import_batch`, the same bootstrap
+runs before the suffix journal; its batch checkpoint additionally keeps the original
+pending set so closing-checkout failure can undo both snapshot and unlocked changes.
+Regression coverage: `crates/loro/tests/pending_snapshot.rs` (both issue reproductions,
+full/shallow snapshots, replay-only/overlay shallow state, chained pending, events
+re-applied to a mirror, and subsequent edit/export/replay) and the `pending_snapshot_*`
+tests in `crates/loro-internal/src/tests/import_atomicity.rs` (lazy state, rollback,
+corrupt snapshots, conflicting ids, pruned deps and JSON-lossy duplicate claims).
+
 The non-empty path compares byte-identical known blocks without parsing them;
 unmatched incoming blocks use a temporary arena, and only checked new suffixes
 are moved into the document arena. This changes no on-wire format. See
@@ -297,9 +324,10 @@ An obsolete parked change is removed and the unlocking import reports
 existing partial-success contract. Pending identity claims remain reserved,
 so dropping an obsolete pending slot does not allow its op ids to be reused.
 
-Current `OpLog::is_empty` includes pending history, so public snapshot import
-cannot replace its DAG while changes are parked. Internal tests reconstruct the
-older parked-before-cut state to defend replay independently of that guard.
+Public snapshot bootstrap replays parked changes after decoding the snapshot and
+rolls back to the pre-import pending state if a shallow cut trimmed their deps;
+internal unit tests also reconstruct parked-before-cut state directly to defend
+`try_apply_pending` independently of bootstrap rollback.
 The no-state-apply path must retain arena allocations on the obsolete-pending
 error: newly parked ops still reference them. Batch rollback continues to use
 its slot journal and keeps container indices, as described in

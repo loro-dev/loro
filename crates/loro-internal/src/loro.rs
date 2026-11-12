@@ -618,7 +618,7 @@ impl LoroDoc {
         }
     }
 
-    /// Is the document empty? (no ops)
+    /// Can a snapshot initialize state/history, preserving any parked changes?
     #[inline(always)]
     pub fn can_reset_with_snapshot(&self) -> bool {
         let oplog = self.oplog.lock();
@@ -630,7 +630,7 @@ impl LoroDoc {
             return false;
         }
 
-        oplog.is_empty() && self.state.lock().can_import_snapshot()
+        oplog.dag().is_empty() && self.state.lock().can_import_snapshot()
     }
 
     /// Whether [OpLog] and [DocState] are detached.
@@ -781,7 +781,7 @@ impl LoroDoc {
                 if self.can_reset_with_snapshot() {
                     ensure_cov::notify_cov("loro_internal::import::snapshot");
                     loro_common::info!("Init by fast snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body, origin)
+                    self.init_snapshot_preserving_pending(parsed.mode, parsed.body, origin, values)
                 } else {
                     self.import_changes_and_apply_delta_to_state_if_needed(
                         |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
@@ -804,6 +804,61 @@ impl LoroDoc {
                 unreachable!()
             }
         }
+    }
+
+    /// Bootstrap state and history together, then replay parked changes against
+    /// that exact snapshot version. On error restore the original parking claims
+    /// as well as empty handles; no queued snapshot event may escape.
+    fn init_snapshot_preserving_pending(
+        &self,
+        mode: EncodeMode,
+        body: &[u8],
+        origin: InternalString,
+        values: ImportedValues,
+    ) -> LoroResult<ImportStatus> {
+        let (checkpoint, empty_containers, pending) = {
+            let mut oplog = self.oplog.lock();
+            let mut state = self.state.lock();
+            (
+                oplog.arena.checkpoint_for_rollback(),
+                state.store.iter_all_container_ids().collect::<Vec<_>>(),
+                std::mem::take(&mut oplog.pending_changes),
+            )
+        };
+        let was_detached = self.is_detached();
+        let result = (|| {
+            let mut status = decode_snapshot(self, mode, body, origin.clone())?;
+            // A replay-only shallow snapshot's decoder temporarily attaches to
+            // its retained head. The batch still owns the final checkout.
+            self.set_detached(was_detached);
+            if !pending.is_empty() {
+                let changes = pending.replay_changes();
+                self.import_changes_and_apply_delta_to_state_if_needed(
+                    |_| Ok(changes),
+                    values,
+                    origin,
+                )?;
+                let oplog = self.oplog.lock();
+                status.success = VersionRange::from_vv(oplog.vv());
+                status.pending = non_empty(oplog.pending_changes.version_range());
+            }
+            Ok(status)
+        })();
+        self.set_detached(was_detached);
+        if result.is_err() {
+            let mut oplog = self.oplog.lock();
+            let mut state = self.state.lock();
+            state.reset_to_empty_for_failed_snapshot_import();
+            oplog.reset_to_empty_for_failed_snapshot_import(checkpoint, &mut state);
+            oplog.pending_changes = pending;
+            for id in empty_containers {
+                state.ensure_container(&id);
+            }
+            drop(state);
+            drop(oplog);
+            *self.diff_calculator.lock() = DiffCalculator::new(true);
+        }
+        result
     }
 
     /// An import called back on a thread that holds the transaction lock, from an
@@ -3080,22 +3135,25 @@ impl LoroDoc {
         // owns that cleanup and the blob loop runs inside `catch_unwind` so it also
         // runs before a panic is re-raised.
         let was_attached = !self.is_detached();
-        // A full snapshot can initialize state lazily, just as in `import`.
-        // Pending-only history must not be replaced by the snapshot, either.
+        // A snapshot can initialize state lazily, just as in `import`, even
+        // with parked changes. Keep their original claims for batch rollback.
         // Keep the pre-snapshot arena checkpoint so a failed closing checkout
         // can discard the snapshot's state as well as the following updates.
         let snapshot_checkpoint = if was_attached
-            && blobs
-                .first()
-                .is_some_and(|blob| blob.1.mode == encoding::EncodedBlobMode::Snapshot)
-        {
+            && blobs.first().is_some_and(|blob| {
+                matches!(
+                    blob.1.mode,
+                    encoding::EncodedBlobMode::Snapshot
+                        | encoding::EncodedBlobMode::ShallowSnapshot
+                )
+            }) {
             let oplog = self.oplog.lock();
             let mut state = self.state.lock();
-            (oplog.is_empty() && oplog.pending_changes.is_empty() && state.can_import_snapshot())
-                .then(|| BatchSnapshotRollback {
-                    arena: oplog.arena.checkpoint_for_rollback(),
-                    empty_containers: state.store.iter_all_container_ids().collect(),
-                })
+            (oplog.dag().is_empty() && state.can_import_snapshot()).then(|| BatchSnapshotRollback {
+                arena: oplog.arena.checkpoint_for_rollback(),
+                empty_containers: state.store.iter_all_container_ids().collect(),
+                pending: oplog.pending_changes.clone(),
+            })
         } else {
             None
         };
@@ -3138,7 +3196,12 @@ impl LoroDoc {
                     // Do not emit the snapshot event until the closing checkout
                     // succeeds. Its state is part of the batch's rollback scope.
                     let result = parse_header_and_body(data, true).and_then(|parsed| {
-                        decode_snapshot(guard.doc, parsed.mode, parsed.body, Default::default())
+                        guard.doc.init_snapshot_preserving_pending(
+                            parsed.mode,
+                            parsed.body,
+                            Default::default(),
+                            values,
+                        )
                     });
                     if result.is_err() {
                         // The standalone decoder resets a failed snapshot to an
@@ -3261,6 +3324,7 @@ impl LoroDoc {
             to_commit_then_renew,
             "checkout".into(),
             EventTriggerKind::Checkout,
+            true,
         )
     }
 
@@ -3273,6 +3337,7 @@ impl LoroDoc {
             to_commit_then_renew,
             origin,
             EventTriggerKind::Import,
+            false,
         )
     }
 
@@ -3281,6 +3346,7 @@ impl LoroDoc {
         to_commit_then_renew: bool,
         origin: InternalString,
         triggered_by: EventTriggerKind,
+        emit_events: bool,
     ) -> LoroResult<()> {
         tracing::info_span!("CheckoutToLatest", peer = self.peer_id()).in_scope(|| {
             let f = self.oplog_frontiers();
@@ -3294,7 +3360,11 @@ impl LoroDoc {
                 triggered_by,
             )?;
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
-            this.emit_events();
+            // Snapshot replay is part of a larger atomic import. Its events
+            // must stay queued until pending replay / batch validation succeeds.
+            if emit_events {
+                this.emit_events();
+            }
             if this.config.detached_editing() {
                 this.renew_peer_id();
             }
@@ -4438,6 +4508,7 @@ struct BatchSnapshotRollback {
     arena: SharedArenaRollback,
     // Even an empty doc may expose empty containers acquired through getters.
     empty_containers: Vec<ContainerID>,
+    pending: crate::oplog::PendingChanges,
 }
 
 /// Forward import diffs of movable lists take untouched element fields from
@@ -4512,6 +4583,7 @@ impl BatchImportGuard<'_> {
                 if let Some(checkpoint) = self.snapshot_checkpoint.take() {
                     state.reset_to_empty_for_failed_snapshot_import();
                     oplog.reset_to_empty_for_failed_snapshot_import(checkpoint.arena, &mut state);
+                    oplog.pending_changes = checkpoint.pending;
                     for id in checkpoint.empty_containers {
                         state.ensure_container(&id);
                     }

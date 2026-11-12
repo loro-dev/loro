@@ -1129,3 +1129,248 @@ fn detached_text_import_that_unlocks_invalid_movable_list_ops_rolls_back() {
     doc.attach();
     assert_doc_unchanged(&doc, &vv, &frontiers, &state);
 }
+
+fn pending_snapshot_fixture(shallow: bool) -> (LoroDoc, Vec<u8>, Vec<u8>, Vec<u8>) {
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(1).unwrap();
+    source.get_text("text").insert_unicode(0, "base").unwrap();
+    source.commit_then_renew();
+    let root = source.state_frontiers();
+    source
+        .get_text("untouched")
+        .insert_unicode(0, "lazy")
+        .unwrap();
+    let snapshot = source
+        .export(if shallow {
+            ExportMode::shallow_snapshot(&root)
+        } else {
+            ExportMode::Snapshot
+        })
+        .unwrap();
+    let vv = source.oplog_vv();
+    source
+        .get_text("text")
+        .insert_unicode(4, " pending")
+        .unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+    let all = source.export(ExportMode::all_updates()).unwrap();
+    (source, snapshot, update, all)
+}
+
+#[test]
+fn pending_snapshot_preserves_lazy_state() {
+    use crate::HandlerTrait;
+    for shallow in [false, true] {
+        for batch in [false, true] {
+            let (source, snapshot, update, _) = pending_snapshot_fixture(shallow);
+            let target = LoroDoc::new_auto_commit();
+            target.import(&update).unwrap();
+            if batch {
+                let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+                target.import_batch(&[snapshot, empty]).unwrap();
+            } else {
+                target.import(&snapshot).unwrap();
+            }
+            let idx = target.get_text("untouched").idx();
+            // Replay-only shallow snapshots necessarily replay the retained tail.
+            if !shallow {
+                assert!(!target.app_state().lock().store.has_decoded_state(idx));
+            }
+            assert_eq!(pending_len(&target), 0);
+            assert_eq!(target.get_deep_value(), source.get_deep_value());
+        }
+    }
+}
+
+#[test]
+fn pending_snapshot_failure_restores_pending_handles_and_events() {
+    for shallow in [false, true] {
+        for batch in [false, true] {
+            let (source, snapshot, update, all) = pending_snapshot_fixture(shallow);
+            let target = LoroDoc::new_auto_commit();
+            let text = target.get_text("text");
+            target.import(&update).unwrap();
+            let before = target.get_deep_value();
+            let pending_before = target.export_pending_updates().unwrap();
+            let events = Arc::new(AtomicUsize::new(0));
+            let count = events.clone();
+            let _sub = target.subscribe_root(Arc::new(move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+            }));
+            // A suffix failure exercises the batch-wide checkpoint, after pending
+            // was successfully unlocked by the snapshot. Standalone fails its apply.
+            let result = if batch {
+                let (_, mut bad) = make_json_list_update_with_four_ops(91);
+                move_last_list_insert_far_out_of_bounds(&mut bad);
+                bad.changes[0].deps = source.oplog_frontiers().iter().collect();
+                // Resolve Lamport against this real dependency, as normal JSON import does.
+                let carrier = LoroDoc::new();
+                carrier.detach();
+                carrier.import(&all).unwrap();
+                carrier
+                    .import_json_updates(serde_json::to_string(&bad).unwrap())
+                    .unwrap();
+                let suffix = carrier
+                    .export(ExportMode::updates(&source.oplog_vv()))
+                    .unwrap();
+                target.import_batch(&[snapshot.clone(), suffix])
+            } else {
+                fail_next_import_state_apply_for_test();
+                target.import(&snapshot)
+            };
+            assert!(result.is_err(), "shallow={shallow}, batch={batch}");
+            assert!(!target.is_detached());
+            assert!(
+                target.oplog_vv().is_empty(),
+                "shallow={shallow}, batch={batch}"
+            );
+            assert!(target.state_frontiers().is_empty());
+            assert_eq!(target.get_deep_value(), before);
+            assert_eq!(target.export_pending_updates().unwrap(), pending_before);
+            assert_eq!(
+                events.load(Ordering::SeqCst),
+                0,
+                "shallow={shallow}, batch={batch}"
+            );
+            assert!(target.drop_pending_events().is_empty());
+            target.import(&snapshot).unwrap();
+            assert_eq!(pending_len(&target), 0);
+            assert_eq!(text.to_string(), source.get_text("text").to_string());
+            assert_eq!(target.state_frontiers(), target.oplog_frontiers());
+            // Retry from the restored pending against full updates also stays usable.
+            let replay = LoroDoc::new();
+            replay.import(&all).unwrap();
+            assert_eq!(target.get_deep_value(), replay.get_deep_value());
+        }
+    }
+}
+
+#[test]
+fn pending_snapshot_decode_failure_keeps_parked_changes() {
+    for shallow in [false, true] {
+        let (source, mut snapshot, update, all) = pending_snapshot_fixture(shallow);
+        corrupt_snapshot_state_bytes(&mut snapshot);
+        let target = LoroDoc::new();
+        target.import(&update).unwrap();
+        let before = target.get_deep_value();
+        assert!(target.import(&snapshot).is_err());
+        assert_eq!(pending_len(&target), 1);
+        assert_eq!(target.get_deep_value(), before);
+        target.import(&all).unwrap();
+        assert_eq!(target.get_deep_value(), source.get_deep_value());
+    }
+}
+
+#[test]
+fn pending_snapshot_rejects_pruned_dependency_without_losing_pending() {
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(1).unwrap();
+    source.get_map("map").insert("seed", 0).unwrap();
+    source.commit_then_renew();
+    let old = source.fork();
+    old.set_peer_id(2).unwrap();
+    let vv = source.oplog_vv();
+    old.get_map("map").insert("concurrent", 1).unwrap();
+    let update = old.export(ExportMode::updates(&vv)).unwrap();
+    source.get_map("map").insert("newer", 2).unwrap();
+    source.commit_then_renew();
+    let snapshot = source
+        .export(ExportMode::shallow_snapshot(&source.state_frontiers()))
+        .unwrap();
+    for batch in [false, true] {
+        let target = LoroDoc::new();
+        target.import(&update).unwrap();
+        let before = target.get_deep_value();
+        let result = if batch {
+            let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+            target.import_batch(&[snapshot.clone(), empty])
+        } else {
+            target.import(&snapshot)
+        };
+        assert!(result.is_err());
+        assert!(!target.is_detached());
+        assert!(target.oplog_vv().is_empty());
+        assert_eq!(pending_len(&target), 1);
+        assert_eq!(target.get_deep_value(), before);
+        // A full-history retry resolves it; nothing was silently discarded.
+        target
+            .import(&source.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        source.import(&update).unwrap();
+        assert_eq!(target.get_deep_value(), source.get_deep_value());
+    }
+}
+
+#[test]
+fn pending_snapshot_rejects_conflicting_known_ids_atomically() {
+    let (source, _, update, _) = pending_snapshot_fixture(false);
+    for batch in [false, true] {
+        let target = LoroDoc::new();
+        target.import(&update).unwrap();
+        let before = target.get_deep_value();
+        // A snapshot supplies the pending ids with different content.
+        let conflict = LoroDoc::new_auto_commit();
+        conflict.set_peer_id(1).unwrap();
+        conflict
+            .get_text("text")
+            .insert_unicode(0, &"x".repeat(64))
+            .unwrap();
+        let snapshot = conflict.export(ExportMode::Snapshot).unwrap();
+        let result = if batch {
+            let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+            target.import_batch(&[snapshot, empty])
+        } else {
+            target.import(&snapshot)
+        };
+        assert!(
+            matches!(result, Err(LoroError::UsedOpID { .. })),
+            "{result:?}"
+        );
+        assert_eq!(pending_len(&target), 1);
+        assert_eq!(target.get_deep_value(), before);
+        assert!(target.oplog_vv().is_empty());
+        target
+            .import(&source.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        assert_eq!(target.get_deep_value(), source.get_deep_value());
+    }
+}
+
+#[test]
+fn pending_snapshot_preserves_first_claimant_of_lossy_duplicates() {
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(1).unwrap();
+    source.get_map("map").insert("seed", 0).unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let vv = source.oplog_vv();
+    source
+        .get_map("map")
+        .insert("number", f64::INFINITY)
+        .unwrap();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+    let json = source
+        .export_json_updates(&vv, &source.oplog_vv(), false)
+        .unwrap();
+    for batch in [false, true] {
+        let target = LoroDoc::new();
+        // JSON turns infinity into null. The first parked claimant stays null,
+        // even after a binary overlap is accepted with JSON-lossy comparison.
+        target
+            .import_json_updates(serde_json::to_string(&json).unwrap())
+            .unwrap();
+        target
+            .import_with_history_mode(&update, Default::default(), true)
+            .unwrap();
+        if batch {
+            let empty = LoroDoc::new().export(ExportMode::all_updates()).unwrap();
+            target.import_batch(&[snapshot.clone(), empty]).unwrap();
+        } else {
+            target.import(&snapshot).unwrap();
+        }
+        assert_eq!(pending_len(&target), 0);
+        assert_eq!(
+            target.get_map("map").get("number").unwrap(),
+            crate::LoroValue::Null
+        );
+    }
+}
