@@ -1,6 +1,6 @@
 # Movable List `apply_diff` and Undo
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-12.
 
 `MovableListHandler::apply_delta`
 (`crates/loro-internal/src/handler/movable_list_apply_delta.rs`) turns a list
@@ -103,13 +103,14 @@ costs O(log n) plus the op itself.
 
 ## Pitfalls
 
-- Separate existing boundary (also reproduced on `3827945`): start with a
-  nested movable list `[7]`, record an earlier push of `8`, then group a push
-  of `9`, import an unrelated remote map edit, and delete the parent list
-  entry. Undoing the group restores an empty child instead of `[7, 8]`.
-  This is the generic composition of child revival across split spans, not
-  #1185's concurrent move/removal inversion. The identity repair keeps that
-  parent-revival application path; it does not rewrite group composition.
+- Split-span group composition (#1245/#1228) also affects child revival:
+  start with a nested movable list `[7]`, record an earlier push of `8`, then
+  group a push of `9`, import an unrelated remote map edit, and delete the
+  parent list entry. The inverse now bridges to the next span's dependencies,
+  so undo restores `[7, 8]` instead of an empty child. This uses the existing
+  parent-revival path; no native identity plan change is needed. Regression:
+  `undo_split_group_revives_movable_child_with_earlier_group_edits_removed`
+  in `crates/loro/tests/undo_split_spans.rs`.
 - `undo_internal` rolls back application errors and returns them; the failed
   item and both identity maps are preserved for retry
   ([undo-atomicity.md](undo-atomicity.md)). A panic on an internal invariant
