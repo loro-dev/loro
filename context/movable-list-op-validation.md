@@ -2,6 +2,29 @@
 
 Verified against code 2026-09-28 (merged with main `6e294c87`). Text bounds and the rollback-scope list verified 2026-09-30.
 
+## Split concurrent imports (#1046)
+
+Verified against code 2026-11-12 (`6ff0efd1`). The original 1.13.7 reproduction
+already passes on this revision; no additional conflict-resolution change is
+needed. `crates/loro/tests/movable_list_split_import.rs` preserves that case
+and checks all six orders of the delete, child-map edit, and move updates,
+starting from the base and either peer. Move-before-edit delivery must remain
+pending until its dependency arrives. Separate imports, `import_batch`,
+detached imports, checkout round trips, fresh replay, full snapshots, and
+shallow snapshots must all retain the same child identity and edited value.
+
+`MovableListDiffCalculator::calculate_diff` resolves both element fields from
+the checkout index in `Checkout`/`Import` mode. Forward diffs may omit untouched
+fields; `references_absent_elem` requests a Checkout-mode recomputation before
+import applies one to an absent element, and `validate_diff` rejects any
+remaining incomplete delta. During application, the list-deletion phase copies
+untouched fields from drained elements into the delta. Thus the new-element arm
+requires both position and value id; silently substituting a position or `Null`
+there would lose state. Unit tests in `movable_list_state.rs` cover missing
+position, missing value id, and complete deltas separately from retained-element
+partial updates. Keep this guard even when ordinary concurrent imports already
+select a mode that supplies complete fields.
+
 Imported movable-list `Move { from, to, elem_id }` and `Set { elem_id, value }` ops
 come from other peers, so they are external input. Several shapes of them used
 to panic while the doc held its locks (`pos.unwrap()`/`value_id.unwrap()` in
@@ -122,7 +145,8 @@ from the element in `DocState`. Detection and fallback:
 - `recalc_in_checkout_mode_if_needed` (`src/loro.rs`) recomputes that import's
   diff with `DiffCalculator::new(true)` (Persist, so always Checkout mode). This
   matches a full replay.
-- Honest imports never trigger it.
+- Ordinary honest imports resolve concurrent changes in `Checkout`/`Import`
+  mode. The fallback also guards against mode/cache regressions such as #1046.
 - `validate_diff` still returns `Err` for such a delta as a backstop.
 
 ## Change-store pitfalls this work exposed
