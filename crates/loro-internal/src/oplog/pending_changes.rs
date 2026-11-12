@@ -36,7 +36,7 @@ impl Deref for PendingChange {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct PendingChanges {
     changes: FxHashMap<PeerID, BTreeMap<Counter, Vec<PendingChange>>>,
     /// Which parked change holds each parked op id, because `changes` is keyed by the
@@ -59,12 +59,12 @@ pub(crate) struct PendingChanges {
 
 /// Disjoint counter spans of one peer, keyed by their start, each with the change that
 /// claimed it first.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct ClaimedSpans<C> {
     spans: BTreeMap<Counter, Claim<C>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Claim<C> {
     end: Counter,
     change: C,
@@ -119,6 +119,22 @@ impl<C: Deref<Target = Change>> ClaimedSpans<C> {
 }
 
 impl PendingChanges {
+    /// Replay each id from its original claimant. Re-importing every parked
+    /// overlap under Exact equality could reject duplicates previously accepted
+    /// through JsonLossy equality, or choose a different claimant by hash order.
+    pub(crate) fn replay_changes(&self) -> Vec<Change> {
+        let mut changes = Vec::new();
+        for spans in self.claims.values() {
+            for (&start, claim) in &spans.spans {
+                let change = &claim.change;
+                let offset = (start - change.id.counter) as usize;
+                changes.push(change.slice(offset, (claim.end - change.id.counter) as usize));
+            }
+        }
+        changes.sort_by_key(|change| (change.id.peer, change.id.counter));
+        changes
+    }
+
     /// Copy only the pending portions, excluding applied and duplicate operations.
     /// Slots are indexed by the missing dependency, not by the pending change's ID.
     pub(crate) fn export_changes(
