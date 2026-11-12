@@ -1009,10 +1009,11 @@ impl MovableListState {
     /// that is not in this state.
     ///
     /// Such diffs only carry the fields an op touched and take the rest from the
-    /// current element. Honest ops cannot produce this (an element absent here was
-    /// deleted before every op in the diff), but a forged op can; it has the same
-    /// meaning as a concurrent move/set of a deleted element, which only a Checkout
-    /// mode diff resolves. See `context/movable-list-op-validation.md`.
+    /// current element. If the element was deleted, its untouched fields must
+    /// instead come from history via a Checkout-mode diff. This also protects
+    /// against a diff mode/cache regression on honest concurrent moves (#1046),
+    /// as well as forged ops targeting deleted elements.
+    /// See `context/movable-list-op-validation.md`.
     pub(crate) fn references_absent_elem(
         &self,
         diff: &crate::delta::MovableListInnerDelta,
@@ -1286,12 +1287,15 @@ impl ContainerState for MovableListState {
                         }
                     }
                     None => {
-                        // Need to create new element
+                        // validate_diff rejects incomplete absent-element deltas.
+                        // For elements drained above, the deletion phase preserves
+                        // untouched fields before removing their state entry.
                         let result = self.create_new_elem(
                             elem_id,
-                            pos.unwrap(),
+                            pos.expect("validated new movable-list element must have a position"),
                             value.clone(),
-                            value_id.unwrap(),
+                            value_id
+                                .expect("validated new movable-list element must have a value id"),
                         );
                         // Composing events
                         let result = self.inner.convert_update_to_event_pos(result);
@@ -2012,8 +2016,73 @@ mod snapshot {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::{loro::ExportMode, HandlerTrait, LoroDoc, ToJson};
     use serde_json::json;
+
+    #[test]
+    fn missing_element_fields_require_checkout_diff() {
+        let list = MovableListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::MovableList,
+        ));
+        let id = IdLp::new(1, 0);
+        for pos in [None, Some(id)] {
+            for value_id in [None, Some(id)] {
+                let diff = crate::delta::MovableListInnerDelta {
+                    list: Default::default(),
+                    elements: [(
+                        id.compact(),
+                        crate::delta::ElementDelta {
+                            pos,
+                            value: LoroValue::Null,
+                            value_updated: true,
+                            value_id,
+                        },
+                    )]
+                    .into_iter()
+                    .collect(),
+                };
+                let incomplete = pos.is_none() || value_id.is_none();
+                assert_eq!(list.references_absent_elem(&diff), incomplete);
+                assert_eq!(
+                    list.validate_diff(&InternalDiff::MovableList(diff))
+                        .is_err(),
+                    incomplete
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn partial_element_diff_requires_retained_element_state() {
+        let mut list = MovableListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::MovableList,
+        ));
+        let id = IdFull::new(1, 0, 0);
+        list.inner.insert_list_item(0, id);
+        let _ = list.create_new_elem(id.idlp().compact(), id.idlp(), LoroValue::Null, id.idlp());
+        for (pos, value_id) in [(Some(IdLp::new(2, 1)), None), (None, Some(IdLp::new(2, 1)))] {
+            let diff = crate::delta::MovableListInnerDelta {
+                list: Default::default(),
+                elements: [(
+                    id.idlp().compact(),
+                    crate::delta::ElementDelta {
+                        pos,
+                        value: LoroValue::Null,
+                        value_updated: value_id.is_some(),
+                        value_id,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            };
+            assert!(!list.references_absent_elem(&diff));
+            list.validate_diff(&InternalDiff::MovableList(diff))
+                .unwrap();
+        }
+    }
 
     #[test]
     fn basic_handler_ops() {
