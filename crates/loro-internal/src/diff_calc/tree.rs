@@ -498,21 +498,23 @@ impl TreeCacheForDiff {
         if !self.tree.contains_key(maybe_ancestor) {
             return false;
         }
-        if let TreeParentId::Node(id) = node_id {
-            if id == maybe_ancestor {
-                return true;
-            }
-        }
-        match node_id {
-            TreeParentId::Node(id) => {
-                let (parent, _, _) = &self.get_parent_with_id(*id);
-                if parent == node_id {
-                    panic!("is_ancestor_of loop")
+        let mut parent = *node_id;
+        // One extra hop allows an unknown parent to resolve to Unexist.
+        let mut remaining = self.tree.len() + 1;
+        loop {
+            match parent {
+                TreeParentId::Node(id) => {
+                    assert!(remaining > 0, "tree diff cache parent cycle");
+                    remaining -= 1;
+                    if &id == maybe_ancestor {
+                        return true;
+                    }
+                    parent = self.get_parent_with_id(id).0;
                 }
-                self.is_ancestor_of(maybe_ancestor, parent)
+                TreeParentId::Deleted | TreeParentId::Root | TreeParentId::Unexist => {
+                    return false;
+                }
             }
-            TreeParentId::Deleted | TreeParentId::Root => false,
-            TreeParentId::Unexist => false,
         }
     }
 
@@ -543,12 +545,19 @@ impl TreeCacheForDiff {
         }
     }
 
-    fn is_parent_deleted(&self, parent: TreeParentId) -> bool {
-        match parent {
-            TreeParentId::Deleted => true,
-            TreeParentId::Node(id) => self.is_parent_deleted(self.get_parent_with_id(id).0),
-            TreeParentId::Root => false,
-            TreeParentId::Unexist => false,
+    fn is_parent_deleted(&self, mut parent: TreeParentId) -> bool {
+        // One extra hop allows an unknown parent to resolve to Unexist.
+        let mut remaining = self.tree.len() + 1;
+        loop {
+            match parent {
+                TreeParentId::Deleted => return true,
+                TreeParentId::Node(id) => {
+                    assert!(remaining > 0, "tree diff cache parent cycle");
+                    remaining -= 1;
+                    parent = self.get_parent_with_id(id).0;
+                }
+                TreeParentId::Root | TreeParentId::Unexist => return false,
+            }
         }
     }
 
@@ -680,6 +689,93 @@ mod test {
     use loro_common::{TreeID, ID};
 
     use crate::{state::TreeParentId, version::Frontiers, HandlerTrait, LoroDoc};
+
+    fn chain_cache(depth: usize) -> super::TreeCacheForDiff {
+        use crate::container::tree::tree_op::TreeOp;
+        use loro_common::IdFull;
+        use std::sync::Arc;
+
+        let mut cache = super::TreeCacheForDiff::default();
+        // Seed a valid chain without exercising the ancestor query while building it.
+        cache.init_tree_with_shallow_root_version(
+            (0..depth)
+                .map(|i| super::MoveLamportAndID {
+                    id: IdFull::new(1, i as i32, i as u32),
+                    op: Arc::new(TreeOp::Create {
+                        target: TreeID::new(1, i as i32),
+                        parent: (i > 0).then(|| TreeID::new(1, i as i32 - 1)),
+                        position: fractional_index::FractionalIndex::default(),
+                    }),
+                    effected: true,
+                })
+                .collect(),
+        );
+        cache
+    }
+
+    #[test]
+    fn deep_cache_parent_walks_use_constant_stack() {
+        // Overflow aborts, so keep this regression in a subprocess.
+        const CHILD: &str = "LORO_TREE_CACHE_DEEP_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "diff_calc::tree::test::deep_cache_parent_walks_use_constant_stack",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let cache = chain_cache(16_000);
+                let leaf = TreeParentId::Node(TreeID::new(1, 15_999));
+                assert!(!cache.is_parent_deleted(leaf));
+                assert!(cache.is_ancestor_of(&TreeID::new(1, 0), &leaf));
+                assert!(!cache.is_ancestor_of(
+                    &TreeID::new(1, 15_999),
+                    &TreeParentId::Node(TreeID::new(1, 15_998))
+                ));
+                assert!(!cache.is_parent_deleted(TreeParentId::Node(TreeID::new(2, 0))));
+                assert!(cache.is_parent_deleted(TreeParentId::Deleted));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn cyclic_cache() -> super::TreeCacheForDiff {
+        let mut cache = chain_cache(3);
+        let ops = cache.tree.get_mut(&TreeID::new(1, 0)).unwrap();
+        let mut op = ops.pop_first().unwrap();
+        if let crate::container::tree::tree_op::TreeOp::Create { parent, .. } =
+            std::sync::Arc::make_mut(&mut op.op)
+        {
+            *parent = Some(TreeID::new(1, 1));
+        }
+        ops.insert(op);
+        cache
+    }
+
+    #[test]
+    #[should_panic(expected = "tree diff cache parent cycle")]
+    fn deletion_query_rejects_corrupt_parent_cycle() {
+        cyclic_cache().is_parent_deleted(TreeParentId::Node(TreeID::new(1, 0)));
+    }
+
+    #[test]
+    #[should_panic(expected = "tree diff cache parent cycle")]
+    fn ancestor_query_rejects_corrupt_parent_cycle() {
+        cyclic_cache().is_ancestor_of(&TreeID::new(1, 2), &TreeParentId::Node(TreeID::new(1, 0)));
+    }
 
     /// Checking out between two old versions must retreat only what the cache
     /// holds: `max_lamport` bounds every cached op, and stays at the cached

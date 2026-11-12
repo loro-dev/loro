@@ -1,6 +1,6 @@
 # Tree Checkout Window
 
-Verified against code 2026-09-28.
+Verified against code 2026-11-12.
 
 `TreeDiffCalculator` (`crates/loro-internal/src/diff_calc/tree.rs`) computes
 tree diffs for checkouts and for imports in `DiffMode::Import`. It keeps one
@@ -56,6 +56,39 @@ wrong). `docs/critical-version-spec.md` Q7 had argued the window was safe.
 The cache's own `checkout` had the same problem with a window taken from the
 target frontiers.
 
+## Retained moves can change effectiveness (#1117)
+
+Retreating only the ops absent from the target is also unsound, even when
+all changed ops fall inside the window. In the issue's two-node, six-op
+history (IDs are `counter@peer`):
+
+1. `0@1` and `1@1` create n0 and n1 at the root.
+2. `2@1` moves n1 under n0 (lamport 2).
+3. Concurrently, `0@2` moves n0 to the root (lamport 2), then `1@2`
+   moves n0 under n1 (lamport 3).
+4. `3@1` moves n1 back to the root (lamport 3). It sorts before `1@2`.
+
+At the latest version, both lamport-3 moves apply: n1 is at the root and
+n0 is below it. At the target, all ops except `3@1` are present, and
+`1@2` must be skipped because n1 is still below n0. The old diff path
+retreated only `3@1` while keeping `1@2` and its latest-version
+`effected=true`. Restoring n1's earlier parent then formed n0 ↔ n1, and
+`is_parent_deleted` recursed until the stack overflowed. The cache-only
+`checkout` transition likewise retained stale effectiveness flags.
+
+PR #1152 (`6e294c87`) already fixed this root cause: retreat the **whole**
+ordered suffix, including ops retained by both versions, and replay it for
+the target. Here the window starts at lamport 3; `1@2` is retreated before
+`3@1` and is then replayed and skipped. No parent query observes a cycle.
+The exact issue test overflows on #1152's parent and passes on current main.
+
+Cache ancestor and deletion queries now walk iteratively, just like the
+materialized tree state. Depth uses constant call-stack space; a walk beyond
+the number of cached nodes plus one (allowing an unknown parent to resolve
+to `Unexist`) fails an internal invariant rather than hanging or returning
+a fabricated placement. This is additional protection, not a substitute for
+recomputing `effected` over the entire affected suffix.
+
 ## Shallow documents
 
 The cache of a shallow document starts at the shallow root, seeded with the
@@ -66,7 +99,14 @@ IDs, which is why `current_vv` has to be replaced.
 
 ## Tests
 
-- `crates/loro/tests/tree_checkout_path.rs`: the two repros.
+- `crates/loro/tests/tree_checkout_path.rs`: the two window repros.
+- `crates/loro/tests/tree_history_cycle.rs`: #1117's exact six ops, checked
+  against `updates_till` replay and the target peer; fork, checkout round trips
+  with/without a subscriber, both diff directions applied to independent docs,
+  revert, snapshot-at, and shallow checkout round trips from two shallow roots.
+  Each probe runs in a subprocess because stack overflow aborts.
+- `diff_calc::tree::test`: a 16,000-node cache on a 1 MiB stack, and explicit
+  rejection of corrupt parent cycles by both parent queries.
 - `retreat_bound_follows_the_cached_version` (unit test in `tree.rs`) and the
   ignored `crates/loro/tests/perf_tree_checkout_old_versions.rs` (run with
   `--release -- --ignored`): the retreat bound.
