@@ -60,6 +60,9 @@ over graceful degradation.
 - `src/container/richtext/`: text state with style anchors. Where local inserts
   go next to anchors, the insert cursor cache, and delete `start_id`s:
   [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).
+  `tracker/`: one big op is one rope leaf but many id-to-cursor fragments; keep
+  checkout linear in its length:
+  [../../context/large-text-linear-time.md](../../context/large-text-linear-time.md).
 - `docs/diff_calc.md`: design notes for diff calculation.
 - `docs/critical-version-spec.md`: specification and proof skeleton for
   replay-base selection (Eg-walker-aligned terminology; defines critical
