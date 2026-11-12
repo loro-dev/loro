@@ -29,6 +29,8 @@ over graceful degradation.
   [../../context/version-input-contract.md](../../context/version-input-contract.md).
   `ChangeStore` is also read without the op log lock, so keep its lock order:
   [../../context/arena-parent-links.md](../../context/arena-parent-links.md).
+  Cached blocks are served without asking the encoded store:
+  [../../context/commit-export-after-snapshot.md](../../context/commit-export-after-snapshot.md).
 - Retained memory by component, what forces a full history parse, why
   `mem_parsed_kv` has no release path, and why replay callers must pass a `from`
   that is exactly the vv of `from_frontiers`:
