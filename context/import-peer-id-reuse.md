@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-11-07.
+Verified against code 2026-11-12.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -42,6 +42,20 @@ path, which rolls back only the arena (decode may have registered containers).
    `AppDag::update_version_on_new_change` under the op log lock. The check replays
    that pass on counter ends only. Parked pending changes already wait for their
    own predecessor (`remote_change_apply_state`).
+
+7. **Causal predecessor.** Presence of `p@c-1` in the receiver alone is not
+   sufficient (loro-dev/loro#1239). `check_changes_include_predecessors` requires
+   it in the causal history of the change's deps. A direct predecessor dep takes
+   the fast path; cross-peer deps may cover it transitively through local history,
+   the current import, or pending history. The check walks unresolved history
+   iteratively, and uses the DAG's version vectors for already applied deps.
+   Missing edges defer the decision, preserving out-of-order delivery. Arriving
+   changes also visit pending changes through the missing-dep slot index (and
+   their dependents), so a later unlock cannot bypass the check. A provably bad
+   pending change rejects that import before mutation; the prior pending entry
+   stays parked. This does not repair documents already poisoned by older versions.
+   Existing pre-shallow-root handling runs first; retained boundary deps resolve
+   through the DAG, and known-prefix trimming still supplies implicit predecessors.
 
 Binary decoding can skip a fully known block whose bytes match the current
 local block exactly (`ChangeStore::contains_encoded_block`). A dirty parsed
@@ -428,6 +442,11 @@ this check. The first version of `claim` ran on every re-park and cost 1.6x here
   and re-imports that must still succeed (piecewise vs merged change stores, every
   op kind including `NaN` and one-atom reversed deletes, shallow docs).
 - `crates/loro-wasm/tests/import_reused_peer_id.test.ts`.
+- `crates/loro/tests/import_missing_peer_dep.rs`: #1239's original binary fixture
+  (attached/detached and batch), JSON empty/unrelated deps with an existing
+  predecessor, valid transitive dependencies in the import/local/shallow history,
+  and one-/two-hop pending unlocks with both arrival orders. Rejections preserve
+  the version and allow subsequent writes and update/snapshot relays.
 - `crates/loro/tests/import_own_peer_deps.rs`: deps on an older op of the own
   peer (attached, detached, next to another peer's dep), on the own counter or a
   later one, and on the own peer from a first change. The doc keeps its version

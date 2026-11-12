@@ -7,17 +7,20 @@
 //! the doc) or silently scrambled it (loro-dev/loro#1118). See
 //! `context/import-peer-id-reuse.md`.
 
-use loro_common::{Counter, HasCounterSpan, LoroError, LoroResult, LoroValue, PeerID, ID};
+use loro_common::{
+    Counter, HasCounterSpan, HasIdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
+};
 use rle::{HasLength, Sliceable};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::pending_changes::ClaimedSpans;
 use crate::{
     arena::SharedArena,
     change::Change,
     container::list::list_op::InnerListOp,
+    dag::Dag,
     op::{InnerContent, Op},
-    version::Frontiers,
+    version::{Frontiers, ImVersionVector},
     OpLog,
 };
 
@@ -165,6 +168,7 @@ impl OpLog {
         });
         Self::check_own_peer_deps(&changes)?;
         self.check_changes_do_not_skip_counters(&changes)?;
+        self.check_changes_include_predecessors(&changes)?;
         Ok(changes)
     }
 
@@ -246,6 +250,129 @@ impl OpLog {
             ends.insert(peer, change.ctr_end());
         }
 
+        Ok(())
+    }
+
+    /// Presence in the receiver is not proof of causality (#1239). Check the
+    /// predecessor against the change's deps, including transitive cross-peer
+    /// edges. Direct own-peer deps and head-frontier imports take allocation-free
+    /// O(1) fast paths, and unapplied subgraphs memoize causal summaries so batch
+    /// and out-of-order multi-peer imports remain near-linear.
+    ///
+    /// Unresolved edges may still cover the predecessor, so defer those checks.
+    /// Follow the pending missing-dep index when new history arrives, checking
+    /// affected pending changes before this import mutates anything as well.
+    fn check_changes_include_predecessors(&self, changes: &[Change]) -> LoroResult<()> {
+        let head_dominates = |deps: &Frontiers| {
+            !self.dag.frontier().is_empty() && self.dag.frontier().iter().all(|f| deps.contains(&f))
+        };
+        if self.pending_changes.is_empty()
+            && changes.iter().all(|change| {
+                let id = change.id;
+                id.counter == 0
+                    || change.deps.iter().any(|dep| dep == id.inc(-1))
+                    || (self.vv().includes_id(id.inc(-1)) && head_dominates(&change.deps))
+            })
+        {
+            return Ok(());
+        }
+
+        let imported: std::cell::OnceCell<FxHashMap<PeerID, ClaimedSpans<&Change>>> =
+            std::cell::OnceCell::new();
+        let mut workspace = CausalWorkspace::default();
+        let mut candidates: Vec<&Change> = changes.iter().collect();
+        let mut visited = FxHashSet::default();
+        let mut unlocked_from: FxHashMap<PeerID, Counter> = FxHashMap::default();
+        let mut i = 0;
+        while i < candidates.len() {
+            let change = candidates[i];
+            i += 1;
+            if !visited.insert(change.id) {
+                continue;
+            }
+            let id_last = change.id_last();
+            let next_from = unlocked_from.entry(id_last.peer).or_insert(Counter::MIN);
+            if id_last.counter >= *next_from {
+                candidates.extend(self.pending_changes.waiting_on_range(
+                    id_last.peer,
+                    *next_from,
+                    id_last.counter,
+                ));
+                *next_from = id_last.counter.saturating_add(1);
+            }
+
+            let id = change.id;
+            let target = id.inc(-1);
+            if id.counter == 0
+                || change.deps.iter().any(|dep| dep == target)
+                || (self.vv().includes_id(target) && head_dominates(&change.deps))
+                || self.dag.try_import_deps_before_shallow_root(&change.deps)?
+            {
+                continue;
+            }
+
+            let imported_map = imported.get_or_init(|| {
+                let mut index: FxHashMap<PeerID, ClaimedSpans<&Change>> = FxHashMap::default();
+                for c in changes {
+                    let spans = index.entry(c.id.peer).or_default();
+                    let start = c.id.counter;
+                    let end = c.ctr_end();
+                    for (g_start, g_end) in spans.gaps(start, end) {
+                        spans.hold(g_start, g_end, c);
+                    }
+                }
+                index
+            });
+
+            if change.deps.iter().any(|dep| {
+                !self.vv().includes_id(dep)
+                    && find_unapplied_source(self, imported_map, dep)
+                        .is_some_and(|src| src.deps.contains(&target))
+            }) {
+                continue;
+            }
+
+            let summary = workspace.summary_of(self, imported_map, change)?;
+            if summary.unresolved || summary.unapplied_vv.includes_id(target) {
+                continue;
+            }
+
+            let mut covered_or_unresolved = false;
+            if self.vv().includes_id(target) && !summary.dag_deps.is_empty() {
+                if summary.dag_deps.includes_id(target)
+                    || (!self.dag.frontier().is_empty()
+                        && self
+                            .dag
+                            .frontier()
+                            .iter()
+                            .all(|f| summary.dag_deps.includes_id(f)))
+                {
+                    covered_or_unresolved = true;
+                } else {
+                    for (&peer, &end_ctr) in summary.dag_deps.iter() {
+                        if end_ctr <= 0 {
+                            continue;
+                        }
+                        match self
+                            .dag
+                            .try_does_id_cover(ID::new(peer, end_ctr - 1), target)?
+                        {
+                            Some(true) | None => {
+                                covered_or_unresolved = true;
+                                break;
+                            }
+                            Some(false) => {}
+                        }
+                    }
+                }
+            }
+
+            if !covered_or_unresolved {
+                return Err(LoroError::DecodeError(format!(
+                    "Invalid change {id}: its deps do not include {target} in their causal history, so it skips counters of its peer",
+                ).into_boxed_str()));
+            }
+        }
         Ok(())
     }
 
@@ -758,6 +885,199 @@ fn list_op_eq(values: ImportedValues, a: &InnerListOp, b: &InnerListOp) -> bool 
         }
         (InnerListOp::StyleEnd, InnerListOp::StyleEnd) => true,
         _ => false,
+    }
+}
+
+#[derive(Clone, Default)]
+struct CausalSummary {
+    unapplied_vv: ImVersionVector,
+    dag_deps: ImVersionVector,
+    unresolved: bool,
+}
+
+impl CausalSummary {
+    fn merge(&mut self, other: &Self) {
+        merge_im_vv(&mut self.unapplied_vv, &other.unapplied_vv);
+        merge_im_vv(&mut self.dag_deps, &other.dag_deps);
+        self.unresolved |= other.unresolved;
+    }
+}
+
+#[inline]
+fn extend_im_vv_last_id(vv: &mut ImVersionVector, id: ID) {
+    let end = id.counter.saturating_add(1).max(0);
+    if end > 0 && vv.get(&id.peer).is_none_or(|&cur| cur < end) {
+        vv.insert(id.peer, end);
+    }
+}
+
+fn merge_im_vv(dst: &mut ImVersionVector, src: &ImVersionVector) {
+    if dst.is_empty() {
+        *dst = src.clone();
+        return;
+    }
+    if src.is_empty() {
+        return;
+    }
+    if dst.len() < src.len() {
+        let mut merged = src.clone();
+        merged.extend_to_include_vv(dst.iter());
+        *dst = merged;
+    } else {
+        dst.extend_to_include_vv(src.iter());
+    }
+}
+
+#[inline]
+fn find_unapplied_source<'a>(
+    oplog: &'a OpLog,
+    imported: &'a FxHashMap<PeerID, ClaimedSpans<&'a Change>>,
+    dep: ID,
+) -> Option<&'a Change> {
+    imported
+        .get(&dep.peer)
+        .and_then(|spans| {
+            spans
+                .overlapping(dep.counter, dep.counter + 1)
+                .next()
+                .map(|(_, _, c)| c)
+        })
+        .or_else(|| {
+            oplog
+                .pending_changes
+                .claims_in(dep.peer, dep.counter, dep.counter + 1)
+                .next()
+                .map(|(_, _, c)| c)
+        })
+}
+
+struct Frame<'a> {
+    node: &'a Change,
+    deps: smallvec::SmallVec<[ID; 2]>,
+    dep_idx: usize,
+    pending_child: Option<ID>,
+    local: CausalSummary,
+}
+
+#[derive(Default)]
+struct CausalWorkspace<'a> {
+    memo: FxHashMap<ID, CausalSummary>,
+    indices: FxHashMap<ID, u32>,
+    lowlink: FxHashMap<ID, u32>,
+    on_stack: FxHashSet<ID>,
+    scc_stack: Vec<(ID, CausalSummary)>,
+    call_stack: Vec<Frame<'a>>,
+}
+
+impl<'a> CausalWorkspace<'a> {
+    fn summary_of(
+        &mut self,
+        oplog: &'a OpLog,
+        imported: &'a FxHashMap<PeerID, ClaimedSpans<&'a Change>>,
+        root: &'a Change,
+    ) -> LoroResult<CausalSummary> {
+        if let Some(cached) = self.memo.get(&root.id) {
+            return Ok(cached.clone());
+        }
+
+        self.indices.clear();
+        self.lowlink.clear();
+        self.on_stack.clear();
+        self.scc_stack.clear();
+        self.call_stack.clear();
+
+        let mut next_index: u32 = 1;
+        self.indices.insert(root.id, 0);
+        self.lowlink.insert(root.id, 0);
+        self.on_stack.insert(root.id);
+        self.scc_stack.push((root.id, CausalSummary::default()));
+        self.call_stack.push(Frame {
+            node: root,
+            deps: root.deps.iter().collect(),
+            dep_idx: 0,
+            pending_child: None,
+            local: CausalSummary::default(),
+        });
+
+        while let Some(frame) = self.call_stack.last_mut() {
+            let node_id = frame.node.id;
+            if let Some(child_id) = frame.pending_child.take() {
+                let child_low = self.lowlink[&child_id];
+                let cur_low = self.lowlink.get_mut(&node_id).unwrap();
+                *cur_low = (*cur_low).min(child_low);
+                if let Some(child_sum) = self.memo.get(&child_id) {
+                    frame.local.merge(child_sum);
+                }
+            }
+
+            if frame.dep_idx < frame.deps.len() {
+                let dep = frame.deps[frame.dep_idx];
+                frame.dep_idx += 1;
+
+                if oplog.vv().includes_id(dep) {
+                    if oplog.dag.is_trimmed_and_unresolved(dep) {
+                        frame.local.unresolved = true;
+                    } else {
+                        extend_im_vv_last_id(&mut frame.local.dag_deps, dep);
+                    }
+                    continue;
+                }
+
+                let Some(child) = find_unapplied_source(oplog, imported, dep) else {
+                    frame.local.unresolved = true;
+                    continue;
+                };
+
+                extend_im_vv_last_id(&mut frame.local.unapplied_vv, dep);
+                let child_id = child.id;
+                if let Some(child_sum) = self.memo.get(&child_id) {
+                    frame.local.merge(child_sum);
+                } else if !self.indices.contains_key(&child_id) {
+                    frame.pending_child = Some(child_id);
+                    let idx = next_index;
+                    next_index += 1;
+                    self.indices.insert(child_id, idx);
+                    self.lowlink.insert(child_id, idx);
+                    self.on_stack.insert(child_id);
+                    self.scc_stack.push((child_id, CausalSummary::default()));
+                    self.call_stack.push(Frame {
+                        node: child,
+                        deps: child.deps.iter().collect(),
+                        dep_idx: 0,
+                        pending_child: None,
+                        local: CausalSummary::default(),
+                    });
+                } else if self.on_stack.contains(&child_id) {
+                    let child_idx = self.indices[&child_id];
+                    let cur_low = self.lowlink.get_mut(&node_id).unwrap();
+                    *cur_low = (*cur_low).min(child_idx);
+                }
+                continue;
+            }
+
+            let finished = self.call_stack.pop().unwrap();
+            if self.lowlink[&node_id] == self.indices[&node_id] {
+                if self.scc_stack.last().map(|(id, _)| *id) == Some(node_id) {
+                    self.scc_stack.pop();
+                    self.on_stack.remove(&node_id);
+                    self.memo.insert(node_id, finished.local);
+                } else {
+                    return Err(LoroError::DecodeError(
+                        format!("Invalid change {node_id}: cyclic causal dependency")
+                            .into_boxed_str(),
+                    ));
+                }
+            } else if let Some((_, slot)) = self
+                .scc_stack
+                .iter_mut()
+                .rev()
+                .find(|(id, _)| *id == node_id)
+            {
+                *slot = finished.local;
+            }
+        }
+
+        Ok(self.memo[&root.id].clone())
     }
 }
 

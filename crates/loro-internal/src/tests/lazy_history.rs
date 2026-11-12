@@ -138,3 +138,37 @@ fn a_zero_counter_in_the_start_vv_keeps_the_empty_replay_base_critical() {
 
     assert!(base.is_critical);
 }
+
+#[test]
+fn cold_two_head_transitive_predecessor_loads_only_head_dag_nodes() {
+    let history = alternating_history();
+    let left = cold_copy(&history.export(ExportMode::Snapshot).unwrap());
+    let right = cold_copy(&history.export(ExportMode::Snapshot).unwrap());
+    append_as(&left, 7, "left");
+    append_as(&right, 8, "right");
+
+    let left_branch = cold_copy(&left.export(ExportMode::Snapshot).unwrap());
+    let v0 = left_branch.oplog_vv();
+    append_as(&left_branch, 9, "bridge");
+    let bridge_update = left_branch.export(ExportMode::updates(&v0)).unwrap();
+    let v1 = left_branch.oplog_vv();
+    append_as(&left_branch, 7, "left-second");
+    let follow_update = left_branch.export(ExportMode::updates(&v1)).unwrap();
+
+    left.import(&right.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let two_head_snapshot = left.export(ExportMode::Snapshot).unwrap();
+
+    // Detached import isolates OpLog / DAG loading from state checkout replay:
+    // `bridge_update` puts `0@9` into `vv` alongside `0@8`, so `1@7` (`deps = [0@9]`)
+    // resolves `0@9 -> 0@7` inside the cold two-headed DAG without loading the 300-turn base.
+    let cold = cold_copy(&two_head_snapshot);
+    cold.detach();
+    cold.import(&bridge_update).unwrap();
+    cold.import(&follow_update).unwrap();
+    assert!(
+        parsed_dag_nodes(&cold) < TURNS as usize / 10,
+        "transitive predecessor check on two-headed cold snapshot loaded {} of {TURNS} DAG nodes",
+        parsed_dag_nodes(&cold),
+    );
+}

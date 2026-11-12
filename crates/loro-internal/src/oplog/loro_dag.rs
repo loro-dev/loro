@@ -1324,6 +1324,77 @@ impl AppDag {
         Ok(Some(vv))
     }
 
+    pub(crate) fn is_trimmed_and_unresolved(&self, dep: ID) -> bool {
+        self.shallow_since_vv.includes_id(dep)
+            && Frontiers::from_id(dep) != self.shallow_root_frontiers_deps
+    }
+
+    /// Whether `dep` (known to be in `self.vv`) causally covers `target` (also in `self.vv`).
+    /// Returns `Ok(None)` when `dep` is trimmed below the shallow root and cannot be resolved.
+    pub(crate) fn try_does_id_cover(&self, dep: ID, target: ID) -> LoroResult<Option<bool>> {
+        if dep.peer == target.peer {
+            return Ok(Some(dep.counter >= target.counter));
+        }
+        if Frontiers::from_id(dep) == self.shallow_root_frontiers_deps {
+            return Ok(Some(self.shallow_since_vv.includes_id(target)));
+        }
+        let Some(dep_node) = self.try_get(dep)? else {
+            return Ok(None);
+        };
+        if let Some(vv) = dep_node.vv.get() {
+            return Ok(Some(vv.includes_id(target)));
+        }
+        if self.unparsed_vv.lock().is_empty() {
+            let vv = self.try_ensure_vv_for(&dep_node)?;
+            return Ok(Some(vv.includes_id(target)));
+        }
+        // Cold snapshot DAG: avoid parsing history down to counter 0.
+        if self.shallow_since_vv.includes_id(target) {
+            return Ok(Some(true));
+        }
+        let Some(target_lamport) = self.try_get_lamport(&target)? else {
+            return Ok(None);
+        };
+        if dep_node.lamport <= target_lamport {
+            return Ok(Some(false));
+        }
+        let mut visited = FxHashSet::default();
+        visited.insert(dep_node.id_start());
+        let mut stack = vec![dep_node];
+        while let Some(node) = stack.pop() {
+            if let Some(vv) = node.vv.get() {
+                if vv.includes_id(target) {
+                    return Ok(Some(true));
+                }
+                continue;
+            }
+            if node.deps == self.shallow_root_frontiers_deps {
+                if self.shallow_since_vv.includes_id(target) {
+                    return Ok(Some(true));
+                }
+                continue;
+            }
+            for next_dep in node.deps.iter() {
+                if next_dep.peer == target.peer && next_dep.counter >= target.counter {
+                    return Ok(Some(true));
+                }
+                if self.shallow_since_vv.includes_id(next_dep) {
+                    continue;
+                }
+                let Some(next_node) = self.try_get(next_dep)? else {
+                    continue;
+                };
+                if next_node.lamport <= target_lamport {
+                    continue;
+                }
+                if visited.insert(next_node.id_start()) {
+                    stack.push(next_node);
+                }
+            }
+        }
+        Ok(Some(false))
+    }
+
     /// The vv of `frontiers`, without inserting DAG nodes or caching blocks.
     ///
     /// [`Self::try_frontiers_to_vv`] loads every ancestor into the parsed map. Debug checks
