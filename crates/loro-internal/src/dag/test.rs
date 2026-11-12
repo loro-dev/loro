@@ -1,6 +1,6 @@
 #![allow(unused)]
 use arbitrary::Arbitrary;
-use im::HashSet;
+use imbl::HashSet;
 use loro_common::HasCounter;
 use std::{cmp::Ordering, sync::Arc};
 
