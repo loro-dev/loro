@@ -684,8 +684,12 @@ impl UndoManagerInner {
 
         this.next_counter = Some(latest_counter);
         this.redo_stack.clear();
-        while this.undo_stack.len() > this.max_stack_size {
-            this.undo_stack.pop_front();
+        this.trim_undo_stack();
+    }
+
+    fn trim_undo_stack(&mut self) {
+        while self.undo_stack.len() > self.max_stack_size {
+            self.undo_stack.pop_front();
         }
     }
 }
@@ -838,7 +842,10 @@ impl UndoManager {
     }
 
     pub fn set_max_undo_steps(&self, size: usize) {
-        self.inner.lock().borrow_mut().max_stack_size = size;
+        let inner = self.inner.lock();
+        let mut inner = inner.borrow_mut();
+        inner.max_stack_size = size;
+        inner.trim_undo_stack();
     }
 
     pub fn add_exclude_origin_prefix(&self, prefix: &str) {
@@ -1055,9 +1062,10 @@ impl UndoManager {
                     meta.cursors = inner;
                 }
 
-                get_opposite(&mut inner.borrow_mut())
-                    .push(CounterSpan::new(end_counter, new_counter), meta);
-                inner.borrow_mut().next_counter = Some(new_counter);
+                let mut inner = inner.borrow_mut();
+                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
+                inner.trim_undo_stack();
+                inner.next_counter = Some(new_counter);
                 executed = true;
             }
         }

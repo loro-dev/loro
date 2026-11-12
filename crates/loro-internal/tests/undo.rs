@@ -354,3 +354,103 @@ fn test_clear_undo() {
     undo_manager.redo().unwrap();
     assert_eq!(text.to_string(), "hello world");
 }
+
+#[test]
+fn redo_respects_reduced_undo_limit() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    for (i, ch) in ["a", "b"].into_iter().enumerate() {
+        text.insert(i, ch, PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+    }
+    assert!(undo.undo().unwrap());
+    undo.set_max_undo_steps(1);
+    assert!(undo.redo().unwrap());
+    assert_eq!(undo.undo_count(), 1);
+    assert!(undo.undo().unwrap());
+    assert_eq!(text.to_string(), "a");
+    assert!(!undo.can_undo());
+}
+
+#[test]
+fn shrinking_undo_limit_preserves_latest_metadata() {
+    use std::sync::{Arc, Mutex};
+
+    use loro_internal::{
+        cursor::Side,
+        undo::{UndoItemMeta, UndoOrRedo},
+    };
+
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let cursor_text = text.clone();
+    let mut_id = Arc::new(Mutex::new(0i32));
+    let id = mut_id.clone();
+    undo.set_on_push(Some(Box::new(move |_, _, _| {
+        let mut id = id.lock().unwrap();
+        *id += 1;
+        let mut meta = UndoItemMeta::new();
+        meta.set_value((*id).into());
+        meta.add_cursor(&cursor_text.get_cursor(0, Side::Left).unwrap());
+        meta
+    })));
+    let popped = Arc::new(Mutex::new(Vec::new()));
+    let record = popped.clone();
+    undo.set_on_pop(Some(Box::new(move |kind, _, meta| {
+        assert_eq!(meta.cursors.len(), 1);
+        assert_eq!(meta.cursors[0].pos.pos, 0);
+        record.lock().unwrap().push((kind, meta.value));
+    })));
+    for i in 0..3 {
+        text.insert(i, "x", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+    }
+    undo.set_max_undo_steps(1);
+    assert_eq!(undo.undo_count(), 1);
+    assert!(popped.lock().unwrap().is_empty());
+    assert!(undo.undo().unwrap());
+    assert!(!undo.can_undo());
+    assert!(undo.redo().unwrap());
+    assert!(undo.undo().unwrap());
+    let popped = popped.lock().unwrap();
+    assert_eq!(popped.len(), 3);
+    for ((kind, value), (is_undo, id)) in popped.iter().zip([(true, 3), (false, 4), (true, 5)]) {
+        assert_eq!(matches!(kind, UndoOrRedo::Undo), is_undo);
+        assert_eq!(*value, id.into());
+    }
+}
+
+#[test]
+fn zero_undo_limit_discards_existing_and_redone_items() {
+    let doc = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    let undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    for i in 0..3 {
+        text.insert(i, "x", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+    }
+    assert!(undo.undo().unwrap());
+    undo.set_max_undo_steps(0);
+    assert_eq!(undo.undo_count(), 0);
+    assert_eq!(undo.redo_count(), 1);
+    assert!(undo.redo().unwrap());
+    assert_eq!(text.to_string(), "xxx");
+    assert!(!undo.can_undo());
+    assert!(!undo.undo().unwrap());
+    for i in 3..6 {
+        text.insert(i, "x", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        assert_eq!(undo.undo_count(), 0);
+    }
+    undo.set_max_undo_steps(1);
+    text.insert(6, "y", PosType::Unicode).unwrap();
+    doc.commit_then_renew();
+    assert!(undo.undo().unwrap());
+    assert_eq!(text.to_string(), "xxxxxx");
+    assert!(!undo.can_undo());
+}

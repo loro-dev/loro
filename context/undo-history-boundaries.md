@@ -1,6 +1,6 @@
 # Undo/redo history boundaries
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-12.
 
 `crates/loro-internal/src/undo.rs`: `UndoManager::perform` processes at most
 one recorded `StackItem` per call to `undo` or `redo`. Grouping and the merge
@@ -49,3 +49,16 @@ Regressions:
 - `loro-js/tests/undo-noop.test.ts` covers no-op undo and redo return values,
   unchanged versions/frontiers, pop callbacks, subsequent parent history and
   notification cleanup when the manager is destroyed.
+
+## Undo stack limit
+
+`UndoManagerInner::trim_undo_stack` removes the oldest undo items after a local
+checkpoint, after redo pushes an undo item, and immediately when
+`set_max_undo_steps` changes the limit (#1232). Zero drops all undo items and
+prevents new ones from being retained; redo history is preserved. Eviction drops
+the item's metadata with it and does not invoke `on_pop`, which is reserved for
+consuming history through undo/redo. The WASM wrapper stores metadata on these
+same Rust items by counter span, without a parallel JS metadata stack.
+
+`crates/loro-internal/tests/undo.rs` and `crates/loro-wasm/tests/undo.test.ts`
+cover dynamic shrinking, redo at the limit, zero, and metadata/cursor callbacks.
