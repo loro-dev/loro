@@ -21,6 +21,8 @@ use crate::{
 #[cfg(test)]
 mod atomicity_tests;
 pub(crate) mod movable_list;
+#[cfg(test)]
+mod split_span_tests;
 
 /// A batch of diffs.
 ///
@@ -116,6 +118,36 @@ impl DiffBatch {
             } else {
                 self.cid_to_events.insert(id.clone(), diff.clone());
                 self.order.push(id.clone());
+            }
+        }
+    }
+
+    /// Inverses run in sequence, so a later inverse map write must win even
+    /// when it restores a value with an older operation timestamp.
+    fn compose_inverse(&mut self, other: Self) {
+        if other.cid_to_events.is_empty() {
+            return;
+        }
+        if self.cid_to_events.is_empty() {
+            *self = other;
+            return;
+        }
+        assert_eq!(
+            self.full_state, other.full_state,
+            "cannot compose a full-state DiffBatch with an incremental one"
+        );
+
+        for (id, diff) in other.into_iter() {
+            if let Some(this_diff) = self.cid_to_events.get_mut(&id) {
+                match (this_diff, diff) {
+                    (Diff::Map(a), Diff::Map(b)) => {
+                        a.updated.extend(b.updated);
+                    }
+                    (a, b) => a.compose_ref(&b),
+                }
+            } else {
+                self.cid_to_events.insert(id.clone(), diff);
+                self.order.push(id);
             }
         }
     }
@@ -1202,7 +1234,7 @@ impl UndoManager {
 /// - `spans`: A vector of tuples where each tuple contains an `IdSpan` and its associated `Frontiers`.
 ///   - `IdSpan`: Represents a span of operations identified by an ID.
 ///   - `Frontiers`: Represents the deps of the given id_span
-/// - `latest_frontiers`: The latest frontiers of the document
+/// - `last_frontiers_or_last_bi`: The latest frontiers, or the precomputed final forward diff
 /// - `calc_diff`: A closure that takes two `Frontiers` and calculates the difference between them, returning a `DiffBatch`.
 ///
 /// # Returns
@@ -1221,9 +1253,15 @@ pub(crate) fn undo(
     // For each continuous span_i:
     //
     // 1. a. Calculate the event of checkout from id_span.last to id_span.deps, call it Ai. It undo the ops in the current span.
-    //    b. Calculate A'i = Ai + T(Ci-1, Ai) if i > 0, otherwise A'i = Ai.
+    //    b. Calculate A'i = Ai + Ci-1 if i > 0, otherwise A'i = Ai.
+    //       Ci-1 is based at this span's deps, exactly where Ai ends, so compose directly.
     //       NOTE: A'i can undo the ops in the current span and the previous spans, if it's applied on the id_span.last version.
-    // 2. Calculate the event of checkout from id_span.last to [the next span's last id] or [the latest version], call it Bi.
+    // 2. Calculate the checkout from id_span.last to the next span's deps, call it Bi.
+    //    These deps include this span's last op because a peer's ops are causally ordered.
+    //    Bi crosses only the other peers' ops between spans. Taking Ci through the next
+    //    span's own ops and back through their inverse is lossy: restored runs can be
+    //    reordered (#1245), or intermediate text can survive the undo (#1228).
+    //    For the last span only, Bi goes to the latest version (or uses the supplied diff).
     // 3. Transform event A'i based on Bi, call it Ci
     // 4. If span_i is the last span, apply Ci to the current state.
 
@@ -1251,27 +1289,29 @@ pub(crate) fn undo(
             let stack_diff_batch;
             let event_b_i = 'block: {
                 let next = if i + 1 < spans.len() {
-                    spans[i + 1].0.id_last().into()
+                    &spans[i + 1].1
                 } else {
                     match last_frontiers_or_last_bi {
-                        Either::Left(last_frontiers) => last_frontiers.clone(),
-                        Either::Right(right) => break 'block right,
+                        Either::Left(last_frontiers) => last_frontiers,
+                        Either::Right(right) => break 'block Some(right),
                     }
                 };
-                stack_diff_batch = Some(calc_diff(&this_id_span.id_last().into(), &next));
-                stack_diff_batch.as_ref().unwrap()
+                let from = Frontiers::from_id(this_id_span.id_last());
+                if &from == next {
+                    break 'block None;
+                }
+                stack_diff_batch = calc_diff(&from, next);
+                Some(&stack_diff_batch)
             };
 
             // println!("event_b_i: {:?}", event_b_i);
 
             // event_a_prime can undo the ops in the current span and the previous spans
-            let mut event_a_prime = if let Some(mut last_ci) = last_ci.take() {
+            let mut event_a_prime = if let Some(last_ci) = last_ci.take() {
                 // ------------------------------------------------------------------------------
-                // 1.b Transform and apply Ci-1 based on Ai, call it A'i
+                // 1.b Apply Ci-1 after Ai, call it A'i
                 // ------------------------------------------------------------------------------
-                last_ci.transform(&event_a_i, true);
-
-                event_a_i.compose(&last_ci);
+                event_a_i.compose_inverse(last_ci);
                 event_a_i
             } else {
                 event_a_i
@@ -1282,7 +1322,9 @@ pub(crate) fn undo(
             // --------------------------------------------------
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
-            event_a_prime.transform(event_b_i, true);
+            if let Some(event_b_i) = event_b_i {
+                event_a_prime.transform(event_b_i, true);
+            }
 
             // println!("event_a_prime: {:?}", event_a_prime);
 
