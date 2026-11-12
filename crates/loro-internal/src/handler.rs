@@ -2919,7 +2919,8 @@ impl TextHandler {
                         continue;
                     }
 
-                    let next_attr = span.attributes.to_option_map();
+                    // Compare effective styles here; incremental diffs must keep null removals.
+                    let next_attr = span.attributes.to_option_map_without_null_value();
                     match delta.last_mut() {
                         Some(TextDelta::Insert { insert, attributes })
                             if &next_attr == attributes =>

@@ -278,7 +278,8 @@ impl RichtextState {
     pub(crate) fn get_delta(&mut self) -> Vec<TextDelta> {
         let mut delta = Vec::new();
         for span in self.state.get_mut().iter() {
-            let next_attr = span.attributes.to_option_map();
+            // Compare effective styles here; incremental diffs must keep null removals.
+            let next_attr = span.attributes.to_option_map_without_null_value();
             match delta.last_mut() {
                 Some(TextDelta::Insert { insert, attributes }) if &next_attr == attributes => {
                     insert.push_str(span.text.as_str());
