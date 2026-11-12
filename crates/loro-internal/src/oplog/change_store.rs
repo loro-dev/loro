@@ -167,6 +167,49 @@ struct ChangeStoreInner {
     may_have_unparsed_bodies: bool,
 }
 
+impl ChangeStoreInner {
+    /// Whether the cached blocks hold every op of one peer from `start` to `end`.
+    ///
+    /// Blocks of a peer never overlap, and a cached block is the current version of
+    /// the block with its key, so a gapless run of cached blocks over the range
+    /// leaves nothing for the encoded store to add.
+    // Out of line on purpose: inlined into `load_blocks_in_range` it made
+    // unrelated local-edit and checkout benchmarks 3 to 8% slower.
+    #[inline(never)]
+    fn caches_range(&self, start: Bound<ID>, end: Bound<ID>) -> bool {
+        let Bound::Included(start) = start else {
+            return false;
+        };
+        let last = match end {
+            Bound::Included(id) => id,
+            Bound::Excluded(id) if id.counter > 0 => ID::new(id.peer, id.counter - 1),
+            _ => return false,
+        };
+        if last.peer != start.peer || last.counter < start.counter {
+            return false;
+        }
+
+        let Some((first_id, first)) = self.mem_parsed_kv.range(..=start).next_back() else {
+            return false;
+        };
+        if first.peer != start.peer || first.counter_range.1 <= start.counter {
+            return false;
+        }
+
+        let mut cached_until = first.counter_range.1;
+        for (_, block) in self
+            .mem_parsed_kv
+            .range((Bound::Excluded(*first_id), Bound::Included(last)))
+        {
+            if block.counter_range.0 != cached_until {
+                return false;
+            }
+            cached_until = block.counter_range.1;
+        }
+        cached_until > last.counter
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ChangeStoreRollback {
     old_vv: Arc<VersionVector>,
@@ -2012,6 +2055,14 @@ mod mut_inner_kv {
             end: Bound<ID>,
             stop_on_error: bool,
         ) -> LoroResult<()> {
+            // Blocks that are already cached need no lookup in the encoded store. A
+            // scan there decodes the blocks it starts and ends in, megabytes for a
+            // big text, and every local commit with a local-update subscriber asks
+            // for the change it has just made (context/commit-export-after-snapshot.md).
+            if self.inner.lock().caches_range(start, end) {
+                return Ok(());
+            }
+
             let mut whether_need_scan_backward = match start {
                 Bound::Included(id) => Some(id),
                 Bound::Excluded(id) => Some(id.inc(1)),
@@ -2829,6 +2880,75 @@ mod test {
             assert!(change.lamport <= l);
             assert!(l < change.lamport + change.atom_len() as Lamport);
         }
+    }
+
+    #[test]
+    fn caches_range_needs_a_gapless_run_of_cached_blocks_of_one_peer() {
+        // `load_blocks_in_range` skips the encoded store exactly when this is true
+        // (context/commit-export-after-snapshot.md).
+        let (store, end, next) = kv_only_store_and_next_change();
+        let caches = |start: Bound<ID>, end: Bound<ID>| store.inner.lock().caches_range(start, end);
+        let block_range = |id: ID| {
+            let inner = store.inner.lock();
+            let (_, block) = inner.mem_parsed_kv.range(..=id).next_back().unwrap();
+            block.counter_range
+        };
+        let whole = (
+            Bound::Included(ID::new(1, 0)),
+            Bound::Excluded(ID::new(1, end)),
+        );
+        assert!(!caches(whole.0, whole.1), "nothing is cached yet");
+
+        // The first block only.
+        store.get_change(ID::new(1, 0)).unwrap();
+        let (_, first_end) = block_range(ID::new(1, 0));
+        let first = |c| Bound::Included(ID::new(1, c));
+        assert!(caches(first(0), Bound::Excluded(ID::new(1, first_end))));
+        assert!(caches(first(0), Bound::Included(ID::new(1, first_end - 1))));
+        assert!(caches(
+            first(first_end - 1),
+            Bound::Included(ID::new(1, first_end - 1))
+        ));
+        assert!(!caches(first(0), Bound::Included(ID::new(1, first_end))));
+        assert!(!caches(
+            first(first_end),
+            Bound::Included(ID::new(1, first_end))
+        ));
+        assert!(!caches(
+            Bound::Included(ID::new(2, 0)),
+            Bound::Excluded(ID::new(2, 1))
+        ));
+        assert!(!caches(first(0), Bound::Excluded(ID::new(2, 1))));
+        assert!(!caches(first(0), Bound::Excluded(ID::new(1, 0))));
+        assert!(!caches(first(0), Bound::Unbounded));
+        assert!(!caches(Bound::Unbounded, Bound::Included(ID::new(1, 0))));
+        assert!(!caches(
+            Bound::Excluded(ID::new(1, 0)),
+            Bound::Excluded(ID::new(1, 2))
+        ));
+
+        // The last block too: both ends are cached, the blocks between them are not.
+        store.get_change(ID::new(1, end - 1)).unwrap();
+        let (last_start, _) = block_range(ID::new(1, end - 1));
+        assert!(
+            first_end < last_start,
+            "the history needs a block in between"
+        );
+        assert!(caches(first(last_start), Bound::Excluded(ID::new(1, end))));
+        assert!(!caches(whole.0, whole.1));
+
+        // A new change lands in the cache only; asking for it must not need the store.
+        let len = next.atom_len() as Counter;
+        store.insert_change(next, false, true);
+        assert!(caches(first(end), Bound::Excluded(ID::new(1, end + len))));
+        assert!(caches(
+            first(last_start),
+            Bound::Excluded(ID::new(1, end + len))
+        ));
+
+        // Once every block is cached the whole history is.
+        store.ensure_block_loaded_in_range(Bound::Unbounded, Bound::Unbounded);
+        assert!(caches(first(0), Bound::Excluded(ID::new(1, end + len))));
     }
 
     #[test]
