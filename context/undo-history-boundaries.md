@@ -7,6 +7,16 @@ one recorded `StackItem` per call to `undo` or `redo`. Grouping and the merge
 interval can put several edits, including edits to different containers, into
 that one item.
 
+The merge window starts when a new item is actually added, not merely when
+`record_checkpoint` decides against requesting a merge. `Stack::push_with_merge`
+can reject a requested merge after a remote import, on an empty tail row, or
+when counter spans are not contiguous. These new items reset `last_undo_time`;
+actual merges keep the item's original timestamp (#1233). The timer uses wall
+clock milliseconds, independently of commit timestamps. Deterministic coverage
+lives in `undo.rs::merge_timer_tests` and `crates/loro-wasm/tests/undo.test.ts`.
+The WASM `setOnPush` span check still identifies the newly created item and keeps
+its metadata when later pushes merge into it (#1253).
+
 Remote edits can make the item's inverse a no-op. For example, inserting a
 MovableList element locally and then deleting it remotely leaves nothing for
 the inverse delete to remove. A move/set whose element was deleted remotely

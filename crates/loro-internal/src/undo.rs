@@ -627,16 +627,25 @@ impl UndoManagerInner {
     }
 
     fn record_checkpoint(this: &RefCell<Self>, latest_counter: Counter, event: Option<DiffEvent>) {
+        Self::record_checkpoint_at(this, latest_counter, event, None);
+    }
+
+    fn record_checkpoint_at(
+        this: &RefCell<Self>,
+        latest_counter: Counter,
+        event: Option<DiffEvent>,
+        now: Option<Timestamp>,
+    ) {
         let previous_counter = this.borrow().next_counter;
 
-        if Some(latest_counter) == this.borrow().next_counter {
+        if Some(latest_counter) == previous_counter {
             return;
         }
 
-        if this.borrow().next_counter.is_none() {
+        let Some(previous) = previous_counter else {
             this.borrow_mut().next_counter = Some(latest_counter);
             return;
-        }
+        };
 
         if let Some(group) = &mut this.borrow_mut().group {
             event.iter().for_each(|e| {
@@ -646,8 +655,8 @@ impl UndoManagerInner {
             });
         }
 
-        let now = get_sys_timestamp() as Timestamp;
-        let span = CounterSpan::new(this.borrow().next_counter.unwrap(), latest_counter);
+        let now = now.unwrap_or_else(|| get_sys_timestamp() as Timestamp);
+        let span = CounterSpan::new(previous, latest_counter);
         let meta = this
             .borrow()
             .on_push
@@ -674,12 +683,17 @@ impl UndoManagerInner {
 
         let should_merge = !this.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
+        let previous_len = this.undo_stack.len();
         if should_merge {
             this.undo_stack
                 .push_with_merge(span, meta, true, this.group.as_ref());
         } else {
-            this.last_undo_time = now;
             this.undo_stack.push(span, meta);
+        }
+        // A requested merge can still create an item (e.g. after an import).
+        // Only an actual merge keeps the previous item's window.
+        if this.undo_stack.len() > previous_len {
+            this.last_undo_time = now;
         }
 
         this.next_counter = Some(latest_counter);
@@ -1278,4 +1292,106 @@ pub(crate) fn undo(
     }
 
     last_ci.unwrap()
+}
+
+#[cfg(test)]
+mod merge_timer_tests {
+    use super::*;
+    use loro_common::ContainerType;
+
+    fn manager() -> RefCell<UndoManagerInner> {
+        let mut inner = UndoManagerInner::new(0);
+        inner.merge_interval_in_ms = 500;
+        RefCell::new(inner)
+    }
+
+    fn record(inner: &RefCell<UndoManagerInner>, counter: Counter, now: Timestamp) {
+        UndoManagerInner::record_checkpoint_at(inner, counter, None, Some(now));
+    }
+
+    #[test]
+    fn first_item_starts_its_own_merge_window() {
+        let inner = manager();
+        record(&inner, 1, 100);
+        assert_eq!(inner.borrow().last_undo_time, 100);
+        record(&inner, 2, 550);
+        assert_eq!(inner.borrow().undo_stack.len(), 1);
+    }
+
+    #[test]
+    fn merged_edits_keep_the_original_window() {
+        let inner = manager();
+        record(&inner, 1, 100_000);
+        record(&inner, 2, 100_300);
+        assert_eq!(inner.borrow().undo_stack.len(), 1);
+        assert_eq!(inner.borrow().last_undo_time, 100_000);
+        record(&inner, 3, 100_600);
+        assert_eq!(inner.borrow().undo_stack.len(), 2);
+        assert_eq!(inner.borrow().last_undo_time, 100_600);
+    }
+
+    #[test]
+    fn remote_diff_starts_a_new_merge_window() {
+        let inner = manager();
+        record(&inner, 1, 100_000);
+        // A remote import leaves a diff on the row containing the old item.
+        let mut diff = crate::event::TextDiff::default();
+        diff.insert_value(0, "remote".into(), Default::default());
+        {
+            let inner = inner.borrow();
+            let mut remote_diff = inner.undo_stack.stack.back().unwrap().1.lock();
+            let cid = ContainerID::new_root("text", ContainerType::Text);
+            remote_diff
+                .cid_to_events
+                .insert(cid.clone(), Diff::Text(diff));
+            remote_diff.order.push(cid);
+        }
+        record(&inner, 2, 100_300);
+        assert_eq!(inner.borrow().undo_stack.len(), 2);
+        assert_eq!(inner.borrow().last_undo_time, 100_300);
+        record(&inner, 3, 100_600);
+        let inner = inner.borrow();
+        assert_eq!(inner.undo_stack.len(), 2);
+        assert_eq!(
+            inner.undo_stack.peek_top_span(),
+            Some(CounterSpan::new(1, 3))
+        );
+    }
+
+    #[test]
+    fn noncontiguous_span_starts_a_new_merge_window() {
+        let inner = manager();
+        record(&inner, 1, 100_000);
+        inner.borrow_mut().next_counter = Some(2);
+        record(&inner, 3, 100_300);
+        assert_eq!(inner.borrow().last_undo_time, 100_300);
+        record(&inner, 4, 100_600);
+        let inner = inner.borrow();
+        assert_eq!(inner.undo_stack.len(), 2);
+        assert_eq!(
+            inner.undo_stack.peek_top_span(),
+            Some(CounterSpan::new(2, 4))
+        );
+    }
+
+    #[test]
+    fn empty_tail_row_starts_a_new_merge_window() {
+        let inner = manager();
+        record(&inner, 1, 100_000);
+        record(&inner, 2, 100_600);
+        inner
+            .borrow_mut()
+            .undo_stack
+            .stack
+            .push_back(Default::default());
+        record(&inner, 3, 100_900);
+        assert_eq!(inner.borrow().last_undo_time, 100_900);
+        record(&inner, 4, 101_200);
+        let inner = inner.borrow();
+        assert_eq!(inner.undo_stack.len(), 3);
+        assert_eq!(
+            inner.undo_stack.peek_top_span(),
+            Some(CounterSpan::new(2, 4))
+        );
+    }
 }

@@ -148,6 +148,49 @@ describe("undo", () => {
     },
   );
 
+  test("import starts a new merge window and preserves onPush metadata", () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(100000);
+    try {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const remote = new LoroDoc();
+      remote.setPeerId(2);
+      const text = doc.getText("text");
+      text.insert(0, "ab");
+      doc.commit();
+      const onPush = vi.fn(() => ({ value: text.toString(), cursors: [] }));
+      const onPop = vi.fn();
+      const undo = new UndoManager(doc, {
+        mergeInterval: 500,
+        onPush,
+        onPop,
+      });
+      text.insert(1, "X");
+      doc.commit();
+      remote.import(doc.export({ mode: "snapshot" }));
+      remote.getText("text").delete(1, 1);
+      remote.commit();
+      doc.import(remote.export({ mode: "snapshot" }));
+
+      clock.mockReturnValue(100300);
+      text.delete(0, 1);
+      doc.commit();
+      clock.mockReturnValue(100600);
+      text.delete(0, 1);
+      doc.commit();
+      expect(onPush).toHaveBeenCalledTimes(3);
+      expect(text.toString()).toBe("");
+      expect(undo.undo()).toBe(true);
+      expect(text.toString()).toBe("ab");
+      // The merged edit must retain the new item's metadata from the first deletion.
+      expect(onPop.mock.calls[0][1].value).toBe("b");
+      expect(undo.redo()).toBe(true);
+      expect(text.toString()).toBe("");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("merge", async () => {
     const doc = new LoroDoc();
     const undo = new UndoManager(doc, { maxUndoSteps: 100, mergeInterval: 50 });
