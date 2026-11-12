@@ -48,6 +48,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
 - Rich-text insert positions next to style anchors, the insert cursor cache,
   and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
+- Why a checkout across one big text op is linear (coalesced leaf updates in the
+  text tracker): [context/large-text-linear-time.md](context/large-text-linear-time.md).
 - Text delta UTF-8 chunks and B-tree batch insertion order:
   [context/text-delta-chunking.md](context/text-delta-chunking.md).
 - Tree diff cache transitions and why their lamport window comes from the two
