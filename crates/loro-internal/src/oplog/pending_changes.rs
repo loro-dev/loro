@@ -6,6 +6,7 @@ use std::{
 
 use crate::{
     change::Change,
+    oplog::AppDag,
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
@@ -509,12 +510,13 @@ impl OpLog {
     /// later B change depended on). Treat that as normal: apply when possible, skip if
     /// already present, and only park changes that are still waiting on a missing dep.
     ///
-    /// Returns the version range of changes from `remote_changes` that remain pending.
+    /// Returns the still-pending range and whether a change had trimmed deps.
     pub(super) fn extend_pending_changes_with_unknown_lamport(
         &mut self,
         remote_changes: Vec<Change>,
         mut would_affect: Option<&mut VersionRange>,
-    ) -> VersionRange {
+    ) -> loro_common::LoroResult<(VersionRange, bool)> {
+        let mut dropped_trimmed = false;
         let mut parked = Vec::new();
         let mut newly_applied_ids = Vec::new();
 
@@ -527,16 +529,17 @@ impl OpLog {
                     self.pending_changes.claim(&local_change, rollback);
                     self.push_pending_change(miss_dep, local_change);
                 }
+                ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                 ChangeState::Applied => {}
                 ChangeState::CanApplyDirectly => {
                     newly_applied_ids.push(local_change.id_last());
-                    self.apply_change_from_remote(local_change, would_affect.as_deref_mut());
+                    self.apply_change_from_remote(local_change, would_affect.as_deref_mut())?;
                 }
             }
         }
 
         if !newly_applied_ids.is_empty() {
-            self.try_apply_pending(newly_applied_ids, would_affect);
+            dropped_trimmed |= self.try_apply_pending(newly_applied_ids, would_affect)?;
         }
 
         // A parked change can already be partially covered by the oplog VV: a change whose
@@ -561,7 +564,7 @@ impl OpLog {
             }
         }
 
-        still_pending
+        Ok((still_pending, dropped_trimmed))
     }
 }
 
@@ -569,11 +572,15 @@ impl OpLog {
     /// Try to apply pending changes.
     ///
     /// `new_ids` are the ID of the op that is just applied.
+    /// Returns whether an obsolete parked change was dropped. The caller reports
+    /// `ImportUpdatesThatDependsOnOutdatedVersion` while keeping valid progress.
+    #[must_use]
     pub(crate) fn try_apply_pending(
         &mut self,
         mut new_ids: Vec<ID>,
         mut would_affect: Option<&mut VersionRange>,
-    ) {
+    ) -> loro_common::LoroResult<bool> {
+        let mut dropped_trimmed = false;
         while let Some(id) = new_ids.pop() {
             let known_end = self.vv().get(&id.peer).copied().unwrap_or(0);
             let rollback = self.import_rollback.as_mut().map(|r| &mut r.pending);
@@ -615,8 +622,9 @@ impl OpLog {
                             self.apply_change_from_remote(
                                 pending_change,
                                 would_affect.as_deref_mut(),
-                            );
+                            )?;
                         }
+                        ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => {
                             self.push_pending_change(miss_dep, pending_change)
@@ -625,32 +633,28 @@ impl OpLog {
                 }
             }
         }
+        Ok(dropped_trimmed)
     }
 
     pub(super) fn apply_change_from_remote(
         &mut self,
         change: PendingChange,
         would_affect: Option<&mut VersionRange>,
-    ) {
-        let change = match change {
-            PendingChange::Known(mut c) => {
-                self.dag.calc_unknown_lamport_change(&mut c).unwrap();
-                c
-            }
-            PendingChange::Unknown(mut c) => {
-                self.dag.calc_unknown_lamport_change(&mut c).unwrap();
-                c
-            }
+    ) -> loro_common::LoroResult<()> {
+        let (PendingChange::Known(change) | PendingChange::Unknown(change)) = change;
+        let Some(mut change) = self.trim_the_known_part_of_change(change) else {
+            return Ok(());
         };
-
-        let Some(change) = self.trim_the_known_part_of_change(change) else {
-            return;
-        };
+        change.lamport = self
+            .dag
+            .try_get_change_lamport_from_deps(&change.deps)?
+            .ok_or(loro_common::LoroError::ImportUpdatesThatDependsOnOutdatedVersion)?;
 
         if let Some(w) = would_affect {
             w.extends_to_include_id_span(change.id_span());
         }
         self.insert_new_change(change, false);
+        Ok(())
     }
 }
 
@@ -659,11 +663,12 @@ enum ChangeState {
     CanApplyDirectly,
     // The id of first missing dep
     AwaitingMissingDependency(ID),
+    DependsOnTrimmedHistory,
 }
 
 fn remote_change_apply_state(
     vv: &VersionVector,
-    _shallow_vv: &ImVersionVector,
+    shallow_vv: &ImVersionVector,
     change: &Change,
 ) -> ChangeState {
     let peer = change.id.peer;
@@ -673,11 +678,28 @@ fn remote_change_apply_state(
         return ChangeState::Applied;
     }
 
+    // A snapshot may already cover a prefix of a parked change. Classify the
+    // same suffix that apply_change_from_remote will insert, not its old deps.
+    let suffix_deps;
+    let deps = if vv_latest_ctr > start {
+        suffix_deps = crate::version::Frontiers::from(ID::new(peer, vv_latest_ctr - 1));
+        &suffix_deps
+    } else {
+        &change.deps
+    };
+
+    // The VV includes trimmed ids, but they have no DAG node from which to
+    // compute a Lamport. A snapshot can trim deps of already parked changes.
+    // Check after Applied: a parked root change may now be in the snapshot.
+    if AppDag::deps_reach_trimmed_history(shallow_vv, deps) {
+        return ChangeState::DependsOnTrimmedHistory;
+    }
+
     if vv_latest_ctr < start {
         return ChangeState::AwaitingMissingDependency(change.id.inc(-1));
     }
 
-    for dep in change.deps.iter() {
+    for dep in deps.iter() {
         let dep_vv_latest_ctr = vv.get(&dep.peer).copied().unwrap_or(0);
         if dep_vv_latest_ctr - 1 < dep.counter {
             return ChangeState::AwaitingMissingDependency(dep);
@@ -1180,4 +1202,242 @@ mod test {
     //     c.import(&updates_a123).unwrap();
     //     assert_eq!(c.get_deep_value(), a.get_deep_value());
     // }
+}
+
+#[cfg(test)]
+mod shallow_cut_tests {
+    use super::*;
+    use crate::version::Frontiers;
+    use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
+    use loro_common::LoroError;
+
+    /// Peer 1 writes `0@1` and `1@1`; peer 2 forks at `0@1` and writes one op with
+    /// deps `[0@1]`. A fresh doc parks peer 2's op (its dep is unknown), then
+    /// imports a shallow snapshot rooted at `1@1`, which trims `0@1`. The parked op
+    /// now depends on trimmed history and can never be merged. This legacy state
+    /// is constructed internally because current snapshot reset refuses pending history.
+    struct ParkedBelowCut {
+        /// The shallow doc holding the parked op.
+        doc: LoroDoc,
+        /// Peer 1's doc, one op (`2@1`) ahead of the shallow doc.
+        p1: LoroDoc,
+        /// The shallow doc's version: `p1.export(updates(&cut_vv))` is `2@1`.
+        cut_vv: VersionVector,
+        /// The update that parked peer 2's op.
+        parked: Vec<u8>,
+    }
+
+    fn shallow_doc_with_parked_change_below_the_cut() -> ParkedBelowCut {
+        let p1 = LoroDoc::new_auto_commit();
+        p1.set_peer_id(1).unwrap();
+        p1.get_text("t").insert(0, "a", PosType::Unicode).unwrap();
+        p1.commit_then_renew();
+        p1.get_text("t").insert(1, "b", PosType::Unicode).unwrap();
+        p1.commit_then_renew();
+
+        let p2 = p1.fork_at(&Frontiers::from(ID::new(1, 0))).unwrap();
+        p2.set_peer_id(2).unwrap();
+        // Map input can be kept across the legacy snapshot reset without text slices.
+        p2.get_map("m").insert("k", 1).unwrap();
+        p2.commit_then_renew();
+        let parked = p2.export(ExportMode::updates(&p1.oplog_vv())).unwrap();
+
+        let root = Frontiers::from(ID::new(1, 1));
+        let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+        let cut_vv = p1.oplog_vv();
+        p1.get_text("t").insert(2, "c", PosType::Unicode).unwrap();
+        p1.commit_then_renew();
+
+        let doc = LoroDoc::new_auto_commit();
+        let status = doc.import(&parked).unwrap();
+        assert!(status.pending.is_some(), "{status:?}");
+        // Current public import refuses snapshot reset when pending history exists.
+        // Reconstruct the legacy parked-before-cut state to test replay defensively.
+        let pending = std::mem::take(&mut doc.oplog().lock().pending_changes);
+        doc.import(&snap).unwrap();
+        doc.oplog().lock().pending_changes = pending;
+        assert_eq!(doc.shallow_since_frontiers(), root);
+        assert!(doc.shallow_since_vv().to_vv().includes_id(ID::new(1, 0)));
+        assert_eq!(doc.oplog_vv(), cut_vv);
+        ParkedBelowCut {
+            doc,
+            p1,
+            cut_vv,
+            parked,
+        }
+    }
+
+    /// The parked op is gone for good: importing it again is rejected rather than
+    /// parked, and a later peer-1 op revisiting its pending slot imports cleanly.
+    /// The unlocking op itself was applied, as for any import that arrives
+    /// together with a rejected change, and the doc stays usable.
+    fn assert_parked_change_dropped(fx: &ParkedBelowCut) {
+        let ParkedBelowCut {
+            doc, p1, parked, ..
+        } = fx;
+        assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+        assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());
+        assert_eq!(doc.get_text("t").to_string(), p1.get_text("t").to_string());
+        assert_eq!(
+            doc.import(parked).unwrap_err(),
+            LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+        );
+        assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+
+        let t1 = p1.get_text("t");
+        t1.insert(t1.len_unicode(), "z", PosType::Unicode).unwrap();
+        p1.commit_then_renew();
+        let status = doc
+            .import(&p1.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+            .unwrap();
+        assert!(status.pending.is_none(), "{status:?}");
+        assert_eq!(doc.get_text("t").to_string(), t1.to_string());
+    }
+
+    /// A change parked before the doc became shallow, whose deps the shallow cut
+    /// then trimmed, is concurrent with the shallow root. The update that unlocks
+    /// it used to apply it anyway and abort on
+    /// `calc_unknown_lamport_change(..).unwrap()`, poisoning the doc mutex.
+    #[test]
+    fn parked_change_below_shallow_cut_is_rejected_when_unlocked() {
+        let fx = shallow_doc_with_parked_change_below_the_cut();
+        let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+        assert_eq!(
+            fx.doc.import(&unlock).unwrap_err(),
+            LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+        );
+        assert_eq!(fx.doc.get_text("t").to_string(), "abc");
+        assert_parked_change_dropped(&fx);
+    }
+
+    #[test]
+    fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_json() {
+        let fx = shallow_doc_with_parked_change_below_the_cut();
+        let unlock = fx
+            .p1
+            .export_json_updates(&fx.cut_vv, &fx.p1.oplog_vv(), false)
+            .unwrap();
+        assert_eq!(
+            fx.doc.import_json_updates(unlock).unwrap_err(),
+            LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+        );
+        assert_parked_change_dropped(&fx);
+    }
+
+    /// `import_batch` runs its blobs detached and hands a single blob to `import`;
+    /// the empty second blob keeps it on the batch path. The reattach at the end
+    /// must still happen and report the error.
+    #[test]
+    fn parked_change_below_shallow_cut_is_rejected_when_unlocked_by_batch() {
+        let fx = shallow_doc_with_parked_change_below_the_cut();
+        let unlock = fx.p1.export(ExportMode::updates(&fx.cut_vv)).unwrap();
+        let empty = LoroDoc::new_auto_commit()
+            .export(ExportMode::all_updates())
+            .unwrap();
+        assert_eq!(
+            fx.doc.import_batch(&[unlock, empty]).unwrap_err(),
+            LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+        );
+        assert!(!fx.doc.is_detached());
+        assert_parked_change_dropped(&fx);
+    }
+
+    /// An import that parks all of its own changes still revisits the pending
+    /// slot of the parked op and drops it. That import applies nothing, so it
+    /// takes the path that applies no state diff; rolling the arena back on its
+    /// error, as that path used to, would leave the import's own parked text op
+    /// pointing at freed arena bytes ("abcc" instead of "abcd" once unlocked).
+    #[test]
+    fn parked_change_below_shallow_cut_is_rejected_when_dropped_by_an_import_that_only_parks() {
+        let fx = shallow_doc_with_parked_change_below_the_cut();
+        fx.p1
+            .get_text("t")
+            .insert(3, "d", PosType::Unicode)
+            .unwrap();
+        fx.p1.commit_then_renew();
+        let only_3 = fx
+            .p1
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 3, 4)]))
+            .unwrap();
+        let only_2 = fx
+            .p1
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 2, 3)]))
+            .unwrap();
+
+        assert_eq!(
+            fx.doc.import(&only_3).unwrap_err(),
+            LoroError::ImportUpdatesThatDependsOnOutdatedVersion
+        );
+        assert_eq!(fx.doc.oplog_vv(), fx.cut_vv);
+        fx.doc.import(&only_2).unwrap();
+        assert_eq!(fx.doc.get_text("t").to_string(), "abcd");
+        assert_parked_change_dropped(&fx);
+    }
+
+    /// The shallow root's own change depends on trimmed history too, and a doc can
+    /// hold it parked (imported before the snapshot) while the snapshot then brings
+    /// it in. Revisiting it must find it applied, not reject it: the applied check
+    /// comes before the trimmed-dep check.
+    #[test]
+    fn parked_change_that_the_shallow_snapshot_then_applied_is_not_rejected() {
+        let p1 = LoroDoc::new_auto_commit();
+        p1.set_peer_id(1).unwrap();
+        p1.get_map("a").insert("k", 0).unwrap();
+        p1.commit_then_renew();
+        p1.get_map("b").insert("k", 1).unwrap();
+        p1.commit_then_renew();
+        let root = Frontiers::from(ID::new(1, 1));
+        let snap = p1.export(ExportMode::shallow_snapshot(&root)).unwrap();
+        let cut_vv = p1.oplog_vv();
+        p1.get_map("c").insert("k", 2).unwrap();
+        p1.commit_then_renew();
+        let only_1 = p1
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 1, 2)]))
+            .unwrap();
+
+        let doc = LoroDoc::new_auto_commit();
+        assert!(doc.import(&only_1).unwrap().pending.is_some());
+        // Current public import refuses snapshot reset when pending history exists.
+        // Reconstruct the legacy parked-before-cut state to test replay defensively.
+        let pending = std::mem::take(&mut doc.oplog().lock().pending_changes);
+        doc.import(&snap).unwrap();
+        doc.oplog().lock().pending_changes = pending;
+        assert_eq!(doc.shallow_since_frontiers(), root);
+        doc.import(&p1.export(ExportMode::updates(&cut_vv)).unwrap())
+            .unwrap();
+        assert_eq!(doc.oplog_vv(), p1.oplog_vv());
+        assert_eq!(doc.get_deep_value(), p1.get_deep_value());
+    }
+    #[test]
+    fn partially_covered_pending_change_uses_retained_suffix_deps() {
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        for key in ["a", "b", "c"] {
+            source.get_map("m").insert(key, true).unwrap();
+        }
+        source.commit_then_renew();
+        let prefix = source.fork_at(&Frontiers::from(ID::new(1, 1))).unwrap();
+        let snapshot = prefix
+            .export(ExportMode::shallow_snapshot(&prefix.oplog_frontiers()))
+            .unwrap();
+        let target = LoroDoc::new_auto_commit();
+        target.import(&snapshot).unwrap();
+        let update = source.export(ExportMode::all_updates()).unwrap();
+        let parsed = crate::encoding::parse_header_and_body(&update, true).unwrap();
+        let mut oplog = target.oplog().lock();
+        let changes = crate::encoding::decode_oplog_changes(
+            &mut oplog,
+            parsed,
+            crate::oplog::ImportedValues::Exact,
+        )
+        .unwrap();
+        assert_eq!(changes.len(), 1);
+        let pending = PendingChange::Unknown(changes.into_iter().next().unwrap());
+        assert!(matches!(
+            remote_change_apply_state(oplog.vv(), oplog.shallow_since_vv(), &pending),
+            ChangeState::CanApplyDirectly
+        ));
+        oplog.apply_change_from_remote(pending, None).unwrap();
+        assert_eq!(oplog.vv(), &source.oplog_vv());
+    }
 }

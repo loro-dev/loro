@@ -1000,7 +1000,9 @@ impl LoroDoc {
                 }
             };
             if result.has_deps_before_shallow_root {
-                oplog.rollback_arena(arena_checkpoint, &mut self.state.lock());
+                // Preflight rejected this import's own obsolete changes. Only
+                // pre-existing pending changes were dropped here; newly parked
+                // changes still reference this import's arena allocations.
                 return Err(LoroError::ImportUpdatesThatDependsOnOutdatedVersion);
             }
 

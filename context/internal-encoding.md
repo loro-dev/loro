@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-11-03.
+Verified against code 2026-11-12.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -278,6 +278,38 @@ run in child processes with a 1 MiB single-allocation cap, then check unchanged
 history/state, continued editing and a later valid import. Module tests cover
 single-change hostile dependency lengths, RLE-amplified totals, cached-header
 count mismatch, all delta prefix widths, truncation and arithmetic overflow.
+
+### Rejecting dependencies trimmed by a shallow root
+
+`AppDag::try_import_deps_before_shallow_root` checks each dependency id against
+`shallow_since_vv` **before** resolving its frontier. The root's own deps have
+no retained DAG nodes, but `try_frontiers_to_vv` deliberately resolves that exact
+frontier to the shallow VV for re-export. A retained root in a mixed frontier
+must not hide another peer's trimmed dep. Retained root + missing future peer
+is still allowed to park (the #974 cross-peer boundary case).
+
+Pending replay uses the same id check in `remote_change_apply_state`, after
+checking whether the change is already applied. For a partially covered change,
+classify and resolve the trimmed suffix's predecessor. Lamport resolution in
+`apply_change_from_remote` uses the fallible DAG API rather than unwrapping.
+An obsolete parked change is removed and the unlocking import reports
+`ImportUpdatesThatDependsOnOutdatedVersion`; valid progress is kept under the
+existing partial-success contract. Pending identity claims remain reserved,
+so dropping an obsolete pending slot does not allow its op ids to be reused.
+
+Current `OpLog::is_empty` includes pending history, so public snapshot import
+cannot replace its DAG while changes are parked. Internal tests reconstruct the
+older parked-before-cut state to defend replay independently of that guard.
+The no-state-apply path must retain arena allocations on the obsolete-pending
+error: newly parked ops still reference them. Batch rollback continues to use
+its slot journal and keeps container indices, as described in
+[import-batch-atomicity.md](import-batch-atomicity.md) and
+[failed-import-arena-indices.md](failed-import-arena-indices.md).
+
+Regressions: `crates/loro/tests/shallow_import_trimmed_deps.rs` (public imports,
+JSON, batches, detached docs, future deps, post-error writes and roundtrips), and
+`pending_changes.rs::shallow_cut_tests` (legacy pending replay and parked text
+arena retention). Cases are adapted from community PR #1083 for issue #1068.
 
 ### Persisting remote pending updates
 
