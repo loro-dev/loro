@@ -1601,8 +1601,8 @@ impl LoroDoc {
                     });
             }
             let mut state = self.state.lock();
-            state.set_record_changes_only(false);
             let e = state.take_events();
+            state.set_record_changes_only(false);
             state.stop_and_clear_recording();
             // Applied to this doc, which kept the state of re-activated mergeable children.
             let diff = DiffBatch::from_changes(e);
@@ -1649,6 +1649,7 @@ impl LoroDoc {
             container_remap,
             element_remap,
         );
+        self.order_mergeable_removals(&mut diff, container_remap);
         // A step that would recreate an unknown container is rejected as a
         // whole, before anything is applied
         let rejected = self
@@ -1841,9 +1842,9 @@ impl LoroDoc {
             }
             let checkout = self._checkout_without_emitting(b, true, false);
             let mut state = self.state.lock();
+            let e = checkout.map(|()| state.take_events());
             state.set_record_changes_only(false);
-            checkout?;
-            let e = state.take_events();
+            let e = e?;
             state.stop_and_clear_recording();
             Ok::<_, LoroError>(e)
         })();
@@ -2123,7 +2124,7 @@ impl LoroDoc {
 
     fn apply_diff_with_movable_undo(
         &self,
-        diff: DiffBatch,
+        mut diff: DiffBatch,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         skip_unreachable: bool,
         align_revived_mergeable: bool,
@@ -2133,6 +2134,8 @@ impl LoroDoc {
         if !self.can_edit() {
             return Err(LoroError::EditWhenDetached);
         }
+
+        self.order_mergeable_removals(&mut diff, container_remap);
 
         // When the batch holds unknown containers, its full states are aligned
         // before anything is applied, so the check sees what is applied; the
@@ -2298,6 +2301,106 @@ impl LoroDoc {
         }
 
         ans
+    }
+
+    /// Apply edits to a visible mergeable subtree before a map diff hides it.
+    /// Its deterministic id can be re-ensured later, so skipping those edits
+    /// would retain content that undo was meant to remove (#1255). Ordering
+    /// also keeps ordinary descendants writable without bypassing the
+    /// transaction's deleted-container check. Already hidden subtrees retain
+    /// the usual skip behavior.
+    fn order_mergeable_removals(
+        &self,
+        diff: &mut DiffBatch,
+        container_remap: &FxHashMap<ContainerID, ContainerID>,
+    ) {
+        if diff.order.len() <= 1 {
+            return;
+        }
+        let mut removals = FxHashMap::default();
+        for (i, (id, edit)) in diff.iter().enumerate() {
+            let crate::event::Diff::Map(map) = edit else {
+                continue;
+            };
+            let (target, _) = resolve_container_remap(id.clone(), container_remap);
+            // Like the unknown-container preflight, inspect existing state
+            // without materializing a new root before the batch is accepted.
+            if (target.is_root()
+                && !target.is_mergeable()
+                && self.arena.id_to_idx(&target).is_none())
+                || !self.has_container(&target)
+            {
+                continue;
+            }
+            let Handler::Map(handler) = Handler::new_attached(target.clone(), self.clone()) else {
+                continue;
+            };
+            for (key, value) in &map.updated {
+                let Some(LoroValue::Container(old)) = handler.get(key) else {
+                    continue;
+                };
+                if !old.is_mergeable() {
+                    continue;
+                }
+                let new = value
+                    .value
+                    .as_ref()
+                    .and_then(diff_value_container_id)
+                    .map(|cid| {
+                        if cid.is_mergeable() {
+                            ContainerID::new_mergeable(&target, key, cid.container_type())
+                        } else {
+                            resolve_container_remap(cid, container_remap).0
+                        }
+                    });
+                if new.as_ref() != Some(&old) {
+                    removals.insert(old, i);
+                }
+            }
+        }
+        if removals.is_empty() {
+            return;
+        }
+
+        // Stable topological order: each reachable descendant must precede
+        // the map entry removing its mergeable ancestor. All dependencies
+        // follow the arena ancestry, so they cannot form a cycle.
+        let mut dependents = vec![Vec::new(); diff.order.len()];
+        let mut pending = vec![0usize; diff.order.len()];
+        for (i, id) in diff.order.iter().enumerate() {
+            let (target, _) = resolve_container_remap(id.clone(), container_remap);
+            if !self.state.lock().get_reachable(&target) {
+                continue;
+            }
+            for ancestor in self.arena_ancestors_and_self(&target) {
+                if let Some(&parent) = removals.get(&ancestor) {
+                    dependents[i].push(parent);
+                    pending[parent] += 1;
+                }
+            }
+        }
+        let mut ready: std::collections::BinaryHeap<_> = pending
+            .iter()
+            .enumerate()
+            .filter(|(_, count)| **count == 0)
+            .map(|(i, _)| std::cmp::Reverse(i))
+            .collect();
+        let mut order = Vec::with_capacity(diff.order.len());
+        while let Some(std::cmp::Reverse(i)) = ready.pop() {
+            order.push(diff.order[i].clone());
+            for &parent in &dependents[i] {
+                pending[parent] -= 1;
+                if pending[parent] == 0 {
+                    ready.push(std::cmp::Reverse(parent));
+                }
+            }
+        }
+        assert_eq!(
+            order.len(),
+            diff.order.len(),
+            "cyclic mergeable removal order"
+        );
+        diff.order = order;
     }
 
     /// How `_apply_diff` treats a full-state batch holding unknown containers,

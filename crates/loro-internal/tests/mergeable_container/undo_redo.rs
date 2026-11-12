@@ -176,3 +176,33 @@ fn redo_restores_tree_node_mergeable_meta_child_as_marker() {
     assert_eq!(restored_attrs.id(), restored_attrs_id);
     assert_eq!(restored_attrs.get("type"), Some("paragraph".into()));
 }
+
+#[test]
+fn undo_creation_removes_text_before_hiding_its_reusable_id() {
+    let doc = doc(1);
+    let root = doc.get_map("node");
+    let undo = UndoManager::new(&doc);
+    let text = root.ensure_mergeable_text("t").unwrap();
+    let id = text.id();
+    text.insert(0, "Hello\n", loro_internal::cursor::PosType::Unicode)
+        .unwrap();
+    doc.commit_then_renew();
+    for _ in 0..2 {
+        assert!(undo.undo().unwrap());
+        assert_eq!(root.get("t"), None);
+        // Reading the retained state needs no marker and must already see the inverse.
+        assert_eq!(text.to_string(), "");
+        assert!(text
+            .insert(0, "hidden", loro_internal::cursor::PosType::Unicode)
+            .is_err());
+        assert!(undo.redo().unwrap());
+        assert_eq!(text.to_string(), "Hello\n");
+    }
+    assert!(undo.undo().unwrap());
+    let revived = root.ensure_mergeable_text("t").unwrap();
+    assert_eq!(revived.id(), id);
+    revived
+        .insert(0, "World\n", loro_internal::cursor::PosType::Unicode)
+        .unwrap();
+    assert_eq!(revived.to_string(), "World\n");
+}

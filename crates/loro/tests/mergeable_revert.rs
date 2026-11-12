@@ -1492,3 +1492,230 @@ fn import_events_may_be_applied_as_full_state() {
         );
     }
 }
+
+// #1255: undo must remove the child's edits before hiding its deterministic id.
+fn fill_mergeable(map: &loro::LoroMap, kind: &str) {
+    match kind {
+        "text" => map
+            .ensure_mergeable_text("child")
+            .unwrap()
+            .insert(0, "Hello\n")
+            .unwrap(),
+        "map" => map
+            .ensure_mergeable_map("child")
+            .unwrap()
+            .insert("value", 1)
+            .unwrap(),
+        "list" => map.ensure_mergeable_list("child").unwrap().push(1).unwrap(),
+        "movable" => map
+            .ensure_mergeable_movable_list("child")
+            .unwrap()
+            .push(1)
+            .unwrap(),
+        "tree" => {
+            map.ensure_mergeable_tree("child")
+                .unwrap()
+                .create(None)
+                .unwrap();
+        }
+        #[cfg(feature = "counter")]
+        "counter" => map
+            .ensure_mergeable_counter("child")
+            .unwrap()
+            .increment(1.0)
+            .unwrap(),
+        _ => unreachable!(),
+    }
+}
+
+fn assert_mergeable_empty(map: &loro::LoroMap, kind: &str) {
+    match kind {
+        "text" => assert_eq!(map.ensure_mergeable_text("child").unwrap().to_string(), ""),
+        "map" => assert_eq!(map.ensure_mergeable_map("child").unwrap().len(), 0),
+        "list" => assert_eq!(map.ensure_mergeable_list("child").unwrap().len(), 0),
+        "movable" => assert_eq!(map.ensure_mergeable_movable_list("child").unwrap().len(), 0),
+        "tree" => assert!(map
+            .ensure_mergeable_tree("child")
+            .unwrap()
+            .roots()
+            .is_empty()),
+        #[cfg(feature = "counter")]
+        "counter" => assert_eq!(
+            map.ensure_mergeable_counter("child").unwrap().get_value(),
+            0.0
+        ),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn undo_mergeable_creation_clears_content_before_reensure() {
+    for kind in ["text", "map", "list", "movable", "tree", "counter"] {
+        if kind == "counter" && !cfg!(feature = "counter") {
+            continue;
+        }
+        for nesting in 0..3 {
+            let d = doc();
+            let mut undo = UndoManager::new(&d);
+            undo.set_merge_interval(0);
+            let root = d.get_map("m");
+            let parent = match nesting {
+                0 => root.clone(),
+                1 => root
+                    .ensure_mergeable_map("outer")
+                    .unwrap()
+                    .ensure_mergeable_map("inner")
+                    .unwrap(),
+                _ => root
+                    .ensure_mergeable_map("outer")
+                    .unwrap()
+                    .insert_container("normal", loro::LoroMap::new())
+                    .unwrap(),
+            };
+            fill_mergeable(&parent, kind);
+            d.commit();
+            let expected = json(&d);
+            let peer = d.fork();
+            for _ in 0..2 {
+                assert!(undo.undo().unwrap(), "{kind}, nesting {nesting}");
+                assert_eq!(root.len(), 0);
+                assert!(undo.redo().unwrap());
+                assert_eq!(json(&d), expected, "{kind}, nesting {nesting}");
+            }
+            assert!(undo.undo().unwrap());
+            sync_mergeable_creation(&d, &peer);
+            assert_eq!(json(&d), json(&peer));
+            // Revive on a different peer, then sync the marker and a concurrent local edit.
+            let parent = match nesting {
+                0 => peer.get_map("m"),
+                1 => peer
+                    .get_map("m")
+                    .ensure_mergeable_map("outer")
+                    .unwrap()
+                    .ensure_mergeable_map("inner")
+                    .unwrap(),
+                _ => peer
+                    .get_map("m")
+                    .ensure_mergeable_map("outer")
+                    .unwrap()
+                    .insert_container("normal", loro::LoroMap::new())
+                    .unwrap(),
+            };
+            assert_mergeable_empty(&parent, kind);
+            fill_mergeable(&parent, kind);
+            d.get_map("concurrent").insert("value", 2).unwrap();
+            sync_mergeable_creation(&peer, &d);
+            sync_mergeable_creation(&d, &peer);
+            assert_eq!(json(&d), json(&peer));
+            assert_replays_to(&d, &json(&d), "mergeable creation undo and peer revival");
+        }
+    }
+}
+
+fn sync_mergeable_creation(a: &LoroDoc, b: &LoroDoc) {
+    b.import(&a.export(loro::ExportMode::all_updates()).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn undo_mergeable_creation_preserves_concurrent_text_edits() {
+    let d = doc();
+    let mut undo = UndoManager::new(&d);
+    let text = d.get_map("m").ensure_mergeable_text("child").unwrap();
+    text.insert(0, "Hello\n").unwrap();
+    d.commit();
+    let remote = peer(&d, 2);
+    remote
+        .get_map("m")
+        .ensure_mergeable_text("child")
+        .unwrap()
+        .insert(0, "World\n")
+        .unwrap();
+    remote.commit();
+    assert!(undo.undo().unwrap());
+    sync(&d, &remote);
+    assert_eq!(
+        d.get_map("m")
+            .ensure_mergeable_text("child")
+            .unwrap()
+            .to_string(),
+        "World\n"
+    );
+    sync(&d, &remote);
+    assert_eq!(json(&d), json(&remote));
+}
+
+#[test]
+fn undo_reensure_restores_prior_hidden_content() {
+    let d = doc();
+    let map = d.get_map("m");
+    map.ensure_mergeable_text("child")
+        .unwrap()
+        .insert(0, "old")
+        .unwrap();
+    map.delete("child").unwrap();
+    d.commit();
+    let mut undo = UndoManager::new(&d);
+    map.ensure_mergeable_text("child")
+        .unwrap()
+        .insert(0, "new")
+        .unwrap();
+    d.commit();
+    assert!(undo.undo().unwrap());
+    assert_eq!(
+        map.ensure_mergeable_text("child").unwrap().to_string(),
+        "old"
+    );
+}
+
+#[test]
+fn undo_mergeable_creation_clears_nested_normal_descendants() {
+    for kind in ["map", "list", "movable", "tree"] {
+        let d = doc();
+        let mut undo = UndoManager::new(&d);
+        let root = d.get_map("m");
+        let parent = match kind {
+            "map" => root
+                .ensure_mergeable_map("child")
+                .unwrap()
+                .insert_container("normal", loro::LoroMap::new())
+                .unwrap(),
+            "list" => root
+                .ensure_mergeable_list("child")
+                .unwrap()
+                .push_container(loro::LoroMap::new())
+                .unwrap(),
+            "movable" => root
+                .ensure_mergeable_movable_list("child")
+                .unwrap()
+                .push_container(loro::LoroMap::new())
+                .unwrap(),
+            "tree" => {
+                let tree = root.ensure_mergeable_tree("child").unwrap();
+                let node = tree.create(None).unwrap();
+                tree.get_meta(node).unwrap()
+            }
+            _ => unreachable!(),
+        };
+        parent
+            .insert_container("text", loro::LoroText::new())
+            .unwrap()
+            .insert(0, "normal")
+            .unwrap();
+        parent
+            .ensure_mergeable_text("nested")
+            .unwrap()
+            .insert(0, "mergeable")
+            .unwrap();
+        d.commit();
+        let expected = json(&d);
+        for _ in 0..2 {
+            assert!(undo.undo().unwrap());
+            assert_eq!(root.len(), 0);
+            assert!(undo.redo().unwrap());
+            assert_eq!(json(&d), expected, "{kind}");
+        }
+        assert!(undo.undo().unwrap());
+        assert_mergeable_empty(&root, kind);
+    }
+}

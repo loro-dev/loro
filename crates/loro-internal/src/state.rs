@@ -2131,7 +2131,15 @@ impl DocState {
                 let Some((last_container_diff, last_kept, _)) =
                     containers.get_mut(&container_diff.idx)
                 else {
-                    if let Some(path) = self.get_path(container_diff.idx) {
+                    // Undo/revert need actual changes even when the target
+                    // version hides this container. These internal batches use
+                    // container ids, not paths; public events still omit it.
+                    let path = self.get_path(container_diff.idx).or_else(|| {
+                        (self.record_changes_only
+                            && self.is_hidden_only_by_mergeable_edges(container_diff.idx))
+                        .then(Vec::new)
+                    });
+                    if let Some(path) = path {
                         containers.insert(
                             container_diff.idx,
                             (container_diff.diff, container_diff.kept, path),
@@ -2202,7 +2210,11 @@ impl DocState {
 
         diff.sort_by_key(|x| {
             (
-                x.path.len(),
+                if self.record_changes_only {
+                    self.arena.get_depth(x.idx).map_or(0, |d| d.get() as usize)
+                } else {
+                    x.path.len()
+                },
                 match &x.id {
                     ContainerID::Root { .. } => 0,
                     ContainerID::Normal { counter, .. } => *counter + 1,
@@ -2251,7 +2263,23 @@ impl DocState {
         }
     }
 
-    // the container may be override, so it may return None
+    /// A missing mergeable marker can return at the same id. A broken normal
+    /// edge instead requires recreation, whose full state supplies its edits.
+    fn is_hidden_only_by_mergeable_edges(&mut self, mut idx: ContainerIdx) -> bool {
+        loop {
+            let id = self.arena.idx_to_id(idx).unwrap();
+            if let Some(parent) = self.arena.get_parent(idx) {
+                if !self.contains_logical_child(parent, &id) && !id.is_mergeable() {
+                    return false;
+                }
+                idx = parent;
+            } else {
+                return id.is_root() && !id.is_mergeable();
+            }
+        }
+    }
+
+    // The container may be overwritten, so it may return None.
     pub(super) fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
         let mut ans = Vec::new();
         let mut idx = idx;
