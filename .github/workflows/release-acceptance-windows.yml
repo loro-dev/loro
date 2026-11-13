@@ -1,0 +1,38 @@
+name: Windows release library acceptance
+
+on:
+  push:
+    branches: [acceptance/loro-1.18-platforms]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  windows-libraries:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Test workspace excluding unpublished platform-specific performance probes
+        run: cargo nextest run --workspace --exclude examples --features=test_utils,jsonpath --no-fail-fast --locked 2>&1 | tee windows-library-tests.log
+      - name: Documentation tests
+        if: always()
+        run: cargo test --workspace --exclude examples --doc --locked 2>&1 | tee windows-doc-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-library-acceptance
+          path: |
+            windows-library-tests.log
+            windows-doc-tests.log

@@ -1,8 +1,7 @@
 name: Release acceptance ASan
 
 on:
-  push:
-    branches: [acceptance/loro-1.18-platforms]
+  workflow_dispatch:
 
 permissions:
   contents: read
