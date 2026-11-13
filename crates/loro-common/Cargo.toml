@@ -24,6 +24,7 @@ enum-as-inner = "0.6.0"
 arbitrary = { version = "1.3.0", features = ["derive"] }
 js-sys = { version = "0.3.60", optional = true }
 serde_columnar = { workspace = true }
+smallvec = { workspace = true }
 nonmax = "0.5.5"
 leb128 = "0.2.5"
 tracing = { workspace = true, optional = true }

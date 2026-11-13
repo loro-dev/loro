@@ -33,6 +33,14 @@ Equality follows the same rule. `values_eq` in `loro-common/src/value.rs` and th
 list. Every comparison of value trees on an import path must, because imports run
 them on stored values of any depth, including when the import brings nothing new.
 
+Verified against code 2026-11-13: `values_eq` keeps the initial pair in a
+`SmallVec` with inline capacity one. Scalars therefore compare without a heap
+allocation; wider pending work can spill to the heap, and traversal remains
+non-recursive. A scalar zero-allocation guard and wide-collection semantics are
+covered by `crates/loro-common/tests/value_equality_allocation.rs`. Consecutive
+styled insertions compare their style values when merging event hints, so a
+heap-allocated initial work item used to add one allocation per merged character.
+
 The general `Deserialize for LoroValue` in `loro-common/src/value.rs` uses a
 `DeserializeSeed` budget of 128 collection levels, shared down both map and list
 children. This protects non-snapshot serde callers without relying on the

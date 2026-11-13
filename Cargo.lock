@@ -1701,6 +1701,7 @@ dependencies = [
  "serde",
  "serde_columnar",
  "serde_json",
+ "smallvec",
  "thiserror 1.0.69",
  "tracing",
  "wasm-bindgen",
