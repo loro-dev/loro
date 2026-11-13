@@ -156,6 +156,11 @@ fn heap_kb() -> u64 {
     }
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn heap_kb() -> u64 {
+    0
+}
+
 struct Samples {
     median: Duration,
     min: Duration,

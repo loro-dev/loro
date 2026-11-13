@@ -376,7 +376,7 @@ impl Actionable for TreeAction {
             }
             TreeActionInner::MetaClear => {
                 let meta = super::unwrap(tree.get_meta(target))?;
-                meta.clear().unwrap();
+                super::unwrap(meta.clear());
                 None
             }
             TreeActionInner::CreateWithoutIndex { parent } => {

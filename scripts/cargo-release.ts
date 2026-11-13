@@ -48,8 +48,10 @@ function isValidVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(version);
 }
 
-function syncRustVersionFile(version: string) {
-  const rustVersionFile = "crates/loro-internal/VERSION";
+export function syncRustVersionFile(
+  version: string,
+  rustVersionFile = "crates/loro-internal/VERSION",
+) {
   const versionFileContent = readFileSync(rustVersionFile, "utf-8");
   const versionFileVersion = versionFileContent.trim();
   const parsedFileVersion = semverParse(versionFileVersion);
@@ -58,11 +60,14 @@ function syncRustVersionFile(version: string) {
     throw new Error("Invalid version format found");
   }
 
-  if (semverCompare(version, versionFileVersion) > 0) {
+  const comparison = semverCompare(version, versionFileVersion);
+  if (comparison === 0) return;
+
+  if (comparison > 0) {
     writeFileSync(rustVersionFile, version);
   } else {
     throw new Error(
-      `input version ${version} is not higher than the version in the file ${versionFileVersion}`,
+      `input version ${version} is lower than the version in the file ${versionFileVersion}`,
     );
   }
 }
@@ -112,4 +117,8 @@ const main = defineCommand({
   },
 });
 
-runMain(main);
+if (import.meta.main) {
+  if (import.meta.main) {
+  runMain(main);
+}
+}
