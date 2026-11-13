@@ -38,6 +38,10 @@ jobs:
       - uses: denoland/setup-deno@v1
         with:
           deno-version: v2.x
+      - name: Test Rust release version preparation
+        run: deno test --no-lock --node-modules-dir=none --allow-read --allow-write --allow-env scripts/cargo-release.test.ts
+      - name: Test Rust release version preparation
+        run: deno test --node-modules-dir=none --allow-read --allow-write --allow-env scripts/cargo-release.test.ts
       - name: Setup Node.js 22.x
         uses: actions/setup-node@v4
         with:

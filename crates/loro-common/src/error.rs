@@ -263,7 +263,7 @@ mod tests {
             panic!("expected unknown error");
         };
         assert!(msg.contains("boom"));
-        assert!(msg.contains("crates/loro-common/src/error.rs"));
+        assert!(msg.contains(file!()));
     }
 
     #[test]
@@ -273,6 +273,6 @@ mod tests {
             panic!("expected internal encode error");
         };
         assert!(msg.contains("boom"));
-        assert!(msg.contains("crates/loro-common/src/error.rs"));
+        assert!(msg.contains(file!()));
     }
 }
