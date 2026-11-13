@@ -328,15 +328,22 @@ pub(crate) fn decode_op(
                     ),
                 ))
             }
-            Value::MarkStart(mark) => crate::op::InnerContent::List(
-                crate::container::list::list_op::InnerListOp::StyleStart {
-                    start: prop as u32,
-                    end: prop as u32 + mark.len,
-                    key: mark.key,
-                    value: mark.value,
-                    info: TextStyleInfoFlag::from_byte(mark.info),
-                },
-            ),
+            Value::MarkStart(mark) => {
+                let start =
+                    u32::try_from(prop).map_err(|_| LoroError::DecodeDataCorruptionError)?;
+                let end = start
+                    .checked_add(mark.len)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                crate::op::InnerContent::List(
+                    crate::container::list::list_op::InnerListOp::StyleStart {
+                        start,
+                        end,
+                        key: mark.key,
+                        value: mark.value,
+                        info: TextStyleInfoFlag::from_byte(mark.info),
+                    },
+                )
+            }
             Value::Null => crate::op::InnerContent::List(
                 crate::container::list::list_op::InnerListOp::StyleEnd,
             ),
