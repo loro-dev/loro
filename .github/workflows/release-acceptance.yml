@@ -1,0 +1,81 @@
+name: Release acceptance platforms
+
+on:
+  push:
+    branches: [acceptance/loro-1.18-platforms]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native Rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.0
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - uses: Swatinem/rust-cache@v2
+      - name: Run native tests
+        shell: bash
+        run: cargo nextest run --features=test_utils,jsonpath --no-fail-fast --locked 2>&1 | tee native-tests.log
+      - name: Run documentation tests
+        if: always()
+        shell: bash
+        run: cargo test --doc --locked 2>&1 | tee doctests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-${{ matrix.os }}
+          path: |
+            native-tests.log
+            doctests.log
+
+  fuzz-asan:
+    name: Linux fuzz with ASan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.11.2
+      - uses: Swatinem/rust-cache@v2
+      - name: Prepare deterministic nonempty seeds
+        run: |
+          python3 - <<'PY'
+          import pathlib, random
+          for name in ['all', 'diff_calc']:
+              path = pathlib.Path('crates/fuzz/fuzz/corpus') / name
+              path.mkdir(parents=True, exist_ok=True)
+              rng = random.Random(128599)
+              for n in [32, 128, 512, 2048]:
+                  for i in range(8):
+                      (path / f'seed-{n}-{i}').write_bytes(rng.randbytes(n))
+          PY
+      - name: Multi-peer fuzz with ASan
+        working-directory: crates/fuzz
+        run: cargo +nightly fuzz run all -- -max_total_time=300 -seed=128599 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-all.log
+      - name: History and diff fuzz with ASan
+        if: always()
+        working-directory: crates/fuzz
+        run: cargo +nightly fuzz run diff_calc -- -max_total_time=300 -seed=128600 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-diff.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-fuzz-asan
+          path: |
+            crates/fuzz/*.log
+            crates/fuzz/fuzz/artifacts/
+            crates/fuzz/fuzz/corpus/
+            crates/fuzz/fuzz/Cargo.lock
