@@ -102,11 +102,22 @@ impl InnerListOp {
             InnerListOp::Insert { pos, .. } => in_range(*pos as i64),
             InnerListOp::InsertText { pos, .. } => in_range(*pos as i64),
             InnerListOp::Delete(span) => {
-                in_range(span.start() as i64) && in_range(span.last() as i64)
+                let pos = span.span.pos as i64;
+                let signed_len = span.span.signed_len as i64;
+                if signed_len > 0 {
+                    pos.checked_add(signed_len - 1)
+                        .is_some_and(|last| in_range(pos) && in_range(last))
+                } else if signed_len < 0 {
+                    pos.checked_add(1)
+                        .and_then(|p| p.checked_add(signed_len))
+                        .is_some_and(|start| in_range(start) && in_range(pos))
+                } else {
+                    false
+                }
             }
             InnerListOp::Move { from, to, .. } => in_range(*from as i64) && in_range(*to as i64),
             InnerListOp::StyleStart { start, end, .. } => {
-                in_range(*start as i64) && in_range(*end as i64)
+                start < end && in_range(*start as i64) && in_range(*end as i64)
             }
             InnerListOp::Set { .. } | InnerListOp::StyleEnd => true,
         };

@@ -286,3 +286,63 @@ fn map_only_import_that_unlocks_parked_out_of_bounds_text_op_is_rejected() {
     // The map-only import unlocks it, so it must still get a rollback scope.
     assert_rejected(&doc, map_change);
 }
+
+#[test]
+fn empty_and_inverted_text_mark_ranges_are_rejected() {
+    for ops in [mark(0, 0), mark(1, 1), mark(2, 2), mark(1, 0), mark(2, 1)] {
+        assert_rejected(&base(), forged_ops(&ops));
+        assert_rejected(&base_with_concurrent_edit(), forged_ops(&ops));
+
+        let detached = base();
+        detached.detach();
+        let before = Snapshot::of(&detached);
+        assert!(detached.import_json_updates(forged_ops(&ops)).is_err());
+        before.assert_unchanged(&detached);
+        detached.try_attach().unwrap();
+        assert_usable(&detached);
+    }
+}
+
+#[test]
+fn malformed_binary_mark_start_length_overflow_is_rejected() {
+    // 124-byte FastUpdates payload found by checksum-aware fuzzing:
+    // decodes a Text MarkStart with prop = -1 (start = u32::MAX) and mark.len = 2,
+    // which used to overflow `prop as u32 + mark.len` during decode_op.
+    const FUZZ_CRASH_HEX: &str = concat!(
+        "6c6f726f000000000000030000000000959fddf1000465110511380111011500",
+        "0000000100000001010000000000050100000100060104010200040d04626f6c",
+        "6402686c0474657874001e01040609000000000006090607030a090609050c00",
+        "0c00060901010101010011012184020000860a01050679656c6c6f77",
+    );
+    let bytes: Vec<u8> = (0..FUZZ_CRASH_HEX.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&FUZZ_CRASH_HEX[i..i + 2], 16).unwrap())
+        .collect();
+
+    for doc in [base(), base_with_concurrent_edit()] {
+        let before = Snapshot::of(&doc);
+        assert!(doc.import(&bytes).is_err());
+        before.assert_unchanged(&doc);
+        assert_usable(&doc);
+
+        let before = Snapshot::of(&doc);
+        assert!(doc.import_batch(&[bytes.clone()]).is_err());
+        assert!(!doc.is_detached());
+        before.assert_unchanged(&doc);
+        assert_usable(&doc);
+    }
+
+    let empty = LoroDoc::new();
+    assert!(empty.import(&bytes).is_err());
+    assert!(empty.import_batch(&[bytes.clone()]).is_err());
+    assert_eq!(empty.get_deep_value(), LoroValue::Map(Default::default()));
+    assert_usable(&empty);
+
+    let detached = base();
+    detached.detach();
+    let before = Snapshot::of(&detached);
+    assert!(detached.import(&bytes).is_err());
+    before.assert_unchanged(&detached);
+    detached.try_attach().unwrap();
+    assert_usable(&detached);
+}
