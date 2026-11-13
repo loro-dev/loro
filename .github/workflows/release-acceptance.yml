@@ -1,11 +1,14 @@
 name: Release acceptance platforms
 
 on:
-  push:
-    branches: [acceptance/loro-1.18-platforms]
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   native:
@@ -65,11 +68,11 @@ jobs:
           PY
       - name: Multi-peer fuzz with ASan
         working-directory: crates/fuzz
-        run: cargo +nightly fuzz run all -- -max_total_time=300 -seed=128599 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-all.log
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu all -- -max_total_time=300 -seed=128599 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-all.log
       - name: History and diff fuzz with ASan
         if: always()
         working-directory: crates/fuzz
-        run: cargo +nightly fuzz run diff_calc -- -max_total_time=300 -seed=128600 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-diff.log
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu diff_calc -- -max_total_time=300 -seed=128600 -max_len=16384 -rss_limit_mb=2048 -timeout=30 -print_final_stats=1 2>&1 | tee asan-diff.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
