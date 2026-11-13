@@ -12,6 +12,7 @@ use serde::{
     de::{DeserializeSeed, VariantAccess},
     Deserialize, Serialize,
 };
+use smallvec::SmallVec;
 
 use crate::ContainerID;
 
@@ -43,7 +44,9 @@ impl PartialEq for LoroValue {
 /// Structural equality without recursion: values come from untrusted peers and can be nested
 /// far deeper than the stack allows (see `context/deep-value-stack-safety.md`).
 fn values_eq<'a>(a: &'a LoroValue, b: &'a LoroValue) -> bool {
-    let mut pending: Vec<(&'a LoroValue, &'a LoroValue)> = vec![(a, b)];
+    // Scalar equality is also used for every merged rich-text insert's styles.
+    // Keep its one work item inline; wide collections can still spill to the heap.
+    let mut pending = SmallVec::from_buf([(a, b)]);
     while let Some((a, b)) = pending.pop() {
         let equal = match (a, b) {
             (LoroValue::Null, LoroValue::Null) => true,
