@@ -1,5 +1,121 @@
 # loro-crdt-map
 
+## 1.18.0
+
+### Minor Changes
+
+- c55cebf: `LoroMovableList` can read the stable id of each element.
+
+  The id is assigned when the element is inserted and stays with that element when it is moved or its value is replaced. Two rows with the same value remain distinguishable, including after concurrent moves. The id is still there after checking out an older version and after loading a state-only or shallow snapshot, when the insert that created the element may no longer be in the history. An index past the end, or an id that is not visible at the current version, returns nothing.
+
+  - Rust: `LoroMovableList::get_elem_id_at`, `get_index_of_elem_id`, and `get_elem_ids`, using the existing `IdLp` (`L{lamport}@{peer}`).
+  - JS: `getElemIdAt`, `getIndexOfElemId`, and `getElemIds`. An id is `{ peer, lamport }`.
+
+  This is the element's id, not the slot id a cursor anchors. `get_cursor` and `LoroList::get_id_at` (JS `LoroList.getIdAt`) return that slot id, `{ peer, counter }`. List diff events are unchanged.
+
+- d33796d: Stop caller input and untrusted updates from panicking, trapping, aborting the process, or silently losing data. The Rust crates `loro` and `loro-internal` move to 1.18.0 with the same changes.
+
+  **Writes can now be rejected.** A local write (`insert`, `set`, `commit`, `applyDiff`, `revertTo`, undo) throws instead of forking history that the doc already depends on:
+
+  - `ConcurrentOpsWithSamePeerID`, in detached editing, when the peer id already has ops after the current version.
+  - `ConcurrentOpsWithSamePeerID`, in any mode, while updates are waiting for a dependency (`pending` in `ImportStatus`) and they use the doc's peer id from its next counter on, or depend on such an id. Before, the write succeeded and importing the dependency later corrupted the document or aborted the process.
+  - Rust only: `DuplicatedTransactionError` while a transaction opened through `LoroDoc::inner().txn()` is uncommitted.
+
+  To recover: import the missing dependency, after which the waiting updates apply and writes work again, or switch to a fresh peer id with `setPeerId`. A remote can park an update under your peer id to block writes with it; a new peer id is the way out. In Rust, commit the open transaction and retry.
+
+  **Imports can be rejected while a transaction runs.** Rust only: `import`, `import_json_updates` and `import_batch` return `ImportWhenInTxn` while a transaction opened through `LoroDoc::inner().txn()` is uncommitted, and when called from an event or pre-commit callback of the same document. Commit the transaction, or import after the callback returns. Starting a transaction from such a callback returns `DuplicatedTransactionError` instead of deadlocking.
+
+  **`import` returns `UsedOpID` for conflicting data that brings no new ops.** Bytes whose ops reuse ids the document already has with different content used to return `Ok` and drop them silently. They now throw `UsedOpID`, as do updates that conflict with updates still waiting for a dependency, and a single update that contradicts itself. Importing what the document already has, or already holds as pending, is still a no-op. Data relayed through JSON can differ in representation only (numbers, binary, non-finite doubles): `importJsonUpdates` accepts that, and in Rust so do `import_with_history_mode` and `import_batch_with_history_mode` with `ImportHistoryMode::JsonLossy`.
+
+  **`importBatch` is not all-or-nothing.** When one update in a batch fails on its own, the batch throws and keeps what the other updates imported, including a dependency that lets pending updates apply. Only a failure of the final checkout rolls the whole batch back. An error from `importBatch` does not mean nothing was applied, and it does not say which update failed.
+
+  **New `importBatchDetailed` reports each update of a batch.** It imports as `importBatch` does and, instead of throwing for an update that fails, returns `{ blobs, status, rollbackError }`. `blobs[i]` is the outcome of the i-th update you passed:
+
+  - `{ type: "imported", status }`: the update is in the document. `status` is the `ImportStatus` of that update: its `pending` ops wait for a dependency, which a later update of the same batch may have brought.
+  - `{ type: "failed", error }`: the update failed on its own, for example with `UsedOpID` or a checksum mismatch. The other updates are not affected.
+  - `{ type: "rolledBack" }`: the update imported, but the final checkout failed and the whole batch was rolled back.
+
+  `status.success` is everything the batch imported and `status.pending` is everything the document still waits for when the batch ends. `rollbackError` is `null` unless the final checkout failed. Then it holds the error, the document is as it was before the call, no entry is `imported`, and no event is emitted. The checkout checks the batch as a whole, so it cannot say which update it rejected: import the updates one at a time to find it. Updates that failed on their own keep their `failed` entry in that case.
+
+  Two differences from `importBatch`: an update whose metadata does not decode (`decodeImportBlobMeta` throws for it) is `failed` and the others are imported, where `importBatch` throws before it imports anything. When every update fails that way, nothing is imported and the document is left as it was, including an uncommitted local change. And a batch of one is a plain import, so the state checks it at once and its failure is `failed`, never `rolledBack`. In Rust this is `LoroDoc::import_batch_detailed` and `import_batch_detailed_with_history_mode`, returning `ImportBatchDetail` with one `ImportBlobOutcome` per blob. They return `Err(ImportWhenInTxn)` when the call is refused as a whole, as `import_batch` does. Nothing was tried then.
+
+  **Rust: `UpdateTimeoutError` gains `Loro(LoroError)`.** `LoroText::update` and `update_by_line` return the edit's own error, such as a deleted container or a read-only document, instead of panicking. Exhaustive `match`es on `UpdateTimeoutError` need the new arm.
+
+  **New and deprecated APIs.**
+
+  - Rust: new `LoroDoc::try_attach` and `LoroDoc::try_checkout_to_latest` return the error, and the doc stays detached at its version and usable. `attach`, `checkout_to_latest` and `find_id_spans_between` are deprecated in favor of `try_attach`, `try_checkout_to_latest` and `try_find_id_spans_between`. They still panic on that input, now after releasing the document's locks.
+  - JS: `attach()` and `checkoutToLatest()` now throw where they trapped the WASM instance. `findIdSpansBetween` already threw. No JS API is deprecated.
+  - New `importBatchDetailed` (Rust: `import_batch_detailed`, `import_batch_detailed_with_history_mode`, `ImportBatchDetail`, `ImportBlobOutcome`), described above.
+  - Rust: `checkout` returns `TransactionError` while a transaction opened through `inner().txn()` is uncommitted, where it used to panic.
+  - `export({ mode: "snapshot" })` of a detached document throws when its latest version cannot be checked out, where it panicked.
+
+  **Other fixes.**
+
+  - `checkout` and `forkAt` accept frontiers with several ids of one peer or repeated ids, and use the greatest id of each peer. `decodeFrontiers` does the same for bytes that repeat a peer.
+  - `LoroText.update` and `updateByLine` throw the edit's error, such as a deleted container, instead of trapping.
+  - Frontiers, version vectors and id spans that the document does not have (unknown peers, negative or out-of-range counters) no longer panic or poison the document. `checkout`, `forkAt` and `diff` return an error; `frontiersToVV` returns `undefined`, `vvToFrontiers` returns the last id of each peer, and `getChangedContainersIn` covers the part of the range the document has.
+  - In detached mode, an update that the state would reject (a list insert past the end) makes `attach` and `checkoutToLatest` throw, and the document stays usable.
+  - A `JsonLossy` import of deeply nested values no longer overflows the stack.
+
+- 204a995: Add opaque `ParsedJsonPath` and `LoroDoc::jsonpath_parsed` to reuse standard-parsed JSONPath syntax while reading current document values.
+
+### Patch Changes
+
+- adf618a: Fix importing one big text insert made right after a concurrent change taking quadratic time (3M characters: ~50 s, now ~0.1 s). The text tracker updated the id-to-cursor map once per rope leaf report, and the rope reported the same leaf once per 256-op fragment; each update walked the whole insert. Repeated leaves are now updated once.
+- 6ee4b16: Merge adjacent text runs with equal effective attributes in `toDelta()` after unmarking. Incremental text events still include null attributes to remove styles.
+- a2a3ff6: Speed up `checkout`, `diff`, `forkAt`, and concurrent imports across a single large text insert or delete by coalescing contiguous same-effect leaf updates in the rich-text tracker instead of splitting and re-merging the rope leaf at every 256-character fragment boundary.
+- 49697b3: Reduce memory use: importing an update into a document opened from a snapshot no
+  longer loads its whole history, version vectors keep sharing structure when merged,
+  small tables reserve smaller block caches, and parsed ops keep no spare capacity.
+- 499461f: Speed up concurrent imports by reusing the current frontier, reducing repeated
+  ancestor traversal, and filtering unrelated container history before materializing
+  replay version vectors.
+- b1f960e: Reject out-of-range signed DeltaInt payloads as corrupted data instead of silently narrowing them to i32. Valid i32 values and accepted nonminimal signed varints keep their existing decoding behavior.
+- 8932e46: Fix a panic when creating or moving a tree node between siblings whose fractional indexes were generated with jitter (#1211). `newBetween` now also compares the last byte of the shorter index, which jitter makes random, and `newAfter` accepts an all-0xFF suffix. Indexes generated without jitter are unchanged.
+- 0cd0c16: Reject malformed change-header counts before allocating memory during import and batch import. Decode change-header and timestamp delta columns with checked bit reads and arithmetic so damaged updates return decoding errors instead of aborting or poisoning the document.
+- 204a995: Reduce transient allocations when evaluating single-node JSONPath fields and filters, preserving multi-node query results and ordering.
+- 9a48087: Avoid allocating a traversal stack for scalar value comparisons, removing repeated allocations when merging consecutive rich-text insertions with the same styles. Deep value comparisons remain non-recursive.
+- 204a995: Resolve JSONPath root names as literal keys instead of parsing them as slash paths, numeric indexes or tree IDs.
+- 204a995: Avoid allocating owned map key strings during value-only JSONPath traversal while preserving ordered snapshot callbacks and mergeable child translation.
+- ff51428: Make undo, redo and checkouts to earlier versions of rich text cost the changes since the last one instead of the whole document history, by keeping the text tracker the first one rebuilds from history and replaying only newer ops into it.
+- 01d066b: Fix selection restoration after remote edits when undoing the last history item.
+- c66b75b: Fix undoing a step that creates and edits a mergeable container so its content does not reappear when the same container is ensured again. Preserve concurrent edits and existing hidden content across undo and redo.
+- 35c6eb0: Reject imported changes whose dependencies do not causally include their same-peer predecessor, preventing malformed updates from poisoning later sync exports. Preserve valid transitive dependencies and out-of-order delivery, and recheck affected pending changes before they are unlocked.
+- be467a5: Make the Rust JSONPath parser dependencies optional so builds without the `jsonpath` feature no longer require `pest` or `pest_derive`. Keep the default Rust features and WASM JSONPath support unchanged.
+- 3774a24: Fix a panic and order-dependent lamports when a pending remote change gets its deps. The lamport now comes from the deps only, and the lamport in the update is ignored.
+- 62fb36f: Apply pending updates after initializing full or shallow snapshots, keeping document state and history aligned. Preserve lazy snapshot state and empty roots, and restore pending changes without emitting events when snapshot import or batch validation fails.
+- 1aa14ce: fix: reject overflowing or inverted text mark ranges during import decoding
+- ab326e1: Reject imported changes that depend on an op of their own peer other than the previous one. Such a change made the import panic with "lamport is not continuous" and poisoned the document lock. The import now returns a decode error and leaves the document unchanged.
+- 1cd9636: Return `ImportUpdatesThatDependsOnOutdatedVersion` instead of panicking when an
+  import mixes retained shallow-root dependencies with trimmed history, or replays
+  an obsolete pending change. Keep valid import progress and pending data usable
+  without poisoning document locks.
+- 7cb0c86: Fix operation-span queries between retained versions on shallow documents without
+  walking pruned dependencies. Return a history error for versions before the
+  shallow root, including equal endpoints.
+- e42321a: Speed up importing a concurrent change into a document that has seen many peer ids. Turning the replay base into frontiers walked the history back once per peer; the walk now stops at nodes whose version vector is already cached, so a document with hundreds of peers imports in a fraction of a millisecond instead of tens to hundreds.
+- c5e9ad7: Reject imported updates with a text style end anchor that does not directly follow its style start. Such a malformed update used to panic in the rich-text diff and leave the document unusable; `import` now returns a decode error and leaves the document unchanged.
+- 0b6cc26: Avoid recursive parent queries in the tree history cache so deep trees do not
+  exhaust the stack. Add regression coverage for historical operations after
+  concurrent tree moves, including the skipped-cycle case from #1117 whose
+  replay ordering was fixed in #1152.
+- 2e1f365: Prevent automatic undo merging when the wall clock moves backwards, including when `mergeInterval` is zero. Explicit undo groups continue to merge normally.
+- d4e8fc5: Changing the peer id during an active undo group no longer splits the new peer's edits into separate undo steps. The group now restarts from the new peer's counter, so one undo reverts everything the group recorded after the change.
+- 332e76d: Make undoing a commit that created many lists fast: a retreat (undo, or a
+  checkout to an older version) now certifies its target as a critical replay
+  base, and the list and movable-list diff calculators trust a tracker seeded
+  there instead of rebuilding it from the whole history once for every list
+  the undone span touched.
+- c9e4d18: Fix UndoManager's merge timer when an import or another history boundary forces a new undo item. Subsequent local edits now use the new item's merge window, while edits that actually merge keep the original window.
+- 9f8518c: Keep `onPush` metadata (`value` and `cursors`) on undo and redo items pushed once the stack holds `maxUndoSteps` items. Each such push evicts the oldest item, so the stack length stays the same, and the metadata was dropped; `onPop` then received `null` and no cursors. The binding now attaches the metadata when the top item's counter span is the pushed span.
+- 30c6086: Fix grouped undo across split history spans restoring deleted text out of order
+  or reviving intermediate text after a causally dependent remote update. Compose
+  inverse map writes in execution order so repeated writes to one key restore its
+  pre-group value. Preserve remote edits and redo behavior.
+- 32abb24: Enforce `setMaxUndoSteps` immediately when lowering the limit and when redo pushes an undo step. Oldest undo items are discarded with their metadata; a limit of zero retains no undo steps while preserving redo history.
+- ea1d383: Stop deeply nested data from untrusted updates from aborting the process. `LoroValue` equality, container depth tracking, deep-value reads (`getDeepValue`/`toJSON`) and Map/List/MovableList snapshot export no longer recurse once per nesting level, and container depth no longer overflows past 65,535 levels. Mergeable container names whose ancestors' names together exceed 1 MiB are no longer treated as mergeable (they used to cost quadratic time and memory on import), and creating such a child with `ensureMergeable*` returns an error.
+- b1f960e: Check encoded list/map counts against available value bytes before reserving their storage, and share a declared-slot budget across nested and successive collections in one value reader. Malformed counts return the existing corruption error earlier; valid encodings and the wire format are unchanged. This bounds these count-driven reservations, not all decoder memory.
+
 ## 1.17.1
 
 ### Patch Changes
