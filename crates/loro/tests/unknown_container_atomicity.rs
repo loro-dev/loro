@@ -551,7 +551,7 @@ fn write_wasm_fixture() {
 #[test]
 fn wasm_fixture_is_up_to_date() {
     assert_eq!(
-        std::fs::read_to_string(WASM_FIXTURE).unwrap(),
+        std::fs::read_to_string(WASM_FIXTURE).unwrap().replace("\r\n", "\n"),
         wasm_fixture(),
         "run the ignored `write_wasm_fixture` test"
     );
