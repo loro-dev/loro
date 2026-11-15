@@ -664,7 +664,9 @@ impl TreeState {
             children: Default::default(),
             fractional_index_config: TreeFractionalIndexConfigInner::GenerateFractionalIndex {
                 jitter: 0,
-                rng: Box::new(rand::rngs::StdRng::seed_from_u64(0)),
+                // Seed from the peer, as `enable_generate_fractional_index` does, so
+                // that enabling jitter later draws different bytes on each peer.
+                rng: Box::new(rand::rngs::StdRng::seed_from_u64(peer_id)),
             },
             peer_id,
         }

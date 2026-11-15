@@ -1,6 +1,6 @@
 # Fractional indexes with jitter
 
-Verified against code 2026-10-18.
+Verified against code 2026-11-14.
 
 Tree sibling positions are `FractionalIndex` byte strings compared
 lexicographically (`crates/fractional_index/src/lib.rs`). A generated index is
@@ -20,6 +20,11 @@ index ends with `0x80`, but a jittered one ends with a random byte, possibly
   (checked against `tests/fixtures/rust-golden.json`, regenerated with
   `pnpm fixtures:generate` from `examples/npm_fixture.rs`) and to
   `loro-js/src/runtime/fractional-index.ts`.
+- The jitter RNG is a `StdRng` seeded from the tree state's `peer_id`
+  (`TreeState::new` and `enable_generate_fractional_index`), so different peers
+  draw different bytes and a fixed peer id gives reproducible positions. That
+  `peer_id` is copied when the state is created; a later `set_peer_id` does not
+  reseed it (loro-dev/loro#1289).
 - `NodeChildren::generate_fi_at{,_jitter}` (`crates/loro-internal/src/state/tree_state.rs`)
   still unwrap `new_between`, so the `left ++ 00…` case would still panic.
 
