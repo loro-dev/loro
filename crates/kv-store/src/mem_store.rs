@@ -309,58 +309,58 @@ impl MemKvStore {
     fn export_with_encoded_block(&mut self) -> Bytes {
         ensure_cov::notify_cov("kv-store::mem_store::export_with_encoded_block");
         let mut builder = self.new_export_builder();
+        let table = &self.ss_table[0];
         let mut mem_iter = self.mem_table.iter().peekable();
-        let mut sstable_iter =
-            SsTableIter::new_scan(&self.ss_table[0], Bound::Unbounded, Bound::Unbounded);
-        'outer: while let Some(next_mem_pair) = mem_iter.peek() {
-            let block = loop {
-                let Some(block) = sstable_iter.peek_next_block() else {
-                    builder.add(next_mem_pair.0.clone(), next_mem_pair.1.clone());
-                    mem_iter.next();
-                    continue 'outer;
-                };
-                if block.last_key() < next_mem_pair.0 {
-                    builder.add_new_block(block.clone());
-                    sstable_iter.next_block();
-                    continue;
-                }
-                break block;
-            };
 
-            if block.first_key() > next_mem_pair.0 {
-                builder.add(next_mem_pair.0.clone(), next_mem_pair.1.clone());
+        for (block_idx, meta) in table.meta.iter().enumerate() {
+            while let Some((mem_k, mem_v)) = mem_iter.peek() {
+                if mem_k.as_ref() >= meta.first_key.as_ref() {
+                    break;
+                }
+                builder.add((*mem_k).clone(), (*mem_v).clone());
                 mem_iter.next();
+            }
+
+            let block_last = meta.last_key.as_ref().unwrap_or(&meta.first_key);
+            let overlaps_mem = mem_iter
+                .peek()
+                .is_some_and(|(mem_k, _)| mem_k.as_ref() <= block_last.as_ref());
+            let compression_compatible = meta.compression_type == self.compression_type
+                || (self.compression_type == CompressionType::LZ4
+                    && meta.compression_type == CompressionType::None);
+
+            if !overlaps_mem && compression_compatible {
+                builder.add_raw_block(meta, table.raw_block_slice(block_idx));
                 continue;
             }
 
-            // There are overlap between next_mem_pair and block
-            let mut iter = BlockIter::new(block.clone());
-            let mut next_mem_pair = mem_iter.peek();
+            let block = table.read_block(block_idx);
+            if !overlaps_mem {
+                builder.add_new_block(block);
+                continue;
+            }
+
+            let mut iter = BlockIter::new(block);
             while let Some(k) = iter.peek_next_key() {
                 loop {
-                    match next_mem_pair {
-                        Some(next_mem_pair_inner) => {
-                            if k > next_mem_pair_inner.0 {
-                                builder.add(
-                                    next_mem_pair_inner.0.clone(),
-                                    next_mem_pair_inner.1.clone(),
-                                );
+                    match mem_iter.peek() {
+                        Some((mem_k, mem_v)) => match k.as_ref().cmp(mem_k.as_ref()) {
+                            Ordering::Greater => {
+                                builder.add((*mem_k).clone(), (*mem_v).clone());
                                 mem_iter.next();
-                                next_mem_pair = mem_iter.peek();
-                                continue;
                             }
-                            if k == next_mem_pair_inner.0 {
-                                builder.add(k, next_mem_pair_inner.1.clone());
+                            Ordering::Equal => {
+                                builder.add(k, (*mem_v).clone());
                                 mem_iter.next();
-                                next_mem_pair = mem_iter.peek();
                                 iter.next();
                                 break;
                             }
-                            // k < next_mem_pair_inner.0
-                            builder.add(k, iter.peek_next_value().unwrap());
-                            iter.next();
-                            break;
-                        }
+                            Ordering::Less => {
+                                builder.add(k, iter.peek_next_value().unwrap());
+                                iter.next();
+                                break;
+                            }
+                        },
                         None => {
                             builder.add(k, iter.peek_next_value().unwrap());
                             iter.next();
@@ -370,19 +370,23 @@ impl MemKvStore {
                 }
             }
 
-            sstable_iter.next_block();
+            while let Some((mem_k, mem_v)) = mem_iter.peek() {
+                if mem_k.as_ref() > block_last.as_ref() {
+                    break;
+                }
+                builder.add((*mem_k).clone(), (*mem_v).clone());
+                mem_iter.next();
+            }
         }
 
-        while let Some(block) = sstable_iter.peek_next_block() {
-            builder.add_new_block(block.clone());
-            sstable_iter.next_block();
+        for (mem_k, mem_v) in mem_iter {
+            builder.add(mem_k.clone(), mem_v.clone());
         }
 
         if builder.is_empty() {
             return Bytes::new();
         }
 
-        drop(mem_iter);
         self.mem_table.clear();
         let ss = builder.build();
         let ans = ss.export_all();
@@ -844,6 +848,49 @@ mod tests {
         let mut imported = new_store();
         imported.import_all(bytes).unwrap();
         assert_eq!(imported.get(b"large"), Some(value));
+    }
+
+    #[test]
+    fn incremental_export_does_not_populate_block_cache_for_untouched_blocks() {
+        let mut source = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        for i in 0..400_u16 {
+            let key = format!("k-{i:04}");
+            let value = vec![(i % 251) as u8; 128];
+            source.set(key.as_bytes(), Bytes::from(value));
+        }
+        let base_bytes = source.export_all();
+
+        let mut store = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        store.import_all(base_bytes).unwrap();
+        // Modify one key in the middle, delete one near the start, and insert one at the end.
+        store.set(b"k-0200", Bytes::from_static(b"updated-middle"));
+        store.remove(b"k-0010");
+        store.set(b"k-0999", Bytes::from_static(b"tail"));
+        assert_eq!(store.cached_block_bytes(), 0);
+
+        let exported = store.export_all();
+        assert_eq!(
+            store.cached_block_bytes(),
+            0,
+            "export_with_encoded_block should not pollute block_cache"
+        );
+
+        let mut round_tripped = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        round_tripped.import_all(exported).unwrap();
+        assert_eq!(round_tripped.get(b"k-0010"), None);
+        assert_eq!(
+            round_tripped.get(b"k-0200"),
+            Some(Bytes::from_static(b"updated-middle"))
+        );
+        assert_eq!(
+            round_tripped.get(b"k-0999"),
+            Some(Bytes::from_static(b"tail"))
+        );
+        assert_eq!(
+            round_tripped.get(b"k-0350"),
+            Some(Bytes::from(vec![(350 % 251) as u8; 128]))
+        );
+        assert_eq!(round_tripped.len(), 400);
     }
 
     fn new_store() -> MemKvStore {

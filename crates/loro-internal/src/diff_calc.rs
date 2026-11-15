@@ -2090,6 +2090,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
         self.list.source_not_in_op_context = false;
         if !vv.includes_vv(&self.list.start_vv) || !self.list.tracker.all_vv().includes_vv(vv) {
             self.list.tracker.reset();
+            self.inner.move_id_to_elem_id.clear();
             self.list.start_vv = vv.clone();
         }
 
@@ -2109,8 +2110,12 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 
         // collect the elements that are moved, updated, or inserted
 
-        // If it's checkout mode, we don't need to track the changes
-        // we only need the element ids
+        // If it's checkout or import mode, `calculate_diff` rebuilds values from `checkout_index`,
+        // so we only need the element ids without cloning values here.
+        let skip_value_clone = matches!(
+            self.inner.current_mode,
+            DiffMode::Checkout | DiffMode::Import
+        );
         match l {
             InnerListOp::Insert { slice, pos: _ } => {
                 let op_id = op.id_full().idlp();
@@ -2121,7 +2126,11 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         id.compact(),
                         ElementDelta {
                             pos: Some(id),
-                            value: value.clone(),
+                            value: if skip_value_clone {
+                                LoroValue::Null
+                            } else {
+                                value.clone()
+                            },
                             value_updated: true,
                             value_id: Some(id),
                         },
@@ -2158,7 +2167,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         if change.value_id.is_some() && change.value_id.as_ref().unwrap() > &idlp {
                         } else {
                             change.value_id = Some(idlp);
-                            change.value = value.clone();
+                            if !skip_value_clone {
+                                change.value = value.clone();
+                            }
                         }
                     }
                     None => {
@@ -2166,7 +2177,11 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                             elem_id.compact(),
                             ElementDelta {
                                 pos: None,
-                                value: value.clone(),
+                                value: if skip_value_clone {
+                                    LoroValue::Null
+                                } else {
+                                    value.clone()
+                                },
                                 value_updated: true,
                                 value_id: Some(idlp),
                             },
@@ -2199,6 +2214,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
 
     fn finish_this_round(&mut self) {
         self.list.finish_this_round();
+        self.inner.changed_elements.clear();
     }
 
     #[instrument(skip(self, oplog, on_new_container))]
@@ -2235,15 +2251,10 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
             self.inner.current_mode,
             DiffMode::Checkout | DiffMode::Import
         );
-        let mut element_changes: FxHashMap<CompactIdLp, ElementDelta> = if is_checkout {
-            FxHashMap::default()
-        } else {
-            std::mem::take(&mut self.inner.changed_elements)
-        };
-
+        let mut element_changes = std::mem::take(&mut self.inner.changed_elements);
         if is_checkout {
-            for id in self.inner.changed_elements.keys() {
-                element_changes.insert(*id, ElementDelta::placeholder());
+            for change in element_changes.values_mut() {
+                *change = ElementDelta::placeholder();
             }
         }
 

@@ -1568,19 +1568,23 @@ impl DocState {
             let id = self.arena.idx_to_id(root_idx).unwrap();
             match &id {
                 loro_common::ContainerID::Root { name, .. } => {
+                    let is_deleted = deleted_root_container.contains(&id);
+                    if should_hide_empty_root_container || is_deleted {
+                        let kind = root_idx.get_type();
+                        let shallow = self
+                            .store
+                            .get_value_ephemeral(root_idx)
+                            .unwrap_or_else(|| kind.default_value());
+                        if (should_hide_empty_root_container
+                            && visible_container_value_is_empty(kind, &shallow))
+                            || (is_deleted
+                                && deleted_root_container_value_is_cleared(kind, &shallow))
+                        {
+                            continue;
+                        }
+                    }
+
                     let v = self.get_container_deep_value(root_idx);
-                    if should_hide_empty_root_container
-                        && visible_container_value_is_empty(root_idx.get_type(), &v)
-                    {
-                        continue;
-                    }
-
-                    if deleted_root_container.contains(&id)
-                        && deleted_root_container_value_is_cleared(root_idx.get_type(), &v)
-                    {
-                        continue;
-                    }
-
                     ans.insert(name.to_string(), v);
                 }
                 loro_common::ContainerID::Normal { .. } => {
@@ -1590,6 +1594,70 @@ impl DocState {
         }
 
         LoroValue::Map(ans.into())
+    }
+
+    /// Return `(name, idx, id, shallow_value)` for visible root containers,
+    /// checking visibility and deletion rules using only shallow values first.
+    pub fn visible_root_shallow_values(
+        &mut self,
+    ) -> LoroResult<Vec<(InternalString, ContainerIdx, ContainerID, LoroValue)>> {
+        let roots = self.preferred_root_containers();
+        let mut visible = Vec::with_capacity(roots.len());
+        let binding = self.config.deleted_root_containers.clone();
+        let deleted_root_container = binding.lock();
+        let should_hide_empty_root_container = self
+            .config
+            .hide_empty_root_containers
+            .load(Ordering::Relaxed);
+        for root_idx in roots {
+            let id = self
+                .arena
+                .idx_to_id(root_idx)
+                .ok_or_else(|| LoroError::DecodeError("Missing container ID".into()))?;
+            match &id {
+                loro_common::ContainerID::Root { name, .. } => {
+                    let kind = root_idx.get_type();
+                    let shallow = self
+                        .store
+                        .try_get_value_ephemeral(root_idx)?
+                        .unwrap_or_else(|| kind.default_value());
+                    if should_hide_empty_root_container
+                        && visible_container_value_is_empty(kind, &shallow)
+                    {
+                        continue;
+                    }
+                    if deleted_root_container.contains(&id)
+                        && deleted_root_container_value_is_cleared(kind, &shallow)
+                    {
+                        continue;
+                    }
+                    visible.push((name.clone(), root_idx, id, shallow));
+                }
+                loro_common::ContainerID::Normal { .. } => {
+                    unreachable!()
+                }
+            }
+        }
+        Ok(visible)
+    }
+
+    /// Get the shallow value of `idx` without retaining a decoded entry in `value_cache`.
+    pub fn try_get_container_shallow_value_ephemeral(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> LoroResult<LoroValue> {
+        Ok(self
+            .store
+            .try_get_value_ephemeral(idx)?
+            .unwrap_or_else(|| idx.get_type().default_value()))
+    }
+
+    pub fn register_container_id(&self, cid: &ContainerID) -> ContainerIdx {
+        self.arena.register_container(cid)
+    }
+
+    pub fn idx_to_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
+        self.arena.idx_to_id(idx)
     }
 
     pub fn get_deep_value_with_id(&mut self) -> LoroValue {

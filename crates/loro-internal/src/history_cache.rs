@@ -307,6 +307,7 @@ impl ContainerHistoryCache {
         self.for_checkout.is_some()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn free(&mut self) {
         self.for_checkout = None;
         self.shallow_maps_seeded.clear();

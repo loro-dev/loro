@@ -4,7 +4,7 @@ use crate::handler::{
 use crate::jsonpath::ast::{
     ComparisonOperator, FilterExpression, LogicalOperator, Segment, Selector,
 };
-use crate::jsonpath::{Query, JSONPathParser};
+use crate::jsonpath::{JSONPathParser, Query};
 use crate::{HandlerTrait, LoroDoc};
 use loro_common::{ContainerID, LoroValue};
 use smallvec::SmallVec;
@@ -913,11 +913,26 @@ mod tests {
             for n in [0, 1, 16] {
                 let (_doc, map) = fixture(n);
                 if n > 1 {
-                    map.insert("raw", loro_common::loro_value!({"x": [1, true, "v"]})).unwrap();
-                    map.insert_container("normal", MapHandler::new_detached()).unwrap().insert("x", 2).unwrap();
-                    map.ensure_mergeable_map("merge").unwrap().insert("x", 3).unwrap();
-                    let wrong_key = loro_common::mergeable_marker(&map.id(), "original-key", loro_common::ContainerType::Map);
-                    let wrong_parent = loro_common::mergeable_marker(&ContainerID::new_root("other", loro_common::ContainerType::Map), "wrong-parent", loro_common::ContainerType::Map);
+                    map.insert("raw", loro_common::loro_value!({"x": [1, true, "v"]}))
+                        .unwrap();
+                    map.insert_container("normal", MapHandler::new_detached())
+                        .unwrap()
+                        .insert("x", 2)
+                        .unwrap();
+                    map.ensure_mergeable_map("merge")
+                        .unwrap()
+                        .insert("x", 3)
+                        .unwrap();
+                    let wrong_key = loro_common::mergeable_marker(
+                        &map.id(),
+                        "original-key",
+                        loro_common::ContainerType::Map,
+                    );
+                    let wrong_parent = loro_common::mergeable_marker(
+                        &ContainerID::new_root("other", loro_common::ContainerType::Map),
+                        "wrong-parent",
+                        loro_common::ContainerType::Map,
+                    );
                     map.insert("wrong-key", wrong_key.clone()).unwrap();
                     map.insert("wrong-parent", wrong_parent.clone()).unwrap();
                     assert_eq!(get_value(&map.get_("wrong-key").unwrap()), wrong_key);
@@ -953,7 +968,9 @@ mod tests {
         #[test]
         fn child_handlers_remain_live_during_iteration() {
             let (_doc, map) = fixture(0);
-            let normal = map.insert_container("normal", MapHandler::new_detached()).unwrap();
+            let normal = map
+                .insert_container("normal", MapHandler::new_detached())
+                .unwrap();
             let merged = map.ensure_mergeable_map("merge").unwrap();
             normal.insert("fresh", false).unwrap();
             merged.insert("fresh", false).unwrap();
@@ -965,7 +982,10 @@ mod tests {
                     ValueOrHandler::Handler(handler) => seen.push(handler.id()),
                     _ => panic!("child must remain a translated handler"),
                 }
-                assert_eq!(get_value(&value).get_by_key("fresh"), Some(&LoroValue::Bool(true)));
+                assert_eq!(
+                    get_value(&value).get_by_key("fresh"),
+                    Some(&LoroValue::Bool(true))
+                );
                 ControlFlow::Continue(())
             });
             assert_eq!(seen.len(), 2);
@@ -983,7 +1003,9 @@ mod tests {
             });
             assert_eq!(count, 1);
             let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                map.for_each_for_path(&mut |_| -> ControlFlow<()> { panic!("iteration callback probe") });
+                map.for_each_for_path(&mut |_| -> ControlFlow<()> {
+                    panic!("iteration callback probe")
+                });
             }));
             assert!(caught.is_err());
             assert_eq!((doc.oplog_vv(), doc.state_vv()), before);
@@ -995,10 +1017,15 @@ mod tests {
         fn detached_iteration_keeps_value_order_and_break() {
             for n in [0, 1, 16] {
                 let map = MapHandler::new_detached();
-                for index in 0..n { map.insert(&format!("key{index}"), index as i64).unwrap(); }
+                for index in 0..n {
+                    map.insert(&format!("key{index}"), index as i64).unwrap();
+                }
                 assert_eq!(ordered_path_values(&map), ordered_public_values(&map));
                 let mut count = 0;
-                map.for_each_for_path(&mut |_| { count += 1; ControlFlow::Break(()) });
+                map.for_each_for_path(&mut |_| {
+                    count += 1;
+                    ControlFlow::Break(())
+                });
                 assert_eq!(count, usize::from(n > 0));
             }
         }
@@ -1006,7 +1033,9 @@ mod tests {
         #[test]
         fn independent_restores_keep_cold_warm_and_edited_parity() {
             let (source, _) = fixture(16);
-            let bytes = source.export(crate::encoding::ExportMode::Snapshot).unwrap();
+            let bytes = source
+                .export(crate::encoding::ExportMode::Snapshot)
+                .unwrap();
             for limit in [0, 8] {
                 for preparation in 0..3 {
                     let restore = || {
@@ -1015,8 +1044,12 @@ mod tests {
                         doc.import(&bytes).unwrap();
                         doc.set_decoded_value_cache_limit(limit);
                         let map = doc.get_map("scope");
-                        if preparation > 0 { assert!(map.get_("κ/00").is_some()); }
-                        if preparation > 1 { map.insert("local", 7).unwrap(); }
+                        if preparation > 0 {
+                            assert!(map.get_("κ/00").is_some());
+                        }
+                        if preparation > 1 {
+                            map.insert("local", 7).unwrap();
+                        }
                         (doc, map)
                     };
                     let (expected_doc, expected_map) = restore();
@@ -1025,8 +1058,14 @@ mod tests {
                     let actual_versions = (actual_doc.oplog_vv(), actual_doc.state_vv());
                     let expected = ordered_public_values(&expected_map);
                     assert_eq!(ordered_path_values(&actual_map), expected);
-                    assert_eq!((expected_doc.oplog_vv(), expected_doc.state_vv()), expected_versions);
-                    assert_eq!((actual_doc.oplog_vv(), actual_doc.state_vv()), actual_versions);
+                    assert_eq!(
+                        (expected_doc.oplog_vv(), expected_doc.state_vv()),
+                        expected_versions
+                    );
+                    assert_eq!(
+                        (actual_doc.oplog_vv(), actual_doc.state_vv()),
+                        actual_versions
+                    );
                 }
             }
         }

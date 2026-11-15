@@ -138,6 +138,5 @@ pub mod compress;
 pub mod iter;
 pub mod mem_store;
 pub mod sstable;
-mod utils;
 pub use iter::{KvIterator, MergeIterator};
 pub use mem_store::{MemKvStore, MemStoreIterator};

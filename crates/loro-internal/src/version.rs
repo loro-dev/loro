@@ -197,6 +197,9 @@ impl ImVersionVector {
     }
 
     pub fn insert(&mut self, k: PeerID, v: Counter) {
+        if self.0.get(&k).copied() == Some(v) {
+            return;
+        }
         self.0.insert(k, v);
     }
 
@@ -283,10 +286,11 @@ impl ImVersionVector {
             return;
         }
 
-        if let Some(counter) = self.0.get_mut(&id.peer) {
-            *counter = normalize_vv_counter(*counter);
-            if *counter < end {
-                *counter = end;
+        if let Some(&counter) = self.0.get(&id.peer) {
+            let normalized = normalize_vv_counter(counter);
+            let target = normalized.max(end);
+            if target != counter {
+                self.0.insert(id.peer, target);
             }
         } else {
             self.0.insert(id.peer, end);

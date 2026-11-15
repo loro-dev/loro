@@ -6,7 +6,9 @@
 // #![warn(missing_docs)]
 
 mod container_tree;
+mod to_json;
 
+use bytes::Bytes;
 use convert::{
     import_batch_detail_to_js_value, import_blob_metadata_to_js, import_status_to_js_value,
     js_diff_to_inner_diff, js_json_schema_to_loro_json_schema, js_to_id_span, js_to_version_vector,
@@ -531,9 +533,24 @@ fn update_error_to_js(err: UpdateTimeoutError) -> JsValue {
     }
 }
 
-fn js_binary_array_to_vec(data: JsBinaryArray) -> JsResult<Vec<Vec<u8>>> {
-    let data: Array = data.dyn_into()?;
-    Ok(data.iter().map(|x| Uint8Array::new(&x).to_vec()).collect())
+const STREAMING_BATCH_BYTES_THRESHOLD: usize = 256 * 1024;
+
+fn js_binary_array_info(data: JsBinaryArray) -> JsResult<(Array, usize, usize)> {
+    let array: Array = data.dyn_into()?;
+    let len = array.length() as usize;
+    let mut total_bytes = 0usize;
+    for i in 0..len {
+        let item = array.get(i as u32);
+        let u8_len = Uint8Array::new(&item).byte_length() as usize;
+        total_bytes = total_bytes.saturating_add(u8_len);
+    }
+    Ok((array, len, total_bytes))
+}
+
+fn js_binary_array_to_bytes(array: &Array) -> Vec<Bytes> {
+    (0..array.length())
+        .map(|i| Bytes::from(Uint8Array::new(&array.get(i)).to_vec()))
+        .collect()
 }
 
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
@@ -910,8 +927,8 @@ impl LoroDoc {
     /// ```
     ///
     #[wasm_bindgen(js_name = "fromSnapshot")]
-    pub fn from_snapshot(snapshot: &[u8]) -> JsResult<LoroDoc> {
-        let doc = LoroDocInner::from_snapshot(snapshot)?;
+    pub fn from_snapshot(snapshot: Vec<u8>) -> JsResult<LoroDoc> {
+        let doc = LoroDocInner::from_snapshot_bytes(Bytes::from(snapshot))?;
         doc.start_auto_commit();
         Ok(Self {
             doc,
@@ -1920,8 +1937,8 @@ impl LoroDoc {
     /// // or import updates
     /// doc2.import(updates);
     /// ```
-    pub fn import(&self, update_or_snapshot: &[u8]) -> JsResult<JsImportStatus> {
-        let status = self.doc.import(update_or_snapshot)?;
+    pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<JsImportStatus> {
+        let status = self.doc.import_bytes(Bytes::from(update_or_snapshot))?;
         Ok(import_status_to_js_value(status)?.into())
     }
 
@@ -1976,8 +1993,22 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "importBatch")]
     pub fn import_batch(&self, data: JsBinaryArray) -> JsResult<JsImportStatus> {
-        let data = js_binary_array_to_vec(data)?;
-        let status = self.doc.import_batch(&data)?;
+        let (array, len, total_bytes) = js_binary_array_info(data)?;
+        let status = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
+            let mut blobs = Vec::with_capacity(len);
+            for i in 0..len {
+                let bytes = Bytes::from(Uint8Array::new(&array.get(i as u32)).to_vec());
+                let meta = LoroDocInner::decode_import_blob_meta_bytes(bytes, false)?;
+                let arr = &array;
+                blobs.push((meta, move || {
+                    Ok(Bytes::from(Uint8Array::new(&arr.get(i as u32)).to_vec()))
+                }));
+            }
+            self.doc.import_batch_with_loaders(blobs, false)?
+        } else {
+            let blobs = js_binary_array_to_bytes(&array);
+            self.doc.import_batch_bytes(blobs)?
+        };
         Ok(import_status_to_js_value(status)?.into())
     }
 
@@ -2029,9 +2060,43 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "importBatchDetailed")]
     pub fn import_batch_detailed(&self, data: JsBinaryArray) -> JsResult<JsImportBatchDetail> {
-        let data = js_binary_array_to_vec(data)?;
-        let detail = self.doc.import_batch_detailed(&data)?;
+        let (array, len, total_bytes) = js_binary_array_info(data)?;
+        let detail = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
+            let mut blobs = Vec::with_capacity(len);
+            for i in 0..len {
+                let bytes = Bytes::from(Uint8Array::new(&array.get(i as u32)).to_vec());
+                let meta = LoroDocInner::decode_import_blob_meta_bytes(bytes, false);
+                let arr = &array;
+                blobs.push((meta, move || {
+                    Ok(Bytes::from(Uint8Array::new(&arr.get(i as u32)).to_vec()))
+                }));
+            }
+            self.doc.import_batch_detailed_with_loaders(blobs, false)?
+        } else {
+            let blobs = js_binary_array_to_bytes(&array);
+            self.doc.import_batch_detailed_bytes(blobs)?
+        };
         Ok(import_batch_detail_to_js_value(detail)?.into())
+    }
+
+    /// Free the cached history index built for fast time-travel / checkout.
+    #[wasm_bindgen(js_name = "freeHistoryCache")]
+    pub fn free_history_cache(&self) {
+        self.doc.free_history_cache();
+    }
+
+    /// Free cached diff calculator state kept across checkouts and edits.
+    #[wasm_bindgen(js_name = "freeDiffCalculator")]
+    pub fn free_diff_calculator(&self) {
+        self.doc.free_diff_calculator();
+    }
+
+    /// Encode uncompacted changes into the KV change store and drop parsed ops from memory.
+    ///
+    /// Commits the current auto-commit transaction if active.
+    #[wasm_bindgen(js_name = "compactChangeStore")]
+    pub fn compact_change_store(&self) {
+        self.doc.compact_change_store();
     }
 
     /// Get the shallow json format of the document state.
@@ -2086,8 +2151,7 @@ impl LoroDoc {
     /// ```
     #[wasm_bindgen(js_name = "toJSON")]
     pub fn to_json(&self) -> JsResult<JsValue> {
-        let json = self.doc.get_deep_value();
-        Ok(json.into())
+        to_json::doc_to_json_js_value(&self.doc)
     }
 
     /// Subscribe to the changes of the loro document. The function will be called when the

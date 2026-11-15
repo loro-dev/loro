@@ -3,7 +3,6 @@ use crate::{
     block::{Block, BlockBuilder},
     compress::CompressionType,
     iter::KvIterator,
-    utils::{get_u16_le, get_u32_le, get_u8_le},
 };
 use bytes::{Buf, BufMut, Bytes};
 use ensure_cov::*;
@@ -33,11 +32,11 @@ const MAX_BLOCK_NUM: u32 = 10_000_000;
 /// ```
 #[derive(Debug, Clone)]
 pub(crate) struct BlockMeta {
-    offset: usize,
-    is_large: bool,
-    compression_type: CompressionType,
-    first_key: Bytes,
-    last_key: Option<Bytes>,
+    pub(crate) offset: usize,
+    pub(crate) is_large: bool,
+    pub(crate) compression_type: CompressionType,
+    pub(crate) first_key: Bytes,
+    pub(crate) last_key: Option<Bytes>,
 }
 
 impl BlockMeta {
@@ -90,8 +89,11 @@ impl BlockMeta {
         buf.put_u32_le(checksum);
     }
 
-    fn decode_meta(data: &[u8]) -> LoroResult<Vec<BlockMeta>> {
-        let (num, mut data) = get_u32_le(data)?;
+    fn decode_meta(mut data: Bytes) -> LoroResult<Arc<[BlockMeta]>> {
+        if data.len() < SIZE_OF_U32 + SIZE_OF_U32 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+        let num = data.get_u32_le();
         if num > MAX_BLOCK_NUM {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
@@ -106,48 +108,55 @@ impl BlockMeta {
         {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
-        let mut ans = Vec::with_capacity(num as usize);
         let checksum = xxhash_rust::xxh32::xxh32(&data[..data.len() - SIZE_OF_U32], XXH_SEED);
+        let mut ans = Vec::with_capacity(num as usize);
         for _ in 0..num {
-            let (offset, buf) = get_u32_le(data)?;
-            let (first_key_len, mut buf) = get_u16_le(buf)?;
-            if buf.len() < first_key_len as usize {
+            if data.len() < SIZE_OF_U32 + SIZE_OF_U16 {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
-            let first_key = buf.copy_to_bytes(first_key_len as usize);
-            let (is_large_and_compression_type, buf) = get_u8_le(buf)?;
+            let offset = data.get_u32_le() as usize;
+            let first_key_len = data.get_u16_le() as usize;
+            if data.len() < first_key_len + SIZE_OF_U8 {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+            let first_key = data.split_to(first_key_len);
+            let is_large_and_compression_type = data.get_u8();
             let is_large = is_large_and_compression_type & 0b1000_0000 != 0;
             let compression_type = is_large_and_compression_type & 0b0111_1111;
             if is_large {
                 ans.push(BlockMeta {
-                    offset: offset as usize,
+                    offset,
                     is_large,
                     compression_type: compression_type.try_into()?,
                     first_key,
                     last_key: None,
                 });
-                data = buf;
                 continue;
             }
-            let (last_key_len, mut buf) = get_u16_le(buf)?;
-            if buf.len() < last_key_len as usize {
+            if data.len() < SIZE_OF_U16 {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
-            let last_key = buf.copy_to_bytes(last_key_len as usize);
+            let last_key_len = data.get_u16_le() as usize;
+            if data.len() < last_key_len {
+                return Err(LoroError::DecodeError("Invalid bytes".into()));
+            }
+            let last_key = data.split_to(last_key_len);
             ans.push(BlockMeta {
-                offset: offset as usize,
+                offset,
                 is_large,
                 compression_type: compression_type.try_into()?,
                 first_key,
                 last_key: Some(last_key),
             });
-            data = buf;
         }
-        let (checksum_read, _) = get_u32_le(data)?;
+        if data.len() < SIZE_OF_U32 {
+            return Err(LoroError::DecodeError("Invalid bytes".into()));
+        }
+        let checksum_read = data.get_u32_le();
         if checksum != checksum_read {
             return Err(LoroError::DecodeChecksumMismatchError);
         }
-        Ok(ans)
+        Ok(Arc::from(ans))
     }
 }
 
@@ -256,6 +265,19 @@ impl SsTableBuilder {
         }
     }
 
+    pub(crate) fn add_raw_block(&mut self, meta: &BlockMeta, raw_block_and_check: &[u8]) {
+        self.finish_current_block();
+        let offset = self.data.len();
+        self.data.extend_from_slice(raw_block_and_check);
+        self.meta.push(BlockMeta {
+            offset,
+            is_large: meta.is_large,
+            compression_type: meta.compression_type,
+            first_key: meta.first_key.clone(),
+            last_key: meta.last_key.clone(),
+        });
+    }
+
     fn add_new_block_inner(&mut self, block: &Block) {
         assert!(self.block_builder.is_empty());
         let offset = self.data.len();
@@ -312,7 +334,7 @@ impl SsTableBuilder {
             data: Bytes::from(buf),
             first_key,
             last_key,
-            meta: self.meta,
+            meta: Arc::from(self.meta),
             meta_offset: meta_offset as usize,
             block_cache,
         }
@@ -345,8 +367,8 @@ pub struct SsTable {
     data: Bytes,
     pub(crate) first_key: Bytes,
     pub(crate) last_key: Bytes,
-    meta: Vec<BlockMeta>,
-    meta_offset: usize,
+    pub(crate) meta: Arc<[BlockMeta]>,
+    pub(crate) meta_offset: usize,
     block_cache: BlockCache,
 }
 
@@ -429,7 +451,7 @@ impl SsTable {
         if meta_offset >= data_len - SIZE_OF_U32 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
-        let raw_meta = &bytes[meta_offset..data_len - SIZE_OF_U32];
+        let raw_meta = bytes.slice(meta_offset..data_len - SIZE_OF_U32);
         let meta = BlockMeta::decode_meta(raw_meta)?;
         Self::validate_block_ranges(&meta, meta_offset)?;
         if validate_blocks {
@@ -556,7 +578,16 @@ impl SsTable {
             .min(self.meta.len() - 1)
     }
 
-    fn read_block(&self, block_idx: usize) -> Arc<Block> {
+    pub(crate) fn raw_block_slice(&self, block_idx: usize) -> &[u8] {
+        let offset = self.meta[block_idx].offset;
+        let offset_end = self
+            .meta
+            .get(block_idx + 1)
+            .map_or(self.meta_offset, |m| m.offset);
+        &self.data[offset..offset_end]
+    }
+
+    pub(crate) fn read_block(&self, block_idx: usize) -> Arc<Block> {
         let offset = self.meta[block_idx].offset;
         let offset_end = self
             .meta

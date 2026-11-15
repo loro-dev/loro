@@ -1,6 +1,6 @@
 # LoroDoc Memory Analysis
 
-Verified against code 2026-11-06 (main `ea1d383e`, after #1218, #1222, #1244).
+Verified against code 2026-11-16 (main `ea1d383e`, plus Phase 1 speed and peak-memory improvements).
 
 This is a measurement report for a process that keeps many `LoroDoc`s open for a
 long time: a local sync hub holding tens to thousands of documents, with single
@@ -285,6 +285,13 @@ item changes the encoding format.
 Items 2, 1a, 7 and 9 have landed. Next: 4 with 3. Items 1b and 5 need design work first.
 
 ### What landed
+
+Phase 1 speed and peak-memory improvements (2026-11-16):
+
+- **`kv-store` zero-copy block/meta decode & raw-block export**: `NormalBlock::decode` and `BlockMeta::decode_meta` borrow input bytes with reused validation buffers, `SsTable::meta` uses `Arc<[BlockMeta]>`, and `MemKvStore::export_with_encoded_block` copies compressed SSTable blocks via `add_raw_block` without hydrating `BlockCache`.
+- **Single-pass `ChangeStore` block encoding, header queries, and direct snapshot handoff**: `ChangeStore::encode_block_with_header`, `try_iter_change_headers`, `has_id_in_header`, `unparsed_block_skip_end_if_missing_cid`, `last_flushed_vv`/`last_flushed_frontiers` skip in `flush_and_compact`/`compact_parsed_blocks_in`, and direct `Snapshot` handoff in `fork_at_inner` (`encoding.rs`).
+- **Lazy `InnerStore::decode_twice` & cache release**: state-only/two-bytes snapshot decoding now registers `LoadState::Lazy` handles backed by a KV parent resolver (`inner_store.rs`), and `OpLog::free_history_cache` calls `free_all()`.
+- **Streaming `Bytes` imports, `toJSON()`, and WASM cache release**: `import_bytes`, `import_batch_bytes`, `import_batch_detailed_bytes`, `import_batch_with_loaders`, streaming large (> 256 KiB) WASM `importBatch`/`importBatchDetailed`, iterative zero-intermediate-tree `LoroDoc.toJSON()` (`crates/loro-wasm/src/to_json.rs`), and WASM `freeHistoryCache()`, `freeDiffCalculator()`, and `compactChangeStore()`.
 
 Items 2, 1a, 7 and 9, measured with the same commands on `ea1d383e` and on the branch.
 Single runs on a shared host, so treat time differences under about 10% as noise.

@@ -348,7 +348,10 @@ impl OpLog {
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
                 if op.container.get_type() == ContainerType::Text
-                    && matches!(op.content, InnerContent::List(list_op::InnerListOp::StyleEnd))
+                    && matches!(
+                        op.content,
+                        InnerContent::List(list_op::InnerListOp::StyleEnd)
+                    )
                 {
                     // Honest peers emit the `StyleStart` right before its `StyleEnd`,
                     // so this is the common case and needs no history lookup.
@@ -609,7 +612,7 @@ impl OpLog {
 
     pub fn free_history_cache(&self) {
         let mut history_cache = self.history_cache.lock();
-        history_cache.free();
+        history_cache.free_all();
     }
 
     #[cfg(test)]
@@ -957,16 +960,16 @@ impl OpLog {
         let mut uncovered = Vec::new();
         for (peer, span) in from.diff(to).forward.iter() {
             let id_span = IdSpan::new(*peer, span.start, span.end);
-            for change in self.change_store.try_iter_changes(id_span)? {
-                let start = change.id.counter.max(span.start);
-                let parents = if start > change.id.counter {
+            for (change_id, change_deps) in self.change_store.try_iter_change_headers(id_span)? {
+                let start = change_id.counter.max(span.start);
+                let parents = if start > change_id.counter {
                     // The change straddles `from`; the new suffix only has
                     // the implicit predecessor as parent.
                     Frontiers::from_id(ID::new(*peer, start - 1))
                 } else {
-                    let mut parents = change.deps().clone();
-                    if change.id.counter > 0 {
-                        let prev = ID::new(*peer, change.id.counter - 1);
+                    let mut parents = change_deps;
+                    if change_id.counter > 0 {
+                        let prev = ID::new(*peer, change_id.counter - 1);
                         if !parents.contains(&prev) {
                             parents.push(prev);
                         }
@@ -1422,6 +1425,8 @@ impl OpLog {
         let known_base =
             (&replay_base_frontiers == from_frontiers).then(|| replay_base_frontiers.clone());
 
+        let target_cid = container_filter.and_then(|idx| self.arena.get_container_id(idx));
+
         // go from the replay base to merged_vv
         let diff = replay_base_vv.diff(&merged_vv).forward;
         let mut iter = crate::dag::DagCausalIter::try_new(&self.dag, replay_base_frontiers, diff)?;
@@ -1448,6 +1453,22 @@ impl OpLog {
                                 .max(replay_base_vv.get(&peer).copied().unwrap_or(0));
                             let dag_node_end = (inner.data.cnt + inner.data.len as Counter)
                                 .min(merged_vv.get(&peer).copied().unwrap_or(0));
+                            if let Some(target_cid) = &target_cid {
+                                if let Some(block_end) =
+                                    self.change_store.unparsed_block_skip_end_if_missing_cid(
+                                        ID::new(peer, cnt),
+                                        target_cid,
+                                    )
+                                {
+                                    if block_end < dag_node_end {
+                                        cur_cnt = block_end;
+                                    } else {
+                                        node = iter.next();
+                                        cur_cnt = 0;
+                                    }
+                                    continue;
+                                }
+                            }
                             let change = match self.change_store.get_change(ID::new(peer, cnt)) {
                                 Some(change) => change,
                                 None => {
@@ -1612,7 +1633,8 @@ impl OpLog {
             // finds the style in the shallow root state.
             return Ok(!self.dag.shallow_since_vv().is_empty()
                 && self.with_history_cache(|h| {
-                    h.find_text_style_end_in_shallow_root(r.container, start_id).is_some()
+                    h.find_text_style_end_in_shallow_root(r.container, start_id)
+                        .is_some()
                 }));
         };
         Ok(start_op.container == r.container
@@ -1764,6 +1786,9 @@ impl OpLog {
     pub fn compact_change_store(&mut self) {
         self.change_store
             .flush_and_compact(self.dag.vv(), self.dag.frontiers());
+        if !self.has_import_rollback() {
+            self.change_store.compact_parsed_blocks();
+        }
     }
 
     #[inline]
