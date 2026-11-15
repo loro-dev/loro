@@ -400,12 +400,18 @@ fn imports_typescript_movable_list_snapshot_with_its_metadata() {
     doc.import(TS_MOVABLE_SNAPSHOT)
         .expect("Rust should import a MovableList snapshot produced by loro.js");
     assert_eq!(doc.get_deep_value(), expected.get_deep_value());
-    assert_eq!(movable_list_metadata(&doc), movable_list_metadata(&expected));
+    assert_eq!(
+        movable_list_metadata(&doc),
+        movable_list_metadata(&expected)
+    );
 
     for update in [RUST_MOVABLE_PEER4, RUST_MOVABLE_PEER3] {
         doc.import(update).unwrap();
         expected.import(update).unwrap();
     }
     assert_eq!(doc.get_deep_value(), expected.get_deep_value());
-    assert_eq!(movable_list_metadata(&doc), movable_list_metadata(&expected));
+    assert_eq!(
+        movable_list_metadata(&doc),
+        movable_list_metadata(&expected)
+    );
 }

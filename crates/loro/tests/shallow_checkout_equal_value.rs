@@ -341,7 +341,9 @@ fn equal_value_winner_change_emits_no_events() {
     }));
     let changed_only = |events: &[String]| {
         assert!(events.iter().all(|e| !e.contains("same")), "{events:?}");
-        assert!(events.iter().any(|e| e.contains("new") || e.contains("old")));
+        assert!(events
+            .iter()
+            .any(|e| e.contains("new") || e.contains("old")));
     };
     doc.checkout(&a).unwrap();
     doc.checkout(&c).unwrap();
@@ -366,7 +368,12 @@ fn equal_value_winner_change_emits_no_events() {
     changed_only(&received.lock().unwrap());
     assert_eq!(receiver.get_map("map").get_last_editor("x"), Some(1));
     assert_eq!(
-        receiver.get_map("map").get("x").unwrap().into_value().unwrap(),
+        receiver
+            .get_map("map")
+            .get("x")
+            .unwrap()
+            .into_value()
+            .unwrap(),
         LoroValue::from("same")
     );
 }
