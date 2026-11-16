@@ -77,11 +77,15 @@ pub use loro_internal::version::{Frontiers, VersionRange, VersionVector, Version
 pub use loro_internal::ApplyDiff;
 pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
+pub use loro_internal::{
+    global_memory_budget, global_memory_stats, reclaim_global_memory, set_global_memory_budget,
+    try_reclaim_global_to_budget, DocMemoryStats, GlobalMemoryBudget, GlobalMemoryStats,
+    MemoryBudget,
+};
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
-pub use loro_internal::{DocMemoryStats, MemoryBudget};
 pub use loro_internal::{
     LoroBinaryValue, LoroEncodeError, LoroError, LoroListValue, LoroMapValue, LoroResult,
     LoroStringValue, LoroTreeError, LoroValue, MemoryLimitExceeded, MemoryLimitKind, ToJson,

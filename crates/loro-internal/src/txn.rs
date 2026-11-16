@@ -224,10 +224,12 @@ pub struct Transaction {
     /// Active nested rollback scopes on this transaction (`budget_base_scope`
     /// and any inner `apply_diff` / `revert_to` / `undo` batch).
     rollback_scopes: Vec<RollbackScope>,
-    /// Outermost rollback scope armed when `MemoryBudget::max_doc_bytes` is set.
+    /// Outermost rollback scope armed when `MemoryBudget::max_doc_bytes` or a global hard limit is set.
     budget_base_scope: Option<u64>,
     /// Hard quota captured before this transaction accepts edits.
     pub(crate) doc_budget_limit: Option<usize>,
+    /// WASM linear memory bytes captured when `budget_base_scope` was armed (`0` on native).
+    budget_scope_linear_bytes: u64,
 }
 
 /// See [`Transaction::begin_rollback_scope`].
@@ -486,6 +488,7 @@ impl Transaction {
             rollback_scopes: Vec::new(),
             budget_base_scope: None,
             doc_budget_limit: None,
+            budget_scope_linear_bytes: crate::memory::wasm_linear_memory_bytes(),
         })
     }
 
@@ -536,17 +539,23 @@ impl Transaction {
         if !self.finished && !self.local_ops.is_empty() {
             if let Some(doc_inner) = self.doc.upgrade() {
                 let doc = LoroDoc::from_inner(doc_inner);
-                if let Some(limit) = self.doc_budget_limit {
+                if self.doc_budget_limit.is_some()
+                    || (doc.has_max_doc_bytes() && self.budget_base_scope.is_some())
+                {
                     let _txn_guard = doc.txn.lock();
                     let uncommitted = self.estimated_uncommitted_bytes();
                     doc.enforce_memory_watermarks_with_txn_bytes(uncommitted, false);
-                    if let Err(budget_err) = doc.check_doc_budget_with_limit(uncommitted, limit) {
+                    if let Err(budget_err) =
+                        doc.check_transaction_budget(&self, Some(self.budget_scope_linear_bytes))
+                    {
                         if let Some(scope) = self.budget_base_scope.take() {
                             self.finished = true;
                             doc.rollback_transaction_scope(&mut self, scope)?;
                             let mut state = doc.state.lock();
                             state.abort_txn();
                             state.clear_local_rollback_stack();
+                            drop(state);
+                            doc.refresh_cached_doc_bytes_unlocked();
                             return Err(budget_err);
                         }
                     }
@@ -684,7 +693,7 @@ impl Transaction {
             debug_assert!(doc.txn.can_lock_in_this_thread());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
-        LoroDoc::from_inner(doc).enforce_memory_watermarks();
+        LoroDoc::from_inner(doc).on_commit_completed();
         Ok(None)
     }
 
@@ -704,6 +713,10 @@ impl Transaction {
         self.budget_base_scope
     }
 
+    pub(crate) fn budget_scope_linear_bytes(&self) -> u64 {
+        self.budget_scope_linear_bytes
+    }
+
     /// Mark the start of a batch that `LoroDoc` rolls back if it fails
     /// ([`Self::roll_back_scope`]). The txn may already hold ops; they are kept.
     pub(crate) fn begin_rollback_scope(&mut self, id: u64) {
@@ -713,6 +726,7 @@ impl Transaction {
     pub(crate) fn begin_budget_rollback_scope(&mut self, id: u64) {
         debug_assert!(self.rollback_scopes.is_empty());
         self.budget_base_scope = Some(id);
+        self.budget_scope_linear_bytes = crate::memory::wasm_linear_memory_bytes();
         self.begin_rollback_scope_inner(id, true);
     }
 
@@ -855,6 +869,9 @@ impl Transaction {
             if !scope.ignore_thread && scope.thread != current_thread_mark() {
                 scope.foreign_ops = true;
             }
+        }
+        if self.local_ops.is_empty() && self.budget_base_scope.is_some() {
+            self.budget_scope_linear_bytes = crate::memory::wasm_linear_memory_bytes();
         }
 
         let len = content.content_len();

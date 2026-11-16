@@ -11,7 +11,7 @@ use std::{
     fmt::Debug,
     ops::Bound,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
 };
@@ -393,10 +393,14 @@ impl quick_cache::Weighter<(u64, usize), Arc<Block>> for BlockDataWeighter {
 struct SharedBlockCacheInner {
     max_bytes: AtomicUsize,
     cache: RwLock<Option<BlockCache>>,
+    has_explicit_max: AtomicBool,
+    has_parent: AtomicBool,
+    parent: RwLock<Option<Arc<SharedBlockCacheInner>>>,
 }
 
 /// A lazily-allocated, byte-bounded block cache that can be shared across all SSTables
-/// owned by a document (including both `ChangeStore` and `DocState` stores).
+/// owned by a document (including both `ChangeStore` and `DocState` stores), or
+/// optionally delegated to a process-wide parent cache.
 #[derive(Clone, Debug)]
 pub struct SharedBlockCache {
     inner: Arc<SharedBlockCacheInner>,
@@ -409,20 +413,27 @@ impl Default for SharedBlockCache {
 }
 
 impl SharedBlockCache {
-    /// Creates a new shared block cache bounded to at most `max_bytes` decompressed block bytes.
-    /// When `max_bytes == 0`, block reads decode on demand without caching.
-    pub fn new(max_bytes: usize) -> Self {
+    fn new_with_flag(max_bytes: usize, has_explicit_max: bool) -> Self {
         Self {
             inner: Arc::new(SharedBlockCacheInner {
                 max_bytes: AtomicUsize::new(max_bytes),
                 cache: RwLock::new(None),
+                has_explicit_max: AtomicBool::new(has_explicit_max),
+                has_parent: AtomicBool::new(false),
+                parent: RwLock::new(None),
             }),
         }
     }
 
+    /// Creates a new shared block cache bounded to at most `max_bytes` decompressed block bytes.
+    /// When `max_bytes == 0`, block reads decode on demand without caching.
+    pub fn new(max_bytes: usize) -> Self {
+        Self::new_with_flag(max_bytes, true)
+    }
+
     /// Creates a shared block cache with the default 4 MiB per-document budget.
     pub fn default_per_doc() -> Self {
-        Self::new(BLOCK_CACHE_MAX_BYTES as usize)
+        Self::new_with_flag(BLOCK_CACHE_MAX_BYTES as usize, false)
     }
 
     pub fn max_bytes(&self) -> usize {
@@ -446,6 +457,59 @@ impl SharedBlockCache {
         }
     }
 
+    /// Sets or clears an explicit per-document max cache byte cap.
+    ///
+    /// When `Some(bytes)`, this cache enforces its own local budget instead of delegating to
+    /// an attached parent cache. When `None`, it reverts to default sizing and delegates to
+    /// the parent cache if one is attached.
+    pub fn set_explicit_max_bytes(&self, max_bytes: Option<usize>) {
+        match max_bytes {
+            Some(bytes) => {
+                self.inner.has_explicit_max.store(true, Ordering::Release);
+                self.set_max_bytes(bytes);
+            }
+            None => {
+                self.inner.has_explicit_max.store(false, Ordering::Release);
+                self.inner
+                    .max_bytes
+                    .store(BLOCK_CACHE_MAX_BYTES as usize, Ordering::Relaxed);
+                self.clear();
+            }
+        }
+    }
+
+    /// Attaches or detaches a shared parent block cache used whenever no explicit per-document
+    /// limit overrides it.
+    pub fn set_parent(&self, parent: Option<&SharedBlockCache>) {
+        let parent_arc = parent
+            .filter(|p| !Arc::ptr_eq(&self.inner, &p.inner))
+            .map(|p| p.inner.clone());
+        let has_parent = parent_arc.is_some();
+        {
+            let mut guard = self.inner.parent.write().unwrap();
+            *guard = parent_arc;
+        }
+        self.inner.has_parent.store(has_parent, Ordering::Release);
+        if has_parent && !self.inner.has_explicit_max.load(Ordering::Acquire) {
+            self.clear();
+        }
+    }
+
+    #[inline]
+    pub fn is_delegating_to_parent(&self) -> bool {
+        self.inner.has_parent.load(Ordering::Acquire)
+            && !self.inner.has_explicit_max.load(Ordering::Acquire)
+    }
+
+    /// Returns bytes cached locally in this cache, returning `0` when delegating to a parent.
+    pub fn local_used_bytes(&self) -> usize {
+        if self.is_delegating_to_parent() {
+            0
+        } else {
+            self.used_bytes()
+        }
+    }
+
     pub fn get_or_insert_with(
         &self,
         table_id: u64,
@@ -453,12 +517,34 @@ impl SharedBlockCache {
         table_blocks_hint: usize,
         decode: impl FnOnce() -> Arc<Block>,
     ) -> Arc<Block> {
-        let max_bytes = self.max_bytes();
+        if self.is_delegating_to_parent() {
+            let parent_arc = { self.inner.parent.read().unwrap().clone() };
+            if let Some(parent) = parent_arc {
+                return Self::get_or_insert_on_inner(
+                    &parent,
+                    table_id,
+                    block_idx,
+                    table_blocks_hint,
+                    decode,
+                );
+            }
+        }
+        Self::get_or_insert_on_inner(&self.inner, table_id, block_idx, table_blocks_hint, decode)
+    }
+
+    fn get_or_insert_on_inner(
+        inner: &SharedBlockCacheInner,
+        table_id: u64,
+        block_idx: usize,
+        table_blocks_hint: usize,
+        decode: impl FnOnce() -> Arc<Block>,
+    ) -> Arc<Block> {
+        let max_bytes = inner.max_bytes.load(Ordering::Relaxed);
         if max_bytes == 0 {
             return decode();
         }
         {
-            let guard = self.inner.cache.read().unwrap();
+            let guard = inner.cache.read().unwrap();
             if let Some(cache) = guard.as_ref() {
                 return cache
                     .get_or_insert_with(&(table_id, block_idx), || Ok::<_, LoroError>(decode()))
@@ -466,7 +552,7 @@ impl SharedBlockCache {
             }
         }
         {
-            let mut guard = self.inner.cache.write().unwrap();
+            let mut guard = inner.cache.write().unwrap();
             if guard.is_none() {
                 let max_blocks = (max_bytes / crate::MemKvStore::DEFAULT_BLOCK_SIZE).max(1);
                 let estimated_blocks = table_blocks_hint.clamp(1, max_blocks);

@@ -35,9 +35,10 @@ over graceful degradation.
   [../../context/memory-analysis.md](../../context/memory-analysis.md).
 - `src/fork.rs` owns `fork_at_inner`; both fork paths copy the local memory
   budget. See the memory-budget context below.
-- Bounded `LoroDoc` memory budget (`MemoryBudget`, `DocMemoryStats`, Stage 1/2
-  hysteresis & cold demotion, Stage 3 hard quotas, state-before-oplog rollback,
-  and `try_commit`):
+- Bounded `LoroDoc` & global memory budgets (`MemoryBudget`,
+  `GlobalMemoryBudget`, `DocMemoryStats`, `GlobalMemoryStats`, Stage 1/2
+  hysteresis & clock/LRU demotion, Stage 3 hard quotas, state-before-oplog
+  rollback, and `try_commit`):
   [../../context/memory-budget.md](../../context/memory-budget.md).
 - `src/arena.rs`: container IDs, indices, and parent links. How a parent is
   found in a lazily loaded document, and the locking rules:

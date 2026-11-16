@@ -321,6 +321,57 @@ impl<T> LoroMutex<T> {
         }
     }
 
+    #[track_caller]
+    /// Attempts to acquire the lock without blocking or panicking on lock-order conflicts.
+    pub(crate) fn try_lock(&self) -> Option<LoroMutexGuard<'_, T>> {
+        if self.kind == LockKind::Txn as u8
+            && (self.is_held_by_current_thread() || self.txn_gate.must_wait())
+        {
+            return None;
+        }
+        #[cfg(debug_assertions)]
+        {
+            let caller = Location::caller();
+            let v = self.currently_locked_in_this_thread.get_or_default();
+            let last = *v.lock();
+            if last.kind >= self.kind {
+                return None;
+            }
+            let this = LockInfo {
+                kind: self.kind,
+                caller_location: Some(caller),
+            };
+            let guard = self.lock.try_lock()?;
+            if self.kind == LockKind::Txn as u8 && self.txn_gate.must_wait() {
+                drop(guard);
+                return None;
+            }
+            self.mark_holder();
+            *v.lock() = this;
+            Some(LoroMutexGuard {
+                guard,
+                _inner: LoroMutexGuardInner {
+                    inner: self,
+                    this,
+                    last,
+                },
+            })
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let guard = self.lock.try_lock()?;
+            if self.kind == LockKind::Txn as u8 && self.txn_gate.must_wait() {
+                drop(guard);
+                return None;
+            }
+            self.mark_holder();
+            Some(LoroMutexGuard {
+                guard,
+                _inner: LoroMutexGuardInner { inner: self },
+            })
+        }
+    }
+
     fn mark_holder(&self) {
         if self.kind == LockKind::Txn as u8 {
             self.holder
