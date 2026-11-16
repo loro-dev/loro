@@ -211,6 +211,9 @@ pub struct Transaction {
     doc: Weak<LoroDocInner>,
     frontiers: Frontiers,
     local_ops: RleVec<[Op; 1]>, // TODO: use a more efficient data structure
+    /// Sum of [`Op::payload_heap_bytes`] over `local_ops`, kept as ops are pushed
+    /// and rolled back so budget checks never walk the transaction.
+    local_ops_payload_bytes: usize,
     event_hints: FxHashMap<ContainerIdx, Vec<EventHint>>,
     pub(super) arena: SharedArena,
     finished: bool,
@@ -479,6 +482,7 @@ impl Transaction {
             start_lamport: next_lamport,
             event_hints: Default::default(),
             local_ops: RleVec::new(),
+            local_ops_payload_bytes: 0,
             finished: false,
             on_commit: None,
             msg: None,
@@ -603,6 +607,7 @@ impl Transaction {
         }
 
         let ops = std::mem::take(&mut self.local_ops);
+        self.local_ops_payload_bytes = 0;
         let deps = take(&mut self.frontiers);
         let change = Change {
             lamport: self.start_lamport,
@@ -698,7 +703,8 @@ impl Transaction {
     }
 
     pub(crate) fn estimated_uncommitted_bytes(&self) -> usize {
-        let ops_bytes = self.local_ops.len() * std::mem::size_of::<Op>();
+        let ops_bytes = (self.local_ops.len() * std::mem::size_of::<Op>())
+            .saturating_add(self.local_ops_payload_bytes);
         let hints_bytes = self.event_hints.capacity()
             * (std::mem::size_of::<ContainerIdx>() + std::mem::size_of::<Vec<EventHint>>() + 8)
             + self
@@ -777,14 +783,20 @@ impl Transaction {
             self.budget_base_scope = None;
         }
         let ops = take(&mut self.local_ops);
+        self.local_ops_payload_bytes = 0;
         for op in ops.iter() {
             let end = op.counter + op.atom_len() as Counter;
-            if end <= scope.counter {
-                self.local_ops.push(op.clone());
+            let kept = if end <= scope.counter {
+                op.clone()
             } else if op.counter < scope.counter {
-                self.local_ops
-                    .push(op.slice(0, (scope.counter - op.counter) as usize));
-            }
+                op.slice(0, (scope.counter - op.counter) as usize)
+            } else {
+                continue;
+            };
+            self.local_ops_payload_bytes = self
+                .local_ops_payload_bytes
+                .saturating_add(kept.payload_heap_bytes());
+            self.local_ops.push(kept);
         }
         for (container, (len, last)) in scope.event_hints {
             if len == 0 {
@@ -948,6 +960,9 @@ impl Transaction {
                 container_hints.push(event);
             }
         }
+        self.local_ops_payload_bytes = self
+            .local_ops_payload_bytes
+            .saturating_add(op.payload_heap_bytes());
         self.local_ops.push(op);
         Ok(())
     }

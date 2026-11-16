@@ -834,3 +834,58 @@ fn forks_inherit_independent_memory_policies_and_enforce_blob_limits() {
     assert_eq!(fork.memory_budget(), budget);
     assert_eq!(fork.get_text("text").to_string(), "before");
 }
+
+/// Overwritten map values stay alive in the history ops (`Arc<MapSet>`) and in
+/// an open transaction. They count toward the hard quota: twenty 512 KiB
+/// overwrites of one key in a single transaction used to be estimated at a few
+/// KiB, and `try_commit` accepted about 10 MiB under a 2 MiB quota.
+#[test]
+fn boxed_op_payloads_count_toward_the_hard_quota() {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    map.insert("k", "base").unwrap();
+    doc.commit();
+    doc.set_memory_budget(MemoryBudget {
+        max_doc_bytes: Some(2 << 20),
+        ..Default::default()
+    });
+    for i in 0..20 {
+        map.insert("k", format!("{i:08}").repeat(64 * 1024))
+            .unwrap();
+    }
+    let pending = doc.memory_stats();
+    assert!(
+        pending.uncommitted_txn_bytes >= 20 * 512 * 1024,
+        "uncommitted payloads: {}",
+        pending.uncommitted_txn_bytes
+    );
+    let err = doc.try_commit().unwrap_err();
+    assert_eq!(
+        err.memory_limit_info().map(|info| info.kind),
+        Some(MemoryLimitKind::DocBudget)
+    );
+    assert_eq!(map.get("k").unwrap().into_value().unwrap(), "base".into());
+
+    // The rejected transaction is gone; a small edit still fits.
+    map.insert("k", "small").unwrap();
+    doc.try_commit().unwrap();
+    assert_eq!(map.get("k").unwrap().into_value().unwrap(), "small".into());
+}
+
+/// The same payloads committed one by one are counted in the parsed history.
+#[test]
+fn boxed_op_payloads_in_history_are_counted() {
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    let before = doc.memory_stats().change_cache_bytes;
+    for i in 0..8 {
+        map.insert("k", format!("{i:08}").repeat(32 * 1024))
+            .unwrap();
+        doc.commit();
+    }
+    let after = doc.memory_stats().change_cache_bytes;
+    assert!(
+        after - before >= 8 * 256 * 1024,
+        "history payloads: {before} -> {after}"
+    );
+}

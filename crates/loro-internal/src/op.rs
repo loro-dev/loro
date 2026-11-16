@@ -95,6 +95,11 @@ pub struct RichOp<'a> {
 }
 
 impl Op {
+    /// See [`InnerContent::payload_heap_bytes`].
+    pub(crate) fn payload_heap_bytes(&self) -> usize {
+        self.content.payload_heap_bytes()
+    }
+
     #[inline]
     #[allow(unused)]
     pub(crate) fn new(id: ID, content: InnerContent, container: ContainerIdx) -> Self {

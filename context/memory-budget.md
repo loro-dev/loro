@@ -191,3 +191,16 @@ starts the scan before the drop through a loom atomic; without that, DPOR sees
 no conflict (the registry map and `Arc` counts are not loom objects) and explores
 one execution. It fails against the old `strong_count` rule.
 
+## Boxed op payloads
+
+`InnerContent::payload_heap_bytes` (`op/content.rs`) estimates heap owned beyond
+`size_of::<Op>()`: `Arc<MapSet>`, `Arc<SetListOp>`, `Arc<StyleOp>`, `Arc<TreeOp>`,
+future values, and list-insert values. It is conservative: a value shared with
+state, or a parsed block's value buffer, is counted for each op that holds it.
+`Transaction` keeps the sum in `local_ops_payload_bytes` (pushed ops, recomputed
+from the kept ops in `roll_back_scope`). `ChangesBlock::parsed_bytes` caches the
+parsed-change total per block; every content mutation goes through
+`ChangesBlock::content_mut` (or invalidates directly in `push_change`), so a
+statistics read walks only blocks changed since the previous read. Before this,
+twenty 512 KiB overwrites of one key in a transaction were estimated at a few KiB
+and `try_commit` accepted them under a 2 MiB quota.
