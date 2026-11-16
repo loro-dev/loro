@@ -6263,11 +6263,12 @@ fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
     LoroError::memory_limit_exceeded(MemoryLimitKind::GlobalBudget, used_usize, limit_usize)
 }
 
+/// Registered documents and the drop gate each shares with its handles.
+type RegistryEntries = FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>;
+
 struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
-    docs: parking_lot::Mutex<
-        FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>,
-    >,
+    docs: parking_lot::Mutex<RegistryEntries>,
     total_cached_doc_bytes: std::sync::atomic::AtomicU64,
     global_block_cache: SharedBlockCache,
     /// Usage left by the last soft sweep that could not reach its target, or 0.

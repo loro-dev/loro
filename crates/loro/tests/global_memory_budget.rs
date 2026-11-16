@@ -502,6 +502,8 @@ fn last_handle_drop_commits_while_another_thread_scans_the_registry() {
 /// other one in `strong_count` and skip the commit.
 #[test]
 fn concurrent_drops_of_the_last_two_handles_commit_once() {
+    // Documents created here are visible to the other tests' global statistics.
+    let (_lock, _reset) = lock_and_reset();
     let mut lost = 0;
     for i in 0..1000 {
         let doc = LoroDoc::new();
