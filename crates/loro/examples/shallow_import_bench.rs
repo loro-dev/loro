@@ -39,7 +39,9 @@ fn main() {
     src.set_peer_id(1).unwrap();
     let text = src.get_text("t");
     for i in 0..2_000 {
-        src.get_map("m").insert(&format!("k{i}"), "v".repeat(200)).unwrap();
+        src.get_map("m")
+            .insert(&format!("k{i}"), "v".repeat(200))
+            .unwrap();
     }
     src.commit();
     let middle = src.oplog_frontiers();

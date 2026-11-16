@@ -303,8 +303,21 @@ Tests: `the_global_estimate_refreshes_only_documents_marked_dirty` (`loro.rs`),
 `global_estimate_stays_exact_after_reads_edits_undo_drops_and_policy_switches`
 (`crates/loro/tests/global_memory_budget.rs`).
 
+## String arena shrink
+
+Verified against code 2026-11-16.
+
+`StrArena::shrink_spare_capacity` copies the arena into an exact-size buffer;
+`BytesSlice`s into the old buffer keep it alive, and `arena_bytes` counts length,
+not capacity. Measured (`crates/loro/examples/arena_shrink_bench.rs`, HEAD vs HEAD
+with the shrink disabled, live heap after `reclaim_memory`): 30k local text
+inserts 1,057,381 → 987,551 bytes (about 70 KB freed, 217 KB more allocated
+during the call); local map strings and imported text unchanged. It does free
+spare capacity, so it stays in `reclaim_memory` and in the global fallback (which
+now backs off).
+
 ## Remaining work
 
-Open items after `perf/memory-budget-followup-fixes`, with their evidence and the
-semantic decisions they need, are in
-[prompts/memory-budget/70](prompts/memory-budget/70-remaining-after-followup-fixes.md).
+Open items after this branch (`perf/memory-budget-remaining`), with their
+evidence and the semantic decisions they need, are in
+[prompts/memory-budget/80](prompts/memory-budget/80-remaining-after-incremental-estimate.md).
