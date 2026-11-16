@@ -527,13 +527,35 @@ impl DocState {
         config: Configure,
         lock_group: &LoroLockGroup,
     ) -> Arc<LoroMutex<Self>> {
+        Self::new_arc_with_cache(
+            doc,
+            arena,
+            config,
+            lock_group,
+            SharedBlockCache::default_per_doc(),
+        )
+    }
+
+    #[inline]
+    pub(crate) fn new_arc_with_cache(
+        doc: Weak<LoroDocInner>,
+        arena: SharedArena,
+        config: Configure,
+        lock_group: &LoroLockGroup,
+        block_cache: SharedBlockCache,
+    ) -> Arc<LoroMutex<Self>> {
         let peer = DefaultRandom.next_u64();
         // TODO: maybe we should switch to certain version in oplog?
 
         let peer = Arc::new(AtomicU64::new(peer));
         Arc::new(lock_group.new_lock(
             Self {
-                store: ContainerStore::new(arena.clone(), config.clone(), peer.clone()),
+                store: ContainerStore::new_with_cache(
+                    arena.clone(),
+                    config.clone(),
+                    peer.clone(),
+                    block_cache,
+                ),
                 peer,
                 arena,
                 frontiers: Frontiers::default(),

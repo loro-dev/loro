@@ -177,15 +177,19 @@ impl LoroDoc {
     pub fn new() -> Self {
         let visible_op_count = Arc::new(AtomicUsize::new(0));
         let kv_block_cache = SharedBlockCache::default_per_doc();
-        let oplog = OpLog::new(visible_op_count.clone());
-        oplog.set_block_cache(kv_block_cache.clone());
+        let oplog = OpLog::new_with_cache(visible_op_count.clone(), kv_block_cache.clone());
         let arena = oplog.arena.clone();
         let config: Configure = oplog.configure.clone();
         let lock_group = LoroLockGroup::new();
         let global_txn = Arc::new(lock_group.new_lock(None, LockKind::Txn));
         let inner = Arc::new_cyclic(|w| {
-            let state = DocState::new_arc(w.clone(), arena.clone(), config.clone(), &lock_group);
-            state.lock().set_block_cache(kv_block_cache.clone());
+            let state = DocState::new_arc_with_cache(
+                w.clone(),
+                arena.clone(),
+                config.clone(),
+                &lock_group,
+                kv_block_cache.clone(),
+            );
             LoroDocInner {
                 oplog: Arc::new(lock_group.new_lock(oplog, LockKind::OpLog)),
                 state,
@@ -205,7 +209,7 @@ impl LoroDoc {
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
                 undo_managers: crate::sync::Mutex::new(Vec::new()),
                 memory_budget: crate::sync::Mutex::new(MemoryBudget::default()),
-                has_max_doc_bytes: AtomicBool::new(false),
+                budget_flags: std::sync::atomic::AtomicU8::new(0),
                 kv_block_cache,
             }
         });
@@ -6072,11 +6076,27 @@ mod test {
     }
 }
 
+const BUDGET_FLAG_MAX_DOC: u8 = 1 << 0;
+const BUDGET_FLAG_WATERMARKS: u8 = 1 << 1;
+const BUDGET_FLAG_MAX_IMPORT_BLOB: u8 = 1 << 2;
+
 impl LoroDoc {
     /// Configures soft memory watermarks and hard memory quotas for this document.
     pub fn set_memory_budget(&self, budget: MemoryBudget) {
-        self.has_max_doc_bytes
-            .store(budget.max_doc_bytes.is_some(), Release);
+        let mut flags = 0u8;
+        if budget.max_doc_bytes.is_some() {
+            flags |= BUDGET_FLAG_MAX_DOC;
+        }
+        if budget.effective_high_watermark().is_some()
+            || budget.max_kv_block_cache_bytes.is_some()
+            || budget.max_decoded_value_cache_bytes.is_some()
+            || budget.max_undo_bytes.is_some()
+        {
+            flags |= BUDGET_FLAG_WATERMARKS;
+        }
+        if budget.max_import_blob_bytes.is_some() {
+            flags |= BUDGET_FLAG_MAX_IMPORT_BLOB;
+        }
         self.kv_block_cache.set_max_bytes(
             budget
                 .max_kv_block_cache_bytes
@@ -6089,6 +6109,7 @@ impl LoroDoc {
         let max_undo = budget.max_undo_bytes;
         let has_max_doc = budget.max_doc_bytes.is_some();
         *self.memory_budget.lock() = budget;
+        self.budget_flags.store(flags, Release);
 
         self.oplog.lock().set_max_pending_bytes(max_pending);
         if let Some(max_undo_bytes) = max_undo {
@@ -6120,10 +6141,23 @@ impl LoroDoc {
 
     #[inline]
     pub(crate) fn has_max_doc_bytes(&self) -> bool {
-        self.has_max_doc_bytes.load(Acquire)
+        self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_DOC != 0
+    }
+
+    #[inline]
+    fn has_watermark_budget(&self) -> bool {
+        self.budget_flags.load(Acquire) & BUDGET_FLAG_WATERMARKS != 0
+    }
+
+    #[inline]
+    fn has_max_import_blob_bytes(&self) -> bool {
+        self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_IMPORT_BLOB != 0
     }
 
     pub fn check_import_blob_limit(&self, len: usize) -> LoroResult<()> {
+        if !self.has_max_import_blob_bytes() {
+            return Ok(());
+        }
         if let Some(limit) = self.memory_budget.lock().max_import_blob_bytes {
             if len > limit {
                 return Err(LoroError::memory_limit_exceeded(
@@ -6137,6 +6171,9 @@ impl LoroDoc {
     }
 
     fn check_import_json_limit(&self, json: &JsonSchema) -> LoroResult<()> {
+        if !self.has_max_import_blob_bytes() {
+            return Ok(());
+        }
         struct CountingWriter {
             count: usize,
             limit: usize,
@@ -6319,6 +6356,9 @@ impl LoroDoc {
     }
 
     pub(crate) fn enforce_memory_watermarks(&self) {
+        if !self.has_watermark_budget() {
+            return;
+        }
         let uncommitted_txn_bytes = if self.txn.is_held_by_current_thread() {
             0
         } else {
@@ -6335,6 +6375,9 @@ impl LoroDoc {
         uncommitted_txn_bytes: usize,
         force_full: bool,
     ) {
+        if !force_full && !self.has_watermark_budget() {
+            return;
+        }
         let budget = self.memory_budget.lock().clone();
         if !force_full
             && budget.effective_high_watermark().is_none()
@@ -6362,6 +6405,9 @@ impl LoroDoc {
         uncommitted_txn_bytes: usize,
         force_full: bool,
     ) {
+        if !force_full && !self.has_watermark_budget() {
+            return;
+        }
         let budget = self.memory_budget.lock().clone();
         if !force_full
             && budget.effective_high_watermark().is_none()

@@ -90,8 +90,17 @@ macro_rules! ctx {
 
 impl ContainerStore {
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
+        Self::new_with_cache(arena, conf, peer, SharedBlockCache::default_per_doc())
+    }
+
+    pub(crate) fn new_with_cache(
+        arena: SharedArena,
+        conf: Configure,
+        peer: Arc<AtomicU64>,
+        block_cache: SharedBlockCache,
+    ) -> Self {
         ContainerStore {
-            store: InnerStore::new(arena.clone(), conf.clone()),
+            store: InnerStore::new_with_cache(arena.clone(), conf.clone(), block_cache),
             arena,
             conf,
             shallow_root_store: None,

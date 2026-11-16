@@ -212,9 +212,18 @@ pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
 impl OpLog {
     #[inline]
     pub(crate) fn new(visible_op_count: Arc<AtomicUsize>) -> Self {
+        Self::new_with_cache(visible_op_count, SharedBlockCache::default_per_doc())
+    }
+
+    #[inline]
+    pub(crate) fn new_with_cache(
+        visible_op_count: Arc<AtomicUsize>,
+        block_cache: crate::kv_store::SharedBlockCache,
+    ) -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
-        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
+        let change_store =
+            ChangeStore::new_mem_with_cache(&arena, cfg.merge_interval_in_s.clone(), block_cache);
         arena.set_creator_resolver(change_store.creator_resolver());
         Self {
             visible_op_count,

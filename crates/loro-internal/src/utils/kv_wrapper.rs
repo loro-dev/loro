@@ -21,12 +21,19 @@ impl Clone for KvWrapper {
 }
 
 impl KvWrapper {
+    #[allow(dead_code)]
     pub fn new_mem() -> Self {
+        Self::new_mem_with_cache(SharedBlockCache::default_per_doc())
+    }
+
+    pub fn new_mem_with_cache(block_cache: SharedBlockCache) -> Self {
         Self {
             // kv: Arc::new(Mutex::new(BTreeMap::new())),
             kv: Arc::new(Mutex::new(MemKvStore::new(
                 // set false because it's depended by GC snapshot's import & export
-                MemKvConfig::default().should_encode_none(false),
+                MemKvConfig::default()
+                    .should_encode_none(false)
+                    .block_cache(block_cache),
             ))),
         }
     }

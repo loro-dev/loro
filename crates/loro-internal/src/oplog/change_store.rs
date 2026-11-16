@@ -354,6 +354,14 @@ fn debug_dag_nodes_of_block(block: &ChangesBlock) -> DebugHeaderNodes {
 
 impl ChangeStore {
     pub fn new_mem(a: &SharedArena, merge_interval: Arc<AtomicI64>) -> Self {
+        Self::new_mem_with_cache(a, merge_interval, SharedBlockCache::default_per_doc())
+    }
+
+    pub fn new_mem_with_cache(
+        a: &SharedArena,
+        merge_interval: Arc<AtomicI64>,
+        block_cache: SharedBlockCache,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ChangeStoreInner {
                 start_vv: ImVersionVector::new(),
@@ -365,7 +373,9 @@ impl ChangeStore {
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
-            external_kv: Arc::new(Mutex::new(MemKvStore::new(MemKvConfig::default()))),
+            external_kv: Arc::new(Mutex::new(MemKvStore::new(
+                MemKvConfig::default().block_cache(block_cache),
+            ))),
             // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
             merge_interval,
             root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),

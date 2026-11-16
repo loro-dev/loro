@@ -181,7 +181,7 @@ pub struct LoroDocInner {
         >,
     >,
     pub(crate) memory_budget: crate::sync::Mutex<memory::MemoryBudget>,
-    pub(crate) has_max_doc_bytes: AtomicBool,
+    pub(crate) budget_flags: std::sync::atomic::AtomicU8,
     pub(crate) kv_block_cache: kv_store::SharedBlockCache,
 }
 

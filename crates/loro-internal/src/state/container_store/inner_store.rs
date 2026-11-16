@@ -751,10 +751,18 @@ impl InnerStore {
 
 impl InnerStore {
     pub(crate) fn new(arena: SharedArena, config: Configure) -> Self {
+        Self::new_with_cache(arena, config, SharedBlockCache::default_per_doc())
+    }
+
+    pub(crate) fn new_with_cache(
+        arena: SharedArena,
+        config: Configure,
+        block_cache: SharedBlockCache,
+    ) -> Self {
         Self {
             arena,
             store: Vec::new(),
-            kv: KvWrapper::new_mem(),
+            kv: KvWrapper::new_mem_with_cache(block_cache),
             load_state: LoadState::AllLoaded,
             config,
             value_cache_queue: VecDeque::new(),
