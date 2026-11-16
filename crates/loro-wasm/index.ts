@@ -501,6 +501,7 @@ decorateMethods(LoroDoc.prototype, [
   "checkoutToLatest",
   "checkout",
   "commit",
+  "tryCommit",
   "getCursorPos",
   "revertTo",
   "export",

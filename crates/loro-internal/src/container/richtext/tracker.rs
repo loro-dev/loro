@@ -746,6 +746,15 @@ impl Tracker {
         self.applied_vv = vv.clone();
         self.current_vv = vv.clone();
     }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let vv_bytes = (self.applied_vv.len() + self.current_vv.len()) * 16;
+        let rope_nodes = self.rope.tree.node_len();
+        let rope_bytes = rope_nodes * (std::mem::size_of::<FugueSpan>() + 16);
+        vv_bytes
+            .saturating_add(rope_bytes)
+            .saturating_add(self.id_to_cursor.estimated_heap_bytes())
+    }
 }
 
 #[cfg(test)]

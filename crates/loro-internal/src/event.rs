@@ -535,6 +535,83 @@ impl Diff {
             _ => pos,
         }
     }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        fn value_or_handler_bytes(vh: &ValueOrHandler) -> usize {
+            match vh {
+                ValueOrHandler::Value(v) => v.estimated_heap_bytes(),
+                ValueOrHandler::Handler(h) => container_id_estimated_bytes(&h.id()),
+            }
+        }
+
+        match self {
+            Diff::List(list) => {
+                let mut total = list.node_len() * std::mem::size_of::<ListDiffItem>();
+                for item in list.iter() {
+                    if let DeltaItem::Replace { value, .. } = item {
+                        for vh in value.iter() {
+                            total = total.saturating_add(value_or_handler_bytes(vh));
+                        }
+                    }
+                }
+                total
+            }
+            Diff::Text(text) => {
+                let mut total = text.node_len() * std::mem::size_of::<TextDiffItem>();
+                for item in text.iter() {
+                    if let DeltaItem::Replace { value, attr, .. } = item {
+                        total = total.saturating_add(value.len_bytes());
+                        if !attr.0.is_empty() {
+                            total = total.saturating_add(
+                                attr.0.capacity()
+                                    * (std::mem::size_of::<String>()
+                                        + std::mem::size_of::<LoroValue>()
+                                        + 8),
+                            );
+                            for (k, v) in attr.0.iter() {
+                                total = total.saturating_add(k.capacity()).saturating_add(
+                                    v.estimated_heap_bytes()
+                                        .saturating_sub(std::mem::size_of::<LoroValue>()),
+                                );
+                            }
+                        }
+                    }
+                }
+                total
+            }
+            Diff::Map(map) => {
+                let mut total = map.updated.capacity()
+                    * (std::mem::size_of::<InternalString>()
+                        + std::mem::size_of::<crate::delta::ResolvedMapValue>()
+                        + 8);
+                for mv in map.updated.values() {
+                    if let Some(vh) = &mv.value {
+                        total = total.saturating_add(
+                            value_or_handler_bytes(vh)
+                                .saturating_sub(std::mem::size_of::<LoroValue>()),
+                        );
+                    }
+                }
+                total
+            }
+            Diff::Tree(tree) => {
+                tree.diff.capacity() * std::mem::size_of::<crate::delta::TreeDiffItem>()
+            }
+            #[cfg(feature = "counter")]
+            Diff::Counter(_) => 0,
+            Diff::Unknown => 0,
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn container_id_estimated_bytes(id: &ContainerID) -> usize {
+    match id {
+        ContainerID::Root { name, .. } => {
+            std::mem::size_of::<ContainerID>().saturating_add(name.len())
+        }
+        ContainerID::Normal { .. } => std::mem::size_of::<ContainerID>(),
+    }
 }
 
 pub fn str_to_path(s: &str) -> Option<Vec<Index>> {

@@ -1,7 +1,7 @@
 use crate::sync::Mutex;
 use bytes::Bytes;
 pub use loro_kv_store::compress::CompressionType;
-pub use loro_kv_store::MemKvStore;
+pub use loro_kv_store::{MemKvStore, SharedBlockCache};
 use std::sync::Arc;
 use std::{collections::BTreeMap, ops::Bound};
 
@@ -29,6 +29,14 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
         self.import_all(bytes)
     }
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
+    fn estimated_memory_bytes(&self) -> usize {
+        self.size()
+    }
+    fn spilled_disk_bytes(&self) -> usize {
+        0
+    }
+    fn set_block_cache(&mut self, _cache: SharedBlockCache) {}
+    fn flush(&mut self) {}
 }
 
 fn get_common_prefix_len_and_strip<'a, T: AsRef<[u8]> + ?Sized>(
@@ -104,6 +112,18 @@ impl KvStore for MemKvStore {
 
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
         Arc::new(Mutex::new(self.clone()))
+    }
+
+    fn estimated_memory_bytes(&self) -> usize {
+        self.estimated_memory_bytes()
+    }
+
+    fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.set_block_cache(cache)
+    }
+
+    fn flush(&mut self) {
+        self.flush()
     }
 }
 

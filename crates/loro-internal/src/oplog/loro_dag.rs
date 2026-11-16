@@ -155,6 +155,30 @@ impl AppDag {
         &self.shallow_since_frontiers
     }
 
+    pub(crate) fn estimated_memory_bytes(&self) -> usize {
+        let map_len = self.map.lock().len();
+        let node_bytes = map_len.saturating_mul(
+            std::mem::size_of::<ID>() + std::mem::size_of::<AppDagNodeInner>() + 48,
+        );
+        let vv_bytes = self
+            .vv
+            .len()
+            .saturating_add(self.unparsed_vv.lock().len())
+            .saturating_add(self.shallow_since_vv.len())
+            .saturating_mul(16);
+        let dep_point_bytes = self.unhandled_dep_points.lock().len().saturating_mul(32);
+        let frontier_bytes = self
+            .frontiers
+            .len()
+            .saturating_add(self.shallow_since_frontiers.len())
+            .saturating_add(self.shallow_root_frontiers_deps.len())
+            .saturating_mul(std::mem::size_of::<ID>());
+        node_bytes
+            .saturating_add(vv_bytes)
+            .saturating_add(dep_point_bytes)
+            .saturating_add(frontier_bytes)
+    }
+
     pub(crate) fn begin_import_rollback(&mut self, old_vv: Arc<VersionVector>) {
         let old_vv_is_empty = self.vv.is_empty();
         let mut rollback = self.import_rollback.lock();
@@ -172,6 +196,10 @@ impl AppDag {
         });
         self.import_rollback_has_journal
             .store(!old_vv_is_empty, AtomicOrdering::Relaxed);
+    }
+
+    pub(crate) fn has_pending_txn(&self) -> bool {
+        self.pending_txn_node.is_some()
     }
 
     pub(crate) fn commit_import_rollback(&mut self) {

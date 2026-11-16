@@ -67,7 +67,7 @@ mod cache {
     #[derive(Clone, Debug)]
     pub(super) struct CachedCursor {
         leaf: LeafIndex,
-        index: FxHashMap<PosType, usize>,
+        pub(super) index: FxHashMap<PosType, usize>,
     }
 
     impl RichtextState {
@@ -1419,6 +1419,31 @@ fn insert_stays_before_anchor(style: &StyleOp, anchor_type: AnchorType) -> bool 
 }
 
 impl RichtextState {
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let cache = self.tree.root_cache();
+        let bytes_len = cache.bytes.max(0) as usize;
+        let entity_len = cache.entity_len.max(0) as usize;
+        let style_bytes = if self.style_ranges.is_some() {
+            std::mem::size_of::<StyleRangeMap>() + entity_len.saturating_mul(16)
+        } else {
+            0
+        };
+        let cursor_bytes = self.cached_cursor.as_ref().map_or(0, |c| {
+            std::mem::size_of::<CachedCursor>()
+                + c.index.capacity()
+                    * (std::mem::size_of::<PosType>() + std::mem::size_of::<usize>() + 8)
+        });
+        std::mem::size_of::<Self>()
+            .saturating_add(bytes_len)
+            .saturating_add(entity_len.saturating_mul(24))
+            .saturating_add(style_bytes)
+            .saturating_add(cursor_bytes)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) {
+        self.clear_cache();
+    }
+
     pub(crate) fn from_chunks<I: Iterator<Item = impl Into<RichtextStateChunk>>>(i: I) -> Self {
         Self {
             tree: i.collect(),

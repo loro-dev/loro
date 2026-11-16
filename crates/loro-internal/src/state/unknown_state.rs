@@ -21,6 +21,10 @@ impl UnknownState {
     pub fn new(idx: ContainerIdx) -> Self {
         Self { idx }
     }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
 }
 
 impl ContainerState for UnknownState {

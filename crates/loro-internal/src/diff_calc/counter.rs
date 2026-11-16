@@ -61,3 +61,11 @@ impl DiffCalculatorTrait for CounterDiffCalculator {
         (InternalDiff::Counter(diff), DiffMode::Linear)
     }
 }
+
+impl CounterDiffCalculator {
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.ops.len() * (std::mem::size_of::<ID>() + std::mem::size_of::<f64>() + 32),
+        )
+    }
+}

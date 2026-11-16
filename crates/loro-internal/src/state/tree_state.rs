@@ -395,6 +395,26 @@ mod btree {
             self.tree.root_cache().len
         }
 
+        pub(super) fn estimated_heap_bytes(&self) -> usize {
+            let tree_len = self.len();
+            let leaf_bytes = self.id_to_leaf_index.capacity()
+                * (std::mem::size_of::<TreeID>() + std::mem::size_of::<LeafIndex>() + 8);
+            let fi_bytes: usize = self
+                .tree
+                .iter()
+                .map(|elem| {
+                    std::mem::size_of::<Elem>() + 16 + elem.pos.position.as_bytes().len() + 16
+                })
+                .sum();
+            std::mem::size_of::<Self>()
+                .saturating_add(leaf_bytes)
+                .saturating_add(fi_bytes.max(tree_len * std::mem::size_of::<Elem>()))
+        }
+
+        pub(super) fn shrink_to_fit(&mut self) {
+            self.id_to_leaf_index.shrink_to_fit();
+        }
+
         pub(super) fn get_elem_at(&self, pos: usize) -> Option<&Elem> {
             let result = self.tree.query::<LengthFinder>(&pos)?;
             if !result.found {
@@ -1569,6 +1589,49 @@ impl Drop for TreeNodeWithChildren {
         while let Some(mut node) = pending.pop() {
             pending.append(&mut node.children);
         }
+    }
+}
+
+impl TreeState {
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let tree_map_bytes = self.trees.capacity()
+            * (std::mem::size_of::<TreeID>() + std::mem::size_of::<TreeStateNode>() + 8)
+            + self
+                .trees
+                .values()
+                .map(|n| n.position.as_ref().map_or(0, |p| p.as_bytes().len()))
+                .sum::<usize>();
+        let children_map_bytes = self.children.0.capacity()
+            * (std::mem::size_of::<TreeParentId>() + std::mem::size_of::<NodeChildren>() + 8)
+            + self
+                .children
+                .0
+                .values()
+                .map(|nc| match nc {
+                    NodeChildren::Vec(v) => {
+                        v.capacity() * std::mem::size_of::<(NodePosition, TreeID)>()
+                            + v.iter()
+                                .map(|(p, _)| p.position.as_bytes().len())
+                                .sum::<usize>()
+                    }
+                    NodeChildren::BTree(bt) => bt.estimated_heap_bytes(),
+                })
+                .sum::<usize>();
+        std::mem::size_of::<Self>()
+            .saturating_add(tree_map_bytes)
+            .saturating_add(children_map_bytes)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) {
+        self.trees.shrink_to_fit();
+        self.children.0.retain(|_, v| v.len() > 0);
+        for children in self.children.0.values_mut() {
+            match children {
+                NodeChildren::Vec(v) => v.shrink_to_fit(),
+                NodeChildren::BTree(bt) => bt.shrink_to_fit(),
+            }
+        }
+        self.children.0.shrink_to_fit();
     }
 }
 

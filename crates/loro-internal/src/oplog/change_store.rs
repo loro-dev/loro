@@ -8,7 +8,7 @@ use crate::{
     arena::{ArenaExtent, CreatorOp, SharedArena, SharedArenaRollback},
     change::Change,
     estimated_size::EstimatedSize,
-    kv_store::KvStore,
+    kv_store::{KvStore, SharedBlockCache},
     op::Op,
     parent::register_container_and_parent_link,
     version::{Frontiers, ImVersionVector},
@@ -1397,6 +1397,60 @@ impl ChangeStore {
             .scan(Bound::Unbounded, Bound::Unbounded)
             .map(|(k, v)| k.len() + v.len())
             .sum()
+    }
+
+    pub(crate) fn set_block_cache(&self, cache: SharedBlockCache) {
+        self.external_kv.lock().set_block_cache(cache);
+    }
+
+    pub(crate) fn flush_kv(&self) {
+        self.external_kv.lock().flush();
+    }
+
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.external_kv.lock().spilled_disk_bytes()
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> (usize, usize) {
+        let kv_bytes = self.external_kv.lock().estimated_memory_bytes();
+        let inner = self.inner.lock();
+        let mut change_cache_bytes = 0usize;
+        for block in inner.mem_parsed_kv.values() {
+            let base = std::mem::size_of::<ChangesBlock>() + 64;
+            let content_bytes = match &block.content {
+                ChangesBlockContent::Changes(changes) => {
+                    let op_bytes: usize = changes
+                        .iter()
+                        .map(|c| {
+                            std::mem::size_of::<Change>()
+                                + c.ops.len().saturating_mul(std::mem::size_of::<Op>())
+                        })
+                        .sum();
+                    op_bytes.saturating_add(block.estimated_size)
+                }
+                ChangesBlockContent::Bytes(b) => b
+                    .bytes
+                    .len()
+                    .saturating_add(if b.header.get().is_some() { 128 } else { 0 }),
+                ChangesBlockContent::Both(changes, b) => {
+                    let op_bytes: usize = changes
+                        .iter()
+                        .map(|c| {
+                            std::mem::size_of::<Change>()
+                                + c.ops.len().saturating_mul(std::mem::size_of::<Op>())
+                        })
+                        .sum();
+                    op_bytes
+                        .saturating_add(block.estimated_size)
+                        .saturating_add(b.bytes.len())
+                        .saturating_add(if b.header.get().is_some() { 128 } else { 0 })
+                }
+            };
+            change_cache_bytes = change_cache_bytes
+                .saturating_add(base)
+                .saturating_add(content_bytes);
+        }
+        (kv_bytes, change_cache_bytes)
     }
 
     /// Evicts non-tail flushed blocks and downgrades remaining `Both` blocks to detached `Bytes`.

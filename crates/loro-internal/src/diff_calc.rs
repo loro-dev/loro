@@ -158,6 +158,46 @@ impl DiffCalculator {
         self.calculators.get(&container).map(|(_, c)| c)
     }
 
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let map_table_bytes = self.calculators.capacity()
+            * (std::mem::size_of::<ContainerIdx>()
+                + std::mem::size_of::<(Option<NonZeroU32>, ContainerDiffCalculator)>()
+                + 8);
+        let calc_bytes: usize = self
+            .calculators
+            .values()
+            .map(|(_, c)| c.estimated_bytes())
+            .sum();
+        std::mem::size_of::<Self>()
+            .saturating_add(map_table_bytes)
+            .saturating_add(calc_bytes)
+    }
+
+    /// Evict cached per-container diff calculators down to `keep_hot` entries.
+    pub(crate) fn reclaim_cold_caches(&mut self, keep_hot: usize) -> usize {
+        let before = self.estimated_bytes();
+        if self.calculators.len() > keep_hot {
+            if keep_hot == 0 {
+                self.calculators.clear();
+            } else {
+                let mut by_size: Vec<(ContainerIdx, usize)> = self
+                    .calculators
+                    .iter()
+                    .map(|(&idx, (_, c))| (idx, c.estimated_bytes()))
+                    .collect();
+                // Keep the `keep_hot` smallest entries and drop the largest trackers first.
+                by_size.sort_by_key(|(idx, bytes)| (*bytes, *idx));
+                for (idx, _) in by_size.into_iter().skip(keep_hot) {
+                    self.calculators.remove(&idx);
+                }
+            }
+            self.calculators.shrink_to_fit();
+        } else if self.calculators.is_empty() && self.calculators.capacity() > 0 {
+            self.calculators.shrink_to_fit();
+        }
+        before.saturating_sub(self.estimated_bytes())
+    }
+
     /// Calculate the diff between two versions.
     ///
     /// Return the diff and the origin diff mode (it's not the diff mode used by the diff calculator.
@@ -579,6 +619,19 @@ impl ContainerDiffCalculator {
             _ => {}
         }
     }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::Map(calc) => calc.estimated_bytes(),
+            Self::List(calc) => calc.estimated_bytes(),
+            Self::Richtext(calc) => calc.estimated_bytes(),
+            Self::Tree(calc) => calc.estimated_bytes(),
+            Self::MovableList(calc) => calc.estimated_bytes(),
+            #[cfg(feature = "counter")]
+            Self::Counter(calc) => calc.estimated_bytes(),
+            Self::Unknown(_) => std::mem::size_of::<UnknownDiffCalculator>(),
+        }
+    }
 }
 
 trait RebuildOpVisitor {
@@ -669,6 +722,20 @@ impl MapDiffCalculator {
             changed: Default::default(),
             current_mode: DiffMode::Checkout,
         }
+    }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        self.changed.capacity()
+            * (std::mem::size_of::<InternalString>() + std::mem::size_of::<Option<MapValue>>() + 8)
+            + self
+                .changed
+                .values()
+                .filter_map(|v| v.as_ref().and_then(|mv| mv.value.as_ref()))
+                .map(|v| {
+                    v.estimated_heap_bytes()
+                        .saturating_sub(std::mem::size_of::<LoroValue>())
+                })
+                .sum::<usize>()
     }
 }
 
@@ -861,6 +928,13 @@ impl ListDiffCalculator {
         self.source_not_in_op_context = true;
     }
 
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<ListTracker>()
+            .saturating_add(self.start_vv.len() * 16)
+            .saturating_add(self.tracker.tracker.estimated_heap_bytes())
+            .saturating_add(self.tracker.values.estimated_bytes())
+    }
+
     /// A retreat never goes below a critical base, so it can only bring back
     /// opaque content that a replayed op deleted.
     fn retreat_is_trustworthy(&self) -> bool {
@@ -905,6 +979,29 @@ impl MovableListDiffCalculator {
 
     fn mark_source_not_in_op_context(&mut self) {
         self.list.mark_source_not_in_op_context();
+    }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let inner = &self.inner;
+        let elem_changes_bytes = inner.changed_elements.capacity()
+            * (std::mem::size_of::<CompactIdLp>() + std::mem::size_of::<ElementDelta>() + 8)
+            + inner
+                .changed_elements
+                .values()
+                .map(|delta| {
+                    delta
+                        .value
+                        .estimated_heap_bytes()
+                        .saturating_sub(std::mem::size_of::<LoroValue>())
+                })
+                .sum::<usize>();
+        let move_map_bytes = inner.move_id_to_elem_id.capacity()
+            * (std::mem::size_of::<ID>() + std::mem::size_of::<IdLp>() + 8);
+        std::mem::size_of::<ListDiffCalculator>()
+            .saturating_add(std::mem::size_of::<MovableListInner>())
+            .saturating_add(self.list.estimated_bytes())
+            .saturating_add(elem_changes_bytes)
+            .saturating_add(move_map_bytes)
     }
 }
 
@@ -1169,6 +1266,42 @@ impl RichtextDiffCalculator {
         {
             *source_not_in_op_context = true;
         }
+    }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let mode_bytes = match &*self.mode {
+            RichtextCalcMode::Crdt {
+                tracker,
+                styles,
+                texts,
+                start_vv,
+                full,
+                ..
+            } => {
+                let styles_bytes = styles.capacity() * std::mem::size_of::<(StyleOp, usize)>()
+                    + styles
+                        .iter()
+                        .map(|(op, _)| {
+                            op.value
+                                .estimated_heap_bytes()
+                                .saturating_sub(std::mem::size_of::<LoroValue>())
+                        })
+                        .sum::<usize>();
+                let full_bytes = full.as_ref().map_or(0, |f| {
+                    std::mem::size_of::<FullTracker>().saturating_add(f.vv.len() * 16)
+                });
+                std::mem::size_of::<RichtextTracker>()
+                    .saturating_add(tracker.estimated_heap_bytes())
+                    .saturating_add(styles_bytes)
+                    .saturating_add(texts.estimated_bytes())
+                    .saturating_add(start_vv.len() * 16)
+                    .saturating_add(full_bytes)
+            }
+            RichtextCalcMode::Linear { diff, .. } => {
+                diff.node_len() * (std::mem::size_of::<RichtextStateChunk>() + 16)
+            }
+        };
+        std::mem::size_of::<RichtextCalcMode>().saturating_add(mode_bytes)
     }
 
     /// Test-only: how many chars the text table holds, to pin that

@@ -33,6 +33,10 @@ impl CounterState {
     pub(crate) fn new(idx: ContainerIdx) -> Self {
         Self { idx, value: 0. }
     }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
 }
 
 impl ContainerState for CounterState {

@@ -79,9 +79,10 @@ pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
     Counter, CounterSpan, FractionalIndex, IdLp, IdSpan, Lamport, PeerID, TreeID, TreeParentId, ID,
 };
+pub use loro_internal::{DocMemoryStats, MemoryBudget};
 pub use loro_internal::{
     LoroBinaryValue, LoroEncodeError, LoroError, LoroListValue, LoroMapValue, LoroResult,
-    LoroStringValue, LoroTreeError, LoroValue, ToJson,
+    LoroStringValue, LoroTreeError, LoroValue, MemoryLimitExceeded, MemoryLimitKind, ToJson,
 };
 pub use loro_kv_store as kv_store;
 
@@ -873,6 +874,22 @@ impl LoroDoc {
     #[inline]
     pub fn commit_with(&self, options: CommitOptions) {
         self.doc.commit_with(options);
+    }
+
+    /// Commit the pending auto-commit transaction, enforcing [`MemoryBudget::max_doc_bytes`].
+    ///
+    /// If committing would exceed `max_doc_bytes` after cache and cold-state reclamation,
+    /// uncommitted operations since the budget was armed are rolled back atomically without
+    /// firing subscribers and [`LoroError::MemoryLimitExceeded`] is returned.
+    #[inline]
+    pub fn try_commit(&self) -> LoroResult<()> {
+        self.doc.try_commit()
+    }
+
+    /// Commit the pending auto-commit transaction with options, enforcing [`MemoryBudget::max_doc_bytes`].
+    #[inline]
+    pub fn try_commit_with(&self, options: CommitOptions) -> LoroResult<()> {
+        self.doc.try_commit_with(options)
     }
 
     /// Set commit message for the current uncommitted changes
@@ -1683,6 +1700,36 @@ impl LoroDoc {
     #[inline]
     pub fn compact_change_store(&self) {
         self.doc.compact_change_store()
+    }
+
+    /// Configure memory watermarks, cache caps, and hard quotas for this document.
+    #[inline]
+    pub fn set_memory_budget(&self, budget: MemoryBudget) {
+        self.doc.set_memory_budget(budget);
+    }
+
+    /// Get a snapshot of this document's current [`MemoryBudget`] configuration.
+    #[inline]
+    pub fn memory_budget(&self) -> MemoryBudget {
+        self.doc.memory_budget()
+    }
+
+    /// Get estimated RAM and spilled byte usage across this document's subsystems.
+    #[inline]
+    pub fn memory_stats(&self) -> DocMemoryStats {
+        self.doc.memory_stats()
+    }
+
+    /// Aggressively reclaim caches and demote cold container states, returning estimated freed bytes.
+    #[inline]
+    pub fn reclaim_memory(&self) -> usize {
+        self.doc.reclaim_memory()
+    }
+
+    /// Reclaim memory and fail with [`LoroError::MemoryLimitExceeded`] if usage still exceeds [`MemoryBudget::max_doc_bytes`].
+    #[inline]
+    pub fn try_reclaim_to_budget(&self) -> LoroResult<DocMemoryStats> {
+        self.doc.try_reclaim_to_budget()
     }
 
     /// Export the document in the given mode.
@@ -4598,6 +4645,21 @@ impl UndoManager {
     /// Set the maximum number of undo steps. The default value is 100.
     pub fn set_max_undo_steps(&mut self, size: usize) {
         self.0.set_max_undo_steps(size)
+    }
+
+    /// Set the maximum retained bytes across the undo/redo stacks.
+    pub fn set_max_undo_bytes(&mut self, max_bytes: usize) {
+        self.0.set_max_undo_bytes(max_bytes)
+    }
+
+    /// Get the maximum retained bytes configured on this undo manager.
+    pub fn max_undo_bytes(&self) -> usize {
+        self.0.max_undo_bytes()
+    }
+
+    /// Get the current estimated RAM usage in bytes of the undo/redo stacks.
+    pub fn used_bytes(&self) -> usize {
+        self.0.used_bytes()
     }
 
     /// Set the merge interval in ms. The default value is 0, which means no merge.

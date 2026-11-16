@@ -719,3 +719,47 @@ mod snapshot {
         }
     }
 }
+
+impl MapState {
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let map_bytes = match &self.map {
+            MapEntries::SortedTiny(entries) => {
+                entries.capacity() * std::mem::size_of::<(InternalString, MapValue)>()
+                    + entries
+                        .iter()
+                        .filter_map(|(_, v)| v.value.as_ref())
+                        .map(|v| {
+                            v.estimated_heap_bytes()
+                                .saturating_sub(std::mem::size_of::<LoroValue>())
+                        })
+                        .sum::<usize>()
+            }
+            MapEntries::Tree(tree) => {
+                tree.len()
+                    * (std::mem::size_of::<InternalString>() + std::mem::size_of::<MapValue>() + 32)
+                    + tree
+                        .values()
+                        .filter_map(|v| v.value.as_ref())
+                        .map(|v| {
+                            v.estimated_heap_bytes()
+                                .saturating_sub(std::mem::size_of::<LoroValue>())
+                        })
+                        .sum::<usize>()
+            }
+        };
+        let child_bytes = match &self.child_containers {
+            ChildContainers::Tiny(entries) => {
+                entries.capacity() * std::mem::size_of::<(ContainerID, InternalString)>()
+            }
+            ChildContainers::Map(map) => {
+                map.capacity()
+                    * (std::mem::size_of::<ContainerID>()
+                        + std::mem::size_of::<InternalString>()
+                        + 8)
+            }
+        };
+        std::mem::size_of::<Self>()
+            .saturating_add(map_bytes)
+            .saturating_add(child_bytes)
+    }
+}

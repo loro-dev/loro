@@ -358,6 +358,31 @@ mod inner {
             self.elements.remove(elem_id);
         }
 
+        pub(crate) fn estimated_heap_bytes(&self) -> usize {
+            let elem_overhead =
+                std::mem::size_of::<CompactIdLp>() + std::mem::size_of::<Element>() + 8;
+            let elements_bytes = self.elements.capacity() * elem_overhead
+                + self
+                    .elements
+                    .values()
+                    .map(|elem| {
+                        elem.value
+                            .estimated_heap_bytes()
+                            .saturating_sub(std::mem::size_of::<LoroValue>())
+                    })
+                    .sum::<usize>();
+            let list_len = self.list.root_cache().include_dead_len.max(0) as usize;
+            let leaf_bytes = self.id_to_list_leaf.capacity()
+                * (std::mem::size_of::<IdLp>() + std::mem::size_of::<LeafIndex>() + 8);
+            let child_bytes = self.child_container_to_elem.capacity()
+                * (std::mem::size_of::<ContainerID>() + std::mem::size_of::<CompactIdLp>() + 8);
+            std::mem::size_of::<super::MovableListState>()
+                .saturating_add(list_len * (std::mem::size_of::<ListItem>() + 16))
+                .saturating_add(elements_bytes)
+                .saturating_add(leaf_bytes)
+                .saturating_add(child_bytes)
+        }
+
         #[allow(dead_code)]
         pub fn check_consistency(&self) {
             if !cfg!(debug_assertions) {
@@ -1022,6 +1047,10 @@ impl MovableListState {
             (elem.pos.is_none() || elem.value_id.is_none())
                 && !self.inner.elements().contains_key(elem_id)
         })
+    }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        self.inner.estimated_heap_bytes()
     }
 }
 

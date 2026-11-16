@@ -684,6 +684,19 @@ impl TreeParentToChildrenCache {
     }
 }
 
+impl TreeDiffCalculator {
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let mode_bytes = match &self.mode {
+            TreeDiffCalculatorMode::Crdt => 0,
+            TreeDiffCalculatorMode::Linear(delta)
+            | TreeDiffCalculatorMode::ImportGreaterUpdates(delta) => {
+                delta.diff.capacity() * std::mem::size_of::<TreeDeltaItem>()
+            }
+        };
+        std::mem::size_of::<Self>().saturating_add(mode_bytes)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use loro_common::{TreeID, ID};

@@ -25,6 +25,7 @@ use crate::{
     event::{Diff, EventTriggerKind, Index, InternalContainerDiff, InternalDiff, KeptChange},
     handler::ValueOrHandler,
     id::PeerID,
+    kv_store::{KvStore, SharedBlockCache},
     lock::{LoroLockGroup, LoroMutex},
     op::{Op, RawOp, RawOpContent},
     version::{Frontiers, VersionVector},
@@ -179,9 +180,9 @@ pub struct DocState {
     /// ([`crate::undo::DiffBatch::from_changes`]: revert, undo). Containers that keep their
     /// state are then not revived at all, which skips building full states nobody reads.
     record_changes_only: bool,
-    /// Set while a local transaction that may be rolled back runs (`apply_diff`,
-    /// `revert_to`). See [`Self::begin_local_rollback`].
-    local_rollback: Option<LocalRollbackJournal>,
+    /// Stack of active local rollback scopes (`budget_base_scope` and nested
+    /// `apply_diff` / `revert_to` scopes). See [`Self::begin_local_rollback`].
+    local_rollback_stack: Vec<LocalRollbackJournal>,
 }
 
 /// What undoing a local transaction's ops by checkout cannot restore exactly,
@@ -189,6 +190,9 @@ pub struct DocState {
 struct LocalRollbackJournal {
     /// The `apply_diff` scope that began it.
     scope: u64,
+    /// `StrArena` byte checkpoint captured at scope entry so rolled-back text inserts release
+    /// their appended bytes instead of permanently bloating `arena_bytes`.
+    str_checkpoint: crate::arena::StrArenaCheckpoint,
     /// The value of each counter before the transaction's first op on it:
     /// subtracting the increments again may not give back the same float.
     #[cfg(feature = "counter")]
@@ -491,6 +495,28 @@ impl State {
             State::UnknownState(unknown_state) => State::UnknownState(unknown_state.fork(config)),
         }
     }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let inner = match self {
+            State::ListState(s) => s.estimated_heap_bytes(),
+            State::MovableListState(s) => s.estimated_heap_bytes(),
+            State::MapState(s) => s.estimated_heap_bytes(),
+            State::RichtextState(s) => s.estimated_heap_bytes(),
+            State::TreeState(s) => s.estimated_heap_bytes(),
+            #[cfg(feature = "counter")]
+            State::CounterState(s) => s.estimated_heap_bytes(),
+            State::UnknownState(s) => s.estimated_heap_bytes(),
+        };
+        std::mem::size_of::<Self>().saturating_add(inner)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) {
+        match self {
+            State::TreeState(s) => s.reclaim_auxiliary_caches(),
+            State::RichtextState(s) => s.reclaim_auxiliary_caches(),
+            _ => {}
+        }
+    }
 }
 
 impl DocState {
@@ -519,7 +545,7 @@ impl DocState {
                 dead_containers_cache: Default::default(),
                 alive_containers_cache: None,
                 record_changes_only: false,
-                local_rollback: None,
+                local_rollback_stack: Vec::new(),
             },
             crate::lock::LockKind::DocState,
         ))
@@ -546,7 +572,7 @@ impl DocState {
             dead_containers_cache: Default::default(),
             alive_containers_cache: None,
             record_changes_only: false,
-            local_rollback: None,
+            local_rollback_stack: Vec::new(),
         }))
     }
 
@@ -1040,7 +1066,9 @@ impl DocState {
             self.changed_idx_in_txn.insert(op.container);
         }
         #[cfg(feature = "counter")]
-        if let (Some(journal), State::CounterState(counter)) = (&mut self.local_rollback, &*state) {
+        if let (Some(journal), State::CounterState(counter)) =
+            (self.local_rollback_stack.last_mut(), &*state)
+        {
             journal
                 .counters
                 .entry(op.container)
@@ -1061,28 +1089,46 @@ impl DocState {
     /// local ops applied from now on: the containers that get new state and the
     /// counters' values.
     ///
-    /// `scope` identifies the caller. A journal of another scope is replaced: two
-    /// scopes never share a transaction, so that scope's transaction was
-    /// committed by another thread and cannot be rolled back anyway.
+    /// Scopes can nest (for example, `apply_diff` inside a `MemoryBudget`
+    /// base scope on the open transaction).
     pub(crate) fn begin_local_rollback(&mut self, scope: u64) {
         self.store.begin_created_journal();
-        self.local_rollback = Some(LocalRollbackJournal {
+        let str_checkpoint = self.arena.str_checkpoint();
+        self.local_rollback_stack.push(LocalRollbackJournal {
             scope,
+            str_checkpoint,
             #[cfg(feature = "counter")]
             counters: Default::default(),
         });
     }
 
-    /// Stop recording for `scope`, keeping the ops.
+    /// Stop recording for `scope`, keeping the ops and merging into any enclosing scope.
     pub(crate) fn end_local_rollback(&mut self, scope: u64) {
-        if self
-            .local_rollback
-            .as_ref()
-            .is_some_and(|j| j.scope == scope)
-        {
-            self.store.take_created_journal();
-            self.local_rollback = None;
+        if let Some(popped) = self.local_rollback_stack.pop_if(|j| j.scope == scope) {
+            #[cfg(feature = "counter")]
+            if let Some(parent) = self.local_rollback_stack.last_mut() {
+                for (idx, value) in popped.counters {
+                    parent.counters.entry(idx).or_insert(value);
+                }
+            }
+            #[cfg(not(feature = "counter"))]
+            let _ = popped;
+            if self.local_rollback_stack.is_empty() {
+                self.store.take_created_journal();
+            } else {
+                self.store.commit_top_created_journal();
+            }
         }
+    }
+
+    pub(crate) fn clear_local_rollback_stack(&mut self) {
+        self.local_rollback_stack.clear();
+        self.changed_idx_in_txn.clear();
+        self.store.clear_created_journals();
+    }
+
+    pub(crate) fn clear_changed_idx_in_txn(&mut self) {
+        self.changed_idx_in_txn.clear();
     }
 
     /// Takes the event recorder out, so that a state change the caller discards
@@ -1113,21 +1159,20 @@ impl DocState {
         start_counter: crate::id::Counter,
     ) {
         let created = self.store.take_created_journal();
-        let journal = self.local_rollback.take();
+        let journal = self.local_rollback_stack.pop();
         assert!(
             journal.as_ref().is_some_and(|j| j.scope == scope),
             "the journal of a rolled back apply_diff was replaced"
         );
-        #[cfg(feature = "counter")]
         if let Some(journal) = journal {
+            #[cfg(feature = "counter")]
             for (idx, value) in journal.counters {
                 if let Some(State::CounterState(counter)) = self.store.get_container_mut(idx) {
                     counter.set_value(value);
                 }
             }
+            self.arena.rollback_str(journal.str_checkpoint);
         }
-        #[cfg(not(feature = "counter"))]
-        let _ = journal;
         self.store.remove_created(&created);
         self.arena
             .forget_parents_of_discarded_ops(peer, start_counter);
@@ -1202,6 +1247,7 @@ impl DocState {
 
     pub(crate) fn commit_txn(&mut self, new_frontiers: Frontiers, diff: Option<InternalDocDiff>) {
         self.in_txn = false;
+        self.clear_local_rollback_stack();
         self.frontiers = new_frontiers;
         if let Some(diff) = diff {
             if self.is_recording() {
@@ -1527,6 +1573,7 @@ impl DocState {
         self.store =
             ContainerStore::new(self.arena.clone(), self.config.clone(), self.peer.clone());
         self.in_txn = false;
+        self.local_rollback_stack.clear();
         self.changed_idx_in_txn.clear();
         self.event_recorder = Default::default();
         if was_recording {
@@ -2719,6 +2766,65 @@ impl DocState {
 
     pub(crate) fn shallow_root_store(&self) -> Option<&Arc<GcStore>> {
         self.store.shallow_root_store()
+    }
+
+    pub(crate) fn kv_estimated_bytes(&self) -> usize {
+        self.store.kv_estimated_bytes()
+    }
+
+    pub(crate) fn state_estimated_bytes(&self) -> usize {
+        self.store.estimated_state_bytes()
+    }
+
+    pub(crate) fn value_cache_bytes(&self) -> usize {
+        self.store.value_cache_bytes()
+    }
+
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.store.spilled_disk_bytes()
+    }
+
+    pub(crate) fn evict_value_cache_to_bytes(&mut self, max_bytes: usize) -> usize {
+        self.store.evict_value_cache_to_bytes(max_bytes)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) -> usize {
+        let mut freed = self.store.reclaim_auxiliary_caches();
+        if let Some(cache) = self.alive_containers_cache.take() {
+            freed = freed.saturating_add(estimated_alive_containers_cache_bytes(
+                cache.roots.capacity(),
+                &cache.indices,
+            ));
+        }
+        freed
+    }
+
+    pub(crate) fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.store.set_block_cache(cache);
+    }
+
+    pub(crate) fn flush_kv(&mut self) {
+        self.store.flush_kv();
+    }
+
+    #[allow(unused)]
+    pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
+        self.store.replace_kv_backend(kv);
+    }
+
+    pub(crate) fn demote_cold_states(
+        &mut self,
+        target_state_bytes: usize,
+        extra_pinned: &FxHashSet<ContainerIdx>,
+    ) -> usize {
+        if !self.in_txn || self.changed_idx_in_txn.is_empty() {
+            return self
+                .store
+                .demote_cold_states(target_state_bytes, extra_pinned);
+        }
+        let mut pinned = self.changed_idx_in_txn.clone();
+        pinned.extend(extra_pinned.iter().copied());
+        self.store.demote_cold_states(target_state_bytes, &pinned)
     }
 }
 

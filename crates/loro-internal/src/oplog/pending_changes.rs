@@ -6,12 +6,14 @@ use std::{
 
 use crate::{
     change::Change,
+    estimated_size::EstimatedSize,
     oplog::AppDag,
     version::{ImVersionVector, VersionRange},
     OpLog, VersionVector,
 };
 use loro_common::{
-    Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroEncodeError, PeerID, ID,
+    Counter, CounterSpan, HasCounterSpan, HasIdSpan, IdSpan, LoroEncodeError, LoroError,
+    LoroResult, MemoryLimitKind, PeerID, ID,
 };
 use rle::{HasLength, Sliceable};
 use rustc_hash::FxHashMap;
@@ -52,9 +54,25 @@ pub(crate) struct PendingChanges {
     /// The greatest counter of each peer that a parked change depends on. `changes` has
     /// only the first missing dep of a change, and a local write under any of them
     /// changes the base the parked change applies on. A change leaves parking only with
+    /// A change leaves parking only with
     /// its deps in the op log, so an entry stops mattering by itself and is never
     /// lowered, except by rollback.
     awaited: FxHashMap<PeerID, Counter>,
+    used_bytes: usize,
+}
+
+fn change_estimated_bytes(change: &Change) -> usize {
+    std::mem::size_of::<Change>()
+        .saturating_add(
+            change
+                .ops
+                .len()
+                .saturating_mul(std::mem::size_of::<crate::op::Op>()),
+        )
+        .saturating_add(change.estimate_storage_size())
+        .saturating_add(change.deps.len().saturating_mul(std::mem::size_of::<ID>()))
+        .saturating_add(change.commit_msg.as_ref().map_or(0, |s| s.len()))
+        .saturating_add(32)
 }
 
 /// Disjoint counter spans of one peer, keyed by their start, each with the change that
@@ -226,6 +244,38 @@ impl PendingChanges {
         self.changes.is_empty()
     }
 
+    pub(crate) fn used_bytes(&self) -> usize {
+        self.used_bytes
+    }
+
+    fn has_in_slot(&self, dep: ID, change: &Change) -> bool {
+        let Some(slot) = self
+            .changes
+            .get(&dep.peer)
+            .and_then(|tree| tree.get(&dep.counter))
+        else {
+            return false;
+        };
+        let len = change.atom_len();
+        slot.iter()
+            .any(|existing| existing.id == change.id && existing.atom_len() == len)
+    }
+
+    fn recompute_used_bytes(&mut self) {
+        let mut total = 0usize;
+        for tree in self.changes.values() {
+            for slot in tree.values() {
+                for pc in slot {
+                    total = total.saturating_add(change_estimated_bytes(pc));
+                }
+            }
+        }
+        for spans in self.claims.values() {
+            total = total.saturating_add(spans.spans.len().saturating_mul(64));
+        }
+        self.used_bytes = total;
+    }
+
     /// The claimed spans of `peer` overlapping `start..end`, in order, each with the
     /// parked change that holds it.
     pub(super) fn claims_in(
@@ -262,11 +312,17 @@ impl PendingChanges {
     /// Record `change` as the holder of its ids that nothing holds yet. Called when it
     /// first parks: `try_apply_pending` moves parked changes between slots constantly,
     /// and they keep what they hold.
-    fn claim(&mut self, change: &Change, mut rollback: Option<&mut PendingChangesRollback>) {
+    fn claim(
+        &mut self,
+        change: &Change,
+        mut rollback: Option<&mut PendingChangesRollback>,
+    ) -> bool {
+        let mut changed = false;
         for dep in change.deps.iter() {
             let previous = self.awaited.get(&dep.peer).copied();
             if previous.is_none_or(|awaited| awaited < dep.counter) {
                 self.awaited.insert(dep.peer, dep.counter);
+                changed = true;
                 if let Some(rollback) = rollback.as_deref_mut() {
                     rollback.claims.push(ClaimEdit::Awaited {
                         peer: dep.peer,
@@ -282,17 +338,20 @@ impl PendingChanges {
             None => vec![(start, end)],
         };
         if gaps.is_empty() {
-            return;
+            return changed;
         }
 
         let change = Arc::new(change.clone());
         let spans = self.claims.entry(peer).or_default();
         for (start, end) in gaps {
             spans.hold(start, end, change.clone());
+            self.used_bytes = self.used_bytes.saturating_add(64);
+            changed = true;
             if let Some(rollback) = rollback.as_deref_mut() {
                 rollback.claims.push(ClaimEdit::Held { peer, start });
             }
         }
+        changed
     }
 
     /// Drop the spans of `peer` the op log has now: its own history answers for them.
@@ -310,6 +369,7 @@ impl PendingChanges {
                 break;
             }
             let (start, claim) = entry.remove_entry();
+            self.used_bytes = self.used_bytes.saturating_sub(64);
             if let Some(rollback) = rollback.as_deref_mut() {
                 rollback
                     .claims
@@ -494,16 +554,40 @@ impl PendingChangesRollback {
                 }
             }
         }
+        pending_changes.recompute_used_bytes();
     }
 }
 
 impl OpLog {
-    fn push_pending_change(&mut self, missing_dep: ID, change: PendingChange) {
+    fn push_pending_change(
+        &mut self,
+        missing_dep: ID,
+        change: PendingChange,
+        enforce_quota: bool,
+    ) -> LoroResult<()> {
         let Self {
             pending_changes,
             import_rollback,
+            max_pending_bytes,
             ..
         } = self;
+        if pending_changes.has_in_slot(missing_dep, &change) {
+            return Ok(());
+        }
+        let delta = change_estimated_bytes(&change);
+        if enforce_quota {
+            if let Some(limit) = *max_pending_bytes {
+                let projected = pending_changes.used_bytes.saturating_add(delta);
+                if projected > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::PendingPool,
+                        projected,
+                        limit,
+                    ));
+                }
+            }
+        }
+
         if let Some(rollback) = import_rollback.as_mut() {
             let pre_len = pending_changes.slot_len(missing_dep.peer, missing_dep.counter);
             rollback.pending.record_added(missing_dep, pre_len);
@@ -516,6 +600,8 @@ impl OpLog {
             .entry(missing_dep.counter)
             .or_default()
             .push(change);
+        pending_changes.used_bytes = pending_changes.used_bytes.saturating_add(delta);
+        Ok(())
     }
 
     /// Store or apply changes that could not get a lamport during the main import pass.
@@ -540,10 +626,25 @@ impl OpLog {
             let local_change = PendingChange::Unknown(change);
             match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
-                    parked.push(local_change.id_span());
+                    let is_dup = self.pending_changes.has_in_slot(miss_dep, &local_change);
+                    if !is_dup {
+                        if let Some(limit) = self.max_pending_bytes {
+                            let delta = change_estimated_bytes(&local_change);
+                            let projected = self.pending_changes.used_bytes.saturating_add(delta);
+                            if projected > limit {
+                                return Err(LoroError::memory_limit_exceeded(
+                                    MemoryLimitKind::PendingPool,
+                                    projected,
+                                    limit,
+                                ));
+                            }
+                        }
+                    }
                     let rollback = self.import_rollback.as_mut().map(|r| &mut r.pending);
                     self.pending_changes.claim(&local_change, rollback);
-                    self.push_pending_change(miss_dep, local_change);
+                    let span = local_change.id_span();
+                    self.push_pending_change(miss_dep, local_change, true)?;
+                    parked.push(span);
                 }
                 ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                 ChangeState::Applied => {}
@@ -590,7 +691,6 @@ impl OpLog {
     /// `new_ids` are the ID of the op that is just applied.
     /// Returns whether an obsolete parked change was dropped. The caller reports
     /// `ImportUpdatesThatDependsOnOutdatedVersion` while keeping valid progress.
-    #[must_use]
     pub(crate) fn try_apply_pending(
         &mut self,
         mut new_ids: Vec<ID>,
@@ -614,6 +714,14 @@ impl OpLog {
             let mut pending_set = Vec::with_capacity(to_remove.len());
             for cnt in to_remove {
                 let pending_changes = tree.remove(&cnt).unwrap();
+                let removed_bytes: usize = pending_changes
+                    .iter()
+                    .map(|c| change_estimated_bytes(c))
+                    .sum();
+                self.pending_changes.used_bytes = self
+                    .pending_changes
+                    .used_bytes
+                    .saturating_sub(removed_bytes);
                 if let Some(rollback) = self.import_rollback.as_mut() {
                     rollback
                         .pending
@@ -643,7 +751,7 @@ impl OpLog {
                         ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                         ChangeState::Applied => {}
                         ChangeState::AwaitingMissingDependency(miss_dep) => {
-                            self.push_pending_change(miss_dep, pending_change)
+                            self.push_pending_change(miss_dep, pending_change, false)?;
                         }
                     }
                 }
@@ -727,7 +835,6 @@ fn remote_change_apply_state(
 
 #[cfg(test)]
 mod test {
-    use crate::handler::HandlerTrait;
     use crate::{cursor::PosType, loro::ExportMode, LoroDoc, ToJson, VersionVector};
 
     #[test]
@@ -769,10 +876,10 @@ mod test {
                     assert!(status.pending.is_some());
                 }
             }
-            // Real repeated imports leave several copies under each missing-dep
-            // slot. Export must deduplicate across all of those slot vectors.
+            // Real repeated imports are deduplicated by `(dep, id, len)`, keeping
+            // pending storage bounded to the 3 unique pending changes.
             let pending_len = doc.oplog().lock().pending_changes_len();
-            assert_eq!(pending_len, 9);
+            assert_eq!(pending_len, 3);
             let vv = doc.oplog_vv();
             let frontiers = doc.oplog_frontiers();
             let pending = doc.export_pending_updates().unwrap().unwrap();
@@ -1455,5 +1562,56 @@ mod shallow_cut_tests {
         ));
         oplog.apply_change_from_remote(pending, None).unwrap();
         assert_eq!(oplog.vv(), &source.oplog_vv());
+    }
+
+    #[test]
+    fn pending_dedup_used_bytes_and_quota_rollback() {
+        use loro_common::{IdSpan, MemoryLimitKind};
+
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        for i in 0..5 {
+            source
+                .get_text("text")
+                .insert(i, &format!("chunk-{i}-payload"), PosType::Unicode)
+                .unwrap();
+            source.commit_then_renew();
+        }
+        let u0 = source
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 0, 15)]))
+            .unwrap();
+        let u1 = source
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 15, 30)]))
+            .unwrap();
+        let u2 = source
+            .export(ExportMode::updates_in_range(vec![IdSpan::new(1, 30, 45)]))
+            .unwrap();
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&u1).unwrap();
+        let bytes_once = doc.oplog().lock().pending_changes.used_bytes();
+        assert!(bytes_once > 0);
+        // Repeated identical pending import does not inflate pending_len or used_bytes.
+        doc.import(&u1).unwrap();
+        doc.import(&u1).unwrap();
+        assert_eq!(doc.oplog().lock().pending_changes_len(), 1);
+        assert_eq!(doc.oplog().lock().pending_changes.used_bytes(), bytes_once);
+
+        // Quota just above current prevents parking u2, leaving state clean on rollback.
+        doc.oplog()
+            .lock()
+            .set_max_pending_bytes(Some(bytes_once + 1));
+        let err = doc.import(&u2).unwrap_err();
+        assert_eq!(
+            err.memory_limit_info().map(|e| e.kind),
+            Some(MemoryLimitKind::PendingPool)
+        );
+        assert_eq!(doc.oplog().lock().pending_changes.used_bytes(), bytes_once);
+        assert_eq!(doc.oplog().lock().pending_changes_len(), 1);
+
+        // Importing the missing dependency u0 applies queued u1 and drops pending bytes to 0.
+        doc.import(&u0).unwrap();
+        assert_eq!(doc.oplog().lock().pending_changes_len(), 0);
+        assert_eq!(doc.oplog().lock().pending_changes.used_bytes(), 0);
     }
 }

@@ -318,6 +318,46 @@ impl ContainerHistoryCache {
         self.shallow_maps_seeded.clear();
     }
 
+    pub(crate) fn estimated_memory_bytes(&self) -> usize {
+        let checkout_bytes = self.for_checkout.as_ref().map_or(0, |c| {
+            c.map
+                .map
+                .len()
+                .saturating_mul(std::mem::size_of::<MapHistoryCacheEntry>() + 32)
+                .saturating_add(c.map.keys.len().saturating_mul(32))
+                .saturating_add(
+                    c.movable_list
+                        .move_set
+                        .len()
+                        .saturating_mul(std::mem::size_of::<MovableListInnerDeltaEntry>() + 32),
+                )
+                .saturating_add(
+                    c.movable_list
+                        .set_set
+                        .len()
+                        .saturating_mul(std::mem::size_of::<MovableListSetDeltaEntry>() + 32),
+                )
+        });
+        let importing_bytes = self.for_importing.as_ref().map_or(0, |map| {
+            map.values()
+                .map(|v| match v {
+                    HistoryCacheForImporting::Tree(t) => t
+                        .ops
+                        .len()
+                        .saturating_mul(std::mem::size_of::<(IdLp, GroupedTreeOpInfo)>() + 48),
+                })
+                .sum::<usize>()
+                .saturating_add(map.capacity().saturating_mul(48))
+        });
+        let seeded_bytes = self
+            .shallow_maps_seeded
+            .capacity()
+            .saturating_mul(std::mem::size_of::<ContainerIdx>() + 8);
+        checkout_bytes
+            .saturating_add(importing_bytes)
+            .saturating_add(seeded_bytes)
+    }
+
     pub(crate) fn set_shallow_root_store(&mut self, shallow_root_store: Option<Arc<GcStore>>) {
         self.shallow_root_state = shallow_root_store;
         self.shallow_maps_seeded.clear();

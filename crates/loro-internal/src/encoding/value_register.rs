@@ -37,6 +37,15 @@ impl<T: std::hash::Hash + Clone + PartialEq + Eq> ValueRegister<T> {
         self.map_value_to_index.get(key).copied()
     }
 
+    pub fn len(&self) -> usize {
+        self.vec.len()
+    }
+
+    #[allow(unused)]
+    pub fn is_empty(&self) -> bool {
+        self.vec.is_empty()
+    }
+
     pub fn unwrap_vec(self) -> Vec<T> {
         self.vec
     }

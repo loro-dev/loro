@@ -45,6 +45,10 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         self.tree.is_empty()
     }
 
+    pub fn node_len(&self) -> usize {
+        self.tree.node_len()
+    }
+
     pub fn push_insert(&mut self, v: V, attr: Attr) -> &mut Self {
         if v.rle_len() == 0 {
             return self;

@@ -1032,11 +1032,13 @@ impl<'a> CausalWorkspace<'a> {
                 let child_id = child.id;
                 if let Some(child_sum) = self.memo.get(&child_id) {
                     frame.local.merge(child_sum);
-                } else if !self.indices.contains_key(&child_id) {
+                } else if let std::collections::hash_map::Entry::Vacant(entry) =
+                    self.indices.entry(child_id)
+                {
                     frame.pending_child = Some(child_id);
                     let idx = next_index;
                     next_index += 1;
-                    self.indices.insert(child_id, idx);
+                    entry.insert(idx);
                     self.lowlink.insert(child_id, idx);
                     self.on_stack.insert(child_id);
                     self.scc_stack.push((child_id, CausalSummary::default()));

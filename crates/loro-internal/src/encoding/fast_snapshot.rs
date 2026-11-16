@@ -265,12 +265,16 @@ pub(crate) fn decode_snapshot_inner(
         }
 
         state.init_with_states_and_version(state_frontiers, &oplog, vec![], false, origin)?;
+        oplog.set_block_cache(doc.kv_block_cache.clone());
+        state.set_block_cache(doc.kv_block_cache.clone());
         Ok(())
     })();
 
     if let Err(e) = decode_result {
         state.reset_to_empty_for_failed_snapshot_import();
         oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &mut state);
+        oplog.set_block_cache(doc.kv_block_cache.clone());
+        state.set_block_cache(doc.kv_block_cache.clone());
         return Err(e);
     }
     drop(state);
@@ -283,6 +287,8 @@ pub(crate) fn decode_snapshot_inner(
             let mut state = doc.app_state().lock();
             state.reset_to_empty_for_failed_snapshot_import();
             oplog.reset_to_empty_for_failed_snapshot_import(arena_checkpoint, &mut state);
+            oplog.set_block_cache(doc.kv_block_cache.clone());
+            state.set_block_cache(doc.kv_block_cache.clone());
             return Err(e);
         }
         debug_assert_eq!(doc.state_frontiers(), doc.oplog_frontiers());

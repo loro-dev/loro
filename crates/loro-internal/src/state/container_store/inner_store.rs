@@ -2,14 +2,16 @@ use crate::{
     arena::SharedArena,
     configure::Configure,
     container::idx::ContainerIdx,
+    kv_store::{KvStore, SharedBlockCache},
     state::{container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState},
+    sync::Mutex,
     utils::kv_wrapper::KvWrapper,
     version::Frontiers,
 };
 use bytes::Bytes;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
 use rustc_hash::FxHashSet;
-use std::collections::VecDeque;
+use std::{collections::VecDeque, sync::Arc};
 
 use super::ContainerWrapper;
 
@@ -36,16 +38,23 @@ pub(crate) struct InnerStore {
     /// decoded value is currently cached in `store`. Bounded by
     /// `Configure::decoded_value_cache_limit()`. Entries may be stale (the wrapper was
     /// dropped or materialized into a full state); eviction skips those.
+    /// Cached value queue bounded by `decoded_value_cache_limit()` and
+    /// `decoded_value_cache_bytes_limit()`.
     value_cache_queue: VecDeque<ContainerIdx>,
-    /// True once the value cache has evicted at least one wrapper since the
-    /// last full KV scan. While this is set, `load_state == AllLoaded` no
-    /// longer implies `store` contains every entry in `kv`, so `load_all()`
+    /// Approximate heap bytes currently held by wrappers tracked in `value_cache_queue`.
+    value_cache_bytes: usize,
+    /// True once the value cache or cold-state demotion has evicted at least one
+    /// wrapper since the last full KV scan. While this is set, `load_state == AllLoaded`
+    /// no longer implies `store` contains every entry in `kv`, so `load_all()`
     /// must re-scan `kv` instead of short-circuiting.
     evicted_since_full_load: bool,
-    /// While `Some`, the containers given new (not loaded) state are recorded, so
-    /// a rolled back local transaction can remove them again
-    /// (`DocState::begin_local_rollback`).
-    created_journal: Option<Vec<ContainerIdx>>,
+    /// Clock hand for two-pass cold state demotion (`demote_cold_states`).
+    demote_clock_hand: usize,
+    /// Whether `self.arena` already has a KV parent resolver pointing at `self.kv`.
+    parent_resolver_installed: bool,
+    /// Stack of active created-container journals so nested rollback scopes
+    /// can roll back independently or merge into an enclosing scope on success.
+    created_journal_stack: Vec<Vec<ContainerIdx>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +129,7 @@ impl InnerStore {
             let container = match self.kv.get(&key) {
                 Some(bytes) => ContainerWrapper::new_from_bytes(bytes),
                 None => {
-                    if let Some(journal) = &mut self.created_journal {
+                    if let Some(journal) = self.created_journal_stack.last_mut() {
                         journal.push(idx);
                     }
                     f()
@@ -149,22 +158,35 @@ impl InnerStore {
             return;
         }
 
-        if let Some(journal) = &mut self.created_journal {
+        if let Some(journal) = self.created_journal_stack.last_mut() {
             journal.push(idx);
         }
         let c = f();
         Self::insert_entry(&mut self.store, idx, c);
     }
 
-    /// Start recording the containers that get new state. See `created_journal`.
+    /// Start recording the containers that get new state.
     pub(crate) fn begin_created_journal(&mut self) {
-        self.created_journal = Some(Vec::new());
+        self.created_journal_stack.push(Vec::new());
     }
 
-    /// Stop recording and return the containers that got new state since
-    /// [`Self::begin_created_journal`].
+    /// Stop recording the innermost journal and return the containers that got
+    /// new state since its [`Self::begin_created_journal`].
     pub(crate) fn take_created_journal(&mut self) -> Vec<ContainerIdx> {
-        self.created_journal.take().unwrap_or_default()
+        self.created_journal_stack.pop().unwrap_or_default()
+    }
+
+    /// Commit the innermost journal without rolling it back; when nested inside
+    /// an outer rollback scope, merge its created containers into the parent scope.
+    pub(crate) fn commit_top_created_journal(&mut self) {
+        let popped = self.created_journal_stack.pop().unwrap_or_default();
+        if let Some(parent) = self.created_journal_stack.last_mut() {
+            parent.extend(popped);
+        }
+    }
+
+    pub(crate) fn clear_created_journals(&mut self) {
+        self.created_journal_stack.clear();
     }
 
     /// Drop the state of containers that got new state while a rolled back
@@ -177,7 +199,25 @@ impl InnerStore {
                 .get_container_id(idx)
                 .is_none_or(|id| self.kv.get(&id.to_bytes()).is_none()));
             if let Some(slot) = self.store.get_mut(Self::slot(idx)) {
-                *slot = None;
+                if let Some(mut removed) = slot.take() {
+                    self.value_cache_bytes = self
+                        .value_cache_bytes
+                        .saturating_sub(removed.take_accounted_value_cache_bytes());
+                }
+            }
+        }
+        if !created.is_empty() {
+            while self.store.last().is_some_and(Option::is_none) {
+                self.store.pop();
+            }
+            if self.store.is_empty() {
+                self.demote_clock_hand = 0;
+                self.store.shrink_to_fit();
+            } else {
+                self.demote_clock_hand %= self.store.len();
+                if self.store.capacity() > self.store.len().saturating_mul(2).max(4) {
+                    self.store.shrink_to_fit();
+                }
             }
         }
     }
@@ -230,28 +270,62 @@ impl InnerStore {
     /// requires a flushed lazy wrapper), so the next read re-creates it from
     /// the KV store.
     fn track_value_cache(&mut self, idx: ContainerIdx) {
-        let Some(entry) = self.get_entry_mut(idx) else {
+        let Some((old_bytes, new_bytes, need_enqueue)) = ({
+            let Some(entry) = self.get_entry_mut(idx) else {
+                return;
+            };
+            if !entry.is_evictable_cached_value() {
+                Some((entry.take_accounted_value_cache_bytes(), 0, false))
+            } else {
+                let new_bytes = entry.estimated_cached_value_bytes();
+                let old_bytes = entry.replace_accounted_value_cache_bytes(new_bytes);
+                let need_enqueue = !entry.is_in_value_cache_queue();
+                if need_enqueue {
+                    entry.set_in_value_cache_queue(true);
+                }
+                entry.mark_value_cache_referenced();
+                Some((old_bytes, new_bytes, need_enqueue))
+            }
+        }) else {
             return;
         };
-        if !entry.is_evictable_cached_value() {
-            return;
-        }
-        if !entry.is_in_value_cache_queue() {
-            entry.set_in_value_cache_queue(true);
+
+        self.value_cache_bytes = self
+            .value_cache_bytes
+            .saturating_sub(old_bytes)
+            .saturating_add(new_bytes);
+
+        if need_enqueue {
             self.value_cache_queue.push_back(idx);
         }
-        self.get_entry_mut(idx)
-            .unwrap()
-            .mark_value_cache_referenced();
-
-        self.trim_value_cache();
+        if new_bytes > 0 {
+            self.trim_value_cache();
+        }
     }
 
     /// Second-chance FIFO: hot ancestors survive an eviction pass during deep
     /// walks. Only flushed lazy wrappers are evictable; dirty state stays pinned.
     pub(super) fn trim_value_cache(&mut self) {
-        let limit = self.config.decoded_value_cache_limit();
-        while self.value_cache_queue.len() > limit {
+        let count_limit = self.config.decoded_value_cache_limit();
+        let bytes_limit = self.config.decoded_value_cache_bytes_limit();
+        self.trim_value_cache_with_limits(count_limit, bytes_limit);
+    }
+
+    pub(crate) fn evict_value_cache_to_bytes(&mut self, target_bytes: usize) -> usize {
+        let before = self.value_cache_bytes;
+        let count_limit = if target_bytes == 0 {
+            0
+        } else {
+            self.config.decoded_value_cache_limit()
+        };
+        self.trim_value_cache_with_limits(count_limit, target_bytes);
+        before.saturating_sub(self.value_cache_bytes)
+    }
+
+    fn trim_value_cache_with_limits(&mut self, count_limit: usize, bytes_limit: usize) {
+        while self.value_cache_queue.len() > count_limit
+            || (self.value_cache_bytes > bytes_limit && !self.value_cache_queue.is_empty())
+        {
             let Some(victim) = self.value_cache_queue.pop_front() else {
                 break;
             };
@@ -260,6 +334,7 @@ impl InnerStore {
                 Requeue,
                 Evict,
             }
+            let mut dropped_bytes = 0usize;
             let action = match self.get_entry_mut(victim) {
                 Some(entry) if entry.is_evictable_cached_value() => {
                     if entry.take_value_cache_referenced() {
@@ -271,15 +346,25 @@ impl InnerStore {
                 }
                 // Stale entry: the wrapper was dropped or materialized into a
                 // full state since it was enqueued.
-                _ => Action::Skip,
+                Some(entry) => {
+                    entry.set_in_value_cache_queue(false);
+                    dropped_bytes = entry.take_accounted_value_cache_bytes();
+                    Action::Skip
+                }
+                None => Action::Skip,
             };
+            self.value_cache_bytes = self.value_cache_bytes.saturating_sub(dropped_bytes);
             match action {
                 Action::Skip => {}
                 Action::Requeue => self.value_cache_queue.push_back(victim),
                 Action::Evict => {
                     let slot = Self::slot(victim);
                     if let Some(entry) = self.store.get_mut(slot) {
-                        *entry = None;
+                        if let Some(mut removed) = entry.take() {
+                            self.value_cache_bytes = self
+                                .value_cache_bytes
+                                .saturating_sub(removed.take_accounted_value_cache_bytes());
+                        }
                     }
                     // `store` may no longer mirror `kv`: a full enumeration has
                     // to re-scan `kv` even in `AllLoaded` mode.
@@ -546,18 +631,13 @@ impl InnerStore {
             fr = Some(Frontiers::decode(&f)?);
         }
 
-        let kv = self.kv.arc_clone();
-        self.arena
-            .set_parent_resolver(Some(move |child_id: ContainerID| {
-                let k = child_id.to_bytes();
-                let v = kv.get(&k)?;
-                let c = ContainerWrapper::new_from_bytes(v);
-                c.parent().cloned()
-            }));
+        self.ensure_parent_resolver_installed();
 
         self.store.clear();
         self.value_cache_queue.clear();
+        self.value_cache_bytes = 0;
         self.evicted_since_full_load = false;
+        self.demote_clock_hand = 0;
         self.load_state = LoadState::Lazy;
         Ok(fr)
     }
@@ -577,18 +657,13 @@ impl InnerStore {
             .map_err(|e| loro_common::LoroError::DecodeError(e.into_boxed_str()))?;
         self.kv.remove(FRONTIERS_KEY);
 
-        let kv = self.kv.arc_clone();
-        self.arena
-            .set_parent_resolver(Some(move |child_id: ContainerID| {
-                let k = child_id.to_bytes();
-                let v = kv.get(&k)?;
-                let c = ContainerWrapper::new_from_bytes(v);
-                c.parent().cloned()
-            }));
+        self.ensure_parent_resolver_installed();
 
         self.store.clear();
         self.value_cache_queue.clear();
+        self.value_cache_bytes = 0;
         self.evicted_since_full_load = false;
+        self.demote_clock_hand = 0;
         self.load_state = LoadState::Lazy;
         Ok(())
     }
@@ -683,9 +758,165 @@ impl InnerStore {
             load_state: LoadState::AllLoaded,
             config,
             value_cache_queue: VecDeque::new(),
+            value_cache_bytes: 0,
             evicted_since_full_load: false,
-            created_journal: None,
+            demote_clock_hand: 0,
+            parent_resolver_installed: false,
+            created_journal_stack: Vec::new(),
         }
+    }
+
+    pub(crate) fn value_cache_bytes(&self) -> usize {
+        self.value_cache_bytes
+    }
+
+    pub(crate) fn estimated_state_bytes(&self) -> usize {
+        self.store
+            .iter()
+            .filter_map(|entry| entry.as_ref())
+            .filter(|c| c.is_materialized_state())
+            .map(|c| c.estimated_state_bytes())
+            .sum::<usize>()
+            .saturating_add(self.store.capacity() * std::mem::size_of::<Option<ContainerWrapper>>())
+    }
+
+    pub(crate) fn kv_estimated_bytes(&self) -> usize {
+        self.kv.estimated_memory_bytes()
+    }
+
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.kv.spilled_disk_bytes()
+    }
+
+    pub(crate) fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.kv.set_block_cache(cache);
+    }
+
+    pub(crate) fn flush_kv(&mut self) {
+        self.kv.flush_compressed();
+    }
+
+    pub(crate) fn replace_kv_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
+        self.kv.replace_backend(new_backend);
+        self.parent_resolver_installed = false;
+        self.ensure_parent_resolver_installed();
+    }
+
+    fn ensure_parent_resolver_installed(&mut self) {
+        if self.parent_resolver_installed {
+            return;
+        }
+        let kv = self.kv.arc_clone();
+        self.arena
+            .set_parent_resolver(Some(move |child_id: ContainerID| {
+                let k = child_id.to_bytes();
+                let v = kv.get(&k)?;
+                let c = ContainerWrapper::new_from_bytes(v);
+                c.parent().cloned()
+            }));
+        self.parent_resolver_installed = true;
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) -> usize {
+        let mut freed = 0usize;
+        for c in self.store.iter_mut().flatten() {
+            if c.is_materialized_state() {
+                let before = c.estimated_state_bytes();
+                c.reclaim_auxiliary_caches();
+                let after = c.estimated_state_bytes();
+                freed = freed.saturating_add(before.saturating_sub(after));
+            }
+        }
+        freed
+    }
+
+    /// Demote cold materialized container states to `self.kv` using a two-pass
+    /// clock sweep until materialized state bytes drop to `target_state_bytes`.
+    pub(crate) fn demote_cold_states(
+        &mut self,
+        target_state_bytes: usize,
+        pinned: &FxHashSet<ContainerIdx>,
+    ) -> usize {
+        let mut cur_bytes = self.estimated_state_bytes();
+        if cur_bytes <= target_state_bytes || self.store.is_empty() {
+            return 0;
+        }
+
+        self.ensure_parent_resolver_installed();
+        let journal_set: FxHashSet<ContainerIdx> = self
+            .created_journal_stack
+            .iter()
+            .flat_map(|v| v.iter().copied())
+            .collect();
+        let store_len = self.store.len();
+        let mut reclaimed = 0usize;
+        let mut updates: Vec<(Bytes, Bytes)> = Vec::new();
+        let deleted = self.config.deleted_root_containers.lock();
+
+        for pass in 0..2 {
+            for step in 0..store_len {
+                if cur_bytes <= target_state_bytes {
+                    break;
+                }
+                let slot = (self.demote_clock_hand + step) % store_len;
+                let Some(c) = self.store[slot].as_mut() else {
+                    continue;
+                };
+                if !c.is_materialized_state() {
+                    continue;
+                }
+                let before_aux = c.estimated_state_bytes();
+                c.reclaim_auxiliary_caches();
+                let after_aux = c.estimated_state_bytes();
+                let aux_freed = before_aux.saturating_sub(after_aux);
+                if aux_freed > 0 {
+                    reclaimed = reclaimed.saturating_add(aux_freed);
+                    cur_bytes = cur_bytes.saturating_sub(aux_freed);
+                    if cur_bytes <= target_state_bytes {
+                        self.demote_clock_hand = (slot + 1) % store_len;
+                        break;
+                    }
+                }
+
+                let idx = ContainerIdx::from_index_and_type(slot as u32, c.kind());
+                if pinned.contains(&idx) || journal_set.contains(&idx) || c.is_state_empty() {
+                    continue;
+                }
+                if pass == 0 && c.take_state_referenced() {
+                    continue;
+                }
+                let Some(cid) = self.arena.get_container_id(idx) else {
+                    continue;
+                };
+                if cid.is_root() && deleted.contains(&cid) && c.is_deleted_root_value_cleared() {
+                    continue;
+                }
+
+                let entry_bytes = c.estimated_state_bytes();
+                if !c.is_flushed() {
+                    let value = c.encode();
+                    updates.push((cid.to_bytes().into(), value));
+                }
+                if let Some(mut old) = self.store[slot].take() {
+                    self.value_cache_bytes = self
+                        .value_cache_bytes
+                        .saturating_sub(old.take_accounted_value_cache_bytes());
+                }
+                self.evicted_since_full_load = true;
+                reclaimed = reclaimed.saturating_add(entry_bytes);
+                cur_bytes = cur_bytes.saturating_sub(entry_bytes);
+                self.demote_clock_hand = (slot + 1) % store_len;
+            }
+            if cur_bytes <= target_state_bytes {
+                break;
+            }
+        }
+        drop(deleted);
+
+        if !updates.is_empty() {
+            self.kv.set_all(updates);
+        }
+        reclaimed
     }
 
     pub(crate) fn fork(&mut self, arena: SharedArena, config: &Configure) -> InnerStore {

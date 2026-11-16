@@ -731,6 +731,62 @@ impl From<ContainerID> for LoroValue {
     }
 }
 
+impl LoroValue {
+    /// Iteratively estimates the in-memory footprint (stack header + heap allocations)
+    /// of this value without risking stack overflow on deeply nested structures.
+    pub fn estimated_heap_bytes(&self) -> usize {
+        const ARC_HEADER_BYTES: usize = 16;
+        let mut total = std::mem::size_of::<Self>();
+        let mut stack: SmallVec<[&LoroValue; 8]> = smallvec::smallvec![self];
+        while let Some(v) = stack.pop() {
+            match v {
+                LoroValue::Null | LoroValue::Bool(_) | LoroValue::Double(_) | LoroValue::I64(_) => {
+                }
+                LoroValue::Binary(b) => {
+                    total = total
+                        .saturating_add(ARC_HEADER_BYTES)
+                        .saturating_add(std::mem::size_of::<Vec<u8>>())
+                        .saturating_add(b.capacity());
+                }
+                LoroValue::String(s) => {
+                    total = total
+                        .saturating_add(ARC_HEADER_BYTES)
+                        .saturating_add(std::mem::size_of::<String>())
+                        .saturating_add(s.capacity());
+                }
+                LoroValue::List(list) => {
+                    total = total
+                        .saturating_add(ARC_HEADER_BYTES)
+                        .saturating_add(std::mem::size_of::<Vec<LoroValue>>())
+                        .saturating_add(list.capacity() * std::mem::size_of::<LoroValue>());
+                    stack.extend(list.iter());
+                }
+                LoroValue::Map(map) => {
+                    total = total
+                        .saturating_add(ARC_HEADER_BYTES)
+                        .saturating_add(std::mem::size_of::<FxHashMap<String, LoroValue>>())
+                        .saturating_add(
+                            map.len()
+                                * (std::mem::size_of::<String>()
+                                    + std::mem::size_of::<LoroValue>()
+                                    + 16),
+                        );
+                    for (k, child) in map.iter() {
+                        total = total.saturating_add(k.capacity());
+                        stack.push(child);
+                    }
+                }
+                LoroValue::Container(cid) => {
+                    if let ContainerID::Root { name, .. } = cid {
+                        total = total.saturating_add(name.len());
+                    }
+                }
+            }
+        }
+        total
+    }
+}
+
 #[cfg(feature = "wasm")]
 pub mod wasm {
     use js_sys::{Array, Object, Uint8Array};
@@ -1321,5 +1377,23 @@ mod stack_safety_tests {
         assert!(error
             .to_string()
             .contains("LoroValue nesting depth exceeds 128"));
+    }
+
+    #[test]
+    fn estimated_heap_bytes_is_iterative_and_tracks_nested_payloads() {
+        let small = LoroValue::from("hello world");
+        let small_bytes = small.estimated_heap_bytes();
+        assert!(small_bytes >= std::mem::size_of::<LoroValue>() + 11);
+
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let deep = nested(100_000);
+                let deep_bytes = deep.estimated_heap_bytes();
+                assert!(deep_bytes > 100_000 * std::mem::size_of::<LoroValue>());
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }
