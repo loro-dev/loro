@@ -1,6 +1,6 @@
 [package]
 name = "generic-btree"
-version = "0.10.7"
+version = "0.10.8"
 edition = "2021"
 authors = ["zxch3n <remch183@outlook.com>"]
 description = "Generic BTree for versatile purposes"
@@ -11,7 +11,7 @@ keywords = ["btree", "data-structure"]
 license = "MIT"
 repository = "https://github.com/loro-dev/generic-btree"
 
-# Vendored into the loro workspace (fork of crates.io generic-btree 0.10.7) so we
+# Vendored into the loro workspace (fork of crates.io generic-btree 0.10.8) so we
 # can evolve the b-tree (e.g. deferred cache propagation). Redirected from
 # crates.io via [patch.crates.io] in the root Cargo.toml.
 

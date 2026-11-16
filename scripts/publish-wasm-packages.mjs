@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, "..");
 
 const packagesToPublish = [
+  "packages/fractional-index",
   "loro-js",
   "crates/loro-wasm",
   "crates/loro-wasm-map",

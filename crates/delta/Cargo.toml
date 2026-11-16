@@ -1,6 +1,6 @@
 [package]
 name = "loro-delta"
-version = "1.13.0"
+version = "1.18.0"
 edition = "2021"
 license = "MIT"
 description = "Loro internal library. It's used as a delta between two versions of text or lists. It's also an efficient Rope."
@@ -12,7 +12,7 @@ keywords = ["rope"]
 
 [dependencies]
 arrayvec = "0.7.4"
-generic-btree = { version = "^0.10.7" }
+generic-btree = { version = "^0.10.8" }
 heapless = "0.8.0"
 enum-as-inner = "0.5.1"
 

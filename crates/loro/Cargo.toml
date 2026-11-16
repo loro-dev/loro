@@ -16,12 +16,12 @@ keywords = ["crdt", "local-first"]
 [dependencies]
 bytes = { workspace = true }
 loro-internal = { path = "../loro-internal", version = "1.18.0" }
-loro-common = { path = "../loro-common", version = "1.17.0", features = [
+loro-common = { path = "../loro-common", version = "1.18.0", features = [
     "serde_json",
 ] }
-loro-kv-store = { path = "../kv-store", version = "1.17.0" }
-delta = { path = "../delta", package = "loro-delta", version = "1.13.0" }
-generic-btree = { version = "^0.10.7" }
+loro-kv-store = { path = "../kv-store", version = "1.18.0" }
+delta = { path = "../delta", package = "loro-delta", version = "1.18.0" }
+generic-btree = { version = "^0.10.8" }
 enum-as-inner = { workspace = true }
 tracing = { workspace = true }
 rustc-hash = { workspace = true }
