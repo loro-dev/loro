@@ -1,0 +1,200 @@
+#![cfg(not(target_arch = "wasm32"))]
+
+use loro::{ExportMode, LoroDoc, LoroText, MemoryBudget, ToJson};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+struct TempSpillDir(PathBuf);
+
+impl TempSpillDir {
+    fn new(prefix: &str) -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "loro-ooc-{prefix}-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn sst_file_count(&self) -> usize {
+        std::fs::read_dir(&self.0)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sst"))
+            .count()
+    }
+}
+
+impl Drop for TempSpillDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn pseudo_random_text(seed: usize, len: usize) -> String {
+    let mut state = (seed as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut out = String::with_capacity(len);
+    for _ in 0..len {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let ch = b'a' + ((state >> 32) as u8 % 26);
+        out.push(ch as char);
+    }
+    out
+}
+
+fn ram_component_sum(s: &loro::DocMemoryStats) -> usize {
+    s.state_bytes
+        + s.value_cache_bytes
+        + s.kv_bytes
+        + s.block_cache_bytes
+        + s.change_cache_bytes
+        + s.dag_bytes
+        + s.arena_bytes
+        + s.pending_bytes
+        + s.history_cache_bytes
+        + s.diff_calc_bytes
+        + s.undo_bytes
+        + s.uncommitted_txn_bytes
+}
+
+#[test]
+fn out_of_core_spills_demotes_rehydrates_and_matches_reference_history() {
+    let spill = TempSpillDir::new("rehydrate");
+    let doc = LoroDoc::new();
+    let reference = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    reference.set_peer_id(1).unwrap();
+
+    doc.set_memory_budget(
+        MemoryBudget::new()
+            .with_spill_dir(spill.path())
+            .with_watermarks(32 * 1024, 16 * 1024),
+    );
+
+    let mut checkpoints = Vec::new();
+    for i in 0..48 {
+        let payload = pseudo_random_text(i, 700);
+        for target in [&doc, &reference] {
+            let map = target.get_map(format!("m_{i}"));
+            map.insert("body", payload.as_str()).unwrap();
+            let t = map.insert_container("note", LoroText::new()).unwrap();
+            t.insert(0, &pseudo_random_text(i + 1000, 350)).unwrap();
+            target.get_list("items").push(i as i64).unwrap();
+            target.commit();
+        }
+        if i == 15 || i == 31 {
+            checkpoints.push(doc.oplog_frontiers());
+        }
+    }
+
+    let freed = doc.reclaim_memory();
+    assert!(freed > 0, "expected reclamation against out-of-core store");
+    let stats = doc.memory_stats();
+    assert_eq!(stats.total_bytes, ram_component_sum(&stats));
+    assert!(
+        stats.spilled_disk_bytes > 20_000,
+        "expected significant spilled bytes on disk, got {}",
+        stats.spilled_disk_bytes
+    );
+    assert!(
+        spill.sst_file_count() >= 1,
+        "expected .sst files in {:?}",
+        spill.path()
+    );
+    assert!(
+        stats.kv_bytes < stats.spilled_disk_bytes / 5,
+        "expected metadata-only kv_bytes ({}) << spilled_disk_bytes ({})",
+        stats.kv_bytes,
+        stats.spilled_disk_bytes
+    );
+
+    // Reading cold containers, editing again, historical checkout, diff, and snapshot export all match reference.
+    assert_eq!(doc.get_deep_value(), reference.get_deep_value());
+    doc.get_map("m_0").insert("extra", 123).unwrap();
+    reference.get_map("m_0").insert("extra", 123).unwrap();
+    doc.commit();
+    reference.commit();
+    assert_eq!(doc.get_deep_value(), reference.get_deep_value());
+
+    let diff_spilled = doc.diff(&checkpoints[0], &checkpoints[1]).unwrap();
+    let diff_ref = reference.diff(&checkpoints[0], &checkpoints[1]).unwrap();
+    assert_eq!(diff_spilled.iter().count(), diff_ref.iter().count());
+    assert_eq!(format!("{diff_spilled:?}"), format!("{diff_ref:?}"));
+
+    let f_at = &checkpoints[0];
+    let forked_at = doc.fork_at(f_at).unwrap();
+    let ref_forked_at = reference.fork_at(f_at).unwrap();
+    assert_eq!(forked_at.get_deep_value(), ref_forked_at.get_deep_value());
+
+    doc.checkout(f_at).unwrap();
+    reference.checkout(f_at).unwrap();
+    assert_eq!(doc.get_deep_value(), reference.get_deep_value());
+    doc.try_checkout_to_latest().unwrap();
+    reference.try_checkout_to_latest().unwrap();
+
+    let snap = doc.export(ExportMode::Snapshot).unwrap();
+    let restored = LoroDoc::from_snapshot(&snap).unwrap();
+    assert_eq!(restored.get_deep_value(), reference.get_deep_value());
+    let updates = doc.export(ExportMode::all_updates()).unwrap();
+    let from_updates = LoroDoc::new();
+    from_updates.import(&updates).unwrap();
+    assert_eq!(from_updates.get_deep_value(), reference.get_deep_value());
+
+    // Switching spill_dir back to None migrates SSTables into RAM and deletes spilled files.
+    drop(forked_at);
+    doc.set_memory_budget(MemoryBudget::default());
+    let back_to_mem = doc.memory_stats();
+    assert_eq!(back_to_mem.spilled_disk_bytes, 0);
+    assert_eq!(spill.sst_file_count(), 0);
+    assert_eq!(doc.get_deep_value(), reference.get_deep_value());
+}
+
+#[test]
+fn out_of_core_fork_isolation_and_drop_cleanup() {
+    let spill = TempSpillDir::new("fork-cleanup");
+    let doc = LoroDoc::new();
+    doc.set_peer_id(7).unwrap();
+    doc.set_memory_budget(MemoryBudget::new().with_spill_dir(spill.path()));
+
+    for i in 0..24 {
+        doc.get_map(format!("k_{i}"))
+            .insert("v", pseudo_random_text(i + 500, 600))
+            .unwrap();
+        doc.commit();
+    }
+    doc.reclaim_memory();
+    assert!(doc.memory_stats().spilled_disk_bytes > 0);
+    assert!(spill.sst_file_count() >= 1);
+
+    let forked = doc.fork();
+    assert!(forked.memory_stats().spilled_disk_bytes > 0);
+    let expected = doc.get_deep_value().to_json_value();
+    assert_eq!(forked.get_deep_value().to_json_value(), expected);
+
+    // Dropping the original unlinks its temp files while the fork stays intact and writable.
+    let files_before_drop = spill.sst_file_count();
+    drop(doc);
+    let files_after_orig_drop = spill.sst_file_count();
+    assert!(files_after_orig_drop < files_before_drop);
+    assert!(files_after_orig_drop >= 1);
+
+    forked.get_map("k_0").insert("fork_only", true).unwrap();
+    forked.commit();
+    assert_eq!(
+        forked.get_map("k_0").get_deep_value().to_json_value()["fork_only"],
+        true
+    );
+    assert_eq!(
+        forked.get_map("k_10").get_deep_value(),
+        forked.get_map("k_10").get_deep_value()
+    );
+
+    drop(forked);
+    assert_eq!(spill.sst_file_count(), 0);
+}

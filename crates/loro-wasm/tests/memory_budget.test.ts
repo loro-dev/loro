@@ -135,7 +135,7 @@ describe("MemoryBudget & DocMemoryStats", () => {
     expect(text.toString()).toBe("start");
 
     const baseStats = doc.memoryStats();
-    doc.setMemoryBudget({ maxDocBytes: baseStats.totalBytes + 768 });
+    doc.setMemoryBudget({ maxDocBytes: baseStats.totalBytes + 1024 });
 
     // Oversized edit throws MemoryLimitExceededError, rolls back atomically, and emits 0 events.
     text.insert(5, "too_large_".repeat(128));

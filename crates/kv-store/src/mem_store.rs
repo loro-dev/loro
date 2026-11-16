@@ -122,6 +122,50 @@ impl MemKvStore {
         &self.block_cache
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn spill_tables_to_dir(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
+        for table in &mut self.ss_table {
+            table.spill_to_dir(dir)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.ss_table.iter().map(SsTable::spilled_disk_bytes).sum()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn clone_spilled(&self, dir: &std::path::Path) -> std::io::Result<Self> {
+        let block_cache = SharedBlockCache::new(self.block_cache.max_bytes());
+        let mut ss_table = Vec::with_capacity(self.ss_table.len());
+        for table in &self.ss_table {
+            let mut cloned = table.clone_spilled(dir)?;
+            cloned.set_block_cache(block_cache.clone());
+            ss_table.push(cloned);
+        }
+        Ok(Self {
+            mem_table: self.mem_table.clone(),
+            mem_table_bytes: self.mem_table_bytes,
+            ss_table,
+            block_size: self.block_size,
+            compression_type: self.compression_type,
+            should_encode_none: self.should_encode_none,
+            block_cache,
+        })
+    }
+
+    /// Reconstruct an empty store preserving configuration and block cache.
+    pub fn empty_like(&self) -> Self {
+        Self::new(
+            MemKvConfig::default()
+                .block_size(self.block_size)
+                .compression_type(self.compression_type)
+                .should_encode_none(self.should_encode_none)
+                .block_cache(self.block_cache.clone()),
+        )
+    }
+
     /// Approximate RAM footprint of this KV store excluding the `SharedBlockCache`
     /// (which may be shared across stores and should be accounted once per cache).
     pub fn estimated_memory_bytes(&self) -> usize {
@@ -342,6 +386,11 @@ impl MemKvStore {
         }
 
         if builder.is_empty() {
+            if !self.should_encode_none {
+                self.mem_table.clear();
+                self.mem_table_bytes = 0;
+                self.ss_table.clear();
+            }
             return Bytes::new();
         }
         self.mem_table.clear();
@@ -410,7 +459,7 @@ impl MemKvStore {
             // Large blocks cannot be coalesced. Normal blocks must go through
             // add_new_block for tombstone removal and small-block coalescing.
             if !overlaps_mem && compression_compatible && meta.is_large {
-                builder.add_raw_block(meta, table.raw_block_slice(block_idx));
+                table.with_raw_block(block_idx, |raw| builder.add_raw_block(meta, raw));
                 continue;
             }
 
@@ -464,6 +513,11 @@ impl MemKvStore {
         }
 
         if builder.is_empty() {
+            if !self.should_encode_none {
+                self.mem_table.clear();
+                self.mem_table_bytes = 0;
+                self.ss_table.clear();
+            }
             return Bytes::new();
         }
 

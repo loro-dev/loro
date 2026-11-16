@@ -62,6 +62,10 @@ impl LoroDoc {
             })
             .map_err(LoroError::from)?;
         let doc = LoroDoc::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(dir) = self.memory_budget.lock().spill_dir.clone() {
+            doc.set_memory_budget(crate::MemoryBudget::new().with_spill_dir(dir));
+        }
         doc.set_config(&self.config);
         doc.with_barrier(|| {
             crate::encoding::fast_snapshot::decode_snapshot_inner(

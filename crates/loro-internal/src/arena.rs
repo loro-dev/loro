@@ -7,7 +7,6 @@ use crate::{
     container::{
         idx::ContainerIdx,
         list::list_op::{InnerListOp, ListOp},
-        map::MapSet,
         ContainerID,
     },
     id::Counter,
@@ -718,10 +717,10 @@ impl SharedArena {
         container: ContainerIdx,
     ) -> Op {
         match content {
-            crate::op::RawOpContent::Map(MapSet { key, value }) => Op {
+            crate::op::RawOpContent::Map(map) => Op {
                 counter,
                 container,
-                content: crate::op::InnerContent::Map(MapSet { key, value }),
+                content: crate::op::InnerContent::Map(Arc::new(map)),
             },
             crate::op::RawOpContent::List(list) => match list {
                 ListOp::Insert { slice, pos } => match slice {
@@ -730,7 +729,7 @@ impl SharedArena {
                         container,
                         content: crate::op::InnerContent::List(InnerListOp::Insert {
                             slice: ValueSlice::new(values.into_owned()),
-                            pos,
+                            pos: pos.min(u32::MAX as usize) as u32,
                         }),
                     },
                     ListSlice::RawStr { str, unicode_len } => {
@@ -741,7 +740,7 @@ impl SharedArena {
                             content: crate::op::InnerContent::List(InnerListOp::InsertText {
                                 slice,
                                 unicode_len: unicode_len as u32,
-                                pos: pos as u32,
+                                pos: pos.min(u32::MAX as usize) as u32,
                             }),
                         }
                     }
@@ -749,7 +748,7 @@ impl SharedArena {
                 ListOp::Delete(span) => Op {
                     counter,
                     container,
-                    content: crate::op::InnerContent::List(InnerListOp::Delete(span)),
+                    content: crate::op::InnerContent::List(InnerListOp::Delete(span.into())),
                 },
                 ListOp::StyleStart {
                     start,
@@ -760,13 +759,9 @@ impl SharedArena {
                 } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        info,
-                        value,
-                    }),
+                    content: InnerContent::List(InnerListOp::new_style_start(
+                        start, end, key, value, info,
+                    )),
                 },
                 ListOp::StyleEnd => Op {
                     counter,
@@ -789,7 +784,7 @@ impl SharedArena {
                 ListOp::Set { elem_id, value } => Op {
                     counter,
                     container,
-                    content: InnerContent::List(InnerListOp::Set { elem_id, value }),
+                    content: InnerContent::List(InnerListOp::new_set(elem_id, value)),
                 },
             },
             crate::op::RawOpContent::Tree(tree) => Op {
@@ -981,6 +976,19 @@ impl SharedArena {
         drop(c);
         let str_bytes = self.inner.str.lock().bytes_len();
         container_bytes.saturating_add(str_bytes)
+    }
+
+    pub(crate) fn shrink_spare_capacity(&self) {
+        {
+            let mut c = self.inner.containers.write();
+            c.container_idx_to_id.shrink_to_fit();
+            c.depth.shrink_to_fit();
+            c.container_id_to_idx.shrink_to_fit();
+            c.parents.shrink_to_fit();
+            c.root_c_idx.shrink_to_fit();
+            c.top_level_root_c_idx.shrink_to_fit();
+        }
+        self.inner.str.lock().shrink_spare_capacity();
     }
 }
 

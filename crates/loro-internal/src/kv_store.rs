@@ -1,7 +1,9 @@
 use crate::sync::Mutex;
 use bytes::Bytes;
 pub use loro_kv_store::compress::CompressionType;
-pub use loro_kv_store::{MemKvStore, SharedBlockCache};
+#[cfg(not(target_arch = "wasm32"))]
+pub use loro_kv_store::FileKvStore;
+pub use loro_kv_store::{MemKvConfig, MemKvStore, SharedBlockCache};
 use std::sync::Arc;
 use std::{collections::BTreeMap, ops::Bound};
 
@@ -29,6 +31,15 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
         self.import_all(bytes)
     }
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>>;
+    fn clone_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(SharedKvStore(self.clone_store()))
+    }
+    fn new_empty_same_backend(&self) -> Arc<Mutex<dyn KvStore>> {
+        Arc::new(Mutex::new(BTreeMap::<Bytes, Bytes>::new()))
+    }
+    fn new_empty_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(BTreeMap::<Bytes, Bytes>::new())
+    }
     fn estimated_memory_bytes(&self) -> usize {
         self.size()
     }
@@ -37,6 +48,96 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     }
     fn set_block_cache(&mut self, _cache: SharedBlockCache) {}
     fn flush(&mut self) {}
+}
+
+#[derive(Debug)]
+struct SharedKvStore(Arc<Mutex<dyn KvStore>>);
+
+impl KvStore for SharedKvStore {
+    fn get(&self, key: &[u8]) -> Option<Bytes> {
+        self.0.lock().get(key)
+    }
+
+    fn set(&mut self, key: &[u8], value: Bytes) {
+        self.0.lock().set(key, value)
+    }
+
+    fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        self.0.lock().compare_and_swap(key, old, new)
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes> {
+        self.0.lock().remove(key)
+    }
+
+    fn contains_key(&self, key: &[u8]) -> bool {
+        self.0.lock().contains_key(key)
+    }
+
+    fn scan(
+        &self,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+        let entries: Vec<(Bytes, Bytes)> = self.0.lock().scan(start, end).collect();
+        Box::new(entries.into_iter())
+    }
+
+    fn len(&self) -> usize {
+        self.0.lock().len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.lock().is_empty()
+    }
+
+    fn size(&self) -> usize {
+        self.0.lock().size()
+    }
+
+    fn export_all(&mut self) -> Bytes {
+        self.0.lock().export_all()
+    }
+
+    fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.0.lock().import_all(bytes)
+    }
+
+    fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.0.lock().import_all_unchecked(bytes)
+    }
+
+    fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
+        self.0.lock().clone_store()
+    }
+
+    fn clone_boxed(&self) -> Box<dyn KvStore> {
+        self.0.lock().clone_boxed()
+    }
+
+    fn new_empty_same_backend(&self) -> Arc<Mutex<dyn KvStore>> {
+        self.0.lock().new_empty_same_backend()
+    }
+
+    fn new_empty_boxed(&self) -> Box<dyn KvStore> {
+        self.0.lock().new_empty_boxed()
+    }
+
+    fn estimated_memory_bytes(&self) -> usize {
+        self.0.lock().estimated_memory_bytes()
+    }
+
+    fn spilled_disk_bytes(&self) -> usize {
+        self.0.lock().spilled_disk_bytes()
+    }
+
+    fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.0.lock().set_block_cache(cache)
+    }
+
+    fn flush(&mut self) {
+        self.0.lock().flush()
+    }
 }
 
 fn get_common_prefix_len_and_strip<'a, T: AsRef<[u8]> + ?Sized>(
@@ -114,8 +215,109 @@ impl KvStore for MemKvStore {
         Arc::new(Mutex::new(self.clone()))
     }
 
+    fn clone_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(self.clone())
+    }
+
+    fn new_empty_same_backend(&self) -> Arc<Mutex<dyn KvStore>> {
+        Arc::new(Mutex::new(self.empty_like()))
+    }
+
+    fn new_empty_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(self.empty_like())
+    }
+
     fn estimated_memory_bytes(&self) -> usize {
         self.estimated_memory_bytes()
+    }
+
+    fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.set_block_cache(cache)
+    }
+
+    fn flush(&mut self) {
+        self.flush()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl KvStore for FileKvStore {
+    fn get(&self, key: &[u8]) -> Option<Bytes> {
+        self.get(key)
+    }
+
+    fn set(&mut self, key: &[u8], value: Bytes) {
+        self.set(key, value)
+    }
+
+    fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        self.compare_and_swap(key, old, new)
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<Bytes> {
+        let ans = self.get(key);
+        self.remove(key);
+        ans
+    }
+
+    fn contains_key(&self, key: &[u8]) -> bool {
+        self.contains_key(key)
+    }
+
+    fn scan(
+        &self,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+        self.scan(start, end)
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn size(&self) -> usize {
+        self.size()
+    }
+
+    fn export_all(&mut self) -> Bytes {
+        self.export_all()
+    }
+
+    fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.import_all(bytes)
+    }
+
+    fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.import_all_unchecked(bytes)
+    }
+
+    fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
+        Arc::new(Mutex::new(self.clone()))
+    }
+
+    fn clone_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(self.clone())
+    }
+
+    fn new_empty_same_backend(&self) -> Arc<Mutex<dyn KvStore>> {
+        Arc::new(Mutex::new(self.empty_like()))
+    }
+
+    fn new_empty_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(self.empty_like())
+    }
+
+    fn estimated_memory_bytes(&self) -> usize {
+        self.estimated_memory_bytes()
+    }
+
+    fn spilled_disk_bytes(&self) -> usize {
+        self.spilled_disk_bytes()
     }
 
     fn set_block_cache(&mut self, cache: SharedBlockCache) {
@@ -276,5 +478,9 @@ impl KvStore for BTreeMap<Bytes, Bytes> {
 
     fn clone_store(&self) -> Arc<Mutex<dyn KvStore>> {
         Arc::new(Mutex::new(self.clone()))
+    }
+
+    fn clone_boxed(&self) -> Box<dyn KvStore> {
+        Box::new(self.clone())
     }
 }

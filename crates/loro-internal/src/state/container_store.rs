@@ -89,6 +89,7 @@ macro_rules! ctx {
 }
 
 impl ContainerStore {
+    #[allow(dead_code)]
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
         Self::new_with_cache(arena, conf, peer, SharedBlockCache::default_per_doc())
     }
@@ -407,7 +408,28 @@ impl ContainerStore {
         self.store.flush_kv();
     }
 
+    pub(crate) fn new_empty_same_backend(
+        &self,
+        arena: SharedArena,
+        conf: Configure,
+        peer: Arc<AtomicU64>,
+    ) -> Self {
+        ContainerStore {
+            store: self
+                .store
+                .new_empty_same_backend(arena.clone(), conf.clone()),
+            arena,
+            conf,
+            shallow_root_store: None,
+            peer,
+        }
+    }
+
     pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
+        if let Some(root) = &self.shallow_root_store {
+            let empty_gc = kv.lock().new_empty_same_backend();
+            root.store.lock().replace_kv_backend(empty_gc);
+        }
         self.store.replace_kv_backend(kv);
     }
 

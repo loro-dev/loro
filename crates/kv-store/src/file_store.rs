@@ -1,0 +1,243 @@
+use crate::{MemKvConfig, MemKvStore, SharedBlockCache};
+use bytes::Bytes;
+use std::ops::Bound;
+use std::path::{Path, PathBuf};
+
+/// Native out-of-core key-value store backed by temporary SSTable files in `spill_dir`.
+///
+/// Recent writes accumulate in an in-memory memtable until [`Self::flush`], [`Self::export_all`],
+/// [`Self::import_all`], or [`Self::import_all_unchecked`] serializes them into SSTable blocks
+/// written to unique `.sst` temporary files under `spill_dir`, freeing serialized table bytes
+/// from RAM while continuing to serve block reads through `SharedBlockCache`.
+///
+/// Temporary files are unlinked when superseded or when the store is dropped. Cloning duplicates
+/// spilled files into fresh temporary files so clones and forks remain independent.
+#[derive(Debug)]
+pub struct FileKvStore {
+    inner: MemKvStore,
+    spill_dir: PathBuf,
+}
+
+impl Clone for FileKvStore {
+    fn clone(&self) -> Self {
+        let inner = self
+            .inner
+            .clone_spilled(&self.spill_dir)
+            .unwrap_or_else(|_| self.inner.clone());
+        Self {
+            inner,
+            spill_dir: self.spill_dir.clone(),
+        }
+    }
+}
+
+impl FileKvStore {
+    /// Creates an out-of-core store that writes temporary SSTables under `spill_dir`.
+    pub fn new(spill_dir: impl Into<PathBuf>, config: MemKvConfig) -> std::io::Result<Self> {
+        let spill_dir = spill_dir.into();
+        std::fs::create_dir_all(&spill_dir)?;
+        Ok(Self {
+            inner: MemKvStore::new(config),
+            spill_dir,
+        })
+    }
+
+    /// Creates a new empty `FileKvStore` sharing the same `spill_dir`, config, and block cache.
+    pub fn empty_like(&self) -> Self {
+        Self {
+            inner: self.inner.empty_like(),
+            spill_dir: self.spill_dir.clone(),
+        }
+    }
+
+    /// Returns the directory used for spilled temporary SSTable files.
+    pub fn spill_dir(&self) -> &Path {
+        &self.spill_dir
+    }
+
+    /// Replaces the shared decompressed block cache used by this store.
+    pub fn set_block_cache(&mut self, block_cache: SharedBlockCache) {
+        self.inner.set_block_cache(block_cache);
+    }
+
+    /// Returns a reference to the shared block cache used by this store.
+    pub fn block_cache(&self) -> &SharedBlockCache {
+        self.inner.block_cache()
+    }
+
+    /// Returns the value stored for `key`, if present.
+    pub fn get(&self, key: &[u8]) -> Option<Bytes> {
+        self.inner.get(key)
+    }
+
+    /// Inserts or overwrites `key` in the in-memory write buffer.
+    pub fn set(&mut self, key: &[u8], value: Bytes) {
+        self.inner.set(key, value)
+    }
+
+    /// Atomically updates `key` to `new` if its current value equals `old`.
+    pub fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
+        self.inner.compare_and_swap(key, old, new)
+    }
+
+    /// Marks `key` as deleted.
+    pub fn remove(&mut self, key: &[u8]) {
+        self.inner.remove(key)
+    }
+
+    /// Returns `true` if `key` is present with a non-tombstone value.
+    pub fn contains_key(&self, key: &[u8]) -> bool {
+        self.inner.contains_key(key)
+    }
+
+    /// Scans live entries within `[start, end]` in sorted key order.
+    pub fn scan(
+        &self,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+    ) -> Box<dyn DoubleEndedIterator<Item = (Bytes, Bytes)> + '_> {
+        self.inner.scan(start, end)
+    }
+
+    /// Returns the number of live keys currently stored.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns `true` if there are no live keys.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Returns total logical key/value bytes across memtable and SSTables.
+    pub fn size(&self) -> usize {
+        self.inner.size()
+    }
+
+    /// Approximate RAM footprint excluding `SharedBlockCache` and spilled disk payloads.
+    pub fn estimated_memory_bytes(&self) -> usize {
+        self.inner.estimated_memory_bytes()
+    }
+
+    /// Returns total bytes currently spilled to temporary SSTable files on disk.
+    pub fn spilled_disk_bytes(&self) -> usize {
+        self.inner.spilled_disk_bytes()
+    }
+
+    /// Compacts in-memory entries into a single SSTable and spills it to disk.
+    pub fn flush(&mut self) {
+        self.inner.flush();
+        self.spill_tables();
+    }
+
+    /// Compacts and exports all entries as serialized SSTable bytes, spilling the compacted table.
+    pub fn export_all(&mut self) -> Bytes {
+        let exported = self.inner.export_all();
+        self.spill_tables();
+        exported
+    }
+
+    /// Imports serialized SSTable bytes with full block checksum verification and spills to disk.
+    pub fn import_all(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.inner.import_all(bytes)?;
+        self.spill_tables();
+        Ok(())
+    }
+
+    /// Imports trusted serialized SSTable bytes without per-block checksum verification and spills.
+    pub fn import_all_unchecked(&mut self, bytes: Bytes) -> Result<(), String> {
+        self.inner.import_all_unchecked(bytes)?;
+        self.spill_tables();
+        Ok(())
+    }
+
+    fn spill_tables(&mut self) {
+        if let Err(err) = self.inner.spill_tables_to_dir(&self.spill_dir) {
+            tracing::warn!(?err, dir = ?self.spill_dir, "failed to spill SSTable to disk");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            static SEQ: AtomicU64 = AtomicU64::new(0);
+            let dir = std::env::temp_dir().join(format!(
+                "loro-kv-store-{prefix}-{}-{}",
+                std::process::id(),
+                SEQ.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn count_sst_files(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "sst"))
+            .count()
+    }
+
+    #[test]
+    fn file_kv_store_spills_reads_clones_and_cleans_up_on_drop() {
+        let temp = TempDir::new("spill");
+        let mut store =
+            FileKvStore::new(&temp.0, MemKvConfig::default().should_encode_none(false)).unwrap();
+        for i in 0..200_u32 {
+            let k = format!("key-{i:04}");
+            let v: Vec<u8> = (0..512_u32)
+                .map(|j| {
+                    let x = i.wrapping_mul(2_654_435_761) ^ j.wrapping_mul(374_761_393);
+                    (x ^ (x >> 13) ^ (x >> 21)) as u8
+                })
+                .collect();
+            store.set(k.as_bytes(), Bytes::from(v));
+        }
+        store.flush();
+        assert_eq!(count_sst_files(&temp.0), 1);
+        let spilled = store.spilled_disk_bytes();
+        assert!(spilled > 10_000, "spilled={spilled}");
+        assert!(
+            store.estimated_memory_bytes() < spilled / 2,
+            "estimated_memory_bytes={} spilled={spilled}",
+            store.estimated_memory_bytes()
+        );
+
+        let expected_42: Vec<u8> = (0..512_u32)
+            .map(|j| {
+                let x = 42_u32.wrapping_mul(2_654_435_761) ^ j.wrapping_mul(374_761_393);
+                (x ^ (x >> 13) ^ (x >> 21)) as u8
+            })
+            .collect();
+        assert_eq!(
+            store.get(b"key-0042"),
+            Some(Bytes::from(expected_42.clone()))
+        );
+
+        let mut cloned = store.clone();
+        assert_eq!(count_sst_files(&temp.0), 2);
+        drop(store);
+        assert_eq!(count_sst_files(&temp.0), 1);
+        assert_eq!(cloned.get(b"key-0042"), Some(Bytes::from(expected_42)));
+
+        let exported = cloned.export_all();
+        assert!(!exported.is_empty());
+        drop(cloned);
+        assert_eq!(count_sst_files(&temp.0), 0);
+    }
+}

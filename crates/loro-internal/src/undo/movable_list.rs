@@ -72,10 +72,11 @@ pub(crate) fn scopes(
                 })?;
                 let scope = scopes.entry(cid).or_default();
                 match &op.op().content {
-                    InnerContent::List(
-                        InnerListOp::Move { elem_id, .. } | InnerListOp::Set { elem_id, .. },
-                    ) => {
+                    InnerContent::List(InnerListOp::Move { elem_id, .. }) => {
                         scope.ids.insert(elem_id.compact());
+                    }
+                    InnerContent::List(InnerListOp::Set(set)) => {
+                        scope.ids.insert(set.elem_id.compact());
                     }
                     InnerContent::List(InnerListOp::Insert { .. }) => {
                         for i in 0..op.atom_len() {

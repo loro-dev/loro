@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use append_only_bytes::BytesSlice;
 use enum_as_inner::EnumAsInner;
@@ -43,12 +43,132 @@ pub enum ListOp<'a> {
     StyleEnd,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetListOp {
+    pub elem_id: IdLp,
+    pub value: LoroValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StyleOp {
+    pub start: u32,
+    pub end: u32,
+    pub key: InternalString,
+    pub value: LoroValue,
+    pub info: TextStyleInfoFlag,
+}
+
+/// Compact in-memory delete span stored inside [`InnerListOp::Delete`].
+/// Out-of-`i32` positions are clamped while preserving sign so validation rejects
+/// values exceeding [`UNKNOWN_SPAN_LEN`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactDeleteSpan {
+    pub id_start: ID,
+    pub pos: i32,
+    pub signed_len: i32,
+}
+
+#[inline]
+fn clamp_isize_to_i32(v: isize) -> i32 {
+    v.clamp(i32::MIN as isize, i32::MAX as isize) as i32
+}
+
+impl CompactDeleteSpan {
+    pub fn new(id_start: ID, pos: isize, signed_len: isize) -> Self {
+        debug_assert!(signed_len != 0);
+        Self {
+            id_start,
+            pos: clamp_isize_to_i32(pos),
+            signed_len: clamp_isize_to_i32(signed_len),
+        }
+    }
+
+    #[inline]
+    pub fn span(self) -> DeleteSpan {
+        DeleteSpan {
+            pos: self.pos as isize,
+            signed_len: self.signed_len as isize,
+        }
+    }
+
+    #[inline]
+    pub fn start(&self) -> isize {
+        self.span().start()
+    }
+
+    #[inline]
+    pub fn end(&self) -> isize {
+        self.span().end()
+    }
+
+    #[inline]
+    pub fn last(&self) -> isize {
+        self.span().last()
+    }
+
+    #[inline]
+    pub fn is_reversed(&self) -> bool {
+        self.signed_len < 0
+    }
+}
+
+impl From<DeleteSpanWithId> for CompactDeleteSpan {
+    fn from(v: DeleteSpanWithId) -> Self {
+        Self::new(v.id_start, v.span.pos, v.span.signed_len)
+    }
+}
+
+impl From<CompactDeleteSpan> for DeleteSpanWithId {
+    fn from(v: CompactDeleteSpan) -> Self {
+        DeleteSpanWithId {
+            id_start: v.id_start,
+            span: v.span(),
+        }
+    }
+}
+
+impl HasLength for CompactDeleteSpan {
+    fn content_len(&self) -> usize {
+        self.signed_len.unsigned_abs() as usize
+    }
+}
+
+impl HasId for CompactDeleteSpan {
+    fn id_start(&self) -> ID {
+        self.id_start
+    }
+}
+
+impl Mergable for CompactDeleteSpan {
+    fn is_mergable(&self, rhs: &Self, conf: &()) -> bool
+    where
+        Self: Sized,
+    {
+        DeleteSpanWithId::from(*self).is_mergable(&DeleteSpanWithId::from(*rhs), conf)
+    }
+
+    fn merge(&mut self, rhs: &Self, conf: &())
+    where
+        Self: Sized,
+    {
+        let mut merged = DeleteSpanWithId::from(*self);
+        merged.merge(&DeleteSpanWithId::from(*rhs), conf);
+        *self = Self::from(merged);
+    }
+}
+
+impl Sliceable for CompactDeleteSpan {
+    fn slice(&self, from: usize, to: usize) -> Self {
+        Self::from(DeleteSpanWithId::from(*self).slice(from, to))
+    }
+}
+
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerListOp {
     // TODO: this is only used for list now? We should rename it to InsertList
     Insert {
         slice: ValueSlice,
-        pos: usize,
+        pos: u32,
     },
     // Note: len may not equal to slice.len() because for text len is unicode len while the slice
     // is utf8 bytes.
@@ -57,26 +177,17 @@ pub enum InnerListOp {
         unicode_len: u32,
         pos: u32,
     },
-    Delete(DeleteSpanWithId),
+    Delete(CompactDeleteSpan),
     Move {
         from: u32,
         /// Element id
         elem_id: IdLp,
         to: u32,
     },
-    Set {
-        elem_id: IdLp,
-        value: LoroValue,
-    },
+    Set(Arc<SetListOp>),
     /// StyleStart and StyleEnd must be paired.
     /// The next op of StyleStart must be StyleEnd.
-    StyleStart {
-        start: u32,
-        end: u32,
-        key: InternalString,
-        value: LoroValue,
-        info: TextStyleInfoFlag,
-    },
+    StyleStart(Arc<StyleOp>),
     StyleEnd,
 }
 
@@ -102,8 +213,8 @@ impl InnerListOp {
             InnerListOp::Insert { pos, .. } => in_range(*pos as i64),
             InnerListOp::InsertText { pos, .. } => in_range(*pos as i64),
             InnerListOp::Delete(span) => {
-                let pos = span.span.pos as i64;
-                let signed_len = span.span.signed_len as i64;
+                let pos = span.pos as i64;
+                let signed_len = span.signed_len as i64;
                 if signed_len > 0 {
                     pos.checked_add(signed_len - 1)
                         .is_some_and(|last| in_range(pos) && in_range(last))
@@ -116,10 +227,12 @@ impl InnerListOp {
                 }
             }
             InnerListOp::Move { from, to, .. } => in_range(*from as i64) && in_range(*to as i64),
-            InnerListOp::StyleStart { start, end, .. } => {
-                start < end && in_range(*start as i64) && in_range(*end as i64)
+            InnerListOp::StyleStart(style) => {
+                style.start < style.end
+                    && in_range(style.start as i64)
+                    && in_range(style.end as i64)
             }
-            InnerListOp::Set { .. } | InnerListOp::StyleEnd => true,
+            InnerListOp::Set(_) | InnerListOp::StyleEnd => true,
         };
         if ok {
             Ok(())
@@ -132,13 +245,31 @@ impl InnerListOp {
 
     pub fn new_del(id: ID, pos: usize, len: isize) -> Self {
         assert!(len != 0);
-        Self::Delete(DeleteSpanWithId {
-            id_start: id,
-            span: DeleteSpan {
-                pos: pos as isize,
-                signed_len: len,
-            },
-        })
+        Self::Delete(CompactDeleteSpan::new(
+            id,
+            pos.min(i32::MAX as usize) as isize,
+            len,
+        ))
+    }
+
+    pub fn new_set(elem_id: IdLp, value: LoroValue) -> Self {
+        Self::Set(Arc::new(SetListOp { elem_id, value }))
+    }
+
+    pub fn new_style_start(
+        start: u32,
+        end: u32,
+        key: InternalString,
+        value: LoroValue,
+        info: TextStyleInfoFlag,
+    ) -> Self {
+        Self::StyleStart(Arc::new(StyleOp {
+            start,
+            end,
+            key,
+            value,
+            info,
+        }))
     }
 
     pub(crate) fn estimate_storage_size(&self, container_type: ContainerType) -> usize {
@@ -561,7 +692,10 @@ impl Mergable for InnerListOp {
                     slice: other_slice,
                     ..
                 },
-            ) => pos + slice.content_len() == *other_pos && slice.is_mergable(other_slice, &()),
+            ) => {
+                (*pos as usize) + slice.content_len() == (*other_pos as usize)
+                    && slice.is_mergable(other_slice, &())
+            }
             (InnerListOp::Delete(span), InnerListOp::Delete(other_span)) => {
                 span.is_mergable(other_span, &())
             }
@@ -638,7 +772,7 @@ impl Sliceable for InnerListOp {
         match self {
             InnerListOp::Insert { slice, pos } => InnerListOp::Insert {
                 slice: slice.slice(from, to),
-                pos: *pos + from,
+                pos: pos + from as u32,
             },
             InnerListOp::InsertText {
                 slice,

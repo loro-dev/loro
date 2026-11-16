@@ -66,6 +66,8 @@ pub use loro_internal::json::{
     JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
     MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use loro_internal::kv_store::FileKvStore;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;

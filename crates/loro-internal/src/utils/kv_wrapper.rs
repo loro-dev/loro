@@ -44,6 +44,12 @@ impl KvWrapper {
         }
     }
 
+    pub(crate) fn new_empty_same_backend(&self) -> Self {
+        Self {
+            kv: self.kv.lock().new_empty_same_backend(),
+        }
+    }
+
     pub fn import(&self, bytes: Bytes) -> Result<(), String> {
         let mut kv = self.kv.lock();
         // Snapshot bytes are external input. The document-level checksum does not replace

@@ -164,8 +164,8 @@ impl AppDag {
             .vv
             .len()
             .saturating_add(self.unparsed_vv.lock().len())
-            .saturating_add(self.shallow_since_vv.len())
-            .saturating_mul(16);
+            .saturating_mul(16)
+            .saturating_add(self.shallow_since_vv.estimated_heap_bytes());
         let dep_point_bytes = self.unhandled_dep_points.lock().len().saturating_mul(32);
         let frontier_bytes = self
             .frontiers

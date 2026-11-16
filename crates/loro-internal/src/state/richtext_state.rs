@@ -882,13 +882,7 @@ impl ContainerState for RichtextState {
                         None,
                     );
                 }
-                list_op::InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key,
-                    value,
-                    info,
-                } => {
+                list_op::InnerListOp::StyleStart(style) => {
                     // Behavior here is a little different from apply_diff.
                     //
                     // When apply_diff, we only do the mark when we have included both
@@ -899,14 +893,14 @@ impl ContainerState for RichtextState {
                     // for apply_local_op. (Because for local behavior, when we mark,
                     // we always create a pair of style ops.)
                     self.state.get_mut().mark_with_entity_index(
-                        *start as usize..*end as usize,
+                        style.start as usize..style.end as usize,
                         Arc::new(StyleOp {
                             lamport: r_op.lamport,
                             peer: r_op.id.peer,
                             cnt: r_op.id.counter,
-                            key: key.clone(),
-                            value: value.clone(),
-                            info: *info,
+                            key: style.key.clone(),
+                            value: style.value.clone(),
+                            info: style.info,
                         }),
                     );
                 }

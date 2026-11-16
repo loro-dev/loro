@@ -539,7 +539,7 @@ fn stage3_doc_budget_try_commit_and_manual_txn_rollback() {
     doc.try_commit().unwrap();
 
     let baseline = doc.memory_stats();
-    let tight = baseline.total_bytes + 768;
+    let tight = baseline.total_bytes + 1024;
     doc.set_memory_budget(MemoryBudget::new().with_max_doc_bytes(tight));
 
     let events = Arc::new(AtomicUsize::new(0));

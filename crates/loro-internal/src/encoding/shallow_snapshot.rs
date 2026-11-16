@@ -159,11 +159,11 @@ fn rich_op_content_bytes(oplog: &crate::OpLog, op: &crate::op::RichOp, remaining
                     used
                 }
                 InnerListOp::InsertText { slice, .. } => slice.len(),
-                InnerListOp::Set { value, .. } => value_bytes_capped(value, after_fixed),
-                InnerListOp::StyleStart { key, value, .. } => {
-                    let mut used = key.len();
+                InnerListOp::Set(set) => value_bytes_capped(&set.value, after_fixed),
+                InnerListOp::StyleStart(style) => {
+                    let mut used = style.key.len();
                     used = used.saturating_add(value_bytes_capped(
-                        value,
+                        &style.value,
                         after_fixed.saturating_sub(used),
                     ));
                     used

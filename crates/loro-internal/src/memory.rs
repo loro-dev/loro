@@ -19,6 +19,9 @@ pub struct MemoryBudget {
     pub max_decoded_value_cache_bytes: Option<usize>,
     /// Maximum retained bytes in registered [`crate::UndoManager`] stacks.
     pub max_undo_bytes: Option<usize>,
+    /// Optional native directory for spilling compacted SSTables onto disk
+    /// (ignored on `wasm32` targets).
+    pub spill_dir: Option<std::path::PathBuf>,
 }
 
 impl MemoryBudget {
@@ -71,6 +74,14 @@ impl MemoryBudget {
     /// Sets the byte quota for attached [`crate::UndoManager`] instances.
     pub fn with_max_undo_bytes(mut self, max_bytes: usize) -> Self {
         self.max_undo_bytes = Some(max_bytes);
+        self
+    }
+
+    /// Configures a native directory (`spill_dir`) for out-of-core SSTable spilling.
+    ///
+    /// Has no effect on `wasm32` targets.
+    pub fn with_spill_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        self.spill_dir = Some(dir.into());
         self
     }
 
