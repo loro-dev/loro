@@ -32,10 +32,20 @@ Verified against code 2026-11-16（基于 `perf/memory-budget-remaining`）。
 
 每项标注：**复现**＝有运行证据；**代码确定**＝读码确定、未运行复现；**猜测**＝待证实。
 
-### A. 导入回滚自身失败时的原子性（代码确定；需要用户先定语义）
+### A. 导入回滚自身失败时的原子性（复现；语义已定：必须可恢复，不接受 panic）
 
-原文见 [70](70-remaining-after-followup-fixes.md) 的 A，无变化。“先算后改”已试并放弃（硬额度时导入中位数
-27.5 → 78 ms，峰值 15.5 → 36 MB）。先用 failpoint 构造“逆向 diff 计算失败”复现。
+- 复现（failpoint `FAIL_NEXT_REVERT_DIFF`，本地分支 `wip/a-precompute-inverse`）：额度拒绝的单包更新
+  返回 Err 但状态与历史都停在新版本；批量路径历史回滚而状态未回滚。测试
+  `a_quota_rejected_import_rolls_back_even_if_the_inverse_diff_fails`（在该 WIP 分支上）。
+- 已试“额度下先算逆向 diff 再改状态”（同一 WIP 分支，可用但太慢，未提交）：
+  `budget_import_bench`，base `61da4189` 对 head，两轮交错：
+  20k op 导入 3.8 → 18 ms、峰值 2.45 → 6.6 MB；20 万字文档逐个导入 300 个小更新 2.9 → 710–841 ms（约 250 倍），
+  因为每次逆向 diff 都从历史重建整段文本。无额度时无变化。
+- 建议方案：状态侧 undo log。额度可能拒绝的导入在 `DocState::apply_diff` 时让各容器状态记录自己覆盖掉的内容
+  （Map 旧值；List/Text 被删内容与插入区间；RichText 样式锚点；MovableList 旧位置/值；Tree 旧父节点/位置与被删子树；
+  Counter 已有 journal；新建容器已有 created journal；从 KV 载入的冷容器可丢回 KV），回滚按逆序应用，不读历史，
+  代价与本次改动大小成正比。工作量大（7 种状态），需要与现有逆向 diff 回滚做随机差分测试。
+- 验收同 70 的 A，另加上面两个场景的 A/B。
 
 ### B'. 增量全局估算的后续（代码确定）
 
@@ -45,26 +55,22 @@ Verified against code 2026-11-16（基于 `perf/memory-budget-remaining`）。
 - `pnpm test-loom` 未在本分支运行（`dirty_docs` 是 parking_lot 锁，内部没有 loom 操作）；应补跑。
 - 两个句柄在两线程并发 drop 的 Loom 模型仍未完成（见 70 的 L）。
 
-### C. WASM 物理页额度语义（需要用户决定，未经决定不要改）
+### C. WASM 物理页额度语义（已修，C2：`perf/memory-budget-decisions`）
 
-同 70 的 C。
+`tryReclaimGlobalToBudget` 与 `tryCommit` 同规则；JS 统计新增 `wasmLinearMemoryExceeded`。
 
 ### D. KV flush 整表重写（复现）
 
 同 70 的 D，去掉“每文档 Stage 1 无退避”（已修）。分层 LSM、墓碑、流式合并仍待做。
 
-### E. 落盘 IO 错误（代码确定；读错误语义需要用户决定）
-
-同 70 的 E。
+### E. 落盘 IO 错误（已修：`take_spill_error`、读回块校验 checksum；读失败保持 panic，见 memory-budget.md）
 
 ### F'. 浅快照的剩余保留（猜测）
 
 - op log 段很小（< (state+shallow)/8）时不复制，最多 op log 段大小未计入；`pruned_root` 缓存未测。
 - 复制 state 段才释放的具体持有者（哪些容器保留了 state 段的切片）未定位。
 
-### G. 只有 `spill_dir`、没有额度/水位线时（需要用户决定）
-
-同 70 的 G。
+### G. 只有 `spill_dir`、没有额度/水位线时（已定 G1：只是后端选择，`set_memory_budget` 打 warn）
 
 ### I. WASM 短字符串绑定（代码确定，收益未测）
 
