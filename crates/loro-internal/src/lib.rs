@@ -209,6 +209,12 @@ pub struct LoroDocInner {
     pub(crate) kv_block_cache: kv_store::SharedBlockCache,
     pub(crate) pool_doc_id: u64,
     pub(crate) cached_doc_bytes: std::sync::atomic::AtomicUsize,
+    /// `spilled_disk_bytes` of the statistics `cached_doc_bytes` came from.
+    pub(crate) cached_spilled_bytes: std::sync::atomic::AtomicUsize,
+    /// Whether `cached_doc_bytes` may be stale; see [`loro::DocStatsDirty`].
+    pub(crate) stats_dirty: Arc<loro::DocStatsDirty>,
+    /// Skips per-document soft sweeps that recently failed; see [`loro::SoftBackoff`].
+    pub(crate) soft_backoff: loro::SoftBackoff,
     pub(crate) last_access_tick: std::sync::atomic::AtomicU64,
     pub(crate) drop_gate: Arc<DocDropGate>,
 }
@@ -218,6 +224,8 @@ impl Drop for LoroDocInner {
         loro::unregister_doc_from_global_pool(
             self.pool_doc_id,
             self.cached_doc_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            self.cached_spilled_bytes
                 .load(std::sync::atomic::Ordering::Relaxed),
         );
     }

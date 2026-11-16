@@ -279,6 +279,9 @@ pub struct UndoManager {
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
     doc: LoroDoc,
+    /// Dropped last, after every reference to `inner`: the document's undo bytes
+    /// shrink here.
+    _stats_mark: StatsMarkOnDrop,
 }
 
 impl std::fmt::Debug for UndoManager {
@@ -358,6 +361,47 @@ impl UndoGroup {
             start_counter,
             affected_cids: Default::default(),
         }
+    }
+}
+
+type SharedUndoInner = parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>;
+
+/// The undo manager's lock, marking the document's memory statistics stale when
+/// released (still under the lock). Undo stacks change outside the document's own
+/// locks, e.g. in event callbacks; see `crate::loro::DocStatsDirty`.
+struct MarkedUndoGuard<'a> {
+    guard: parking_lot::ReentrantMutexGuard<'a, RefCell<UndoManagerInner>>,
+    dirty: &'a crate::loro::DocStatsDirty,
+}
+
+impl<'a> MarkedUndoGuard<'a> {
+    fn lock(inner: &'a SharedUndoInner, dirty: &'a crate::loro::DocStatsDirty) -> Self {
+        Self {
+            guard: inner.lock(),
+            dirty,
+        }
+    }
+}
+
+impl std::ops::Deref for MarkedUndoGuard<'_> {
+    type Target = RefCell<UndoManagerInner>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl Drop for MarkedUndoGuard<'_> {
+    fn drop(&mut self) {
+        self.dirty.mark();
+    }
+}
+
+struct StatsMarkOnDrop(Arc<crate::loro::DocStatsDirty>);
+
+impl Drop for StatsMarkOnDrop {
+    fn drop(&mut self) {
+        self.0.mark();
     }
 }
 
@@ -960,6 +1004,10 @@ fn get_counter_end(doc: &LoroDoc, peer: PeerID) -> Counter {
 }
 
 impl UndoManager {
+    fn lock_inner(&self) -> MarkedUndoGuard<'_> {
+        MarkedUndoGuard::lock(&self.inner, &self.doc.stats_dirty)
+    }
+
     pub fn new(doc: &LoroDoc) -> Self {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
@@ -973,6 +1021,8 @@ impl UndoManager {
         })));
         let inner_clone = inner.clone();
         let inner_clone2 = inner.clone();
+        let dirty = doc.stats_dirty.clone();
+        let dirty2 = doc.stats_dirty.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_local = remap_containers.clone();
         let remap_containers_clone = remap_containers.clone();
@@ -980,7 +1030,7 @@ impl UndoManager {
             EventTriggerKind::Local => {
                 // TODO: PERF undo can be significantly faster if we can get
                 // the DiffBatch for undo here
-                let lock = inner_clone.lock();
+                let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 if lock.borrow().processing_undo {
                     return;
                 }
@@ -1012,7 +1062,7 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
-                let lock = inner_clone.lock();
+                let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 let mut inner = lock.borrow_mut();
 
                 {
@@ -1042,7 +1092,7 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Checkout => {
-                let lock = inner_clone.lock();
+                let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 if lock.borrow().paused {
                     return;
                 }
@@ -1054,7 +1104,7 @@ impl UndoManager {
         }));
 
         let sub = doc.subscribe_peer_id_change(Box::new(move |id| {
-            let lock = inner_clone2.lock();
+            let lock = MarkedUndoGuard::lock(&inner_clone2, &dirty2);
             let mut inner = lock.borrow_mut();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
@@ -1082,11 +1132,12 @@ impl UndoManager {
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
             doc: doc.clone(),
+            _stats_mark: StatsMarkOnDrop(doc.stats_dirty.clone()),
         }
     }
 
     pub fn set_max_undo_bytes(&self, max_bytes: usize) {
-        let lock = self.inner.lock();
+        let lock = self.lock_inner();
         if let Ok(mut inner) = lock.try_borrow_mut() {
             inner.max_undo_bytes = max_bytes;
             inner.shrink_to_fit();
@@ -1094,7 +1145,7 @@ impl UndoManager {
     }
 
     pub fn max_undo_bytes(&self) -> usize {
-        let lock = self.inner.lock();
+        let lock = self.lock_inner();
         let ans = lock
             .try_borrow()
             .map(|inner| inner.max_undo_bytes)
@@ -1103,7 +1154,7 @@ impl UndoManager {
     }
 
     pub fn used_bytes(&self) -> usize {
-        let lock = self.inner.lock();
+        let lock = self.lock_inner();
         let ans = lock
             .try_borrow()
             .map(|inner| inner.used_bytes())
@@ -1112,14 +1163,14 @@ impl UndoManager {
     }
 
     pub fn shrink_to_fit(&self) {
-        let lock = self.inner.lock();
+        let lock = self.lock_inner();
         if let Ok(mut inner) = lock.try_borrow_mut() {
             inner.shrink_to_fit();
         };
     }
 
     pub fn group_start(&self) -> LoroResult<()> {
-        let lock = self.inner.lock();
+        let lock = self.lock_inner();
         let mut inner = lock.borrow_mut();
 
         if inner.group.is_some() {
@@ -1135,7 +1186,7 @@ impl UndoManager {
     }
 
     pub fn group_end(&self) {
-        self.inner.lock().borrow_mut().group = None;
+        self.lock_inner().borrow_mut().group = None;
     }
 
     pub fn peer(&self) -> PeerID {
@@ -1143,11 +1194,11 @@ impl UndoManager {
     }
 
     pub fn set_merge_interval(&self, interval: i64) {
-        self.inner.lock().borrow_mut().merge_interval_in_ms = interval;
+        self.lock_inner().borrow_mut().merge_interval_in_ms = interval;
     }
 
     pub fn set_max_undo_steps(&self, size: usize) {
-        let inner = self.inner.lock();
+        let inner = self.lock_inner();
         let mut inner = inner.borrow_mut();
         inner.max_stack_size = size;
         inner.trim_undo_stack();
@@ -1166,7 +1217,7 @@ impl UndoManager {
         // an empty commit before undo/redo processing.
         self.doc.with_barrier(|| {});
         let counter = get_counter_end(&self.doc, self.peer());
-        UndoManagerInner::record_checkpoint(&self.inner.lock(), counter, None);
+        UndoManagerInner::record_checkpoint(&self.lock_inner(), counter, None);
         Ok(())
     }
 
@@ -1199,7 +1250,7 @@ impl UndoManager {
         get_opposite: impl Fn(&mut UndoManagerInner) -> &mut Stack,
         kind: UndoOrRedo,
     ) -> LoroResult<bool> {
-        if self.inner.lock().borrow().paused {
+        if self.lock_inner().borrow().paused {
             return Ok(false);
         }
         let doc = &self.doc.clone();
@@ -1260,7 +1311,7 @@ impl UndoManager {
         self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
         let top = {
-            let lock = self.inner.lock();
+            let lock = self.lock_inner();
             let mut inner = lock.borrow_mut();
             inner.processing_undo = true;
             get_stack(&mut inner).pop()
@@ -1314,7 +1365,7 @@ impl UndoManager {
                     }
                     Err(e) => {
                         span.affected_cids = next_affected_cids;
-                        get_stack(&mut self.inner.lock().borrow_mut())
+                        get_stack(&mut self.lock_inner().borrow_mut())
                             .restore_popped(span, &remote_diff);
                         return Err(e);
                     }
@@ -1336,7 +1387,7 @@ impl UndoManager {
                     next_affected_cids.extend(extra);
                 }
                 drop(commit);
-                let inner = self.inner.lock();
+                let inner = self.lock_inner();
                 let mut is_some = false;
 
                 if let Some(on_pop) = inner.borrow().on_pop.as_ref() {
@@ -1363,7 +1414,7 @@ impl UndoManager {
             }
             let new_counter = get_counter_end(doc, self.peer());
             if end_counter != new_counter {
-                let inner = self.inner.lock();
+                let inner = self.lock_inner();
                 let mut meta = inner
                     .borrow()
                     .on_push
@@ -1402,29 +1453,29 @@ impl UndoManager {
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.inner.lock().borrow().undo_stack.is_empty()
+        !self.lock_inner().borrow().undo_stack.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.inner.lock().borrow().redo_stack.is_empty()
+        !self.lock_inner().borrow().redo_stack.is_empty()
     }
 
     pub fn undo_count(&self) -> usize {
-        self.inner.lock().borrow().undo_stack.len()
+        self.lock_inner().borrow().undo_stack.len()
     }
 
     pub fn redo_count(&self) -> usize {
-        self.inner.lock().borrow().redo_stack.len()
+        self.lock_inner().borrow().redo_stack.len()
     }
 
     /// Get the metadata of the top undo stack item, if any.
     pub fn top_undo_meta(&self) -> Option<UndoItemMeta> {
-        self.inner.lock().borrow().undo_stack.peek_top_meta()
+        self.lock_inner().borrow().undo_stack.peek_top_meta()
     }
 
     /// Get the metadata of the top redo stack item, if any.
     pub fn top_redo_meta(&self) -> Option<UndoItemMeta> {
-        self.inner.lock().borrow().redo_stack.peek_top_meta()
+        self.lock_inner().borrow().redo_stack.peek_top_meta()
     }
 
     /// Get the counter span of the top undo stack item, if any.
@@ -1433,12 +1484,12 @@ impl UndoManager {
     /// the push evicted the oldest item at the stack size limit. A push merged into the
     /// previous item extends that item's span instead.
     pub fn top_undo_span(&self) -> Option<CounterSpan> {
-        self.inner.lock().borrow().undo_stack.peek_top_span()
+        self.lock_inner().borrow().undo_stack.peek_top_span()
     }
 
     /// Get the counter span of the top redo stack item, if any.
     pub fn top_redo_span(&self) -> Option<CounterSpan> {
-        self.inner.lock().borrow().redo_stack.peek_top_span()
+        self.lock_inner().borrow().redo_stack.peek_top_span()
     }
 
     /// Get the value associated with the top undo stack item, if any.
@@ -1452,26 +1503,26 @@ impl UndoManager {
     }
 
     pub fn set_on_push(&self, on_push: Option<OnPush>) {
-        self.inner.lock().borrow_mut().on_push = on_push;
+        self.lock_inner().borrow_mut().on_push = on_push;
     }
 
     pub fn set_on_pop(&self, on_pop: Option<OnPop>) {
-        self.inner.lock().borrow_mut().on_pop = on_pop;
+        self.lock_inner().borrow_mut().on_pop = on_pop;
     }
 
     pub fn clear(&self) {
-        self.inner.lock().borrow_mut().undo_stack.clear();
-        self.inner.lock().borrow_mut().redo_stack.clear();
+        self.lock_inner().borrow_mut().undo_stack.clear();
+        self.lock_inner().borrow_mut().redo_stack.clear();
     }
 
     /// Clear only the redo stack, preserving the undo stack.
     pub fn clear_redo(&self) {
-        self.inner.lock().borrow_mut().redo_stack.clear();
+        self.lock_inner().borrow_mut().redo_stack.clear();
     }
 
     /// Clear only the undo stack, preserving the redo stack.
     pub fn clear_undo(&self) {
-        self.inner.lock().borrow_mut().undo_stack.clear();
+        self.lock_inner().borrow_mut().undo_stack.clear();
     }
 
     /// Pause the UndoManager so that local edits and checkout events are ignored.
@@ -1487,25 +1538,25 @@ impl UndoManager {
     ///
     /// Call [`Self::resume`] after returning the document to its original state.
     pub fn pause(&self) {
-        self.inner.lock().borrow_mut().paused = true;
+        self.lock_inner().borrow_mut().paused = true;
     }
 
     /// Resume the UndoManager after a [`Self::pause`].
     pub fn resume(&self) {
-        self.inner.lock().borrow_mut().paused = false;
+        self.lock_inner().borrow_mut().paused = false;
     }
 
     /// Returns whether the UndoManager is currently paused.
     pub fn is_paused(&self) -> bool {
-        self.inner.lock().borrow().paused
+        self.lock_inner().borrow().paused
     }
 
     pub fn set_top_undo_meta(&self, meta: UndoItemMeta) {
-        self.inner.lock().borrow_mut().undo_stack.set_top_meta(meta);
+        self.lock_inner().borrow_mut().undo_stack.set_top_meta(meta);
     }
 
     pub fn set_top_redo_meta(&self, meta: UndoItemMeta) {
-        self.inner.lock().borrow_mut().redo_stack.set_top_meta(meta);
+        self.lock_inner().borrow_mut().redo_stack.set_top_meta(meta);
     }
 }
 

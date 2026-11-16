@@ -2533,6 +2533,9 @@ mod mut_inner_kv {
             let mut block = Arc::new(block);
             block.ensure_changes(arena).map_err(|err| (block_id, err))?;
             inner.mem_parsed_kv.insert(block_id, block.clone());
+            // This runs without the op log lock (the creator resolver), so tell the
+            // document's statistics; see `crate::loro::DocStatsDirty`.
+            arena.mark_stats_dirty();
             Ok(Some(block))
         }
 
@@ -2546,7 +2549,9 @@ mod mut_inner_kv {
             if block.peer != id.peer || block.counter_range.1 <= id.counter {
                 return None;
             }
-            Some(match block.ensure_changes(arena) {
+            let parsed = block.ensure_changes(arena);
+            arena.mark_stats_dirty();
+            Some(match parsed {
                 Ok(()) => Ok(block.clone()),
                 Err(err) => Err((*block_id, err)),
             })

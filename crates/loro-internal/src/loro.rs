@@ -230,15 +230,24 @@ impl LoroDoc {
                 kv_block_cache,
                 pool_doc_id,
                 cached_doc_bytes: std::sync::atomic::AtomicUsize::new(0),
+                cached_spilled_bytes: std::sync::atomic::AtomicUsize::new(0),
+                stats_dirty: Arc::new(DocStatsDirty::new(pool_doc_id)),
+                soft_backoff: SoftBackoff::new(),
                 last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
                 drop_gate: Default::default(),
             }
         });
         if pool_doc_id != 0 {
             global_pool().register(pool_doc_id, Arc::downgrade(&inner), inner.drop_gate.clone());
-            if global_flags != 0 {
-                refresh_cached_doc_bytes_for_inner(&inner);
-            }
+            // After registering: a mark pushes the id, and the refresh of a pushed id
+            // must find the document in the registry.
+            let dirty = &inner.stats_dirty;
+            inner.txn.set_stats_dirty(dirty.clone());
+            inner.oplog.set_stats_dirty(dirty.clone());
+            inner.state.set_stats_dirty(dirty.clone());
+            inner.diff_calculator.set_stats_dirty(dirty.clone());
+            inner.arena.set_stats_dirty(dirty.clone());
+            // `register` queued it (it starts dirty); the next estimate computes it.
         }
         LoroDoc::from_inner(inner)
     }
@@ -6225,6 +6234,66 @@ static NEXT_POOL_DOC_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 static GLOBAL_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static GLOBAL_POOL: std::sync::OnceLock<GlobalMemoryPool> = std::sync::OnceLock::new();
 
+/// Whether a document's cached statistics (`cached_doc_bytes`) may be stale.
+///
+/// The native global estimate (no allocator tracker) used to recompute every live
+/// document's statistics on each budgeted commit, so a commit cost grew with the
+/// number of documents. Now it sums the cached values and recomputes only
+/// documents marked here ([`GlobalMemoryPool::refresh_dirty_docs`]).
+///
+/// Marking rule: whatever can change a component of [`DocMemoryStats`] marks the
+/// document while it holds the lock that component is read under, or after the
+/// change. The refresh clears the flag after taking the document's locks and before
+/// reading the components, so a change is either seen by that read or marks again.
+/// Marks come from every acquisition of the document's `Txn`, `OpLog`, `DocState`
+/// and `DiffCalculator` locks (`LoroMutex::set_stats_dirty`), arena writes
+/// (`SharedArena::mark_stats_dirty`; handlers register containers without the
+/// document's locks), change blocks parsed by the creator resolver, and undo
+/// managers (`MarkedUndoGuard`). A flag going from clean to dirty adds the id to
+/// `GlobalMemoryPool::dirty_docs`, also without a global budget (the statistics
+/// APIs work without one); a document starts dirty and queued. The set holds live
+/// documents only (`unregister` removes the id), and a document that is never
+/// refreshed is added once.
+#[derive(Debug)]
+pub(crate) struct DocStatsDirty {
+    doc_id: u64,
+    dirty: std::sync::atomic::AtomicBool,
+}
+
+impl DocStatsDirty {
+    fn new(doc_id: u64) -> Self {
+        Self {
+            doc_id,
+            // Queued by `GlobalMemoryPool::register`.
+            dirty: std::sync::atomic::AtomicBool::new(true),
+        }
+    }
+
+    /// Marks the statistics stale. Cheap when already dirty (one relaxed load); a
+    /// stale `true` read cannot skip a needed push, since the refresh that cleared
+    /// it held the lock the marker holds now, or ran before the change it marks.
+    #[inline]
+    pub(crate) fn mark(&self) {
+        if !self.dirty.load(Relaxed) {
+            self.mark_slow();
+        }
+    }
+
+    #[cold]
+    fn mark_slow(&self) {
+        if self.doc_id == 0 || self.dirty.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        if let Some(pool) = GLOBAL_POOL.get() {
+            pool.push_dirty(self.doc_id);
+        }
+    }
+
+    fn is_dirty(&self) -> bool {
+        self.dirty.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 #[inline]
 pub(crate) fn global_budget_flags() -> u8 {
     GLOBAL_BUDGET_FLAGS.load(Acquire)
@@ -6270,12 +6339,62 @@ struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
     docs: parking_lot::Mutex<RegistryEntries>,
     total_cached_doc_bytes: std::sync::atomic::AtomicU64,
+    /// Sum of `cached_spilled_bytes`.
+    total_cached_spilled_bytes: std::sync::atomic::AtomicU64,
+    /// Live documents whose cached statistics may be stale; see [`DocStatsDirty`].
+    dirty_docs: parking_lot::Mutex<FxHashSet<u64>>,
     global_block_cache: SharedBlockCache,
-    /// Usage left by the last soft sweep that could not reach its target, or 0.
     /// See [`GlobalMemoryPool::soft_reclaim_backed_off`].
-    soft_backoff_floor: std::sync::atomic::AtomicU64,
-    /// Soft sweeps skipped since `soft_backoff_floor` was set.
-    soft_backoff_skips: std::sync::atomic::AtomicU32,
+    soft_backoff: SoftBackoff,
+}
+
+/// Skips soft sweeps that recently failed to reach their target: one global
+/// (`GlobalMemoryPool::soft_backoff`) and one per document
+/// (`LoroDocInner::soft_backoff`, used by `enforce_watermarks_with_budget_locked`).
+#[derive(Debug)]
+pub(crate) struct SoftBackoff {
+    /// Usage left by the last sweep that could not reach its target, or 0.
+    floor: std::sync::atomic::AtomicU64,
+    /// Sweeps skipped since `floor` was set.
+    skips: std::sync::atomic::AtomicU32,
+}
+
+impl SoftBackoff {
+    pub(crate) const fn new() -> Self {
+        Self {
+            floor: std::sync::atomic::AtomicU64::new(0),
+            skips: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// Whether a sweep should be skipped for usage `used` above the high
+    /// watermark: the previous sweep could not get below its target, usage has
+    /// not grown meaningfully since, and fewer than [`SOFT_BACKOFF_MAX_SKIPS`]
+    /// checks were skipped.
+    fn backed_off(&self, used: u64) -> bool {
+        let floor = self.floor.load(Relaxed);
+        if floor == 0 {
+            return false;
+        }
+        let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+        used <= floor.saturating_add(growth)
+            && self.skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
+    }
+
+    fn record(&self, reached_target: bool, used: u64) {
+        if reached_target {
+            self.reset();
+        } else {
+            self.skips.store(0, Relaxed);
+            self.floor.store(used.max(1), Relaxed);
+        }
+    }
+
+    pub(crate) fn reset(&self) {
+        if self.floor.load(Relaxed) != 0 {
+            self.floor.store(0, Relaxed);
+        }
+    }
 }
 
 /// A failed soft sweep is retried once usage grows by this fraction of what it
@@ -6292,9 +6411,10 @@ impl GlobalMemoryPool {
             budget: parking_lot::Mutex::new(GlobalMemoryBudget::default()),
             docs: parking_lot::Mutex::new(FxHashMap::default()),
             total_cached_doc_bytes: std::sync::atomic::AtomicU64::new(0),
+            total_cached_spilled_bytes: std::sync::atomic::AtomicU64::new(0),
+            dirty_docs: parking_lot::Mutex::new(FxHashSet::default()),
             global_block_cache: SharedBlockCache::new(DEFAULT_GLOBAL_BLOCK_CACHE_BYTES),
-            soft_backoff_floor: std::sync::atomic::AtomicU64::new(0),
-            soft_backoff_skips: std::sync::atomic::AtomicU32::new(0),
+            soft_backoff: SoftBackoff::new(),
         }
     }
 
@@ -6305,24 +6425,11 @@ impl GlobalMemoryPool {
     /// and arena copy) on the active document, so repeating one that cannot
     /// succeed made every commit pay for it. Hard admission does not use this.
     fn soft_reclaim_backed_off(&self, used: u64) -> bool {
-        let floor = self.soft_backoff_floor.load(Relaxed);
-        if floor == 0 {
-            return false;
-        }
-        let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
-        used <= floor.saturating_add(growth)
-            && self.soft_backoff_skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
+        self.soft_backoff.backed_off(used)
     }
 
     fn record_soft_sweep_result(&self, reached_target: bool, used: u64) {
-        if reached_target {
-            if self.soft_backoff_floor.load(Relaxed) != 0 {
-                self.soft_backoff_floor.store(0, Relaxed);
-            }
-        } else {
-            self.soft_backoff_skips.store(0, Relaxed);
-            self.soft_backoff_floor.store(used.max(1), Relaxed);
-        }
+        self.soft_backoff.record(reached_target, used);
     }
 
     fn register(
@@ -6332,15 +6439,104 @@ impl GlobalMemoryPool {
         gate: Arc<crate::DocDropGate>,
     ) {
         self.docs.lock().insert(id, (weak, gate));
+        self.push_dirty(id);
     }
 
-    fn unregister(&self, id: u64, last_cached_bytes: usize) {
+    fn unregister(&self, id: u64, last_cached_bytes: usize, last_spilled_bytes: usize) {
         self.docs.lock().remove(&id);
-        if last_cached_bytes > 0 {
-            let diff = last_cached_bytes as u64;
-            let _ = self
-                .total_cached_doc_bytes
-                .fetch_update(Relaxed, Relaxed, |cur| Some(cur.saturating_sub(diff)));
+        self.dirty_docs.lock().remove(&id);
+        sub_saturating(&self.total_cached_doc_bytes, last_cached_bytes);
+        sub_saturating(&self.total_cached_spilled_bytes, last_spilled_bytes);
+    }
+
+    fn live_doc_count(&self) -> usize {
+        self.docs
+            .lock()
+            .values()
+            .filter(|(weak, _)| weak.strong_count() > 0)
+            .count()
+    }
+
+    fn push_dirty(&self, id: u64) {
+        self.dirty_docs.lock().insert(id);
+    }
+
+    /// Recomputes the statistics of the documents marked dirty, except `active_id`,
+    /// which stays queued: its caller supplies its bytes and keeps changing it.
+    /// A document that is busy (or whose undo manager is) keeps its cached value and
+    /// stays queued, as the full scan used to keep a busy document's cached value.
+    fn refresh_dirty_docs(&self, active_id: Option<u64>) {
+        let ids = std::mem::take(&mut *self.dirty_docs.lock());
+        if ids.is_empty() {
+            return;
+        }
+        let mut requeue = Vec::new();
+        let targets: Vec<_> = {
+            let docs = self.docs.lock();
+            ids.into_iter()
+                .filter_map(|id| {
+                    if active_id == Some(id) {
+                        requeue.push(id);
+                        return None;
+                    }
+                    docs.get(&id)
+                        .map(|(weak, gate)| (id, weak.clone(), gate.clone()))
+                })
+                .collect()
+        };
+        for (id, weak, gate) in targets {
+            #[cfg(test)]
+            DIRTY_REFRESHES.with(|n| n.set(n.get() + 1));
+            // A document that cannot be upgraded is being dropped and unregisters.
+            if let Some(doc) = RegistryRef::upgrade(&weak, gate) {
+                if !refresh_cached_doc_bytes_for_inner(&doc) {
+                    requeue.push(id);
+                }
+            }
+        }
+        if !requeue.is_empty() {
+            self.dirty_docs.lock().extend(requeue);
+        }
+    }
+
+    /// The estimated bytes of all documents plus the global block cache, and their
+    /// spilled bytes, with `active`'s bytes as given. Costs the number of documents
+    /// changed since the last call, not the number of documents.
+    fn estimated_docs_total(&self, active: Option<(&LoroDocInner, usize)>) -> (u64, u64) {
+        self.refresh_dirty_docs(active.map(|(doc, _)| doc.pool_doc_id));
+        if let Some((doc, bytes)) = active {
+            self.update_cached_doc_bytes(doc, bytes, None);
+        }
+        #[cfg(debug_assertions)]
+        self.debug_assert_clean_caches_fresh(active.map(|(doc, _)| doc.pool_doc_id));
+        (
+            self.cached_estimated_total(),
+            self.total_cached_spilled_bytes.load(Relaxed),
+        )
+    }
+
+    /// Debug builds: every clean document's cache equals a fresh computation.
+    /// Skips documents that are busy, dirty, or marked while being checked.
+    #[cfg(debug_assertions)]
+    fn debug_assert_clean_caches_fresh(&self, active_id: Option<u64>) {
+        for doc in self.snapshot_live_docs() {
+            if Some(doc.pool_doc_id) == active_id || doc.stats_dirty.is_dirty() {
+                continue;
+            }
+            let Some(fresh) = fresh_doc_stats_unmarked(&doc) else {
+                continue;
+            };
+            if doc.stats_dirty.is_dirty() {
+                continue;
+            }
+            let cached = doc
+                .cached_doc_bytes
+                .load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                cached, fresh.total_bytes,
+                "doc {} is not marked dirty but its cached statistics are stale: {fresh:?}",
+                doc.pool_doc_id
+            );
         }
     }
 
@@ -6363,50 +6559,31 @@ impl GlobalMemoryPool {
             .collect()
     }
 
-    fn update_cached_doc_bytes(&self, doc: &LoroDocInner, new_bytes: usize) {
-        let prev = doc.cached_doc_bytes.swap(new_bytes, AcqRel);
-        if prev != new_bytes {
-            if new_bytes > prev {
-                self.total_cached_doc_bytes
-                    .fetch_add((new_bytes - prev) as u64, Relaxed);
-            } else {
-                let diff = (prev - new_bytes) as u64;
-                let _ = self
-                    .total_cached_doc_bytes
-                    .fetch_update(Relaxed, Relaxed, |cur| Some(cur.saturating_sub(diff)));
-            }
-        }
-    }
-
-    fn docs_estimated_with_override(
+    fn update_cached_doc_bytes(
         &self,
-        live: &[RegistryRef],
-        active_override: Option<(u64, usize)>,
-    ) -> (u64, u64) {
-        let mut total_docs = 0u64;
-        let mut total_spilled = 0u64;
-        for doc in live {
-            if let Some((active_id, active_bytes)) = active_override {
-                if doc.pool_doc_id == active_id {
-                    self.update_cached_doc_bytes(doc, active_bytes);
-                    total_docs = total_docs.saturating_add(active_bytes as u64);
-                    continue;
-                }
-            }
-            let (ram, spilled) = try_stats_for_global(doc);
-            total_docs = total_docs.saturating_add(ram as u64);
-            total_spilled = total_spilled.saturating_add(spilled as u64);
+        doc: &LoroDocInner,
+        new_bytes: usize,
+        new_spilled: Option<usize>,
+    ) {
+        swap_cached(
+            &doc.cached_doc_bytes,
+            &self.total_cached_doc_bytes,
+            new_bytes,
+        );
+        if let Some(spilled) = new_spilled {
+            swap_cached(
+                &doc.cached_spilled_bytes,
+                &self.total_cached_spilled_bytes,
+                spilled,
+            );
         }
-        let block_cache = self.global_block_cache.used_bytes() as u64;
-        (total_docs.saturating_add(block_cache), total_spilled)
     }
 
     fn current_heap_or_estimated_used(&self) -> u64 {
         if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
-            let live = self.snapshot_live_docs();
-            self.docs_estimated_with_override(&live, None).0
+            self.estimated_docs_total(None).0
         }
     }
 
@@ -6496,10 +6673,10 @@ impl GlobalMemoryPool {
         exclude_doc_id: Option<u64>,
         force_full: bool,
     ) {
-        let live = self.snapshot_live_docs();
         if !heap_tracker_active() {
-            let _ = self.docs_estimated_with_override(&live, None);
+            let _ = self.estimated_docs_total(None);
         }
+        let live = self.snapshot_live_docs();
         let _ = self.reclaim_idle_docs_to_target(&live, exclude_doc_id, target_bytes, force_full);
     }
 
@@ -6511,18 +6688,16 @@ impl GlobalMemoryPool {
         uncommitted_txn_bytes: usize,
         active_bytes: usize,
     ) {
-        self.update_cached_doc_bytes(active_doc, active_bytes);
+        self.update_cached_doc_bytes(active_doc, active_bytes, None);
         let budget = self.budget.lock().clone();
         let Some(high) = budget.effective_high_watermark() else {
             return;
         };
         let target = budget.effective_target_watermark().unwrap_or(high);
-        let mut live = None;
         let initial_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
-            let docs = live.insert(self.snapshot_live_docs());
-            self.docs_estimated_with_override(docs, Some((active_doc.pool_doc_id, active_bytes)))
+            self.estimated_docs_total(Some((active_doc, active_bytes)))
                 .0
         };
         let wasm_pressure = cfg!(target_arch = "wasm32")
@@ -6544,7 +6719,7 @@ impl GlobalMemoryPool {
             return;
         }
 
-        let live = live.unwrap_or_else(|| self.snapshot_live_docs());
+        let live = self.snapshot_live_docs();
         let mut cur_used = self.reclaim_idle_docs_to_target(
             &live,
             Some(active_doc.pool_doc_id),
@@ -6597,7 +6772,7 @@ impl GlobalMemoryPool {
 
     fn check_global_budget_with_active(
         &self,
-        active_doc_id: u64,
+        active_doc: &LoroDocInner,
         active_bytes: Option<usize>,
         linear_before: Option<u64>,
     ) -> LoroResult<()> {
@@ -6608,8 +6783,7 @@ impl GlobalMemoryPool {
         let used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
-            let live = self.snapshot_live_docs();
-            self.docs_estimated_with_override(&live, active_bytes.map(|b| (active_doc_id, b)))
+            self.estimated_docs_total(active_bytes.map(|b| (active_doc, b)))
                 .0
         };
         if let Some(max_heap) = budget.max_heap_bytes {
@@ -6706,12 +6880,16 @@ fn global_pool() -> &'static GlobalMemoryPool {
     GLOBAL_POOL.get_or_init(GlobalMemoryPool::new)
 }
 
-pub(crate) fn unregister_doc_from_global_pool(pool_doc_id: u64, last_cached_bytes: usize) {
+pub(crate) fn unregister_doc_from_global_pool(
+    pool_doc_id: u64,
+    last_cached_bytes: usize,
+    last_spilled_bytes: usize,
+) {
     if pool_doc_id == 0 {
         return;
     }
     if let Some(pool) = GLOBAL_POOL.get() {
-        pool.unregister(pool_doc_id, last_cached_bytes);
+        pool.unregister(pool_doc_id, last_cached_bytes, last_spilled_bytes);
     }
 }
 
@@ -6735,21 +6913,25 @@ fn shrink_undo_managers_inner(doc: &LoroDocInner) -> usize {
     freed
 }
 
-fn sum_undo_bytes_inner(doc: &LoroDocInner) -> usize {
+/// The undo managers' bytes, and whether every manager could be read.
+fn sum_undo_bytes_inner(doc: &LoroDocInner) -> (usize, bool) {
     let managers = {
         let mut guard = doc.undo_managers.lock();
         guard.retain(|w| w.strong_count() > 0);
         guard.iter().filter_map(|w| w.upgrade()).collect::<Vec<_>>()
     };
     let mut total = 0usize;
+    let mut complete = true;
     for manager in managers {
-        if let Some(lock) = manager.try_lock() {
-            if let Ok(inner) = lock.try_borrow() {
-                total = total.saturating_add(inner.used_bytes());
-            }
+        match manager.try_lock() {
+            Some(lock) => match lock.try_borrow() {
+                Ok(inner) => total = total.saturating_add(inner.used_bytes()),
+                Err(_) => complete = false,
+            },
+            None => complete = false,
         }
     }
-    total
+    (total, complete)
 }
 
 fn compute_doc_stats_locked_inner(
@@ -6759,11 +6941,6 @@ fn compute_doc_stats_locked_inner(
     uncommitted_txn_bytes: usize,
     try_diff_only: bool,
 ) -> DocMemoryStats {
-    let oplog_mem = oplog.estimated_memory_breakdown();
-    let state_bytes = state.state_estimated_bytes();
-    let value_cache_bytes = state.value_cache_bytes();
-    let state_kv_bytes = state.kv_estimated_bytes();
-    let state_spilled = state.spilled_disk_bytes();
     let diff_calc_bytes = if try_diff_only {
         doc.diff_calculator
             .try_lock()
@@ -6771,9 +6948,43 @@ fn compute_doc_stats_locked_inner(
     } else {
         doc.diff_calculator.lock().estimated_bytes()
     };
+    let undo_bytes = sum_undo_bytes_inner(doc).0;
+    let stats = doc_stats_from_parts(
+        doc,
+        oplog,
+        state,
+        uncommitted_txn_bytes,
+        diff_calc_bytes,
+        undo_bytes,
+    );
+    if doc.pool_doc_id != 0 {
+        if let Some(pool) = GLOBAL_POOL.get() {
+            pool.update_cached_doc_bytes(doc, stats.total_bytes, Some(stats.spilled_disk_bytes));
+        } else {
+            doc.cached_doc_bytes.store(stats.total_bytes, Release);
+            doc.cached_spilled_bytes
+                .store(stats.spilled_disk_bytes, Release);
+        }
+    }
+    stats
+}
+
+/// The statistics from their parts; no side effects on the caches.
+fn doc_stats_from_parts(
+    doc: &LoroDocInner,
+    oplog: &OpLog,
+    state: &DocState,
+    uncommitted_txn_bytes: usize,
+    diff_calc_bytes: usize,
+    undo_bytes: usize,
+) -> DocMemoryStats {
+    let oplog_mem = oplog.estimated_memory_breakdown();
+    let state_bytes = state.state_estimated_bytes();
+    let value_cache_bytes = state.value_cache_bytes();
+    let state_kv_bytes = state.kv_estimated_bytes();
+    let state_spilled = state.spilled_disk_bytes();
     let kv_bytes = state_kv_bytes.saturating_add(oplog_mem.change_kv_bytes);
     let block_cache_bytes = doc.kv_block_cache.local_used_bytes();
-    let undo_bytes = sum_undo_bytes_inner(doc);
     let spilled_disk_bytes = state_spilled.saturating_add(oplog_mem.spilled_disk_bytes);
 
     let total_bytes = state_bytes
@@ -6788,14 +6999,6 @@ fn compute_doc_stats_locked_inner(
         .saturating_add(diff_calc_bytes)
         .saturating_add(undo_bytes)
         .saturating_add(uncommitted_txn_bytes);
-
-    if doc.pool_doc_id != 0 {
-        if let Some(pool) = GLOBAL_POOL.get() {
-            pool.update_cached_doc_bytes(doc, total_bytes);
-        } else {
-            doc.cached_doc_bytes.store(total_bytes, Release);
-        }
-    }
 
     DocMemoryStats {
         total_bytes,
@@ -6815,31 +7018,105 @@ fn compute_doc_stats_locked_inner(
     }
 }
 
-fn try_stats_for_global(doc: &Arc<LoroDocInner>) -> (usize, usize) {
-    let Some(txn_guard) = doc.txn.try_lock() else {
-        return (doc.cached_doc_bytes.load(Relaxed), 0);
+/// Recomputes `doc`'s cached statistics if none of its locks (nor its undo
+/// managers) are busy, and clears its dirty flag. Returns `false`, leaving the
+/// flag set, when it could not; the caller keeps the document queued. Takes the
+/// locks without marking: this is the reader the marks are for (see
+/// [`DocStatsDirty`]).
+fn refresh_cached_doc_bytes_for_inner(doc: &LoroDocInner) -> bool {
+    let Some(txn) = doc.txn.try_lock_unmarked() else {
+        return false;
     };
-    let uncommitted = txn_guard
+    let Some(oplog) = doc.oplog.try_lock_unmarked() else {
+        return false;
+    };
+    let Some(state) = doc.state.try_lock_unmarked() else {
+        return false;
+    };
+    let Some(diff_calc) = doc.diff_calculator.try_lock_unmarked() else {
+        return false;
+    };
+    // Clear before reading: a change made from now on marks again.
+    doc.stats_dirty
+        .dirty
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let uncommitted = txn
         .as_ref()
         .map_or(0, Transaction::estimated_uncommitted_bytes);
-    let Some(oplog) = doc.oplog.try_lock() else {
-        return (doc.cached_doc_bytes.load(Relaxed).max(uncommitted), 0);
-    };
-    let Some(state) = doc.state.try_lock() else {
-        return (doc.cached_doc_bytes.load(Relaxed).max(uncommitted), 0);
-    };
-    let stats = compute_doc_stats_locked_inner(doc, &oplog, &state, uncommitted, true);
-    (stats.total_bytes, stats.spilled_disk_bytes)
+    let (undo_bytes, undo_complete) = sum_undo_bytes_inner(doc);
+    let stats = doc_stats_from_parts(
+        doc,
+        &oplog,
+        &state,
+        uncommitted,
+        diff_calc.estimated_bytes(),
+        undo_bytes,
+    );
+    if doc.pool_doc_id != 0 {
+        if let Some(pool) = GLOBAL_POOL.get() {
+            pool.update_cached_doc_bytes(doc, stats.total_bytes, Some(stats.spilled_disk_bytes));
+        }
+    }
+    if !undo_complete {
+        doc.stats_dirty
+            .dirty
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        return false;
+    }
+    true
 }
 
-fn refresh_cached_doc_bytes_for_inner(doc: &Arc<LoroDocInner>) {
-    let _ = try_stats_for_global(doc);
+/// `doc`'s statistics, computed without marking it or updating its cache, or
+/// `None` if something is busy.
+#[cfg(debug_assertions)]
+fn fresh_doc_stats_unmarked(doc: &LoroDocInner) -> Option<DocMemoryStats> {
+    let txn = doc.txn.try_lock_unmarked()?;
+    let oplog = doc.oplog.try_lock_unmarked()?;
+    let state = doc.state.try_lock_unmarked()?;
+    let diff_calc = doc.diff_calculator.try_lock_unmarked()?;
+    let (undo_bytes, complete) = sum_undo_bytes_inner(doc);
+    if !complete {
+        return None;
+    }
+    let uncommitted = txn
+        .as_ref()
+        .map_or(0, Transaction::estimated_uncommitted_bytes);
+    Some(doc_stats_from_parts(
+        doc,
+        &oplog,
+        &state,
+        uncommitted,
+        diff_calc.estimated_bytes(),
+        undo_bytes,
+    ))
+}
+
+fn swap_cached(
+    cached: &std::sync::atomic::AtomicUsize,
+    total: &std::sync::atomic::AtomicU64,
+    new: usize,
+) {
+    let prev = cached.swap(new, AcqRel);
+    if new > prev {
+        total.fetch_add((new - prev) as u64, Relaxed);
+    } else if new < prev {
+        sub_saturating(total, prev - new);
+    }
+}
+
+fn sub_saturating(total: &std::sync::atomic::AtomicU64, diff: usize) {
+    if diff > 0 {
+        let diff = diff as u64;
+        let _ = total.fetch_update(Relaxed, Relaxed, |cur| Some(cur.saturating_sub(diff)));
+    }
 }
 
 #[cfg(test)]
 thread_local! {
     static IDLE_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static ACTIVE_FALLBACK_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DIRTY_REFRESHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DOC_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn try_reclaim_idle_doc(
@@ -6920,7 +7197,10 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
         for doc in &live {
             doc.kv_block_cache
                 .set_parent(Some(&pool.global_block_cache));
-            refresh_cached_doc_bytes_for_inner(doc);
+            // Marks made while no budget was set did not queue the document.
+            if !refresh_cached_doc_bytes_for_inner(doc) {
+                pool.push_dirty(doc.pool_doc_id);
+            }
             if arm_hard_scope {
                 if let Some(mut txn_guard) = doc.txn.try_lock() {
                     if let Some(txn) = txn_guard.as_mut() {
@@ -6961,11 +7241,11 @@ pub fn global_memory_budget() -> GlobalMemoryBudget {
 /// global allocator (if tracked, as on WASM).
 pub fn global_memory_stats() -> GlobalMemoryStats {
     let pool = global_pool();
-    let live = pool.snapshot_live_docs();
+    let live_doc_count = pool.live_doc_count();
+    let (docs_estimated_bytes, spilled_disk_bytes) = pool.estimated_docs_total(None);
     let global_block_cache_bytes = pool.global_block_cache.used_bytes();
-    let (docs_estimated_bytes, spilled_disk_bytes) = pool.docs_estimated_with_override(&live, None);
     GlobalMemoryStats {
-        live_doc_count: live.len(),
+        live_doc_count,
         docs_estimated_bytes,
         global_block_cache_bytes,
         allocated_heap_bytes: tracked_allocated_heap_bytes(),
@@ -6980,12 +7260,12 @@ pub fn global_memory_stats() -> GlobalMemoryStats {
 /// returning the observed byte reduction.
 pub fn reclaim_global_memory(target_bytes: Option<u64>) -> u64 {
     let pool = global_pool();
-    let live = pool.snapshot_live_docs();
     let before = if heap_tracker_active() {
         tracked_allocated_heap_bytes()
     } else {
-        pool.docs_estimated_with_override(&live, None).0
+        pool.estimated_docs_total(None).0
     };
+    let live = pool.snapshot_live_docs();
     let (target, force_full) = match target_bytes {
         Some(t) => (t, false),
         None => (0, true),
@@ -7105,6 +7385,7 @@ impl LoroDoc {
             }
         }
         let _ = strict;
+        self.soft_backoff.reset();
         let mut flags = 0u8;
         if budget.max_doc_bytes.is_some() {
             flags |= BUDGET_FLAG_MAX_DOC;
@@ -7468,11 +7749,7 @@ impl LoroDoc {
                         .total_bytes,
                 )
             };
-            global_pool().check_global_budget_with_active(
-                self.pool_doc_id,
-                active_bytes,
-                linear_before,
-            )?;
+            global_pool().check_global_budget_with_active(self, active_bytes, linear_before)?;
         }
         Ok(())
     }
@@ -7508,11 +7785,7 @@ impl LoroDoc {
             None
         };
         if has_global {
-            global_pool().check_global_budget_with_active(
-                self.pool_doc_id,
-                active_bytes,
-                linear_before,
-            )?;
+            global_pool().check_global_budget_with_active(self, active_bytes, linear_before)?;
         }
         Ok(())
     }
@@ -7550,11 +7823,7 @@ impl LoroDoc {
             None
         };
         if has_global {
-            global_pool().check_global_budget_with_active(
-                self.pool_doc_id,
-                active_bytes,
-                linear_before,
-            )?;
+            global_pool().check_global_budget_with_active(self, active_bytes, linear_before)?;
         }
         Ok(())
     }
@@ -7676,7 +7945,15 @@ impl LoroDoc {
 
         if let Some(high) = high {
             let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
-            if stats.total_bytes > high || force_full {
+            if stats.total_bytes <= high && !force_full {
+                self.soft_backoff.reset();
+            } else if !force_full && self.soft_backoff.backed_off(stats.total_bytes as u64) {
+                // The last sweep could not reach the target and usage has barely
+                // grown: skip Stage 1's history compaction and full KV flush (with a
+                // spill directory, a rewrite of the whole table) on every commit.
+            } else {
+                #[cfg(test)]
+                DOC_STAGE1_PASSES.with(|n| n.set(n.get() + 1));
                 // Stage 1: Reclaim caches and soft buffers before touching materialized states.
                 state.evict_value_cache_to_bytes(if force_full {
                     0
@@ -7710,6 +7987,7 @@ impl LoroDoc {
                 let target_limit = target.unwrap_or(high);
                 let stats_after_stage1 =
                     self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+                let mut left = stats_after_stage1.total_bytes;
                 if stats_after_stage1.total_bytes > target_limit || force_full {
                     // Stage 2: Demote cold materialized container states and compress KV memtables.
                     let need = stats_after_stage1.total_bytes.saturating_sub(target_limit);
@@ -7721,6 +7999,14 @@ impl LoroDoc {
                     state.demote_cold_states(target_state_bytes, &Default::default());
                     state.flush_kv();
                     oplog.flush_kv();
+                    if !force_full {
+                        left = self
+                            .memory_stats_locked(oplog, state, uncommitted_txn_bytes)
+                            .total_bytes;
+                    }
+                }
+                if !force_full {
+                    self.soft_backoff.record(left <= target_limit, left as u64);
                 }
             }
         }
@@ -7888,6 +8174,140 @@ mod reclamation_work_tests {
         pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true);
         IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
         assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
+
+    /// The native global estimate recomputes only documents marked dirty, not
+    /// every live document (it used to cost ~1 ms per commit with 1,000 idle
+    /// documents). Global budgets are off in this test binary, so marks do not
+    /// queue documents themselves; the test queues the dirty ones by hand.
+    #[test]
+    fn the_global_estimate_refreshes_only_documents_marked_dirty() {
+        let pool = GlobalMemoryPool::new();
+        let docs: Vec<LoroDoc> = (0..40)
+            .map(|i| {
+                let doc = LoroDoc::new_auto_commit();
+                doc.get_map("m").insert("v", i).unwrap();
+                doc.commit_then_renew();
+                pool.register(
+                    doc.pool_doc_id,
+                    Arc::downgrade(&doc.inner),
+                    doc.drop_gate.clone(),
+                );
+                doc
+            })
+            .collect();
+        DIRTY_REFRESHES.with(|n| n.set(0));
+        let _ = pool.estimated_docs_total(None);
+        assert_eq!(
+            DIRTY_REFRESHES.with(|n| n.get()),
+            40,
+            "new documents start queued"
+        );
+        assert!(docs.iter().all(|d| !d.stats_dirty.is_dirty()));
+        let refreshes_for_queued_dirty_docs = || {
+            for doc in &docs {
+                if doc.stats_dirty.is_dirty() {
+                    pool.push_dirty(doc.pool_doc_id);
+                }
+            }
+            DIRTY_REFRESHES.with(|n| n.set(0));
+            let _ = pool.estimated_docs_total(None);
+            DIRTY_REFRESHES.with(|n| n.get())
+        };
+        assert_eq!(refreshes_for_queued_dirty_docs(), 0);
+
+        let _ = docs[3].get_map("m").get("v");
+        assert!(
+            docs[3].stats_dirty.is_dirty(),
+            "a read takes the state lock"
+        );
+        let _ = docs[4].get_map("only_registered");
+        assert!(
+            docs[4].stats_dirty.is_dirty(),
+            "a handler registers in the arena"
+        );
+        docs[5]
+            .get_text("t")
+            .insert(0, "x", crate::cursor::PosType::Unicode)
+            .unwrap();
+        let undo = crate::UndoManager::new(&docs[6]);
+        refresh_cached_doc_bytes_for_inner(&docs[6].inner);
+        docs[6]
+            .get_text("t")
+            .insert(0, "y", crate::cursor::PosType::Unicode)
+            .unwrap();
+        docs[6].commit_then_renew();
+        let dirty = docs.iter().filter(|d| d.stats_dirty.is_dirty()).count();
+        assert_eq!(dirty, 4);
+        assert_eq!(refreshes_for_queued_dirty_docs(), 4);
+        assert!(docs.iter().all(|d| !d.stats_dirty.is_dirty()));
+        drop(undo);
+        assert!(
+            docs[6].stats_dirty.is_dirty(),
+            "undo bytes left with the manager"
+        );
+        assert_eq!(refreshes_for_queued_dirty_docs(), 1);
+
+        // A busy document keeps its cached value and stays queued.
+        let state = docs[7].state.lock();
+        assert!(docs[7].stats_dirty.is_dirty());
+        assert_eq!(refreshes_for_queued_dirty_docs(), 1);
+        assert_eq!(
+            pool.dirty_docs.lock().iter().copied().collect::<Vec<_>>(),
+            vec![docs[7].pool_doc_id]
+        );
+        drop(state);
+        DIRTY_REFRESHES.with(|n| n.set(0));
+        let _ = pool.estimated_docs_total(None);
+        assert_eq!(DIRTY_REFRESHES.with(|n| n.get()), 1);
+        assert!(pool.dirty_docs.lock().is_empty());
+
+        // (Refreshes update the process-wide pool's totals, so compare per document.)
+        for doc in &docs {
+            let fresh = fresh_doc_stats_unmarked(&doc.inner).unwrap();
+            assert_eq!(doc.cached_doc_bytes.load(Relaxed), fresh.total_bytes);
+        }
+    }
+
+    /// The per-document Stage 1 (with a spill directory it flushes the whole KV
+    /// table) used to run on every commit above the high watermark even when the
+    /// previous sweep could not reach the target. It now backs off like the
+    /// global sweep.
+    #[test]
+    fn a_failed_document_soft_sweep_backs_off_until_usage_grows() {
+        let doc = LoroDoc::new_auto_commit();
+        let text = doc.get_text("t");
+        text.insert(0, "first", crate::cursor::PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+        let passes = || DOC_STAGE1_PASSES.with(|n| n.get());
+        let edit = |s: &str| {
+            text.insert(0, s, crate::cursor::PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+        };
+        let tiny = || MemoryBudget {
+            high_watermark_bytes: Some(1),
+            target_watermark_bytes: Some(1),
+            ..Default::default()
+        };
+        let start = passes();
+        doc.set_memory_budget(tiny());
+        assert_eq!(
+            passes() - start,
+            1,
+            "setting the budget sweeps once and fails"
+        );
+        for _ in 0..10 {
+            edit("x");
+        }
+        assert_eq!(passes() - start, 1, "no growth: backed off");
+        edit(&"grow".repeat(256 * 1024));
+        assert_eq!(passes() - start, 2, "usage grew: swept again");
+        doc.set_memory_budget(tiny());
+        assert_eq!(passes() - start, 3, "a new budget clears the backoff");
+        let _ = doc.reclaim_memory();
+        assert_eq!(passes() - start, 4, "explicit reclamation never backs off");
+        assert_eq!(text.len_unicode(), "first".len() + 10 + 4 * 256 * 1024);
     }
 
     /// A soft sweep that cannot reach its target is not repeated on every
