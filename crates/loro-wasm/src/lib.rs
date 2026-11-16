@@ -1105,7 +1105,8 @@ impl LoroDoc {
         self.doc.detach()
     }
 
-    /// Duplicate the document with a different PeerID
+    /// Duplicate the document with a different PeerID.
+    /// The fork inherits an independent copy of the document memory budget.
     ///
     /// The time complexity and space complexity of this operation are both O(n),
     ///

@@ -800,3 +800,37 @@ fn hard_budget_installed_in_commit_callback_applies_to_next_transaction() {
     assert_limit_err(&doc.try_commit().unwrap_err(), MemoryLimitKind::DocBudget);
     assert_eq!(text.to_string(), "before");
 }
+
+#[test]
+fn forks_inherit_independent_memory_policies_and_enforce_blob_limits() {
+    let doc = LoroDoc::new();
+    doc.get_text("text").insert(0, "before").unwrap();
+    doc.commit();
+    let earlier = doc.oplog_frontiers();
+    doc.get_text("text").insert(6, "after").unwrap();
+    doc.commit();
+    let budget = MemoryBudget::new()
+        .with_max_doc_bytes(8 * 1024 * 1024)
+        .with_watermarks(7 * 1024 * 1024, 6 * 1024 * 1024)
+        .with_max_import_blob_bytes(1)
+        .with_max_pending_bytes(4096)
+        .with_max_kv_block_cache_bytes(1024)
+        .with_max_decoded_value_cache_bytes(1024)
+        .with_max_undo_bytes(1024);
+    doc.set_memory_budget(budget.clone());
+    let update = doc.export(ExportMode::all_updates()).unwrap();
+    let forks = [doc.fork(), doc.fork_at(&earlier).unwrap()];
+    for fork in forks {
+        assert_eq!(fork.memory_budget(), budget);
+        assert_limit_err(
+            &fork.import(&update).unwrap_err(),
+            MemoryLimitKind::ImportBlob,
+        );
+        fork.set_memory_budget(MemoryBudget::default());
+        assert_eq!(doc.memory_budget(), budget);
+    }
+    doc.checkout(&earlier).unwrap();
+    let fork = doc.fork();
+    assert_eq!(fork.memory_budget(), budget);
+    assert_eq!(fork.get_text("text").to_string(), "before");
+}

@@ -227,10 +227,7 @@ impl LoroDoc {
             .with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner_for_fork(self))
             .expect("forking a valid document should encode a snapshot");
         let doc = Self::new();
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(dir) = self.memory_budget.lock().spill_dir.clone() {
-            doc.set_memory_budget(MemoryBudget::new().with_spill_dir(dir));
-        }
+        doc.set_memory_budget(self.memory_budget());
         doc.with_barrier(|| {
             encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default())
         })

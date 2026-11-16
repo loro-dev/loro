@@ -96,3 +96,17 @@ count plus containers in dirty pages, rather than strictly constant time.
 - **Hybrid `ImVersionVector` (`version.rs`)**: Stores `<= 4` peers inline via `SmallVec<[(PeerID, Counter); 4]>` (`0` heap bytes) before promoting to `imbl::GenericHashMap` (`ImVvHeapMap`).
 - **Sparse 64-slot paged `InnerStore` & lazy `ListState` child index (`inner_store.rs`, `list_state.rs`)**: `InnerStore` groups slots into 64-entry `StorePage`s whose `slots` grow only up to the highest populated offset in that page and free empty `Box<StorePage>` entries on cold demotion, value eviction, or rollback (`remove_created`). `ListState::child_container_to_index` stays `None` for scalar-only lists. `StrArena::shrink_spare_capacity()` runs on forced full reclamation (`reclaim_memory`).
 - **Native out-of-core `FileKvStore` (`kv-store/src/file_store.rs`, `sstable.rs`, `MemoryBudget::spill_dir`)**: On `#[cfg(not(target_arch = "wasm32"))]`, `MemoryBudget::with_spill_dir(dir)` migrates both `OpLog` (`ChangeStore::replace_kv_backend`) and `DocState` (`ContainerStore::replace_kv_backend`, including `shallow_root_store`) onto `FileKvStore`. Flushed/imported/compacted SSTables write `.sst` backing files via `SpillFile` (positional reads served through `SharedBlockCache`, metadata-only `kv_bytes`, disk bytes tracked in `spilled_disk_bytes`, shared immutable `.sst` files on `Clone`/`fork()` (separate mutable buffers/cache, file removed after the last owner), Unix owner-only `0600` files, and automatic file unlinking after the last owner releases a superseded/dropped file). On `wasm32`, `spill_dir` is accepted on `MemoryBudget` as a no-op.
+
+## Fork and shallow-root backend inheritance
+
+`loro.rs::fork` and `fork.rs::fork_at_inner` install an independent clone of the
+full local `MemoryBudget` on the new document before decoding its state/history.
+This includes quotas, cache limits, watermarks and the native spill directory.
+Changing the fork's policy does not change its source. Internal snapshot handoff
+still bypasses the external import-blob cap; subsequent public imports enforce it.
+
+`ContainerStore::decode_gc` creates the shallow-root `InnerStore` with
+`new_empty_same_backend`, so configuring spill before a shallow import applies
+to both root and latest stores. The root's separate `encoded_state_bytes` can
+still retain RAM: backend propagation alone is not a claim that the entire
+snapshot input allocation was released. Further storage work must account for it.
