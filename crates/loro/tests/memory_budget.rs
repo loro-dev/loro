@@ -725,3 +725,78 @@ fn undo_manager_remote_skip_and_byte_quota() {
         smaller_cap
     );
 }
+
+#[test]
+fn soft_only_budget_reclaims_single_and_batch_imports_without_manual_reclaim() {
+    let source = LoroDoc::new();
+    source.set_peer_id(999).unwrap();
+    for i in 0..100 {
+        source
+            .get_map(format!("soft-{i}"))
+            .insert("payload", "x".repeat(128))
+            .unwrap();
+    }
+    source.commit();
+    let first = source.export(ExportMode::all_updates()).unwrap();
+    let vv = source.oplog_vv();
+    source.get_map("soft-0").insert("next", true).unwrap();
+    source.commit();
+    let second = source.export(ExportMode::updates(&vv)).unwrap();
+    for batch in [false, true] {
+        let doc = LoroDoc::new();
+        doc.set_memory_budget(MemoryBudget::new().with_watermarks(0, 0));
+        if batch {
+            doc.import_batch(&[first.clone(), second.clone()]).unwrap();
+        } else {
+            doc.import(&first).unwrap();
+            doc.import(&second).unwrap();
+        }
+        let before_read = doc.memory_stats().state_bytes;
+        assert_eq!(doc.get_deep_value(), source.get_deep_value());
+        // Materialize all containers and show the import had already released
+        // their full states, despite there being no hard document quota.
+        for i in 0..100 {
+            doc.get_map(format!("soft-{i}"))
+                .insert("touch", true)
+                .unwrap();
+        }
+        assert!(doc.memory_stats().state_bytes > before_read);
+    }
+}
+
+#[test]
+fn changing_hard_budget_preserves_pending_edits_until_next_transaction() {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "before").unwrap();
+    doc.set_memory_budget(MemoryBudget::new().with_max_doc_bytes(1));
+    // The transaction that already accepted these edits keeps its old quota.
+    doc.try_commit().unwrap();
+    assert_eq!(text.to_string(), "before");
+    let before = doc.oplog_frontiers();
+    text.insert(6, "after").unwrap();
+    assert_limit_err(&doc.try_commit().unwrap_err(), MemoryLimitKind::DocBudget);
+    assert_eq!(text.to_string(), "before");
+    assert_eq!(doc.oplog_frontiers(), before);
+    doc.set_memory_budget(MemoryBudget::default());
+    text.insert(6, "ok").unwrap();
+    doc.try_commit().unwrap();
+    assert_eq!(text.to_string(), "beforeok");
+}
+
+#[test]
+fn hard_budget_installed_in_commit_callback_applies_to_next_transaction() {
+    let doc = LoroDoc::new();
+    let callback_doc = doc.clone();
+    let _sub = doc.subscribe_pre_commit(Box::new(move |_| {
+        callback_doc.set_memory_budget(MemoryBudget::new().with_max_doc_bytes(1));
+        true
+    }));
+    let text = doc.get_text("text");
+    text.insert(0, "before").unwrap();
+    doc.try_commit().unwrap();
+    assert_eq!(text.to_string(), "before");
+    text.insert(6, "after").unwrap();
+    assert_limit_err(&doc.try_commit().unwrap_err(), MemoryLimitKind::DocBudget);
+    assert_eq!(text.to_string(), "before");
+}

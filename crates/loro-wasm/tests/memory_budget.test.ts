@@ -270,3 +270,19 @@ describe("MemoryBudget & DocMemoryStats", () => {
     expect(undo.usedBytes()).toBeLessThanOrEqual(tightCap);
   });
 });
+
+it("applies a changed hard document quota after pending edits commit", () => {
+  const doc = new LoroDoc();
+  const text = doc.getText("text");
+  text.insert(0, "before");
+  doc.setMemoryBudget({ maxDocBytes: 1 });
+  doc.tryCommit();
+  expect(text.toString()).toBe("before");
+  text.insert(6, "after");
+  expect(() => doc.tryCommit()).toThrow();
+  expect(text.toString()).toBe("before");
+  doc.setMemoryBudget({});
+  text.insert(6, "ok");
+  doc.tryCommit();
+  expect(text.toString()).toBe("beforeok");
+});

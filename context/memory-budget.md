@@ -33,6 +33,20 @@ Verified against code 2026-11-16.
   - **Stage 1**: evicts decoded value wrappers (`evict_value_cache_to_bytes`), caps/clears `kv_block_cache`, frees `DiffCalculator` cold container trackers (`reclaim_cold_caches`), calls `reclaim_auxiliary_caches()` on `DocState` containers (including `RichtextState::id_to_cursor_cache`), compacts `OpLog` history (`OpLog::compact_history`, skipped while `import_rollback` is active or `AppDag::has_pending_txn()` is true so `ChangeStore::flush_and_compact` never trips on uncommitted ops), frees `HistoryCache`, and trims registered `UndoManager`s.
   - **Stage 2**: if `total_bytes > target`, `InnerStore::demote_cold_states` runs a two-pass clock sweep (clearing `state_referenced` on pass 0, encoding & dropping unreferenced non-empty, non-pinned containers into `self.kv` on pass 1) and flushes `state`/`oplog` KV memtables. Newly created containers recorded in `created_journal_stack` are pinned while inside a rollback scope; empty containers and cleared deleted roots are skipped so they do not bloat KV.
 
+## Runtime quota changes
+
+`set_memory_budget` changes the hard document quota for the next transaction.
+An already edited transaction keeps its captured `Transaction::doc_budget_limit`;
+setting a quota in a commit callback never retroactively rejects those edits.
+An empty auto-commit transaction can adopt the new quota before its first edit.
+`try_commit` runs admission, rollback and commit under the same transaction lock;
+manual commits and `apply_diff` use the same captured quota. Existing nested
+batch scopes prevent a new budget scope from being inserted beneath them.
+Single and batch imports perform soft reclamation after closing import rollback
+scopes, including when only watermarks are configured. The two-pass cold-state
+sweep uses a fixed starting clock hand so advancing the hand never skips slots.
+Unbounded undo stacks skip byte estimation during trimming.
+
 ## Stage 3 Hard Admission & Atomic Rollback
 
 - **`ImportBlob` (`max_import_blob_bytes`)**: checked pre-decode across `import*`, `import_batch*`, `import_batch_detailed*` (isolated per-blob `Failed`), and `import_json_updates` (via a zero-allocation `CountingWriter`).

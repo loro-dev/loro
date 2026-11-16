@@ -226,6 +226,8 @@ pub struct Transaction {
     rollback_scopes: Vec<RollbackScope>,
     /// Outermost rollback scope armed when `MemoryBudget::max_doc_bytes` is set.
     budget_base_scope: Option<u64>,
+    /// Hard quota captured before this transaction accepts edits.
+    pub(crate) doc_budget_limit: Option<usize>,
 }
 
 /// See [`Transaction::begin_rollback_scope`].
@@ -483,6 +485,7 @@ impl Transaction {
             dag_frontiers_at_start,
             rollback_scopes: Vec::new(),
             budget_base_scope: None,
+            doc_budget_limit: None,
         })
     }
 
@@ -533,12 +536,13 @@ impl Transaction {
         if !self.finished && !self.local_ops.is_empty() {
             if let Some(doc_inner) = self.doc.upgrade() {
                 let doc = LoroDoc::from_inner(doc_inner);
-                if doc.has_max_doc_bytes() {
-                    doc.enforce_memory_watermarks();
-                    if let Err(budget_err) = doc.check_doc_budget() {
+                if let Some(limit) = self.doc_budget_limit {
+                    let _txn_guard = doc.txn.lock();
+                    let uncommitted = self.estimated_uncommitted_bytes();
+                    doc.enforce_memory_watermarks_with_txn_bytes(uncommitted, false);
+                    if let Err(budget_err) = doc.check_doc_budget_with_limit(uncommitted, limit) {
                         if let Some(scope) = self.budget_base_scope.take() {
                             self.finished = true;
-                            let _txn_guard = doc.txn.lock();
                             doc.rollback_transaction_scope(&mut self, scope)?;
                             let mut state = doc.state.lock();
                             state.abort_txn();

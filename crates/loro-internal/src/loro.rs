@@ -399,7 +399,9 @@ impl LoroDoc {
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
     ) {
         let mut panic = DeferredPanic::default();
-        let ans = self.commit_internal_inner(config, preserve_on_empty, &mut panic);
+        let ans = self
+            .commit_internal_inner(config, preserve_on_empty, &mut panic, false)
+            .expect("infallible commit does not enforce hard admission");
         if !panic.has_panic() {
             return ans;
         }
@@ -413,26 +415,32 @@ impl LoroDoc {
         config: CommitOptions,
         preserve_on_empty: bool,
         panic: &mut DeferredPanic,
-    ) -> (
+        enforce_budget: bool,
+    ) -> LoroResult<(
         Option<CommitOptions>,
         Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    ) {
+    )> {
         if !self.auto_commit.load(Acquire) {
             let txn_guard = self.txn.lock();
             // if not auto_commit, nothing should happen
             // because the global txn is not used
-            return (None, Some(txn_guard));
+            return Ok((None, Some(txn_guard)));
         }
 
         loop {
             if let Some(txn_guard) = self.before_commit() {
-                return (None, Some(txn_guard));
+                return Ok((None, Some(txn_guard)));
             }
 
             let mut txn_guard = self.txn.lock();
+            if enforce_budget {
+                if let Some(txn) = txn_guard.as_mut() {
+                    self.admit_transaction_commit(txn)?;
+                }
+            }
             let txn = txn_guard.take();
             let Some(mut txn) = txn else {
-                return (None, Some(txn_guard));
+                return Ok((None, Some(txn_guard)));
             };
             let on_commit = txn.take_on_commit();
             if let Some(origin) = config.origin.clone() {
@@ -474,14 +482,14 @@ impl LoroDoc {
                 }
             }
 
-            return (
+            return Ok((
                 options,
                 if !config.immediate_renew {
                     Some(txn_guard)
                 } else {
                     None
                 },
-            );
+            ));
         }
     }
 
@@ -517,49 +525,42 @@ impl LoroDoc {
         if self.txn.is_held_by_current_thread() {
             return Err(LoroError::DuplicatedTransactionError);
         }
-        if !self.has_max_doc_bytes() {
-            self.commit_with(options);
+        let mut panic = DeferredPanic::default();
+        let result = self
+            .commit_internal_inner(options, false, &mut panic, true)
+            .map(|_| ());
+        // Mapping drops any transaction guard before resuming user panics.
+        panic.resume();
+        result
+    }
+
+    fn admit_transaction_commit(&self, txn: &mut Transaction) -> LoroResult<()> {
+        if txn.is_empty() {
             return Ok(());
         }
-
-        let uncommitted_bytes = {
-            let txn_guard = self.txn.lock();
-            match txn_guard.as_ref() {
-                Some(txn) if !txn.is_empty() => txn.estimated_uncommitted_bytes(),
-                _ => {
-                    drop(txn_guard);
-                    self.commit_with(options);
-                    return Ok(());
-                }
-            }
-        };
-
-        self.enforce_memory_watermarks_with_txn_bytes(uncommitted_bytes, false);
-        let Some(limit) = self.memory_budget.lock().max_doc_bytes else {
-            self.commit_with(options);
+        let Some(limit) = txn.doc_budget_limit else {
             return Ok(());
         };
-        let stats = self.memory_stats_with_txn_bytes(uncommitted_bytes);
-        if stats.total_bytes > limit {
-            let mut txn_guard = self.txn.lock();
-            if let Some(txn) = txn_guard.as_mut() {
-                if let Some(scope) = txn.budget_base_scope() {
-                    if txn.rollback_scope_is_intact(scope) {
-                        self.rollback_transaction_scope_inner(txn, scope)?;
-                        if self.auto_commit.load(Acquire) && txn.budget_base_scope().is_none() {
-                            self.arm_budget_scope_on_txn(txn);
-                        }
-                    }
-                }
-            }
-            return Err(LoroError::memory_limit_exceeded(
-                MemoryLimitKind::DocBudget,
-                stats.total_bytes,
-                limit,
-            ));
+        if txn.has_rollback_scope() {
+            return Err(LoroError::DuplicatedTransactionError);
         }
-
-        self.commit_with(options);
+        let uncommitted = txn.estimated_uncommitted_bytes();
+        self.enforce_memory_watermarks_with_txn_bytes(uncommitted, false);
+        if let Err(err) = self.check_doc_budget_with_limit(uncommitted, limit) {
+            let scope = txn
+                .budget_base_scope()
+                .expect("budgeted transaction has a base scope");
+            assert!(
+                txn.rollback_scope_is_intact(scope),
+                "budget rollback scope must be intact"
+            );
+            self.rollback_transaction_scope_inner(txn, scope)?;
+            txn.doc_budget_limit = None;
+            if self.has_max_doc_bytes() {
+                self.arm_budget_scope_on_txn(txn);
+            }
+            return Err(err);
+        }
         Ok(())
     }
 
@@ -852,6 +853,9 @@ impl LoroDoc {
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
         let result = self.import_without_emitting_input(input, origin, values);
+        // The import rollback scope has closed, so history compaction is now
+        // safe even for budgets that configure only soft watermarks.
+        self.enforce_memory_watermarks_with_txn_bytes(0, false);
         self.emit_events();
         result
     }
@@ -2231,17 +2235,21 @@ impl LoroDoc {
             skip_unreachable,
             align_revived_mergeable,
         );
-        if result.is_ok() && self.has_max_doc_bytes() {
-            let uncommitted_bytes = self
-                .txn
-                .lock()
-                .as_ref()
-                .map_or(0, Transaction::estimated_uncommitted_bytes);
-            self.enforce_memory_watermarks_with_txn_bytes(uncommitted_bytes, false);
-            if let Err(budget_err) = self.check_doc_budget_with_txn_bytes(uncommitted_bytes) {
-                result = Err(budget_err);
+        if result.is_ok() {
+            let guard = self.txn.lock();
+            if let Some(txn) = guard.as_ref() {
+                if let Some(limit) = txn.doc_budget_limit {
+                    let uncommitted_bytes = txn.estimated_uncommitted_bytes();
+                    self.enforce_memory_watermarks_with_txn_bytes(uncommitted_bytes, false);
+                    if let Err(budget_err) =
+                        self.check_doc_budget_with_limit(uncommitted_bytes, limit)
+                    {
+                        result = Err(budget_err);
+                    }
+                }
             }
         }
+
         if let Some(scope) = scope {
             if result.is_ok() {
                 self.end_apply_diff_scope(scope);
@@ -2304,9 +2312,10 @@ impl LoroDoc {
     }
 
     pub(crate) fn arm_budget_scope_on_txn(&self, txn: &mut Transaction) {
-        if txn.budget_base_scope().is_some() {
+        if txn.budget_base_scope().is_some() || txn.has_rollback_scope() {
             return;
         }
+        txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
         let id = Self::next_rollback_scope_id();
         txn.begin_budget_rollback_scope(id);
         self.state.lock().begin_local_rollback(id);
@@ -5229,6 +5238,7 @@ impl BatchImportGuard<'_> {
             }
         }
 
+        doc.enforce_memory_watermarks_with_txn_bytes(0, false);
         let pending = doc.oplog.lock().pending_changes.version_range();
         doc._renew_txn_if_auto_commit_with_guard(options, txn);
         (checkout.err(), pending)
@@ -6082,6 +6092,8 @@ const BUDGET_FLAG_MAX_IMPORT_BLOB: u8 = 1 << 2;
 
 impl LoroDoc {
     /// Configures soft memory watermarks and hard memory quotas for this document.
+    /// A new hard document quota applies to the next transaction. Pending edits
+    /// retain the quota captured when that transaction began accepting edits.
     pub fn set_memory_budget(&self, budget: MemoryBudget) {
         let mut flags = 0u8;
         if budget.max_doc_bytes.is_some() {
@@ -6122,11 +6134,14 @@ impl LoroDoc {
             }
         }
 
-        if has_max_doc && !self.txn.is_held_by_current_thread() {
+        if !self.txn.is_held_by_current_thread() {
             let mut txn_guard = self.txn.lock();
             if let Some(txn) = txn_guard.as_mut() {
-                if txn.budget_base_scope().is_none() {
-                    self.arm_budget_scope_on_txn(txn);
+                if txn.is_empty() && !txn.has_rollback_scope() {
+                    if has_max_doc && txn.budget_base_scope().is_none() {
+                        self.arm_budget_scope_on_txn(txn);
+                    }
+                    txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
                 }
             }
         }
@@ -6308,22 +6323,18 @@ impl LoroDoc {
         }
     }
 
-    pub(crate) fn check_doc_budget(&self) -> LoroResult<()> {
-        let uncommitted_txn_bytes = if self.txn.is_held_by_current_thread() {
-            0
-        } else {
-            self.txn
-                .lock()
-                .as_ref()
-                .map_or(0, Transaction::estimated_uncommitted_bytes)
-        };
-        self.check_doc_budget_with_txn_bytes(uncommitted_txn_bytes)
-    }
-
     fn check_doc_budget_with_txn_bytes(&self, uncommitted_txn_bytes: usize) -> LoroResult<()> {
         let Some(limit) = self.memory_budget.lock().max_doc_bytes else {
             return Ok(());
         };
+        self.check_doc_budget_with_limit(uncommitted_txn_bytes, limit)
+    }
+
+    pub(crate) fn check_doc_budget_with_limit(
+        &self,
+        uncommitted_txn_bytes: usize,
+        limit: usize,
+    ) -> LoroResult<()> {
         let stats = self.memory_stats_with_txn_bytes(uncommitted_txn_bytes);
         if stats.total_bytes > limit {
             return Err(LoroError::memory_limit_exceeded(
@@ -6370,7 +6381,7 @@ impl LoroDoc {
         self.enforce_memory_watermarks_with_txn_bytes(uncommitted_txn_bytes, false);
     }
 
-    fn enforce_memory_watermarks_with_txn_bytes(
+    pub(crate) fn enforce_memory_watermarks_with_txn_bytes(
         &self,
         uncommitted_txn_bytes: usize,
         force_full: bool,
@@ -6536,10 +6547,7 @@ impl LoroDoc {
         target_frontiers: &Frontiers,
     ) -> LoroResult<()> {
         let from_frontiers = state.frontiers.clone();
-        let from_vv = oplog
-            .dag
-            .frontiers_to_vv(&from_frontiers)
-            .unwrap_or_default();
+        let from_vv = frontiers_to_vv_or_not_found(oplog, &from_frontiers)?;
         let (diff, diff_mode) = DiffCalculator::new(false).try_calc_diff_internal(
             oplog,
             &from_vv,

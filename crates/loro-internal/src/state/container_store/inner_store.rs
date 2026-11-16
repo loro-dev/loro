@@ -861,12 +861,13 @@ impl InnerStore {
         let mut updates: Vec<(Bytes, Bytes)> = Vec::new();
         let deleted = self.config.deleted_root_containers.lock();
 
+        let start_hand = self.demote_clock_hand;
         for pass in 0..2 {
             for step in 0..store_len {
                 if cur_bytes <= target_state_bytes {
                     break;
                 }
-                let slot = (self.demote_clock_hand + step) % store_len;
+                let slot = (start_hand + step) % store_len;
                 let Some(c) = self.store[slot].as_mut() else {
                     continue;
                 };
@@ -944,6 +945,37 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+
+    #[test]
+    fn full_clock_sweep_visits_every_cold_container() {
+        for count in [5, 100, 1000] {
+            for hand in [0, 3] {
+                let doc = crate::LoroDoc::new_auto_commit();
+                for i in 0..count {
+                    doc.get_map(format!("m{i}")).insert("k", i as i64).unwrap();
+                }
+                doc.commit_then_renew();
+                let expected = doc.get_deep_value();
+                {
+                    let mut state = doc.app_state().lock();
+                    let store = &mut state.store.store;
+                    store.demote_clock_hand = hand;
+                    store.demote_cold_states(0, &Default::default());
+                    assert!(
+                        store
+                            .store
+                            .iter()
+                            .flatten()
+                            .all(|c| !c.is_materialized_state()),
+                        "count={count}, hand={hand}"
+                    );
+                }
+                assert_eq!(doc.get_deep_value(), expected);
+                doc.get_map("m0").insert("after", true).unwrap();
+                doc.commit_then_renew();
+            }
+        }
+    }
 
     fn encoded_container_header(kind: ContainerType, parent: Option<ContainerID>) -> Bytes {
         let mut output = Vec::new();

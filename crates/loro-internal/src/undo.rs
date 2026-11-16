@@ -732,6 +732,11 @@ impl Default for Stack {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static UNDO_SIZE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         Self {
@@ -844,6 +849,8 @@ impl UndoManagerInner {
     }
 
     pub(crate) fn used_bytes(&self) -> usize {
+        #[cfg(test)]
+        UNDO_SIZE_WALKS.with(|n| n.set(n.get() + 1));
         self.undo_stack
             .estimated_bytes()
             .saturating_add(self.redo_stack.estimated_bytes())
@@ -855,6 +862,9 @@ impl UndoManagerInner {
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {
+        if self.max_undo_bytes == usize::MAX {
+            return;
+        }
         while self.used_bytes() > self.max_undo_bytes {
             if !self.undo_stack.is_empty() {
                 self.undo_stack.pop_front();
@@ -1674,5 +1684,27 @@ mod merge_timer_tests {
             inner.undo_stack.peek_top_span(),
             Some(CounterSpan::new(2, 4))
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_work_tests {
+    use super::*;
+    #[test]
+    fn unlimited_undo_trimming_does_not_walk_history() {
+        let mut manager = UndoManagerInner::new(0);
+        for i in 0..1000 {
+            manager.undo_stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta::default(),
+                Default::default(),
+            );
+        }
+        UNDO_SIZE_WALKS.with(|n| n.set(0));
+        manager.trim_undo_stack();
+        assert_eq!(manager.undo_stack.len(), 1000);
+        UNDO_SIZE_WALKS.with(|n| assert_eq!(n.get(), 0));
+        manager.set_max_undo_bytes_from_doc(0);
+        assert!(manager.undo_stack.is_empty());
     }
 }
