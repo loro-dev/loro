@@ -7017,7 +7017,42 @@ impl LoroDoc {
     /// Configures soft memory watermarks and hard memory quotas for this document.
     /// A new hard document quota applies to the next transaction. Pending edits
     /// retain the quota captured when that transaction began accepting edits.
+    ///
+    /// If moving the document to a new `spill_dir` fails, the document keeps its
+    /// current storage (and [`Self::memory_budget`] keeps reporting the previous
+    /// directory, so setting the same directory again retries), the failure is
+    /// logged, and the other settings are applied. Use
+    /// [`Self::try_set_memory_budget`] to get the error instead.
     pub fn set_memory_budget(&self, budget: MemoryBudget) {
+        let _ = self.set_memory_budget_inner(budget, false);
+    }
+
+    /// Like [`Self::set_memory_budget`], but if moving the document to a new
+    /// `spill_dir` fails (the directory cannot be created, or the spilled tables
+    /// cannot be written), returns the error and changes nothing.
+    pub fn try_set_memory_budget(&self, budget: MemoryBudget) -> LoroResult<()> {
+        self.set_memory_budget_inner(budget, true)
+    }
+
+    fn set_memory_budget_inner(&self, mut budget: MemoryBudget, strict: bool) -> LoroResult<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let prev_spill_dir = self.memory_budget.lock().spill_dir.clone();
+            if prev_spill_dir != budget.spill_dir {
+                if let Err(err) = self.switch_spill_backend(budget.spill_dir.as_deref()) {
+                    let err = LoroError::Unknown(
+                        format!("failed to switch the out-of-core spill directory: {err}")
+                            .into_boxed_str(),
+                    );
+                    if strict {
+                        return Err(err);
+                    }
+                    tracing::warn!(dir = ?budget.spill_dir, "{err}");
+                    budget.spill_dir = prev_spill_dir;
+                }
+            }
+        }
+        let _ = strict;
         let mut flags = 0u8;
         if budget.max_doc_bytes.is_some() {
             flags |= BUDGET_FLAG_MAX_DOC;
@@ -7040,80 +7075,8 @@ impl LoroDoc {
         let max_pending = budget.max_pending_bytes;
         let max_undo = budget.max_undo_bytes;
         let has_max_doc = budget.max_doc_bytes.is_some();
-        #[cfg(not(target_arch = "wasm32"))]
-        let new_spill_dir = budget.spill_dir.clone();
-        #[cfg(not(target_arch = "wasm32"))]
-        let prev_spill_dir = {
-            let mut guard = self.memory_budget.lock();
-            let prev = guard.spill_dir.clone();
-            *guard = budget;
-            prev
-        };
-        #[cfg(target_arch = "wasm32")]
-        {
-            *self.memory_budget.lock() = budget;
-        }
+        *self.memory_budget.lock() = budget;
         self.budget_flags.store(flags, Release);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if prev_spill_dir != new_spill_dir {
-            type SpillBackends = (
-                Box<dyn crate::kv_store::KvStore>,
-                Arc<crate::sync::Mutex<dyn crate::kv_store::KvStore>>,
-            );
-            let block_cache = self.kv_block_cache.clone();
-            let make_backends = || -> std::io::Result<SpillBackends> {
-                match &new_spill_dir {
-                    Some(dir) => {
-                        let oplog_kv = crate::kv_store::FileKvStore::new(
-                            dir,
-                            crate::kv_store::MemKvConfig::default()
-                                .block_cache(block_cache.clone()),
-                        )?;
-                        let state_kv = crate::kv_store::FileKvStore::new(
-                            dir,
-                            crate::kv_store::MemKvConfig::default()
-                                .should_encode_none(false)
-                                .block_cache(block_cache.clone()),
-                        )?;
-                        Ok((
-                            Box::new(oplog_kv),
-                            Arc::new(crate::sync::Mutex::new(state_kv)),
-                        ))
-                    }
-                    None => {
-                        let oplog_kv = crate::kv_store::MemKvStore::new(
-                            crate::kv_store::MemKvConfig::default()
-                                .block_cache(block_cache.clone()),
-                        );
-                        let state_kv = crate::kv_store::MemKvStore::new(
-                            crate::kv_store::MemKvConfig::default()
-                                .should_encode_none(false)
-                                .block_cache(block_cache.clone()),
-                        );
-                        Ok((
-                            Box::new(oplog_kv),
-                            Arc::new(crate::sync::Mutex::new(state_kv)),
-                        ))
-                    }
-                }
-            };
-            match make_backends() {
-                Ok((oplog_kv, state_kv)) => {
-                    let oplog = self.oplog.lock();
-                    let mut state = self.state.lock();
-                    oplog.replace_kv_backend(oplog_kv);
-                    state.replace_kv_backend(state_kv);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        dir = ?new_spill_dir,
-                        "failed to switch out-of-core spill directory"
-                    );
-                }
-            }
-        }
 
         self.oplog.lock().set_max_pending_bytes(max_pending);
         if let Some(max_undo_bytes) = max_undo {
@@ -7139,6 +7102,54 @@ impl LoroDoc {
         }
 
         self.enforce_memory_watermarks();
+        Ok(())
+    }
+
+    /// Move the op log and state stores (including a shallow root) to new
+    /// backends: out-of-core files under `dir`, or memory for `None`. Both new
+    /// stores are filled and flushed before either is installed, under the op
+    /// log and state locks, so a failure leaves the current stores in place.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn switch_spill_backend(&self, dir: Option<&std::path::Path>) -> Result<(), String> {
+        let block_cache = self.kv_block_cache.clone();
+        let (oplog_kv, state_kv): (
+            Box<dyn crate::kv_store::KvStore>,
+            Arc<crate::sync::Mutex<dyn crate::kv_store::KvStore>>,
+        ) = match dir {
+            Some(dir) => {
+                let make = |config: crate::kv_store::MemKvConfig| {
+                    crate::kv_store::FileKvStore::new(dir, config)
+                        .map_err(|e| format!("{}: {e}", dir.display()))
+                };
+                (
+                    Box::new(make(
+                        crate::kv_store::MemKvConfig::default().block_cache(block_cache.clone()),
+                    )?),
+                    Arc::new(crate::sync::Mutex::new(make(
+                        crate::kv_store::MemKvConfig::default()
+                            .should_encode_none(false)
+                            .block_cache(block_cache.clone()),
+                    )?)),
+                )
+            }
+            None => (
+                Box::new(crate::kv_store::MemKvStore::new(
+                    crate::kv_store::MemKvConfig::default().block_cache(block_cache.clone()),
+                )),
+                Arc::new(crate::sync::Mutex::new(crate::kv_store::MemKvStore::new(
+                    crate::kv_store::MemKvConfig::default()
+                        .should_encode_none(false)
+                        .block_cache(block_cache.clone()),
+                ))),
+            ),
+        };
+        let oplog = self.oplog.lock();
+        let mut state = self.state.lock();
+        let oplog_kv = oplog.prepare_kv_backend(oplog_kv)?;
+        let state_kv = state.prepare_kv_backend(state_kv)?;
+        oplog.install_kv_backend(oplog_kv);
+        state.install_kv_backend(state_kv);
+        Ok(())
     }
 
     /// Returns a clone of the current [`MemoryBudget`] configuration.

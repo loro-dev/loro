@@ -198,3 +198,84 @@ fn out_of_core_fork_isolation_and_drop_cleanup() {
     drop(forked);
     assert_eq!(spill.sst_file_count(), 0);
 }
+
+fn text_doc_with_history() -> LoroDoc {
+    let doc = LoroDoc::new();
+    let text = doc.get_text("t");
+    for i in 0..64 {
+        text.insert(text.len_unicode(), &pseudo_random_text(i, 256))
+            .unwrap();
+        doc.commit();
+    }
+    doc
+}
+
+/// A spill directory that cannot be created leaves the document in memory and
+/// is not recorded, so setting the same directory again once it is usable
+/// switches the document out of core.
+#[test]
+fn a_failed_spill_directory_switch_is_reported_and_retried() {
+    let base = TempSpillDir::new("switch-retry");
+    let dir = base.path().join("dir");
+    std::fs::write(&dir, b"a file, not a directory").unwrap();
+    let doc = text_doc_with_history();
+    let value = doc.get_deep_value();
+
+    let budget = MemoryBudget::default().with_spill_dir(&dir);
+    assert!(doc.try_set_memory_budget(budget.clone()).is_err());
+    assert_eq!(doc.memory_budget().spill_dir, None);
+
+    // The infallible setter applies the other settings and keeps the old storage.
+    doc.set_memory_budget(MemoryBudget {
+        max_doc_bytes: Some(1 << 30),
+        ..budget.clone()
+    });
+    assert_eq!(doc.memory_budget().spill_dir, None);
+    assert_eq!(doc.memory_budget().max_doc_bytes, Some(1 << 30));
+    doc.reclaim_memory();
+    assert_eq!(doc.memory_stats().spilled_disk_bytes, 0);
+    assert_eq!(doc.get_deep_value(), value);
+
+    std::fs::remove_file(&dir).unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    doc.try_set_memory_budget(budget).unwrap();
+    assert_eq!(
+        doc.memory_budget().spill_dir.as_deref(),
+        Some(dir.as_path())
+    );
+    doc.reclaim_memory();
+    assert!(doc.memory_stats().spilled_disk_bytes > 0);
+    assert_eq!(doc.get_deep_value(), value);
+    doc.get_text("t").insert(0, "after").unwrap();
+    doc.commit();
+    let restored = LoroDoc::new();
+    restored
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+}
+
+/// A directory that exists but cannot hold files: the new stores cannot write
+/// their tables, so the switch fails before either store is replaced.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_spill_directory_that_rejects_writes_keeps_the_current_storage() {
+    let doc = text_doc_with_history();
+    // Encoded history is what the switch has to write out.
+    doc.compact_change_store();
+    let value = doc.get_deep_value();
+    let err = doc
+        .try_set_memory_budget(MemoryBudget::default().with_spill_dir("/proc/self"))
+        .unwrap_err();
+    assert!(err.to_string().contains("spill"), "{err}");
+    assert_eq!(doc.memory_budget().spill_dir, None);
+    assert_eq!(doc.memory_stats().spilled_disk_bytes, 0);
+    assert_eq!(doc.get_deep_value(), value);
+    doc.get_text("t").insert(0, "still writable").unwrap();
+    doc.commit();
+    let restored = LoroDoc::new();
+    restored
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert_eq!(restored.get_deep_value(), doc.get_deep_value());
+}

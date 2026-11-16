@@ -16,6 +16,10 @@ use std::path::{Path, PathBuf};
 pub struct FileKvStore {
     inner: MemKvStore,
     spill_dir: PathBuf,
+    /// The first error since the last [`Self::take_spill_error`]: tables that
+    /// failed to spill stay in memory, so no data is lost, but the caller may
+    /// need to know the store is not out of core.
+    spill_error: Option<String>,
 }
 
 impl Clone for FileKvStore {
@@ -25,6 +29,7 @@ impl Clone for FileKvStore {
         Self {
             inner,
             spill_dir: self.spill_dir.clone(),
+            spill_error: None,
         }
     }
 }
@@ -37,6 +42,7 @@ impl FileKvStore {
         Ok(Self {
             inner: MemKvStore::new(config),
             spill_dir,
+            spill_error: None,
         })
     }
 
@@ -45,6 +51,7 @@ impl FileKvStore {
         Self {
             inner: self.inner.empty_like(),
             spill_dir: self.spill_dir.clone(),
+            spill_error: None,
         }
     }
 
@@ -149,9 +156,16 @@ impl FileKvStore {
         Ok(())
     }
 
+    /// Returns and clears the first spill failure since the previous call.
+    pub fn take_spill_error(&mut self) -> Option<String> {
+        self.spill_error.take()
+    }
+
     fn spill_tables(&mut self) {
         if let Err(err) = self.inner.spill_tables_to_dir(&self.spill_dir) {
             tracing::warn!(?err, dir = ?self.spill_dir, "failed to spill SSTable to disk");
+            self.spill_error
+                .get_or_insert_with(|| format!("{}: {err}", self.spill_dir.display()));
         }
     }
 }

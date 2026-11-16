@@ -204,3 +204,20 @@ parsed-change total per block; every content mutation goes through
 statistics read walks only blocks changed since the previous read. Before this,
 twenty 512 KiB overwrites of one key in a transaction were estimated at a few KiB
 and `try_commit` accepted them under a 2 MiB quota.
+
+## Spill directory switches
+
+`LoroDoc::set_memory_budget_inner` (`loro.rs`) moves the stores before it records
+a new `spill_dir`. `switch_spill_backend` builds both backends, then under the op
+log and state locks fills and flushes them (`ChangeStore::prepare_kv_backend`,
+`ContainerStore::prepare_kv_backend` including the shallow root, both scanning
+straight into the new store instead of collecting a `Vec`) and installs both only
+if neither reported a write failure (`KvStore::take_spill_error`, recorded by
+`FileKvStore::spill_tables`). On failure the current stores stay; the infallible
+setter logs it, keeps the previous `spill_dir` (so the same directory can be set
+again to retry) and applies the other fields; `try_set_memory_budget` returns the
+error and changes nothing. A switch only writes what the stores hold encoded at
+that moment; a later flush that cannot write keeps its tables in RAM and only
+logs (`take_spill_error` is not surfaced through a public API yet).
+Tests: `crates/loro/tests/out_of_core.rs` (a file at the path; `/proc/self` as a
+directory that rejects writes, Linux only).

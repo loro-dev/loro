@@ -1717,6 +1717,17 @@ impl LoroDoc {
         self.doc.set_memory_budget(budget);
     }
 
+    /// Like [`Self::set_memory_budget`], but if moving the document to a new
+    /// `spill_dir` fails (the directory cannot be created or the spilled tables
+    /// cannot be written), returns the error and changes nothing. The plain
+    /// setter logs that failure, keeps the current storage and the previous
+    /// `spill_dir`, and applies the other settings; setting the same directory
+    /// again retries.
+    #[inline]
+    pub fn try_set_memory_budget(&self, budget: MemoryBudget) -> LoroResult<()> {
+        self.doc.try_set_memory_budget(budget)
+    }
+
     /// Get a snapshot of this document's current [`MemoryBudget`] configuration.
     #[inline]
     pub fn memory_budget(&self) -> MemoryBudget {

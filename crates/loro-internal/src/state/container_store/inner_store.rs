@@ -993,8 +993,15 @@ impl InnerStore {
         }
     }
 
-    pub(crate) fn replace_kv_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
-        self.kv.replace_backend(new_backend);
+    pub(crate) fn fill_kv_backend(
+        &self,
+        new_backend: &Arc<Mutex<dyn KvStore>>,
+    ) -> Result<(), String> {
+        self.kv.fill_backend(new_backend)
+    }
+
+    pub(crate) fn install_kv_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
+        self.kv.install_backend(new_backend);
         self.parent_resolver_installed = false;
         self.ensure_parent_resolver_installed();
     }

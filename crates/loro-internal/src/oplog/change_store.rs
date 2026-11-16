@@ -1491,14 +1491,29 @@ impl ChangeStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn replace_kv_backend(&self, mut new_backend: Box<dyn KvStore>) {
-        let mut guard = self.external_kv.lock();
-        let entries: Vec<(Bytes, Bytes)> = guard.scan(Bound::Unbounded, Bound::Unbounded).collect();
-        for (k, v) in entries {
-            new_backend.set(&k, v);
+    /// Copy every entry into `new_backend` and flush it, without installing it.
+    /// Fails if the backend could not write its tables out of core. The caller
+    /// holds the op log lock until [`Self::install_kv_backend`], so no flush or
+    /// compaction writes the current store in between.
+    pub(crate) fn prepare_kv_backend(
+        &self,
+        mut new_backend: Box<dyn KvStore>,
+    ) -> Result<Box<dyn KvStore>, String> {
+        {
+            let guard = self.external_kv.lock();
+            for (k, v) in guard.scan(Bound::Unbounded, Bound::Unbounded) {
+                new_backend.set(&k, v);
+            }
         }
         new_backend.flush();
-        *guard = new_backend;
+        match new_backend.take_spill_error() {
+            Some(err) => Err(err),
+            None => Ok(new_backend),
+        }
+    }
+
+    pub(crate) fn install_kv_backend(&self, new_backend: Box<dyn KvStore>) {
+        *self.external_kv.lock() = new_backend;
     }
 
     pub(crate) fn new_empty_kv_backend(&self) -> Box<dyn KvStore> {
