@@ -1374,3 +1374,111 @@ fn pending_snapshot_preserves_first_claimant_of_lossy_duplicates() {
         );
     }
 }
+
+/// Everything a rejected import must leave unchanged.
+#[derive(Debug, PartialEq)]
+struct DocShape {
+    value: loro_common::LoroValue,
+    oplog_vv: VersionVector,
+    oplog_frontiers: Frontiers,
+    state_frontiers: Frontiers,
+    pending: usize,
+    import_scope_open: bool,
+}
+
+fn doc_shape(doc: &LoroDoc) -> DocShape {
+    DocShape {
+        value: doc.get_deep_value(),
+        oplog_vv: doc.oplog_vv(),
+        oplog_frontiers: doc.oplog_frontiers(),
+        state_frontiers: doc.state_frontiers(),
+        pending: pending_len(doc),
+        import_scope_open: doc.oplog().lock().has_import_rollback(),
+    }
+}
+
+/// A document with history, an update that creates containers on top of it, and
+/// a snapshot of the larger version.
+fn budget_rollback_fixture() -> (LoroDoc, Vec<u8>, Vec<u8>) {
+    let source = LoroDoc::new_auto_commit();
+    source.set_peer_id(1).unwrap();
+    source.get_text("text").insert_unicode(0, "base").unwrap();
+    source.commit_then_renew();
+    let target = LoroDoc::new_auto_commit();
+    target.set_peer_id(2).unwrap();
+    target
+        .import(&source.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    let vv = source.oplog_vv();
+    let list = source.get_list("list");
+    for i in 0..200 {
+        list.insert(i, format!("{i:04}").repeat(64)).unwrap();
+    }
+    source
+        .get_map("map")
+        .insert_container("child", crate::MapHandler::new_detached())
+        .unwrap()
+        .insert("k", "v")
+        .unwrap();
+    source.get_text("text").insert_unicode(4, " more").unwrap();
+    source.commit_then_renew();
+    let update = source.export(ExportMode::updates(&vv)).unwrap();
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    (target, update, snapshot)
+}
+
+fn assert_usable_after_rejection(doc: &LoroDoc, update: &[u8]) {
+    doc.get_text("text").insert_unicode(0, "x").unwrap();
+    doc.commit_then_renew();
+    let _ = doc.export(ExportMode::Snapshot).unwrap();
+    doc.set_memory_budget(crate::MemoryBudget::default());
+    doc.import(update).unwrap();
+    assert!(doc.get_text("text").to_string().contains("more"));
+    let frontiers = doc.oplog_frontiers();
+    doc.checkout(&Frontiers::from_id(crate::ID::new(1, 0)))
+        .unwrap();
+    doc.checkout(&frontiers).unwrap();
+    doc.attach();
+}
+
+/// Rejected by the hard quota: state, history, pending changes, events and the
+/// import scope are all as before, and the document stays usable.
+#[test]
+fn quota_rejected_update_and_snapshot_imports_restore_state_and_history() {
+    for use_snapshot in [false, true] {
+        let (doc, update, snapshot) = budget_rollback_fixture();
+        let events = Arc::new(AtomicUsize::new(0));
+        let counter = events.clone();
+        doc.subscribe_root(Arc::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }))
+        .detach();
+        let before = doc_shape(&doc);
+        doc.set_memory_budget(crate::MemoryBudget {
+            max_doc_bytes: Some(doc.memory_stats().total_bytes + 1024),
+            ..Default::default()
+        });
+        let input = if use_snapshot { &snapshot } else { &update };
+        let err = doc.import(input).unwrap_err();
+        assert!(err.memory_limit_info().is_some(), "{use_snapshot}: {err}");
+        assert_eq!(doc_shape(&doc), before, "snapshot input: {use_snapshot}");
+        assert_eq!(events.load(Ordering::SeqCst), 0);
+        assert_usable_after_rejection(&doc, &update);
+    }
+}
+
+/// The same for a batch, which reattaches with a checkout before the check.
+#[test]
+fn quota_rejected_batches_leave_state_and_history_together() {
+    let (doc, update, _) = budget_rollback_fixture();
+    let before = doc_shape(&doc);
+    doc.set_memory_budget(crate::MemoryBudget {
+        max_doc_bytes: Some(doc.memory_stats().total_bytes + 1024),
+        ..Default::default()
+    });
+    let res = doc.import_batch(&[update.clone()]);
+    assert!(res.is_err());
+    assert_eq!(doc_shape(&doc), before);
+    assert!(!doc.is_detached());
+    assert_usable_after_rejection(&doc, &update);
+}
