@@ -1,6 +1,6 @@
 # Text delta chunking and batch insertion order
 
-Verified against code 2026-10-23.
+Verified against code 2026-11-16.
 
 `crates/delta/src/text_delta.rs` uses `TextChunk::from_long_str` for long
 appends and middle insertion. Chunk capacity is measured in bytes (128 normally,
@@ -10,10 +10,10 @@ slice. A valid chunk can be smaller than capacity even with more input remaining
 Middle insertion reaches `DeltaRope::insert_values`, which buffers multiple
 items and inserts them back to front using `BTree::insert_by_path`. Each returned
 cursor marks the start of the inserted item, so the next item is inserted before
-it. Empty and single-item inputs avoid allocating a batch buffer. This must work
-with published `generic-btree` 0.10.7: the root `[patch.crates-io]` and in-tree
-B-tree fixes do not propagate to downstream packages, and `scripts/cargo-release.ts`
-excludes the vendored fork from publishing.
+it. Empty and single-item inputs avoid allocating a batch buffer. The minimum registry dependency is `generic-btree` 0.10.8, published separately
+with the in-tree fixes. The root `[patch.crates-io]` does not propagate to
+downstream packages; `scripts/cargo-release.ts` excludes this independently
+versioned crate from the Loro workspace release.
 
 The underlying defect is in `BTree::insert_many_by_cursor` in
 `crates/generic-btree/src/lib.rs`. Its batch can merge a prefix into the leaf
@@ -35,7 +35,7 @@ and `repeated_utf8_middle_insert_matches_string` in the delta integration tests;
 tests checks leaf boundaries, parent splits, caches, and subsequent insertion.
 
 `bash scripts/test-delta-published-deps.sh` packages the actual `loro-delta` crate,
-extracts it outside the workspace, pins the registry B-tree dependency to 0.10.7,
+extracts it outside the workspace, pins the registry B-tree dependency to 0.10.8,
 and runs all package tests. CI runs this independently of workspace tests; pass
 `--offline` to use locally cached dependencies. Do not remove the delta-level
 ordered insertion merely because the in-tree B-tree regression tests pass.

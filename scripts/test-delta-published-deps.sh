@@ -16,6 +16,6 @@ manifest="$task_tmp_dir/$package_name/Cargo.toml"
 
 # Exercise the minimum supported registry version, not the in-tree fork or a
 # newer release that could hide a missing fix in loro-delta itself.
-cargo update --manifest-path "$manifest" -p generic-btree --precise 0.10.7 "$@"
+cargo update --manifest-path "$manifest" -p generic-btree --precise 0.10.8 "$@"
 cargo tree --manifest-path "$manifest" --depth 1 "$@"
 cargo test --manifest-path "$manifest" --locked "$@"
