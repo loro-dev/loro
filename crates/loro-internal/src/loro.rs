@@ -552,6 +552,7 @@ impl LoroDoc {
         if self.txn.is_held_by_current_thread() {
             return Err(LoroError::DuplicatedTransactionError);
         }
+        self.touch_access_tick();
         let mut panic = DeferredPanic::default();
         let result = self
             .commit_internal_inner(options, false, &mut panic, true)
@@ -6436,11 +6437,6 @@ impl GlobalMemoryPool {
             return;
         };
         let target = budget.effective_target_watermark().unwrap_or(high);
-        let wasm_pressure = cfg!(target_arch = "wasm32")
-            && budget.max_wasm_linear_bytes.is_some_and(|max_lin| {
-                wasm_linear_memory_bytes() > max_lin.saturating_mul(80) / 100
-            });
-
         let initial_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
@@ -6448,12 +6444,14 @@ impl GlobalMemoryPool {
             self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
                 .0
         };
+        let wasm_pressure = cfg!(target_arch = "wasm32")
+            && budget.wasm_heap_pressure(wasm_linear_memory_bytes(), initial_used);
         if initial_used <= high && !wasm_pressure {
             return;
         }
 
         let effective_target = if wasm_pressure && initial_used <= high {
-            target.min(initial_used.saturating_mul(70) / 100)
+            target.min(budget.max_wasm_linear_bytes.unwrap().saturating_mul(65) / 100)
         } else {
             target
         };
@@ -7408,6 +7406,22 @@ impl LoroDoc {
             return;
         }
         let budget = self.memory_budget.lock().clone();
+        if !force_full
+            && heap_tracker_active()
+            && budget == MemoryBudget::default()
+            && global_watermarks_active()
+        {
+            let global = global_pool().budget.lock().clone();
+            let used = tracked_allocated_heap_bytes();
+            if global
+                .effective_high_watermark()
+                .is_some_and(|high| used <= high)
+                && !(cfg!(target_arch = "wasm32")
+                    && global.wasm_heap_pressure(wasm_linear_memory_bytes(), used))
+            {
+                return;
+            }
+        }
         if !force_full
             && !global_watermarks_active()
             && budget.effective_high_watermark().is_none()

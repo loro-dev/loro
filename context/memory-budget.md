@@ -74,7 +74,7 @@ Unbounded undo stacks skip byte estimation during trimming.
 - **WASM live heap + linear memory tracking & pre-malloc admission (`crates/loro-internal/src/memory.rs`, `crates/loro-wasm/src/lib.rs`)**:
   - `ReportingAlloc` wires `enable_global_heap_tracker()`, `record_global_alloc`, `record_global_dealloc`, and `record_global_realloc` with relaxed atomics (avoiding `crate::sync` Loom instrumentation), exposing live/peak Rust heap bytes alongside `wasm_linear_memory_bytes()` (`wasm32::memory_size(0) * 65536` in `u64` so 4 GiB never overflows 32-bit `usize`).
   - `LoroDoc::import`, `importBatch`, and `importBatchDetailed` read JS `Uint8Array.byteLength` and run `preflight_external_import_alloc` **before** `.to_vec()` allocates in WASM linear memory, proactively reclaiming idle docs and rejecting with `MemoryLimitKind::GlobalBudget` before V8's `wasm-max-mem-pages` / 4 GiB ceiling traps.
-  - Large JS strings (`>= 64 KiB` code units) passed to `LoroText` (`insert`, `insertUtf8`, `splice`, `update`, `updateByLine`) check `preflight_wasm_linear_alloc(code_units * 2)` before `wasm-bindgen` copies the string onto the WASM heap when `maxWasmLinearBytes` is configured, keeping moderate edits eligible for `tryCommit` rollback while blocking multi-MiB linear-memory traps early.
+  - Large JS strings (`>= 64 KiB` code units) passed to `LoroText` (`insert`, `insertUtf8`, `splice`, `update`, `updateByLine`) check `preflight_wasm_linear_alloc(code_units * 3)` before `wasm-bindgen` copies the string onto the WASM heap when `maxWasmLinearBytes` is configured, keeping moderate edits eligible for `tryCommit` rollback while blocking multi-MiB linear-memory traps early.
   - Because `memory.grow` never shrinks on `wasm32`, `check_global_budget_with_active` compares `allocated_heap_bytes > max_heap_bytes`, and allows writes after `wasm_linear_memory_bytes` touched `max_wasm_linear_bytes` only if `lin_now <= linear_before` (0 new WASM pages) and live heap dropped `<= 70%` of `max_wasm_linear_bytes` after idle-doc reclamation.
 
 ## Undo accounting and checkpoints without container events
@@ -100,6 +100,26 @@ page refresh past hard admission. Debug builds independently walk all entries an
 assert cached and fresh totals agree. The work-count regression checks 20 edits
 among 512 containers cause exactly 20 page recomputations. Complexity is page
 count plus containers in dirty pages, rather than strictly constant time.
+
+## Global pressure fast path and recovery
+
+When exact heap tracking is active (WASM), a document with the default local
+memory policy skips per-document soft-reclamation statistics below the global
+high watermark. Explicit statistics and hard admission still run their own
+checks. Local quotas/caches/undo policies and forced reclamation bypass this
+shortcut. Native builds without heap tracking retain the estimate-based path.
+
+Linear memory above 80% of its ceiling triggers extra reclamation only when live
+heap also exceeds 70% of that ceiling. Reclamation then aims at an absolute target
+(no more than 65% of the linear ceiling), rather than 70% of each commit's current
+usage. Thus freeing heap can end pressure while WASM pages remain allocated.
+A runtime regression verifies repeated commits preserve idle materialized state
+once heap has fallen, and a pure threshold test covers pressure returning.
+
+The global quota setter now avoids inserting rollback scopes beneath a batch or
+into a transaction that already accepted edits; the next transaction picks up
+new global hard admission. Local quota snapshots and global linear baselines are
+both retained across the stacked commit paths.
 
 ## Structural Shrinkage & Native Out-of-Core Spilling
 

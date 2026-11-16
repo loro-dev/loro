@@ -382,3 +382,17 @@ fn global_import_blob_limit_rejects_oversized_blob_cleanly() {
     // Ensure `LoroMap` import wasn't dead
     let _empty: Option<LoroMap> = None;
 }
+
+#[test]
+fn global_budget_installation_preserves_an_already_edited_transaction() {
+    let (_lock, _reset) = lock_and_reset();
+    let doc = LoroDoc::new();
+    let text = doc.get_text("text");
+    text.insert(0, "before").unwrap();
+    set_global_memory_budget(GlobalMemoryBudget::new().with_max_heap_bytes(1));
+    doc.try_commit().unwrap();
+    assert_eq!(text.to_string(), "before");
+    text.insert(6, "after").unwrap();
+    assert_global_limit_err(&doc.try_commit().unwrap_err());
+    assert_eq!(text.to_string(), "before");
+}

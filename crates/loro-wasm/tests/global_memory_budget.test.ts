@@ -384,3 +384,37 @@ describe("Global WASM MemoryBudget & GlobalMemoryStats", () => {
     expect(parsed.allocatedHeapBytes).toBeLessThan(24 * 1024 * 1024);
   }, 60_000);
 });
+
+it("does not repeatedly demote idle state after WASM pages stay high but heap is free", () => {
+  const transient = new LoroDoc();
+  const transientText = transient.getText("large");
+  transientText.insert(0, "x".repeat(8 * 1024 * 1024));
+  transient.commit();
+  transientText.free();
+  transient.free();
+  const stats = globalMemoryStats();
+  const linearLimit = Math.ceil(stats.wasmLinearMemoryBytes * 1.1);
+  expect(stats.allocatedHeapBytes).toBeLessThan(linearLimit * 0.7);
+  setGlobalMemoryBudget({ maxWasmLinearBytes: linearLimit });
+  const idle = new LoroDoc();
+  for (let i = 0; i < 16; i++) {
+    const item = idle.getMap(`idle-${i}`);
+    item.set("v", i);
+    item.free();
+  }
+  idle.commit();
+  const before = idle.memoryStats().stateBytes;
+  const active = new LoroDoc();
+  const map = active.getMap("active");
+  for (let i = 0; i < 20; i++) {
+    map.set("v", i);
+    active.tryCommit();
+  }
+  expect(idle.memoryStats().stateBytes).toBe(before);
+  const last = idle.getMap("idle-15");
+  expect(last.get("v")).toBe(15);
+  last.free();
+  map.free();
+  active.free();
+  idle.free();
+});

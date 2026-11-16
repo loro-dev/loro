@@ -159,6 +159,14 @@ impl GlobalMemoryBudget {
             || self.max_kv_block_cache_bytes.is_some()
     }
 
+    /// Linear pages stay allocated after free; pressure must also require live heap.
+    pub(crate) fn wasm_heap_pressure(&self, linear_bytes: u64, live_heap_bytes: u64) -> bool {
+        self.max_wasm_linear_bytes.is_some_and(|max| {
+            linear_bytes > max.saturating_mul(80) / 100
+                && live_heap_bytes > max.saturating_mul(70) / 100
+        })
+    }
+
     /// Effective high watermark in bytes that triggers cross-document reclamation.
     pub fn effective_high_watermark(&self) -> Option<u64> {
         let wasm_limit = if cfg!(target_arch = "wasm32") {
@@ -397,4 +405,19 @@ pub struct DocMemoryStats {
     pub uncommitted_txn_bytes: usize,
     /// Bytes spilled to on-disk backing storage (0 unless out-of-core spilling is active).
     pub spilled_disk_bytes: usize,
+}
+
+#[cfg(test)]
+mod pressure_tests {
+    use super::*;
+    #[test]
+    fn freed_heap_clears_pressure_even_when_wasm_pages_do_not_shrink() {
+        let budget = GlobalMemoryBudget::new().with_max_wasm_linear_bytes(100_000);
+        let linear = 90_000;
+        assert!(budget.wasm_heap_pressure(linear, 75_000));
+        assert!(!budget.wasm_heap_pressure(linear, 60_000));
+        assert!(!budget.wasm_heap_pressure(linear, 69_000));
+        assert!(budget.wasm_heap_pressure(linear, 71_000));
+        assert!(!budget.wasm_heap_pressure(70_000, 71_000));
+    }
 }

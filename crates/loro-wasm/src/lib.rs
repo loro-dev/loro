@@ -564,7 +564,7 @@ fn js_str_to_string_checked(arg: JsStrArg) -> JsResult<String> {
         let js_str: &js_sys::JsString = wasm_bindgen::JsCast::unchecked_ref(&val);
         let code_units = js_str.length() as u64;
         if code_units >= 64 * 1024 {
-            loro_internal::loro::preflight_wasm_linear_alloc(code_units.saturating_mul(2))?;
+            loro_internal::loro::preflight_wasm_linear_alloc(code_units.saturating_mul(3))?;
         }
     }
     val.as_string()
