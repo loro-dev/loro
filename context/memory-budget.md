@@ -139,9 +139,26 @@ still bypasses the external import-blob cap; subsequent public imports enforce i
 
 `ContainerStore::decode_gc` creates the shallow-root `InnerStore` with
 `new_empty_same_backend`, so configuring spill before a shallow import applies
-to both root and latest stores. The root's separate `encoded_state_bytes` can
-still retain RAM: backend propagation alone is not a claim that the entire
-snapshot input allocation was released. Further storage work must account for it.
+to both root and latest stores.
+
+## Shallow root input buffer
+
+Verified against code 2026-11-16.
+
+Snapshot sections are zero-copy slices of the import input. The shallow root
+keeps `encoded_state_bytes` (and its store) for the document's lifetime, and the
+latest state store keeps slices of the state section, so a shallow import used
+to keep the whole input allocated, op log section included, after the op log
+was rewritten or spilled; statistics counted only the kept sections. Reproduced
+by `rewritten_stores_release_the_snapshot_input_buffer` (`fast_snapshot.rs`): a
+full snapshot's input was released after an edit and `reclaim_memory`, a shallow
+one's was not. Both the shallow and state sections had to be copied (either copy
+alone still kept the input). `decode_snapshot_inner` now copies them
+(`copy_shallow_sections`) unless the op log section is under an eighth of them,
+keeping `from_snapshot_bytes` zero-copy where little could be pinned. Measured
+(`crates/loro/examples/shallow_import_bench.rs`, 197 KB shallow snapshot): heap
+left after an edit and `reclaim_memory` 1,270,822 → 1,181,430 bytes, import peak
+and time unchanged within noise. `pruned_root`'s cache is separate and untested.
 
 ## Reclamation sweep and retained handler reads
 
@@ -235,10 +252,56 @@ and `arena.shrink_spare_capacity()` (copies the string arena). Now
 so documents that become idle are still reclaimed without growth. Usage below
 the high watermark, a successful sweep, or `set_global_memory_budget` clears the
 backoff. Hard admission (`check_global_budget_with_active`) never reads it.
-The native estimate path now snapshots the registry once per sweep instead of
-twice. Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`. The
-per-document Stage 1 in `enforce_watermarks_with_budget_locked` has no backoff
-yet (see the follow-up prompt).
+Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`.
+
+The per-document sweep (`enforce_watermarks_with_budget_locked`) uses the same
+`SoftBackoff` (`LoroDocInner::soft_backoff`): a sweep that ends above the target
+records the usage it left, and later commits skip Stage 1/2 until usage grows
+by the same margin or 64 checks were skipped. Usage at or below the high
+watermark and `set_memory_budget` clear it; `reclaim_memory` (`force_full`)
+never backs off. Before, with a spill directory every such commit flushed the
+whole KV table. Test: `a_failed_document_soft_sweep_backs_off_until_usage_grows`.
+
+## Incremental native global estimate
+
+Verified against code 2026-11-16.
+
+Without an allocator tracker (native), the global estimate is the sum of each
+document's `cached_doc_bytes` (`GlobalMemoryPool::total_cached_doc_bytes`,
+spilled bytes in `total_cached_spilled_bytes`) plus the global block cache.
+`GlobalMemoryPool::estimated_docs_total` first recomputes only the documents in
+`dirty_docs` (`refresh_dirty_docs`); hard admission, the watermark check,
+`global_memory_stats` and `reclaim_global_memory` all go through it. Before, each
+budgeted commit recomputed every live document (1,000 idle documents: ~880 µs per
+`try_commit`, ~300 µs per `commit`; now ~3 µs and ~5 µs, flat in the number of
+documents; `crates/loro/examples/global_budget_scaling_bench.rs`).
+
+`DocStatsDirty` (`loro.rs`) is the per-document flag. The rule: anything that can
+change a `DocMemoryStats` component marks the document while it holds the lock
+that component is read under, or after the change. The refresh
+(`refresh_cached_doc_bytes_for_inner`) takes the `Txn`, `OpLog`, `DocState` and
+`DiffCalculator` locks without marking (`LoroMutex::try_lock_unmarked`), clears
+the flag, then reads, so a concurrent change is either seen or marks again.
+Mark sources:
+
+- every `lock`/`try_lock` of those four locks (`LoroMutex::set_stats_dirty`);
+- arena writes (`SharedArena::containers_write`/`str_write`): handlers register
+  containers without the document's locks;
+- `ChangeStore::load_parsed_block`/`parse_cached_block` (the creator resolver
+  parses history without the op log lock);
+- undo managers: `MarkedUndoGuard` marks before releasing the manager's lock;
+  `StatsMarkOnDrop` marks after the manager and its subscriptions drop.
+
+A new state that changes outside these locks must add a mark, or the estimate
+undercounts. Debug builds check it: `debug_assert_clean_caches_fresh` compares
+every clean, idle document's cache with a fresh computation on each estimate
+(O(documents), debug only). A document starts dirty and queued by `register`;
+`unregister` removes it, so `dirty_docs` holds live documents only, also without
+a global budget. A busy document (or undo manager) keeps its cached value and
+stays queued; the active document is passed in by its caller and stays queued.
+Tests: `the_global_estimate_refreshes_only_documents_marked_dirty` (`loro.rs`),
+`global_estimate_stays_exact_after_reads_edits_undo_drops_and_policy_switches`
+(`crates/loro/tests/global_memory_budget.rs`).
 
 ## Remaining work
 
