@@ -239,3 +239,9 @@ The native estimate path now snapshots the registry once per sweep instead of
 twice. Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`. The
 per-document Stage 1 in `enforce_watermarks_with_budget_locked` has no backoff
 yet (see the follow-up prompt).
+
+## Remaining work
+
+Open items after `perf/memory-budget-followup-fixes`, with their evidence and the
+semantic decisions they need, are in
+[prompts/memory-budget/70](prompts/memory-budget/70-remaining-after-followup-fixes.md).
