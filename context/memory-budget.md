@@ -158,3 +158,36 @@ through metadata ordering and import. `import_batch_detailed_with_blob_results`
 accepts an exact-size iterator, avoiding an extra result vector on the existing
 Rust owned-bytes path. Preflight errors stay per-blob errors, including the
 single-blob special case. Large batches still use the two-pass streaming path.
+
+## Last handle and registry references
+
+Verified against code 2026-11-16.
+
+`Drop for LoroDoc` (`lib.rs`) commits pending edits only when it releases the last
+handle. The global registry (`GlobalMemoryPool::snapshot_live_docs`, `loro.rs`)
+holds temporary `Arc<LoroDocInner>`s; a plain `strong_count == 1` check made the
+last handle skip its commit while a scan held one, and the edits were lost when
+the registry released it (reproduced: about half of 20,000 drops with a thread
+calling `global_memory_stats`). `DocDropGate` (a mutex outside `LoroDocInner`,
+shared with the registry entry) fixes it:
+
+- `RegistryRef::upgrade` upgrades and increments `registry_refs` under the gate;
+  `RegistryRef::drop` drops its `Arc`, then decrements, under the gate.
+- A handle drop reads `strong_count - 1 - registry_refs` under the gate. If other
+  handles remain, it releases its `Arc` inside the gate (`ManuallyDrop`), so two
+  handles dropped concurrently cannot both see each other. Otherwise it commits.
+- The registry never commits. Its final release may drop the document under the
+  gate; that drop takes the registry lock, so `snapshot_live_docs` never holds
+  the registry lock while taking a gate.
+- Registry code must not create a `LoroDoc` handle from a registry reference
+  (`LoroDocInner::arm_budget_scope_on_txn` exists for that reason).
+- Short-lived `Weak` upgrades inside state code happen while a handle is in use,
+  so they cannot be the reference that outlives the last handle.
+
+Tests: `reclamation_work_tests` in `loro.rs`, two threaded tests in
+`crates/loro/tests/global_memory_budget.rs`, and the Loom model
+`crates/loro/tests/global_registry_loom.rs` (part of `pnpm test-loom`). The model
+starts the scan before the drop through a loom atomic; without that, DPOR sees
+no conflict (the registry map and `Arc` counts are not loom objects) and explores
+one execution. It fails against the old `strong_count` rule.
+

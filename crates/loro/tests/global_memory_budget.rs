@@ -455,3 +455,77 @@ fn retained_map_reads_keep_the_document_recent_for_global_reclamation() {
         assert!(demoted, "mode={mode}: never reached state demotion");
     }
 }
+
+/// Dropping the last handle of a document with uncommitted edits while another
+/// thread scans the global registry must still commit those edits. Before the
+/// drop gate, a scan's temporary reference made the last handle skip its commit
+/// and the edits disappeared (about half of the iterations in this loop).
+#[test]
+fn last_handle_drop_commits_while_another_thread_scans_the_registry() {
+    let (_lock, _reset) = lock_and_reset();
+    set_global_memory_budget(GlobalMemoryBudget {
+        max_heap_bytes: Some(1 << 40),
+        ..Default::default()
+    });
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let scanner = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let _ = global_memory_stats();
+            }
+        })
+    };
+    let mut lost = 0;
+    for i in 0..2000 {
+        let doc = LoroDoc::new();
+        let updates = Arc::new(AtomicUsize::new(0));
+        let counter = updates.clone();
+        doc.subscribe_local_update(Box::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            true
+        }))
+        .detach();
+        doc.get_text("t").insert(0, &format!("x{i}")).unwrap();
+        drop(doc);
+        if updates.load(Ordering::SeqCst) != 1 {
+            lost += 1;
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    scanner.join().unwrap();
+    assert_eq!(lost, 0);
+}
+
+/// Two handles of one document dropped at the same time on two threads: the
+/// handle released second must still commit. Both handles used to observe the
+/// other one in `strong_count` and skip the commit.
+#[test]
+fn concurrent_drops_of_the_last_two_handles_commit_once() {
+    let mut lost = 0;
+    for i in 0..1000 {
+        let doc = LoroDoc::new();
+        let updates = Arc::new(AtomicUsize::new(0));
+        let counter = updates.clone();
+        doc.subscribe_local_update(Box::new(move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            true
+        }))
+        .detach();
+        doc.get_text("t").insert(0, &format!("x{i}")).unwrap();
+        let other = doc.clone();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let b2 = barrier.clone();
+        let t = std::thread::spawn(move || {
+            b2.wait();
+            drop(other);
+        });
+        barrier.wait();
+        drop(doc);
+        t.join().unwrap();
+        if updates.load(Ordering::SeqCst) != 1 {
+            lost += 1;
+        }
+    }
+    assert_eq!(lost, 0);
+}

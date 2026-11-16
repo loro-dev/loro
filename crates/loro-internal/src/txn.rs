@@ -87,7 +87,7 @@ impl crate::LoroDoc {
             ));
         }
 
-        let mut txn = Transaction::new_with_origin(self.inner.clone(), origin.into())?;
+        let mut txn = Transaction::new_with_origin(Arc::clone(&self.inner), origin.into())?;
 
         let obs = self.observer.clone();
         let local_update_subs_weak = self.local_update_subs.downgrade();

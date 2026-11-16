@@ -231,15 +231,16 @@ impl LoroDoc {
                 pool_doc_id,
                 cached_doc_bytes: std::sync::atomic::AtomicUsize::new(0),
                 last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
+                drop_gate: Default::default(),
             }
         });
         if pool_doc_id != 0 {
-            global_pool().register(pool_doc_id, Arc::downgrade(&inner));
+            global_pool().register(pool_doc_id, Arc::downgrade(&inner), inner.drop_gate.clone());
             if global_flags != 0 {
                 refresh_cached_doc_bytes_for_inner(&inner);
             }
         }
-        LoroDoc { inner }
+        LoroDoc::from_inner(inner)
     }
 
     pub fn fork(&self) -> Self {
@@ -2409,16 +2410,6 @@ impl LoroDoc {
         txn.begin_rollback_scope(id);
         self.state.lock().begin_local_rollback(id);
         Some(id)
-    }
-
-    pub(crate) fn arm_budget_scope_on_txn(&self, txn: &mut Transaction) {
-        if txn.budget_base_scope().is_some() || txn.has_rollback_scope() {
-            return;
-        }
-        txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
-        let id = Self::next_rollback_scope_id();
-        txn.begin_budget_rollback_scope(id);
-        self.state.lock().begin_local_rollback(id);
     }
 
     fn end_apply_diff_scope(&self, scope: u64) {
@@ -6274,7 +6265,9 @@ fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
 
 struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
-    docs: parking_lot::Mutex<FxHashMap<u64, std::sync::Weak<LoroDocInner>>>,
+    docs: parking_lot::Mutex<
+        FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>,
+    >,
     total_cached_doc_bytes: std::sync::atomic::AtomicU64,
     global_block_cache: SharedBlockCache,
 }
@@ -6289,8 +6282,13 @@ impl GlobalMemoryPool {
         }
     }
 
-    fn register(&self, id: u64, weak: std::sync::Weak<LoroDocInner>) {
-        self.docs.lock().insert(id, weak);
+    fn register(
+        &self,
+        id: u64,
+        weak: std::sync::Weak<LoroDocInner>,
+        gate: Arc<crate::DocDropGate>,
+    ) {
+        self.docs.lock().insert(id, (weak, gate));
     }
 
     fn unregister(&self, id: u64, last_cached_bytes: usize) {
@@ -6303,18 +6301,23 @@ impl GlobalMemoryPool {
         }
     }
 
-    fn snapshot_live_docs(&self) -> Vec<Arc<LoroDocInner>> {
-        let mut docs = self.docs.lock();
-        let mut live = Vec::with_capacity(docs.len());
-        docs.retain(|_, weak| {
-            if let Some(arc) = weak.upgrade() {
-                live.push(arc);
-                true
-            } else {
-                false
-            }
-        });
-        live
+    /// Upgrades every registered document under its drop gate. The returned
+    /// references release under the same gate, so they never make a document's
+    /// last handle skip its final commit (see `crate::DocDropGate`). The registry
+    /// lock is not held while a gate is taken: the final drop of a document may
+    /// run under its gate and then takes the registry lock to unregister.
+    fn snapshot_live_docs(&self) -> Vec<RegistryRef> {
+        let entries: Vec<_> = {
+            let mut docs = self.docs.lock();
+            docs.retain(|_, (weak, _)| weak.strong_count() > 0);
+            docs.values()
+                .map(|(weak, gate)| (weak.clone(), gate.clone()))
+                .collect()
+        };
+        entries
+            .into_iter()
+            .filter_map(|(weak, gate)| RegistryRef::upgrade(&weak, gate))
+            .collect()
     }
 
     fn update_cached_doc_bytes(&self, doc: &LoroDocInner, new_bytes: usize) {
@@ -6334,7 +6337,7 @@ impl GlobalMemoryPool {
 
     fn docs_estimated_with_override(
         &self,
-        live: &[Arc<LoroDocInner>],
+        live: &[RegistryRef],
         active_override: Option<(u64, usize)>,
     ) -> (u64, u64) {
         let mut total_docs = 0u64;
@@ -6372,7 +6375,7 @@ impl GlobalMemoryPool {
 
     fn reclaim_idle_docs_to_target(
         &self,
-        live: &[Arc<LoroDocInner>],
+        live: &[RegistryRef],
         exclude_doc_id: Option<u64>,
         target_bytes: u64,
         force_full: bool,
@@ -6397,7 +6400,7 @@ impl GlobalMemoryPool {
             }
         }
 
-        let mut candidates: Vec<&Arc<LoroDocInner>> = live
+        let mut candidates: Vec<&RegistryRef> = live
             .iter()
             .filter(|doc| exclude_doc_id != Some(doc.pool_doc_id))
             .collect();
@@ -6579,6 +6582,73 @@ impl GlobalMemoryPool {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = linear_before;
         Ok(())
+    }
+}
+
+impl LoroDocInner {
+    /// On the inner document, so the registry can arm a scope without creating a
+    /// temporary `LoroDoc` handle while it holds the transaction lock.
+    pub(crate) fn arm_budget_scope_on_txn(&self, txn: &mut Transaction) {
+        if txn.budget_base_scope().is_some() || txn.has_rollback_scope() {
+            return;
+        }
+        txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
+        let id = LoroDoc::next_rollback_scope_id();
+        txn.begin_budget_rollback_scope(id);
+        self.state.lock().begin_local_rollback(id);
+    }
+}
+
+/// A temporary strong reference taken by the global registry. See
+/// [`GlobalMemoryPool::snapshot_live_docs`].
+pub(crate) struct RegistryRef {
+    doc: Option<Arc<LoroDocInner>>,
+    gate: Arc<crate::DocDropGate>,
+}
+
+impl RegistryRef {
+    #[cfg(test)]
+    fn from_doc(doc: &LoroDoc) -> Self {
+        let gate = doc.drop_gate.clone();
+        let weak = Arc::downgrade(&doc.inner);
+        Self::upgrade(&weak, gate).unwrap()
+    }
+
+    fn upgrade(
+        weak: &std::sync::Weak<LoroDocInner>,
+        gate: Arc<crate::DocDropGate>,
+    ) -> Option<Self> {
+        let doc = {
+            let mut refs = gate.registry_refs.lock_ignoring_poison();
+            let doc = weak.upgrade()?;
+            *refs += 1;
+            doc
+        };
+        Some(Self {
+            doc: Some(doc),
+            gate,
+        })
+    }
+}
+
+impl std::ops::Deref for RegistryRef {
+    type Target = Arc<LoroDocInner>;
+
+    fn deref(&self) -> &Self::Target {
+        self.doc
+            .as_ref()
+            .expect("registry reference is alive until drop")
+    }
+}
+
+impl Drop for RegistryRef {
+    fn drop(&mut self) {
+        let mut refs = self.gate.registry_refs.lock_ignoring_poison();
+        // Drop before decrementing: the gate must never see this reference in
+        // `strong_count` without also seeing it in `registry_refs`. If this was
+        // the last reference, the last handle has already committed.
+        drop(self.doc.take());
+        *refs -= 1;
     }
 }
 
@@ -6806,7 +6876,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
                             && !txn.has_rollback_scope()
                             && txn.budget_base_scope().is_none()
                         {
-                            LoroDoc::from_inner(doc.clone()).arm_budget_scope_on_txn(txn);
+                            doc.arm_budget_scope_on_txn(txn);
                         }
                     }
                 }
@@ -7752,8 +7822,52 @@ mod reclamation_work_tests {
         doc.commit_then_renew();
         let pool = GlobalMemoryPool::new();
         IDLE_STAGE1_PASSES.with(|n| n.set(0));
-        pool.reclaim_idle_docs_to_target(&[doc.inner.clone()], None, 0, true);
+        pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true);
         IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
         assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
+
+    /// The registry's temporary reference must not make the last handle skip its
+    /// implicit commit; the registry's own release must not commit either.
+    #[test]
+    fn last_handle_commits_while_the_registry_holds_a_reference() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let doc = LoroDoc::new_auto_commit();
+        let updates = Arc::new(AtomicUsize::new(0));
+        let counter = updates.clone();
+        doc.subscribe_local_update(Box::new(move |_| {
+            counter.fetch_add(1, SeqCst);
+            true
+        }))
+        .detach();
+        doc.get_text("t")
+            .insert(0, "x", crate::cursor::PosType::Unicode)
+            .unwrap();
+        let weak = Arc::downgrade(&doc.inner);
+        let held = RegistryRef::from_doc(&doc);
+        let other = doc.clone();
+        drop(doc);
+        assert_eq!(updates.load(SeqCst), 0, "another handle is still alive");
+        drop(other);
+        assert_eq!(updates.load(SeqCst), 1, "the last handle commits");
+        assert!(weak.upgrade().is_some());
+        drop(held);
+        assert_eq!(updates.load(SeqCst), 1);
+        assert!(weak.upgrade().is_none());
+    }
+
+    /// Arming the hard scope from `set_global_memory_budget` used to create a
+    /// temporary `LoroDoc` while holding the transaction lock.
+    #[test]
+    fn arming_a_global_scope_does_not_create_a_handle() {
+        let doc = LoroDoc::new_auto_commit();
+        let before = Arc::strong_count(&doc.inner);
+        let held = RegistryRef::from_doc(&doc);
+        let mut guard = held.txn.try_lock().unwrap();
+        held.arm_budget_scope_on_txn(guard.as_mut().unwrap());
+        assert_eq!(Arc::strong_count(&doc.inner), before + 1);
+        drop(guard);
+        drop(held);
+        assert_eq!(Arc::strong_count(&doc.inner), before);
     }
 }

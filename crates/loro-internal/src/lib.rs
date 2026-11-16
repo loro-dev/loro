@@ -130,13 +130,33 @@ pub use version::VersionVector;
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct LoroDoc {
-    inner: Arc<LoroDocInner>,
+    // Released explicitly in `Drop for LoroDoc`, inside the drop gate when this
+    // handle is not the last one (see `DocDropGate`).
+    inner: std::mem::ManuallyDrop<Arc<LoroDocInner>>,
 }
 
 impl LoroDoc {
     pub(crate) fn from_inner(inner: Arc<LoroDocInner>) -> Self {
-        Self { inner }
+        Self {
+            inner: std::mem::ManuallyDrop::new(inner),
+        }
     }
+}
+
+/// Serializes the "is this the last handle?" decision in `Drop for LoroDoc`
+/// with the global registry's temporary references.
+///
+/// The registry upgrades its `Weak` and increments `registry_refs` while holding
+/// this lock, and drops its `Arc` and decrements while holding it. A handle that
+/// is not the last one also releases its `Arc` while holding it. So inside the
+/// lock, `strong_count - registry_refs` counts exactly the other handles (plus
+/// short-lived upgrades made while one of those handles is in use), and the
+/// last handle always commits, however the registry interleaves. Kept outside
+/// `LoroDocInner` so that the final drop may happen while the lock is held.
+/// See `context/memory-budget.md` ("Last handle and registry references").
+#[derive(Debug, Default)]
+pub(crate) struct DocDropGate {
+    pub(crate) registry_refs: crate::sync::Mutex<usize>,
 }
 
 impl std::ops::Deref for LoroDoc {
@@ -190,6 +210,7 @@ pub struct LoroDocInner {
     pub(crate) pool_doc_id: u64,
     pub(crate) cached_doc_bytes: std::sync::atomic::AtomicUsize,
     pub(crate) last_access_tick: std::sync::atomic::AtomicU64,
+    pub(crate) drop_gate: Arc<DocDropGate>,
 }
 
 impl Drop for LoroDocInner {
@@ -207,8 +228,30 @@ pub const LORO_VERSION: &str = include_str!("../VERSION");
 
 impl Drop for LoroDoc {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.inner) == 1 {
-            let _ = self.implicit_commit_then_stop();
+        struct ReleaseOnExit(*mut std::mem::ManuallyDrop<Arc<LoroDocInner>>);
+        impl Drop for ReleaseOnExit {
+            fn drop(&mut self) {
+                // SAFETY: points at `LoroDoc::inner`, which is not used after this
+                // guard runs, also when the commit below unwinds.
+                unsafe { std::mem::ManuallyDrop::drop(&mut *self.0) }
+            }
         }
+
+        let gate = Arc::clone(&self.inner.drop_gate);
+        let refs = gate.registry_refs.lock_ignoring_poison();
+        let others = Arc::strong_count(&self.inner)
+            .saturating_sub(1)
+            .saturating_sub(*refs);
+        if others > 0 {
+            // Release inside the gate: a concurrent `drop` of the other handle must
+            // not count this one as still alive.
+            // SAFETY: `inner` is not used after this.
+            unsafe { std::mem::ManuallyDrop::drop(&mut self.inner) };
+            drop(refs);
+            return;
+        }
+        drop(refs);
+        let _release = ReleaseOnExit(&mut self.inner);
+        let _ = self.implicit_commit_then_stop();
     }
 }
