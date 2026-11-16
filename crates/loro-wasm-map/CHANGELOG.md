@@ -86,7 +86,7 @@
 - 62fb36f: Apply pending updates after initializing full or shallow snapshots, keeping document state and history aligned. Preserve lazy snapshot state and empty roots, and restore pending changes without emitting events when snapshot import or batch validation fails.
 - 1aa14ce: fix: reject overflowing or inverted text mark ranges during import decoding
 - ab326e1: Reject imported changes that depend on an op of their own peer other than the previous one. Such a change made the import panic with "lamport is not continuous" and poisoned the document lock. The import now returns a decode error and leaves the document unchanged.
-- bf1891c: Require generic-btree 0.10.8 for the published Rust crates so downstream builds include the in-tree text insertion and iterator fixes. Include the fractional-index package in npm publishing.
+- 3f5f37d: Require generic-btree 0.10.8 for the published Rust crates so downstream builds include the in-tree text insertion and iterator fixes. Include the fractional-index package in npm publishing.
 - 1cd9636: Return `ImportUpdatesThatDependsOnOutdatedVersion` instead of panicking when an
   import mixes retained shallow-root dependencies with trimmed history, or replays
   an obsolete pending change. Keep valid import progress and pending data usable
