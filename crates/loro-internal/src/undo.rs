@@ -592,7 +592,13 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
-                    last_span.affected_cids.extend(affected_cids);
+                    // An empty set means the checkpoint's containers are unknown.
+                    // Merging a known span cannot make that older span known.
+                    if last_span.affected_cids.is_empty() || affected_cids.is_empty() {
+                        last_span.affected_cids.clear();
+                    } else {
+                        last_span.affected_cids.extend(affected_cids);
+                    }
                     return;
                 }
             }
@@ -653,18 +659,6 @@ impl Stack {
         self.size
     }
 
-    fn discard_empty_front_rows(&mut self) {
-        // Undo pop can leave an empty front row that only carries remote diffs.
-        // There is no older stack item for that diff to transform during trimming.
-        while self
-            .stack
-            .front()
-            .is_some_and(|(items, _)| items.is_empty())
-        {
-            self.stack.pop_front();
-        }
-    }
-
     fn ensure_trailing_empty_row(&mut self) {
         if self.stack.is_empty() {
             self.stack
@@ -673,20 +667,44 @@ impl Stack {
     }
 
     fn pop_front(&mut self) {
-        if self.is_empty() {
-            return;
-        }
+        self.pop_front_inner(false);
+    }
 
-        self.discard_empty_front_rows();
+    /// Returns the change to this stack's byte estimate without walking retained items.
+    fn pop_front_inner(&mut self, account_bytes: bool) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        let mut freed = 0usize;
+        while self
+            .stack
+            .front()
+            .is_some_and(|(items, _)| items.is_empty())
+        {
+            let (items, diff) = self.stack.pop_front().unwrap();
+            if account_bytes {
+                freed = freed
+                    .saturating_add(items.capacity() * std::mem::size_of::<StackItem>())
+                    .saturating_add(diff.lock().estimated_bytes());
+            }
+        }
         self.size -= 1;
         let first = self.stack.front_mut().unwrap();
-        let f = first.0.pop_front();
-        assert!(f.is_some());
-        if first.0.is_empty() {
-            self.stack.pop_front();
+        let item = first.0.pop_front().expect("nonempty undo row");
+        if account_bytes {
+            freed = freed.saturating_add(item.estimated_bytes());
         }
-
+        if first.0.is_empty() {
+            let (items, diff) = self.stack.pop_front().unwrap();
+            if account_bytes {
+                freed = freed
+                    .saturating_add(items.capacity() * std::mem::size_of::<StackItem>())
+                    .saturating_add(diff.lock().estimated_bytes());
+            }
+        }
+        // Empty rows contain no nested allocations; the outer deque keeps its capacity.
         self.ensure_trailing_empty_row();
+        freed
     }
 
     fn set_top_meta(&mut self, meta: UndoItemMeta) {
@@ -712,6 +730,12 @@ impl Stack {
             })
             .sum();
         rows_vec_bytes.saturating_add(content_bytes)
+    }
+
+    fn has_unknown_affected_cids(&self) -> bool {
+        self.stack
+            .iter()
+            .any(|(items, _)| items.iter().any(|item| item.affected_cids.is_empty()))
     }
 
     fn collect_relevant_cids(&self, out: &mut FxHashSet<ContainerID>) {
@@ -865,14 +889,16 @@ impl UndoManagerInner {
         if self.max_undo_bytes == usize::MAX {
             return;
         }
-        while self.used_bytes() > self.max_undo_bytes {
-            if !self.undo_stack.is_empty() {
-                self.undo_stack.pop_front();
+        let mut used_bytes = self.used_bytes();
+        while used_bytes > self.max_undo_bytes {
+            let freed = if !self.undo_stack.is_empty() {
+                self.undo_stack.pop_front_inner(true)
             } else if !self.redo_stack.is_empty() {
-                self.redo_stack.pop_front();
+                self.redo_stack.pop_front_inner(true)
             } else {
                 break;
-            }
+            };
+            used_bytes = used_bytes.saturating_sub(freed);
         }
     }
 
@@ -885,6 +911,13 @@ impl UndoManagerInner {
             return;
         }
 
+        if self.undo_stack.has_unknown_affected_cids()
+            || self.redo_stack.has_unknown_affected_cids()
+        {
+            self.undo_stack.compose_remote_event(diff);
+            self.redo_stack.compose_remote_event(diff);
+            return;
+        }
         let mut relevant_cids: FxHashSet<ContainerID> = FxHashSet::default();
         self.undo_stack.collect_relevant_cids(&mut relevant_cids);
         self.redo_stack.collect_relevant_cids(&mut relevant_cids);
@@ -1690,6 +1723,71 @@ mod merge_timer_tests {
 #[cfg(test)]
 mod budget_work_tests {
     use super::*;
+    #[test]
+    fn finite_byte_trim_walks_history_once_and_accounts_removed_rows() {
+        let mut manager = UndoManagerInner::new(0);
+        for i in 0..1000 {
+            manager.undo_stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta::default(),
+                Default::default(),
+            );
+            if i % 7 == 0 {
+                manager.undo_stack.stack.push_back(Default::default());
+            }
+        }
+        UNDO_SIZE_WALKS.with(|n| n.set(0));
+        manager.set_max_undo_bytes_from_doc(0);
+        UNDO_SIZE_WALKS.with(|n| assert_eq!(n.get(), 1));
+        assert!(manager.undo_stack.is_empty());
+
+        let mut stack = Stack::new();
+        for i in 0..20 {
+            stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta {
+                    value: LoroValue::from("payload".repeat(i as usize + 1)),
+                    cursors: vec![],
+                },
+                Default::default(),
+            );
+            if i % 3 == 0 {
+                let mut diff = crate::event::TextDiff::default();
+                diff.insert_value(0, "remote".into(), Default::default());
+                let cid = ContainerID::new_root("text", loro_common::ContainerType::Text);
+                let batch = &stack.stack.back().unwrap().1;
+                batch.lock().order.push(cid.clone());
+                batch.lock().cid_to_events.insert(cid, Diff::Text(diff));
+                stack.stack.push_back(Default::default());
+            }
+        }
+        while !stack.is_empty() {
+            let before = stack.estimated_bytes();
+            let freed = stack.pop_front_inner(true);
+            assert_eq!(before - freed, stack.estimated_bytes());
+        }
+    }
+
+    #[test]
+    fn merging_known_edits_does_not_narrow_an_unknown_checkpoint() {
+        let mut stack = Stack::new();
+        stack.push_with_cids(
+            CounterSpan::new(0, 1),
+            Default::default(),
+            Default::default(),
+        );
+        let cid = ContainerID::new_root("text", loro_common::ContainerType::Text);
+        stack.push_with_merge_cids(
+            CounterSpan::new(1, 2),
+            Default::default(),
+            [cid].into_iter().collect(),
+            true,
+            None,
+        );
+        assert_eq!(stack.len(), 1);
+        assert!(stack.has_unknown_affected_cids());
+    }
+
     #[test]
     fn unlimited_undo_trimming_does_not_walk_history() {
         let mut manager = UndoManagerInner::new(0);

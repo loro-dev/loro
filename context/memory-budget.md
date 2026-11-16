@@ -64,3 +64,16 @@ Unbounded undo stacks skip byte estimation during trimming.
 - `LoroDoc`: `setMemoryBudget(budget)`, `getMemoryBudget()`, `memoryStats()`, `reclaimMemory()`, `tryReclaimToBudget()`, and `tryCommit(options?)` (included in `decorateMethods` in `crates/loro-wasm/index.ts` so subscriber delivery runs consistently with `commit`).
 - `UndoManager`: `new UndoManager(doc, { maxUndoBytes })`, `setMaxUndoBytes(bytes)`, `usedBytes()`.
 - Memory limit rejections throw a structured JS `Error` with `name === "MemoryLimitExceededError"`, `code === "MemoryLimitExceeded"`, `kind` (`"ImportBlob" | "PendingPool" | "DocBudget"`), `usedBytes`, and `limitBytes`. `ImportBatchDetail` keeps plain `string` error fields (`error` / `rollbackError`).
+
+## Undo accounting and checkpoints without container events
+
+`UndoManager::record_new_checkpoint` can record same-peer imported history without
+container events. Its empty `affected_cids` means unknown: remote diffs must be
+kept conservatively, and merging a known span into that item keeps it unknown.
+Otherwise undo may delete a remote prefix instead of the imported local text.
+
+Finite byte-quota trimming calculates the two-stack total once, then subtracts
+each removed item's allocation and any discarded row's capacity/remote diff.
+It does not walk retained history for every eviction. The default unlimited
+quota still performs no byte walk. Estimates retain the existing accounting
+convention; this change does not redefine the reported undo byte fields.
