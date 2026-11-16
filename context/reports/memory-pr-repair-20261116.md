@@ -2,6 +2,11 @@
 
 Verified against code 2026-11-16.
 
+Historical first-wave snapshot: later undo, fork, shallow-root, global LRU/sweep
+and small detailed-batch repairs are recorded in the
+[second-wave report](memory-followup-20261116.md). Pending rows below describe
+the state at this first-wave checkpoint, not the latest branch.
+
 This records actual repairs to the stack #1296 -> #1299 -> #1300 -> #1301.
 The original performance investigation is in the sibling worktree's
 `benchmarks/pr-memory-20261116/causes/ROOT_CAUSES.md`; its timings are not

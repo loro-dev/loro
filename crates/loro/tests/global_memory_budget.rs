@@ -396,3 +396,62 @@ fn global_budget_installation_preserves_an_already_edited_transaction() {
     assert_global_limit_err(&doc.try_commit().unwrap_err());
     assert_eq!(text.to_string(), "before");
 }
+
+#[test]
+fn reclaim_above_current_usage_preserves_the_shared_block_cache() {
+    let (_lock, _reset) = lock_and_reset();
+    set_global_memory_budget(GlobalMemoryBudget::new().with_max_kv_block_cache_bytes(1024 * 1024));
+    let (source, _) = populate_doc_with_cold_kv(88, 32, 300);
+    let snapshot = source.export(ExportMode::Snapshot).unwrap();
+    let doc = LoroDoc::new();
+    doc.import(&snapshot).unwrap();
+    let _ = doc.get_deep_value();
+    let before = global_memory_stats().global_block_cache_bytes;
+    assert!(before > 0);
+    assert_eq!(reclaim_global_memory(Some(u64::MAX)), 0);
+    assert_eq!(global_memory_stats().global_block_cache_bytes, before);
+}
+
+#[test]
+fn retained_map_reads_keep_the_document_recent_for_global_reclamation() {
+    let (_lock, _reset) = lock_and_reset();
+    for mode in ["field", "value", "deep"] {
+        set_global_memory_budget(GlobalMemoryBudget::new().with_max_kv_block_cache_bytes(0));
+        let (hot, _) = populate_doc_with_cold_kv(91, 32, 300);
+        let retained = hot.get_map("k_91_0");
+        let (cold, _) = populate_doc_with_cold_kv(92, 32, 300);
+        match mode {
+            "field" => {
+                let _ = retained.get("payload");
+            }
+            "value" => {
+                let _ = retained.get_value();
+            }
+            _ => {
+                let _ = retained.get_deep_value();
+            }
+        }
+        let hot_before = hot.memory_stats().state_bytes;
+        let cold_before = cold.memory_stats().state_bytes;
+        let mut demoted = false;
+        for _ in 0..8 {
+            let target = global_memory_stats().docs_estimated_bytes.saturating_sub(1);
+            reclaim_global_memory(Some(target));
+            let hot_after = hot.memory_stats().state_bytes;
+            let cold_after = cold.memory_stats().state_bytes;
+            if hot_after < hot_before || cold_after < cold_before {
+                assert!(
+                    cold_after < cold_before,
+                    "mode={mode}: cold document was skipped"
+                );
+                assert_eq!(
+                    hot_after, hot_before,
+                    "mode={mode}: retained read was not tracked"
+                );
+                demoted = true;
+                break;
+            }
+        }
+        assert!(demoted, "mode={mode}: never reached state demotion");
+    }
+}

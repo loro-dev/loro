@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   ImportBatchDetail,
   ImportBlobOutcome,
@@ -160,4 +160,37 @@ it.each([false, true])("imports typed-array views without changing their backing
   expect(detailed.getText("text").toString()).toBe(payload);
   expect(backing.subarray(0, 8)).toEqual(new Uint8Array(8).fill(0x7f));
   expect(view).toEqual(bytes);
+});
+
+it.each([1, 2])("copies each small detailed-batch blob into WASM only once (count=%s)", (count) => {
+  const blobs = [update(301, (doc) => doc.getMap("m").set("a", 1)), update(302, (doc) => doc.getMap("m").set("b", 2))];
+  const batch = blobs.slice(0, count);
+  const lengths = new Set(batch.map((b) => b.length));
+  const original = Uint8Array.prototype.set;
+  let copies = 0;
+  const spy = vi.spyOn(Uint8Array.prototype, "set").mockImplementation(function (this: Uint8Array, source, offset) {
+    if (source instanceof Uint8Array && lengths.has(source.length)) copies++;
+    original.call(this, source, offset);
+  });
+  const doc = new LoroDoc();
+  try {
+    const result = doc.importBatchDetailed(batch);
+    expect(result.blobs.map((b) => b.type)).toEqual(batch.map(() => "imported"));
+    expect(copies).toBe(count);
+  } finally { spy.mockRestore(); }
+  expect(doc.getMap("m").toJSON()).toEqual(count === 1 ? { a: 1 } : { a: 1, b: 2 });
+});
+
+it("preserves per-blob preflight failures in single and small detailed batches", () => {
+  const blob = update(401, (doc) => doc.getMap("m").set("a", 1));
+  const doc = new LoroDoc();
+  doc.setMemoryBudget({ maxImportBlobBytes: 1 });
+  for (const batch of [[blob], [blob, blob]]) {
+    const detail = doc.importBatchDetailed(batch);
+    expect(detail.blobs.map((b) => b.type)).toEqual(batch.map(() => "failed"));
+    for (const result of detail.blobs) {
+      if (result.type === "failed") expect(result.error).toContain("kind=import_blob");
+    }
+    expect(detail.rollbackError).toBeNull();
+  }
 });

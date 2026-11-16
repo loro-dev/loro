@@ -3517,19 +3517,42 @@ impl LoroDoc {
         bytes: Vec<bytes::Bytes>,
         json_lossy: bool,
     ) -> LoroResult<ImportBatchDetail> {
+        self.import_batch_detailed_with_blob_results(bytes.into_iter().map(Ok), json_lossy)
+    }
+
+    /// Detailed owned batch whose buffers can fail admission before allocation.
+    /// Keeps per-blob errors and the single-blob import boundary intact.
+    pub fn import_batch_detailed_with_blob_results<I>(
+        &self,
+        bytes: I,
+        json_lossy: bool,
+    ) -> LoroResult<ImportBatchDetail>
+    where
+        I: IntoIterator<Item = LoroResult<bytes::Bytes>>,
+        I::IntoIter: ExactSizeIterator,
+    {
         self.check_import_not_nested()?;
         let values = imported_values_for_mode(json_lossy);
-        if bytes.is_empty() {
+        let mut bytes = bytes.into_iter();
+        let len = bytes.len();
+        if len == 0 {
             return Ok(self.empty_batch_detail());
         }
-        if bytes.len() == 1 {
-            let blob = bytes.into_iter().next().expect("checked len == 1");
-            return self.import_single_detailed(|| Ok(ImportInput::Bytes(blob)), values);
+        if len == 1 {
+            let blob = bytes.next().expect("checked len == 1");
+            return self.import_single_detailed(|| blob.map(ImportInput::Bytes), values);
         }
 
-        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
-        let mut blobs = Vec::with_capacity(bytes.len());
-        for (index, blob) in bytes.into_iter().enumerate() {
+        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(len);
+        let mut blobs = Vec::with_capacity(len);
+        for (index, result) in bytes.enumerate() {
+            let blob = match result {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    outcomes.push(Some(ImportBlobOutcome::Failed(err)));
+                    continue;
+                }
+            };
             match self
                 .check_import_blob_limit(blob.len())
                 .and_then(|()| LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false))
@@ -6354,9 +6377,6 @@ impl GlobalMemoryPool {
         target_bytes: u64,
         force_full: bool,
     ) -> u64 {
-        if self.global_block_cache.used_bytes() > 0 {
-            self.global_block_cache.clear();
-        }
         let mut cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
@@ -6365,6 +6385,17 @@ impl GlobalMemoryPool {
         if !force_full && cur_used <= target_bytes {
             return cur_used;
         }
+        if self.global_block_cache.used_bytes() > 0 {
+            self.global_block_cache.clear();
+            cur_used = if heap_tracker_active() {
+                tracked_allocated_heap_bytes()
+            } else {
+                self.cached_estimated_total()
+            };
+            if !force_full && cur_used <= target_bytes {
+                return cur_used;
+            }
+        }
 
         let mut candidates: Vec<&Arc<LoroDocInner>> = live
             .iter()
@@ -6372,12 +6403,15 @@ impl GlobalMemoryPool {
             .collect();
         candidates.sort_by_key(|doc| doc.last_access_tick.load(Relaxed));
 
+        let mut stage1_done = FxHashSet::default();
         // Pass 1 (Stage 1): clear auxiliary caches, compact history, flush KV, shrink spare arena.
         for doc in &candidates {
             if !force_full && cur_used <= target_bytes {
                 break;
             }
-            let _ = try_reclaim_idle_doc(doc, false, 0);
+            if try_reclaim_idle_doc(doc, false, 0, false) {
+                stage1_done.insert(doc.pool_doc_id);
+            }
             cur_used = if heap_tracker_active() {
                 tracked_allocated_heap_bytes()
             } else {
@@ -6399,7 +6433,7 @@ impl GlobalMemoryPool {
             } else {
                 usize::try_from(cur_used.saturating_sub(target_bytes)).unwrap_or(usize::MAX)
             };
-            let _ = try_reclaim_idle_doc(doc, true, need);
+            let _ = try_reclaim_idle_doc(doc, true, need, stage1_done.contains(&doc.pool_doc_id));
             cur_used = if heap_tracker_active() {
                 tracked_allocated_heap_bytes()
             } else {
@@ -6682,10 +6716,16 @@ fn refresh_cached_doc_bytes_for_inner(doc: &Arc<LoroDocInner>) {
     let _ = try_stats_for_global(doc);
 }
 
+#[cfg(test)]
+thread_local! {
+    static IDLE_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn try_reclaim_idle_doc(
     doc: &Arc<LoroDocInner>,
     stage2: bool,
     target_reduction_bytes: usize,
+    stage1_completed: bool,
 ) -> bool {
     let Some(txn_guard) = doc.txn.try_lock() else {
         return false;
@@ -6706,19 +6746,23 @@ fn try_reclaim_idle_doc(
         return false;
     };
 
-    state.evict_value_cache_to_bytes(0);
-    if !doc.kv_block_cache.is_delegating_to_parent() {
-        doc.kv_block_cache.clear();
+    if !stage1_completed {
+        #[cfg(test)]
+        IDLE_STAGE1_PASSES.with(|n| n.set(n.get() + 1));
+        state.evict_value_cache_to_bytes(0);
+        if !doc.kv_block_cache.is_delegating_to_parent() {
+            doc.kv_block_cache.clear();
+        }
+        state.reclaim_auxiliary_caches();
+        oplog.compact_history();
+        oplog.flush_kv();
+        oplog.with_history_cache(|h| h.free_all());
+        oplog.arena.shrink_spare_capacity();
+        if let Some(mut diff_calc) = doc.diff_calculator.try_lock() {
+            diff_calc.reclaim_cold_caches(0);
+        }
+        let _ = shrink_undo_managers_inner(doc);
     }
-    state.reclaim_auxiliary_caches();
-    oplog.compact_history();
-    oplog.flush_kv();
-    oplog.with_history_cache(|h| h.free_all());
-    oplog.arena.shrink_spare_capacity();
-    if let Some(mut diff_calc) = doc.diff_calculator.try_lock() {
-        diff_calc.reclaim_cold_caches(0);
-    }
-    let _ = shrink_undo_managers_inner(doc);
 
     if stage2 {
         let cur_state_bytes = state.state_estimated_bytes();
@@ -7696,4 +7740,20 @@ struct PlannedAlignment {
     edit: Option<crate::event::Diff>,
     /// Children kept by the alignment, whose own entries are full states too
     kept: FxHashSet<ContainerID>,
+}
+
+#[cfg(test)]
+mod reclamation_work_tests {
+    use super::*;
+    #[test]
+    fn a_two_pass_global_sweep_runs_stage1_once_per_idle_document() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.get_map("map").insert("value", 1).unwrap();
+        doc.commit_then_renew();
+        let pool = GlobalMemoryPool::new();
+        IDLE_STAGE1_PASSES.with(|n| n.set(0));
+        pool.reclaim_idle_docs_to_target(&[doc.inner.clone()], None, 0, true);
+        IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
+        assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
 }

@@ -2355,23 +2355,14 @@ impl LoroDoc {
             }
             self.doc.import_batch_detailed_with_loaders(blobs, false)?
         } else {
-            let arr = &array;
-            let mut blobs = Vec::with_capacity(len);
-            for i in 0..len {
-                let item = arr.get(i as u32);
-                let byte_len = js_u8_byte_len(&item);
-                let meta = self
-                    .doc
-                    .preflight_external_import_alloc(byte_len)
-                    .and_then(|()| {
-                        let bytes = Bytes::from(Uint8Array::new(&item).to_vec());
-                        LoroDocInner::decode_import_blob_meta_bytes(bytes, false)
-                    });
-                blobs.push((meta, move || {
-                    js_u8_to_bytes_checked(&self.doc, &arr.get(i as u32))
-                }));
-            }
-            self.doc.import_batch_detailed_with_loaders(blobs, false)?
+            // Retain at most the small-batch threshold (or one blob), and share
+            // each allocation between metadata and import. Failed admissions
+            // stay per-blob errors rather than failing the whole batch.
+            let blobs: Vec<_> = (0..len)
+                .map(|i| js_u8_to_bytes_checked(&self.doc, &array.get(i as u32)))
+                .collect();
+            self.doc
+                .import_batch_detailed_with_blob_results(blobs, false)?
         };
         Ok(import_batch_detail_to_js_value(detail)?.into())
     }

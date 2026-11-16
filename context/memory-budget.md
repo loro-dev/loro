@@ -142,3 +142,19 @@ still bypasses the external import-blob cap; subsequent public imports enforce i
 to both root and latest stores. The root's separate `encoded_state_bytes` can
 still retain RAM: backend propagation alone is not a claim that the entire
 snapshot input allocation was released. Further storage work must account for it.
+
+## Reclamation sweep and retained handler reads
+
+A sweep first checks current usage against its target before clearing shared
+blocks. It records which documents completed Stage 1; Stage 2 skips that work
+for those documents, while retrying Stage 1 for any document that was busy on
+the first pass. Each stage retains its try-lock/dirty-transaction guards.
+`BasicHandler` and `HandlerTrait` state/value read entry points refresh the
+owning document's access tick before taking the state lock. A retained Map read
+therefore keeps its document recent even without a new `get_map` call.
+
+Small `importBatchDetailed` calls retain their already-copied owned buffers
+through metadata ordering and import. `import_batch_detailed_with_blob_results`
+accepts an exact-size iterator, avoiding an extra result vector on the existing
+Rust owned-bytes path. Preflight errors stay per-blob errors, including the
+single-blob special case. Large batches still use the two-pass streaming path.
