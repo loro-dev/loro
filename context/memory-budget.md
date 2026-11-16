@@ -221,3 +221,21 @@ that moment; a later flush that cannot write keeps its tables in RAM and only
 logs (`take_spill_error` is not surfaced through a public API yet).
 Tests: `crates/loro/tests/out_of_core.rs` (a file at the path; `/proc/self` as a
 directory that rejects writes, Linux only).
+
+## Global soft-sweep backoff
+
+`GlobalMemoryPool::enforce_global_watermarks_for_active` falls back to Stage 1
+and Stage 2 on the active document when idle documents cannot bring usage to the
+target. When even that fails (live state larger than the target), every commit
+used to repeat it, including `oplog.flush_kv()` (rewrites the whole KV table)
+and `arena.shrink_spare_capacity()` (copies the string arena). Now
+`record_soft_sweep_result` stores the usage left by a failed sweep, and
+`soft_reclaim_backed_off` skips later sweeps until usage exceeds that by
+`max(floor / 8, 256 KiB)` or `SOFT_BACKOFF_MAX_SKIPS` (64) checks were skipped,
+so documents that become idle are still reclaimed without growth. Usage below
+the high watermark, a successful sweep, or `set_global_memory_budget` clears the
+backoff. Hard admission (`check_global_budget_with_active`) never reads it.
+The native estimate path now snapshots the registry once per sweep instead of
+twice. Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`. The
+per-document Stage 1 in `enforce_watermarks_with_budget_locked` has no backoff
+yet (see the follow-up prompt).

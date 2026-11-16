@@ -6270,7 +6270,20 @@ struct GlobalMemoryPool {
     >,
     total_cached_doc_bytes: std::sync::atomic::AtomicU64,
     global_block_cache: SharedBlockCache,
+    /// Usage left by the last soft sweep that could not reach its target, or 0.
+    /// See [`GlobalMemoryPool::soft_reclaim_backed_off`].
+    soft_backoff_floor: std::sync::atomic::AtomicU64,
+    /// Soft sweeps skipped since `soft_backoff_floor` was set.
+    soft_backoff_skips: std::sync::atomic::AtomicU32,
 }
+
+/// A failed soft sweep is retried once usage grows by this fraction of what it
+/// left (at least [`SOFT_BACKOFF_MIN_GROWTH`]) ...
+const SOFT_BACKOFF_GROWTH_DIVISOR: u64 = 8;
+const SOFT_BACKOFF_MIN_GROWTH: u64 = 256 * 1024;
+/// ... or after this many skipped checks, so documents that became idle in the
+/// meantime are still reclaimed without growth.
+const SOFT_BACKOFF_MAX_SKIPS: u32 = 64;
 
 impl GlobalMemoryPool {
     fn new() -> Self {
@@ -6279,6 +6292,35 @@ impl GlobalMemoryPool {
             docs: parking_lot::Mutex::new(FxHashMap::default()),
             total_cached_doc_bytes: std::sync::atomic::AtomicU64::new(0),
             global_block_cache: SharedBlockCache::new(DEFAULT_GLOBAL_BLOCK_CACHE_BYTES),
+            soft_backoff_floor: std::sync::atomic::AtomicU64::new(0),
+            soft_backoff_skips: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// Whether the soft sweep should be skipped for usage `used` above the high
+    /// watermark: the previous sweep could not get below its target, usage has
+    /// not grown meaningfully since, and fewer than [`SOFT_BACKOFF_MAX_SKIPS`]
+    /// checks were skipped. Each sweep runs Stage 1 (including a full KV flush
+    /// and arena copy) on the active document, so repeating one that cannot
+    /// succeed made every commit pay for it. Hard admission does not use this.
+    fn soft_reclaim_backed_off(&self, used: u64) -> bool {
+        let floor = self.soft_backoff_floor.load(Relaxed);
+        if floor == 0 {
+            return false;
+        }
+        let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+        used <= floor.saturating_add(growth)
+            && self.soft_backoff_skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
+    }
+
+    fn record_soft_sweep_result(&self, reached_target: bool, used: u64) {
+        if reached_target {
+            if self.soft_backoff_floor.load(Relaxed) != 0 {
+                self.soft_backoff_floor.store(0, Relaxed);
+            }
+        } else {
+            self.soft_backoff_skips.store(0, Relaxed);
+            self.soft_backoff_floor.store(used.max(1), Relaxed);
         }
     }
 
@@ -6474,16 +6516,18 @@ impl GlobalMemoryPool {
             return;
         };
         let target = budget.effective_target_watermark().unwrap_or(high);
+        let mut live = None;
         let initial_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
-            let live = self.snapshot_live_docs();
-            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
+            let docs = live.insert(self.snapshot_live_docs());
+            self.docs_estimated_with_override(docs, Some((active_doc.pool_doc_id, active_bytes)))
                 .0
         };
         let wasm_pressure = cfg!(target_arch = "wasm32")
             && budget.wasm_heap_pressure(wasm_linear_memory_bytes(), initial_used);
         if initial_used <= high && !wasm_pressure {
+            self.record_soft_sweep_result(true, initial_used);
             return;
         }
 
@@ -6492,29 +6536,28 @@ impl GlobalMemoryPool {
         } else {
             target
         };
-
-        let live = self.snapshot_live_docs();
-        let mut cur_used = if !heap_tracker_active() {
-            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
-                .0
-        } else {
-            initial_used
-        };
-        if cur_used <= effective_target && !wasm_pressure {
+        if initial_used <= effective_target && !wasm_pressure {
+            return;
+        }
+        if self.soft_reclaim_backed_off(initial_used) {
             return;
         }
 
-        cur_used = self.reclaim_idle_docs_to_target(
+        let live = live.unwrap_or_else(|| self.snapshot_live_docs());
+        let mut cur_used = self.reclaim_idle_docs_to_target(
             &live,
             Some(active_doc.pool_doc_id),
             effective_target,
             false,
         );
         if cur_used <= effective_target {
+            self.record_soft_sweep_result(true, cur_used);
             return;
         }
 
         // Fallback: if idle docs alone couldn't meet target, trim Stage 1 + Stage 2 on active doc.
+        #[cfg(test)]
+        ACTIVE_FALLBACK_PASSES.with(|n| n.set(n.get() + 1));
         state.evict_value_cache_to_bytes(0);
         state.reclaim_auxiliary_caches();
         oplog.compact_history();
@@ -6524,14 +6567,14 @@ impl GlobalMemoryPool {
         active_doc.diff_calculator.lock().reclaim_cold_caches(0);
         let _ = shrink_undo_managers_inner(active_doc);
 
-        let after_stage1 = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
         cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
             self.cached_estimated_total()
         };
         if cur_used <= effective_target {
-            let _ = after_stage1;
+            self.record_soft_sweep_result(true, cur_used);
             return;
         }
 
@@ -6543,6 +6586,12 @@ impl GlobalMemoryPool {
         state.flush_kv();
         oplog.flush_kv();
         let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        cur_used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            self.cached_estimated_total()
+        };
+        self.record_soft_sweep_result(cur_used <= effective_target, cur_used);
     }
 
     fn check_global_budget_with_active(
@@ -6789,6 +6838,7 @@ fn refresh_cached_doc_bytes_for_inner(doc: &Arc<LoroDocInner>) {
 #[cfg(test)]
 thread_local! {
     static IDLE_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ACTIVE_FALLBACK_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn try_reclaim_idle_doc(
@@ -6860,6 +6910,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
     pool.global_block_cache
         .set_max_bytes(budget.effective_block_cache_bytes());
     *pool.budget.lock() = budget;
+    pool.record_soft_sweep_result(true, 0);
     GLOBAL_BUDGET_FLAGS.store(flags, Release);
 
     let live = pool.snapshot_live_docs();
@@ -7836,6 +7887,55 @@ mod reclamation_work_tests {
         pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true);
         IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
         assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
+
+    /// A soft sweep that cannot reach its target is not repeated on every
+    /// commit; it is retried after usage grows or after a bounded number of
+    /// skipped checks. (Hard admission, `check_global_budget_with_active`, never
+    /// reads the backoff.)
+    #[test]
+    fn a_failed_global_soft_sweep_backs_off_until_usage_grows() {
+        let pool = GlobalMemoryPool::new();
+        *pool.budget.lock() = GlobalMemoryBudget {
+            high_watermark_bytes: Some(1),
+            target_watermark_bytes: Some(1),
+            ..Default::default()
+        };
+        let doc = LoroDoc::new_auto_commit();
+        pool.register(
+            doc.pool_doc_id,
+            Arc::downgrade(&doc.inner),
+            doc.drop_gate.clone(),
+        );
+        let text = doc.get_text("t");
+        let edit_and_check = |s: &str| {
+            text.insert(0, s, crate::cursor::PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+            let oplog = doc.oplog.lock();
+            let mut state = doc.state.lock();
+            let bytes = doc.memory_stats_locked(&oplog, &state, 0).total_bytes;
+            // `cached_doc_bytes` is shared with the process-wide pool; start this
+            // private pool's total from the active document alone.
+            doc.cached_doc_bytes.store(0, Relaxed);
+            pool.total_cached_doc_bytes.store(0, Relaxed);
+            pool.enforce_global_watermarks_for_active(&doc, &oplog, &mut state, 0, bytes);
+        };
+        let passes = || ACTIVE_FALLBACK_PASSES.with(|n| n.get());
+        let start = passes();
+        edit_and_check("first");
+        assert_eq!(passes() - start, 1);
+        for _ in 0..10 {
+            edit_and_check("x");
+        }
+        assert_eq!(passes() - start, 1, "no growth: backed off");
+
+        edit_and_check(&"grow".repeat(256 * 1024));
+        assert_eq!(passes() - start, 2, "usage grew: swept again");
+
+        for _ in 0..SOFT_BACKOFF_MAX_SKIPS + 1 {
+            edit_and_check("y");
+        }
+        assert_eq!(passes() - start, 3, "retried after the skip limit");
     }
 
     /// The registry's temporary reference must not make the last handle skip its
