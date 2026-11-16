@@ -78,10 +78,21 @@ It does not walk retained history for every eviction. The default unlimited
 quota still performs no byte walk. Estimates retain the existing accounting
 convention; this change does not redefine the reported undo byte fields.
 
+## Page statistics cache
+
+`StorePage::state_bytes` caches the sum for at most 64 materialized containers.
+Every mutable entry lookup, insertion, removal, mutable iteration, flush and cold
+state demotion invalidates that page. Read-only statistics reuse clean pages.
+`estimated_state_bytes` still sums page/table overhead and never postpones a dirty
+page refresh past hard admission. Debug builds independently walk all entries and
+assert cached and fresh totals agree. The work-count regression checks 20 edits
+among 512 containers cause exactly 20 page recomputations. Complexity is page
+count plus containers in dirty pages, rather than strictly constant time.
+
 ## Structural Shrinkage & Native Out-of-Core Spilling
 
 - **Lock-free unbudgeted fast paths (`LoroDocInner::budget_flags`)**: `LoroDoc::new()` injects `kv_block_cache` directly into `OpLog` / `DocState` without extra locking, and unbudgeted commits/imports short-circuit on `budget_flags` (`std::sync::atomic::AtomicU8`) before touching `memory_budget` or `txn` locks.
 - **Compact `Op` (`<= 40B` on 64-bit, `op.rs`, `op/content.rs`, `list_op.rs`)**: `InnerContent::Map(Arc<MapSet>)` and compact `InnerListOp` variants (`Insert { slice, pos: u32 }`, `Set(Arc<SetListOp>)`, `StyleStart(Arc<StyleOp>)`, `Delete(CompactDeleteSpan)`) cut parsed op size without changing wire encoding.
 - **Hybrid `ImVersionVector` (`version.rs`)**: Stores `<= 4` peers inline via `SmallVec<[(PeerID, Counter); 4]>` (`0` heap bytes) before promoting to `imbl::GenericHashMap` (`ImVvHeapMap`).
 - **Sparse 64-slot paged `InnerStore` & lazy `ListState` child index (`inner_store.rs`, `list_state.rs`)**: `InnerStore` groups slots into 64-entry `StorePage`s whose `slots` grow only up to the highest populated offset in that page and free empty `Box<StorePage>` entries on cold demotion, value eviction, or rollback (`remove_created`). `ListState::child_container_to_index` stays `None` for scalar-only lists. `StrArena::shrink_spare_capacity()` runs on forced full reclamation (`reclaim_memory`).
-- **Native out-of-core `FileKvStore` (`kv-store/src/file_store.rs`, `sstable.rs`, `MemoryBudget::spill_dir`)**: On `#[cfg(not(target_arch = "wasm32"))]`, `MemoryBudget::with_spill_dir(dir)` migrates both `OpLog` (`ChangeStore::replace_kv_backend`) and `DocState` (`ContainerStore::replace_kv_backend`, including `shallow_root_store`) onto `FileKvStore`. Flushed/imported/compacted SSTables write `.sst` backing files via `SpillFile` (positional reads served through `SharedBlockCache`, metadata-only `kv_bytes`, disk bytes tracked in `spilled_disk_bytes`, independent `.sst` copies on `Clone`/`fork()`, and automatic file unlinking on supersede, `Drop`, or switching `spill_dir` back to `None`). On `wasm32`, `spill_dir` is accepted on `MemoryBudget` as a no-op.
+- **Native out-of-core `FileKvStore` (`kv-store/src/file_store.rs`, `sstable.rs`, `MemoryBudget::spill_dir`)**: On `#[cfg(not(target_arch = "wasm32"))]`, `MemoryBudget::with_spill_dir(dir)` migrates both `OpLog` (`ChangeStore::replace_kv_backend`) and `DocState` (`ContainerStore::replace_kv_backend`, including `shallow_root_store`) onto `FileKvStore`. Flushed/imported/compacted SSTables write `.sst` backing files via `SpillFile` (positional reads served through `SharedBlockCache`, metadata-only `kv_bytes`, disk bytes tracked in `spilled_disk_bytes`, shared immutable `.sst` files on `Clone`/`fork()` (separate mutable buffers/cache, file removed after the last owner), Unix owner-only `0600` files, and automatic file unlinking after the last owner releases a superseded/dropped file). On `wasm32`, `spill_dir` is accepted on `MemoryBudget` as a no-op.

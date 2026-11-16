@@ -2100,14 +2100,20 @@ mod tests {
         nodes.push(side.clone());
 
         let dag = TestDag::new(nodes, Frontiers::from([prev_join, side.id]));
-        let start = std::time::Instant::now();
         let (base, mode) = dag.find_replay_base(&side.id.into(), &prev_join.into());
-        let elapsed = start.elapsed();
         assert_eq!(base, root.id.into());
         assert_eq!(mode, DiffMode::Checkout);
-        assert!(
-            elapsed < std::time::Duration::from_millis(50),
-            "64-diamond critical-version walk took {elapsed:?}"
-        );
+        let lookups = std::cell::Cell::new(0usize);
+        let base = latest_single_head_critical_version(
+            &|id| {
+                lookups.set(lookups.get() + 1);
+                Ok(dag.get(id))
+            },
+            &side.id.into(),
+            &prev_join.into(),
+        )
+        .unwrap();
+        assert_eq!(base, root.id.into());
+        assert!(lookups.get() < 64 * 20, "lookups={}", lookups.get());
     }
 }

@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 /// written to unique `.sst` temporary files under `spill_dir`, freeing serialized table bytes
 /// from RAM while continuing to serve block reads through `SharedBlockCache`.
 ///
-/// Temporary files are unlinked when superseded or when the store is dropped. Cloning duplicates
-/// spilled files into fresh temporary files so clones and forks remain independent.
+/// Temporary files are unlinked when the last reference disappears. Clones share
+/// immutable spilled files; each clone keeps independent write buffers and caches.
 #[derive(Debug)]
 pub struct FileKvStore {
     inner: MemKvStore,
@@ -20,10 +20,8 @@ pub struct FileKvStore {
 
 impl Clone for FileKvStore {
     fn clone(&self) -> Self {
-        let inner = self
-            .inner
-            .clone_spilled(&self.spill_dir)
-            .unwrap_or_else(|_| self.inner.clone());
+        let mut inner = self.inner.clone();
+        inner.set_block_cache(SharedBlockCache::new(self.inner.block_cache().max_bytes()));
         Self {
             inner,
             spill_dir: self.spill_dir.clone(),
@@ -194,6 +192,46 @@ mod tests {
     }
 
     #[test]
+    fn spilling_releases_import_buffer_and_keeps_files_private() {
+        struct OwnedBytes(Vec<u8>, std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl AsRef<[u8]> for OwnedBytes {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        impl Drop for OwnedBytes {
+            fn drop(&mut self) {
+                self.1.store(true, Ordering::SeqCst);
+            }
+        }
+        let temp = TempDir::new("owned-spill");
+        let mut source = MemKvStore::new(MemKvConfig::default());
+        source.set(b"large", Bytes::from(vec![7; 128 * 1024]));
+        source.set(b"small", Bytes::from_static(b"value"));
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let input = Bytes::from_owner(OwnedBytes(source.export_all().to_vec(), dropped.clone()));
+        let mut store = FileKvStore::new(&temp.0, MemKvConfig::default()).unwrap();
+        store.import_all(input).unwrap();
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "spill metadata retained the input allocation"
+        );
+        assert!(store.spilled_disk_bytes() > 0);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for file in std::fs::read_dir(&temp.0).unwrap() {
+                assert_eq!(
+                    file.unwrap().metadata().unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+        assert_eq!(store.get(b"large"), Some(Bytes::from(vec![7; 128 * 1024])));
+        assert_eq!(store.get(b"small").as_deref(), Some(b"value".as_slice()));
+    }
+
+    #[test]
     fn file_kv_store_spills_reads_clones_and_cleans_up_on_drop() {
         let temp = TempDir::new("spill");
         let mut store =
@@ -230,7 +268,11 @@ mod tests {
         );
 
         let mut cloned = store.clone();
-        assert_eq!(count_sst_files(&temp.0), 2);
+        assert_eq!(
+            count_sst_files(&temp.0),
+            1,
+            "cloning must not copy immutable files"
+        );
         drop(store);
         assert_eq!(count_sst_files(&temp.0), 1);
         assert_eq!(cloned.get(b"key-0042"), Some(Bytes::from(expected_42)));

@@ -506,12 +506,14 @@ impl SpillFile {
         loop {
             let seq = NEXT_SPILL_FILE_ID.fetch_add(1, Ordering::Relaxed);
             let path = dir.join(format!("loro-kv-{pid}-{seq}.sst"));
-            match std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&path)
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create_new(true);
+            #[cfg(unix)]
             {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
                 Ok(mut file) => {
                     if let Err(err) = (|| -> std::io::Result<()> {
                         use std::io::Write;
@@ -551,11 +553,6 @@ impl SpillFile {
             (&self.file).read_exact(&mut buf)?;
         }
         Ok(buf)
-    }
-
-    fn duplicate_in(&self, dir: &std::path::Path) -> std::io::Result<Self> {
-        let bytes = self.read_slice(0, self.len)?;
-        Self::create_and_write(dir, &bytes)
     }
 }
 
@@ -644,24 +641,6 @@ impl SsTable {
         let file = Arc::new(SpillFile::create_and_write(dir, data)?);
         self.backing = SsTableBacking::File(file);
         Ok(())
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn clone_spilled(&self, dir: &std::path::Path) -> std::io::Result<Self> {
-        let backing = match &self.backing {
-            SsTableBacking::Memory(data) => SsTableBacking::Memory(data.clone()),
-            SsTableBacking::File(file) => SsTableBacking::File(Arc::new(file.duplicate_in(dir)?)),
-        };
-        Ok(Self {
-            id: self.id,
-            backing,
-            first_key: self.first_key.clone(),
-            last_key: self.last_key.clone(),
-            meta: self.meta.clone(),
-            meta_bytes: self.meta_bytes,
-            meta_offset: self.meta_offset,
-            block_cache: SharedBlockCache::new(self.block_cache.max_bytes()),
-        })
     }
 
     pub fn iter(&self) -> SsTableIter<'_> {

@@ -17,10 +17,16 @@ use super::ContainerWrapper;
 
 const PAGE_SIZE: usize = 64;
 
+#[cfg(test)]
+thread_local! {
+    static PAGE_STATS_RECOMPUTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Debug)]
 struct StorePage {
     slots: Vec<Option<ContainerWrapper>>, // length <= PAGE_SIZE
     live_count: u8,
+    cached_state_bytes: std::cell::Cell<Option<usize>>,
 }
 
 impl StorePage {
@@ -28,7 +34,25 @@ impl StorePage {
         Self {
             slots: Vec::new(),
             live_count: 0,
+            cached_state_bytes: std::cell::Cell::new(None),
         }
+    }
+
+    fn state_bytes(&self) -> usize {
+        if let Some(bytes) = self.cached_state_bytes.get() {
+            return bytes;
+        }
+        #[cfg(test)]
+        PAGE_STATS_RECOMPUTES.with(|n| n.set(n.get() + 1));
+        let bytes = self
+            .slots
+            .iter()
+            .flatten()
+            .filter(|c| c.is_materialized_state())
+            .map(|c| c.estimated_state_bytes())
+            .sum();
+        self.cached_state_bytes.set(Some(bytes));
+        bytes
     }
 
     fn overhead_bytes(&self) -> usize {
@@ -124,6 +148,7 @@ impl InnerStore {
     ) -> Option<&mut ContainerWrapper> {
         let (page_idx, offset) = Self::page_and_offset(Self::slot(idx));
         let page = pages.get_mut(page_idx)?.as_mut()?;
+        page.cached_state_bytes.set(None);
         let entry = page.slots.get_mut(offset)?.as_mut()?;
         debug_assert_eq!(entry.kind(), idx.get_type());
         Some(entry)
@@ -165,6 +190,7 @@ impl InnerStore {
             *live_pages += 1;
         }
         let page = pages[page_idx].as_mut().unwrap();
+        page.cached_state_bytes.set(None);
         if page.slots.len() <= offset {
             page.slots.resize_with(offset + 1, || None);
         }
@@ -182,6 +208,7 @@ impl InnerStore {
     ) -> Option<ContainerWrapper> {
         let (page_idx, offset) = Self::page_and_offset(slot);
         let page = pages.get_mut(page_idx)?.as_mut()?;
+        page.cached_state_bytes.set(None);
         let taken = page.slots.get_mut(offset)?.take()?;
         page.live_count -= 1;
         if page.live_count == 0 {
@@ -232,6 +259,7 @@ impl InnerStore {
             .enumerate()
             .filter_map(|(page_idx, page)| page.as_mut().map(|p| (page_idx * PAGE_SIZE, p)))
             .flat_map(|(base, page)| {
+                page.cached_state_bytes.set(None);
                 page.slots
                     .iter_mut()
                     .enumerate()
@@ -710,6 +738,7 @@ impl InnerStore {
             let Some(page) = page.as_mut() else {
                 continue;
             };
+            page.cached_state_bytes.set(None);
             let base = page_idx * PAGE_SIZE;
             for (offset, entry) in page.slots.iter_mut().enumerate() {
                 let Some(c) = entry.as_mut() else {
@@ -905,18 +934,30 @@ impl InnerStore {
     }
 
     pub(crate) fn estimated_state_bytes(&self) -> usize {
-        let page_overhead: usize = self
+        let total = self
             .pages
             .iter()
             .filter_map(Option::as_deref)
-            .map(StorePage::overhead_bytes)
-            .sum();
-        self.iter_entries()
-            .filter(|(_, c)| c.is_materialized_state())
-            .map(|(_, c)| c.estimated_state_bytes())
+            .map(|p| p.state_bytes().saturating_add(p.overhead_bytes()))
             .sum::<usize>()
-            .saturating_add(self.pages.capacity() * std::mem::size_of::<Option<Box<StorePage>>>())
-            .saturating_add(page_overhead)
+            .saturating_add(self.pages.capacity() * std::mem::size_of::<Option<Box<StorePage>>>());
+        #[cfg(debug_assertions)]
+        {
+            let fresh = self
+                .iter_entries()
+                .filter(|(_, c)| c.is_materialized_state())
+                .map(|(_, c)| c.estimated_state_bytes())
+                .sum::<usize>()
+                + self
+                    .pages
+                    .iter()
+                    .filter_map(Option::as_deref)
+                    .map(StorePage::overhead_bytes)
+                    .sum::<usize>()
+                + self.pages.capacity() * std::mem::size_of::<Option<Box<StorePage>>>();
+            assert_eq!(total, fresh, "page statistics cache is stale");
+        }
+        total
     }
 
     pub(crate) fn kv_estimated_bytes(&self) -> usize {
@@ -1023,6 +1064,7 @@ impl InnerStore {
                     continue;
                 };
                 step += 1;
+                page.cached_state_bytes.set(None);
                 let Some(c) = page.slots.get_mut(offset).and_then(Option::as_mut) else {
                     continue;
                 };
@@ -1114,6 +1156,25 @@ mod tests {
     };
 
     #[test]
+    fn budget_statistics_recompute_only_the_modified_page() {
+        let doc = crate::LoroDoc::new_auto_commit();
+        for i in 0..PAGE_SIZE * 8 {
+            doc.get_map(format!("page-{i}")).insert("v", 0).unwrap();
+        }
+        doc.commit_then_renew();
+        doc.set_memory_budget(crate::memory::MemoryBudget::new().with_max_doc_bytes(1 << 30));
+        let map = doc.get_map("page-0");
+        let _ = doc.memory_stats();
+        PAGE_STATS_RECOMPUTES.with(|n| n.set(0));
+        for i in 1..=20 {
+            map.insert("v", i).unwrap();
+            doc.commit_then_renew();
+            let _ = doc.memory_stats();
+        }
+        PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 20));
+    }
+
+    #[test]
     fn full_clock_sweep_visits_every_cold_container() {
         for count in [5, 100, 1000] {
             for hand in [0, 3] {
@@ -1130,10 +1191,8 @@ mod tests {
                     store.demote_cold_states(0, &Default::default());
                     assert!(
                         store
-                            .store
-                            .iter()
-                            .flatten()
-                            .all(|c| !c.is_materialized_state()),
+                            .iter_entries()
+                            .all(|(_, c)| !c.is_materialized_state()),
                         "count={count}, hand={hand}"
                     );
                 }

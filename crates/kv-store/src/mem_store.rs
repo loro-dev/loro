@@ -135,26 +135,6 @@ impl MemKvStore {
         self.ss_table.iter().map(SsTable::spilled_disk_bytes).sum()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn clone_spilled(&self, dir: &std::path::Path) -> std::io::Result<Self> {
-        let block_cache = SharedBlockCache::new(self.block_cache.max_bytes());
-        let mut ss_table = Vec::with_capacity(self.ss_table.len());
-        for table in &self.ss_table {
-            let mut cloned = table.clone_spilled(dir)?;
-            cloned.set_block_cache(block_cache.clone());
-            ss_table.push(cloned);
-        }
-        Ok(Self {
-            mem_table: self.mem_table.clone(),
-            mem_table_bytes: self.mem_table_bytes,
-            ss_table,
-            block_size: self.block_size,
-            compression_type: self.compression_type,
-            should_encode_none: self.should_encode_none,
-            block_cache,
-        })
-    }
-
     /// Reconstruct an empty store preserving configuration and block cache.
     pub fn empty_like(&self) -> Self {
         Self::new(

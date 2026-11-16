@@ -1,0 +1,17 @@
+{
+  "baseline_note": "Original p3 uses the investigation rlib tagged 35510eff, linked to the same benchmark source; not rebuilt in this run. The baseline InnerStore source was compared to git 35510eff and matched.",
+  "source_sha256": "1e4c86e0e9f7f7478cb9738e076c4cfebf24662d8ba70a76fbd515654956c724",
+  "binaries": {
+    "original-p3": "91b93b4f63f48bd8b9b0471e0612e257f3bb37cf4bef3b871af02997dd5df80a",
+    "repaired-p3": "ab00ba35b44255fd723ee47a1f891c1b5c1941aa8c8b54a034af1fb8707287c9"
+  },
+  "baseline_rlib_sha256": "5b6f93650b72e740857a08a383c552c5485759ea3833af6dd557afcc09b23085",
+  "source_files_sha256": {
+    "crates/loro-internal/src/state/container_store/inner_store.rs": "93058f50ab567575ef5bc9ad1e3abfa5dfb0d3cc02a7088e491e69fc63b12666",
+    "crates/loro-internal/src/loro.rs": "ae981218cc2a646241c01c3c0330b62a2f947adcd9a7e074746e8ae219d1714e",
+    "crates/loro-internal/src/txn.rs": "3b9286dcf316c5f7f775dba624fd4a15b1220946fab728528ed3e8f80399c081",
+    "crates/kv-store/src/file_store.rs": "7fbf5f050eacf275fde870f83e66fa0c9c502107c03c385971821ba8fb61d81c",
+    "crates/kv-store/src/sstable.rs": "3c34b21d304a483a2a479e494a1edb6d4f348c5127af03da7e24a428149b9d89",
+    "crates/kv-store/src/mem_store.rs": "5ce8135b6b7a8d7843187540af27cc4648492063d95e5fd7fd9f7ab02a39738d"
+  }
+}
