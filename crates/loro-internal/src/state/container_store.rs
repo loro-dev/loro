@@ -397,6 +397,14 @@ impl ContainerStore {
             })
     }
 
+    pub(crate) fn take_spill_error(&self) -> Option<String> {
+        let root = self
+            .shallow_root_store
+            .as_ref()
+            .and_then(|root| root.store.lock().take_spill_error());
+        join_spill_errors(self.store.take_spill_error(), root)
+    }
+
     pub(crate) fn spilled_disk_bytes(&self) -> usize {
         self.store.spilled_disk_bytes()
             + self
@@ -1654,5 +1662,13 @@ mod test {
             .import(&doc.export(crate::encoding::ExportMode::Snapshot).unwrap())
             .unwrap();
         assert_eq!(round_tripped.get_deep_value(), doc.get_deep_value());
+    }
+}
+
+/// Both errors, when both stores failed to spill.
+pub(crate) fn join_spill_errors(a: Option<String>, b: Option<String>) -> Option<String> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+        (a, b) => a.or(b),
     }
 }

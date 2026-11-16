@@ -2809,6 +2809,10 @@ impl DocState {
         self.store.spilled_disk_bytes()
     }
 
+    pub(crate) fn take_spill_error(&self) -> Option<String> {
+        self.store.take_spill_error()
+    }
+
     pub(crate) fn evict_value_cache_to_bytes(&mut self, max_bytes: usize) -> usize {
         self.store.evict_value_cache_to_bytes(max_bytes)
     }

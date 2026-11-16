@@ -418,3 +418,30 @@ it("does not repeatedly demote idle state after WASM pages stay high but heap is
   active.free();
   idle.free();
 });
+
+it("tryReclaimGlobalToBudget accepts grown pages once the heap fits, and reports the pages", () => {
+  const transient = new LoroDoc();
+  const transientText = transient.getText("large");
+  transientText.insert(0, "x".repeat(8 * 1024 * 1024));
+  transient.commit();
+  transientText.free();
+  transient.free();
+  const stats = globalMemoryStats();
+  // Below the pages already allocated, but with room for the live heap.
+  const linearLimit = stats.wasmLinearMemoryBytes - 65536;
+  expect(stats.allocatedHeapBytes).toBeLessThan(linearLimit * 0.7);
+  setGlobalMemoryBudget({ maxWasmLinearBytes: linearLimit });
+  try {
+    expect(globalMemoryStats().wasmLinearMemoryExceeded).toBe(true);
+    // Used to throw forever once the pages grew, while tryCommit succeeded.
+    const after = tryReclaimGlobalToBudget();
+    expect(after.wasmLinearMemoryExceeded).toBe(true);
+    const doc = new LoroDoc();
+    doc.getMap("m").set("v", 1);
+    doc.tryCommit();
+    doc.free();
+  } finally {
+    setGlobalMemoryBudget({});
+  }
+  expect(globalMemoryStats().wasmLinearMemoryExceeded).toBe(false);
+});

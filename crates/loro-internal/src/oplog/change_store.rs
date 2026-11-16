@@ -1524,6 +1524,11 @@ impl ChangeStore {
         self.external_kv.lock().spilled_disk_bytes()
     }
 
+    /// See [`crate::LoroDoc::take_spill_error`].
+    pub(crate) fn take_spill_error(&self) -> Option<String> {
+        self.external_kv.lock().take_spill_error()
+    }
+
     pub(crate) fn estimated_memory_bytes(&self) -> (usize, usize) {
         let kv_bytes = self.external_kv.lock().estimated_memory_bytes();
         let inner = self.inner.lock();

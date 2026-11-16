@@ -169,6 +169,10 @@ impl KvWrapper {
         self.kv.lock().spilled_disk_bytes()
     }
 
+    pub(crate) fn take_spill_error(&self) -> Option<String> {
+        self.kv.lock().take_spill_error()
+    }
+
     pub(crate) fn set_block_cache(&self, cache: SharedBlockCache) {
         self.kv.lock().set_block_cache(cache);
     }

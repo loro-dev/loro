@@ -968,6 +968,10 @@ impl InnerStore {
         self.kv.spilled_disk_bytes()
     }
 
+    pub(crate) fn take_spill_error(&self) -> Option<String> {
+        self.kv.take_spill_error()
+    }
+
     pub(crate) fn set_block_cache(&mut self, cache: SharedBlockCache) {
         self.kv.set_block_cache(cache);
     }

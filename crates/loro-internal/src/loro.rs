@@ -6796,7 +6796,7 @@ impl GlobalMemoryPool {
             let lin_now = wasm_linear_memory_bytes();
             if lin_now > max_lin {
                 let fits_existing_pages = linear_before.is_some_and(|before| {
-                    lin_now <= before && used <= max_lin.saturating_mul(70) / 100
+                    lin_now <= before && heap_fits_existing_pages(max_lin, used)
                 });
                 if !fits_existing_pages {
                     return Err(make_global_budget_err(lin_now, max_lin));
@@ -7335,7 +7335,11 @@ pub fn try_reclaim_global_to_budget() -> LoroResult<GlobalMemoryStats> {
     }
     #[cfg(target_arch = "wasm32")]
     if let Some(max_lin) = budget.max_wasm_linear_bytes {
-        if stats.wasm_linear_memory_bytes > max_lin {
+        if !linear_budget_satisfied(
+            stats.wasm_linear_memory_bytes,
+            max_lin,
+            stats.allocated_heap_bytes,
+        ) {
             return Err(make_global_budget_err(
                 stats.wasm_linear_memory_bytes,
                 max_lin,
@@ -7343,6 +7347,38 @@ pub fn try_reclaim_global_to_budget() -> LoroResult<GlobalMemoryStats> {
         }
     }
     Ok(stats)
+}
+
+/// Live heap that counts as within `max_wasm_linear_bytes` once the linear
+/// memory itself has grown past it: WASM pages never shrink, so only heap use
+/// can come back down. Shared by hard admission (which also requires that the
+/// commit added no pages) and [`try_reclaim_global_to_budget`].
+fn heap_fits_existing_pages(max_lin: u64, used_heap: u64) -> bool {
+    used_heap <= max_lin.saturating_mul(70) / 100
+}
+
+/// Whether `max_wasm_linear_bytes` is met after a reclamation: the pages are
+/// within it, or they grew past it (permanently) but the live heap is back under
+/// the share [`heap_fits_existing_pages`] allows, the same rule `try_commit`
+/// uses. Before, `try_reclaim_global_to_budget` failed forever once the pages
+/// had grown, while commits still succeeded. See context/memory-budget.md,
+/// "WASM linear memory ceiling".
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn linear_budget_satisfied(lin_now: u64, max_lin: u64, used_heap: u64) -> bool {
+    lin_now <= max_lin || heap_fits_existing_pages(max_lin, used_heap)
+}
+
+/// Whether the WASM linear memory has grown past
+/// [`GlobalMemoryBudget::max_wasm_linear_bytes`]. It cannot shrink again; an
+/// application may want to recreate the instance once its documents are saved.
+/// Always `false` on native targets.
+pub fn wasm_linear_memory_exceeded() -> bool {
+    let lin = wasm_linear_memory_bytes();
+    global_pool()
+        .budget
+        .lock()
+        .max_wasm_linear_bytes
+        .is_some_and(|max_lin| lin > max_lin)
 }
 
 impl LoroDoc {
@@ -7385,6 +7421,17 @@ impl LoroDoc {
             }
         }
         let _ = strict;
+        #[cfg(not(target_arch = "wasm32"))]
+        if budget.spill_dir.is_some() && budget.effective_high_watermark().is_none() {
+            // A spill directory only chooses where flushed tables live; nothing
+            // flushes automatically without watermarks or `max_doc_bytes`.
+            // See context/memory-budget.md, "Spill directory without a budget".
+            tracing::warn!(
+                dir = ?budget.spill_dir,
+                "spill_dir is set without watermarks or max_doc_bytes: memory moves to disk \
+                 only on reclaim_memory"
+            );
+        }
         self.soft_backoff.reset();
         let mut flags = 0u8;
         if budget.max_doc_bytes.is_some() {
@@ -8025,6 +8072,20 @@ impl LoroDoc {
         }
     }
 
+    /// Takes the first failure to write spilled tables to the
+    /// [`MemoryBudget::spill_dir`] since the previous call, or `None`.
+    ///
+    /// A flush that cannot write keeps its tables in memory, so no data is lost,
+    /// but the document is no longer (fully) out of core and its memory grows.
+    /// Errors from the op log and the state stores are joined with `"; "`.
+    /// Always `None` without a spill directory, and on `wasm32`, where spilling
+    /// is a no-op.
+    pub fn take_spill_error(&self) -> Option<String> {
+        let oplog = self.oplog.lock().change_store().take_spill_error();
+        let state = self.state.lock().take_spill_error();
+        crate::state::container_store::join_spill_errors(oplog, state)
+    }
+
     /// Reclaims caches and demotes cold container states, returning estimated freed bytes.
     pub fn reclaim_memory(&self) -> usize {
         let before = self.memory_stats().total_bytes;
@@ -8164,6 +8225,20 @@ struct PlannedAlignment {
 #[cfg(test)]
 mod reclamation_work_tests {
     use super::*;
+
+    #[test]
+    fn the_linear_ceiling_is_met_by_pages_or_by_heap_within_existing_pages() {
+        let max = 1000;
+        assert!(
+            linear_budget_satisfied(1000, max, 990),
+            "pages within the ceiling"
+        );
+        assert!(
+            linear_budget_satisfied(4000, max, 700),
+            "pages grew; heap back at 70%"
+        );
+        assert!(!linear_budget_satisfied(4000, max, 701));
+    }
     #[test]
     fn a_two_pass_global_sweep_runs_stage1_once_per_idle_document() {
         let doc = LoroDoc::new_auto_commit();

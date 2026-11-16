@@ -851,6 +851,13 @@ fn global_memory_stats_to_js(stats: &GlobalMemoryStats) -> JsResult<JsValue> {
     for (key, value) in fields {
         Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from_f64(value))?;
     }
+    // Pages never shrink: once past `maxWasmLinearBytes` they stay past it,
+    // while `tryCommit` and `tryReclaimGlobalToBudget` may still succeed.
+    Reflect::set(
+        &obj,
+        &JsValue::from_str("wasmLinearMemoryExceeded"),
+        &JsValue::from_bool(loro_internal::wasm_linear_memory_exceeded()),
+    )?;
     Ok(obj.into())
 }
 
@@ -7539,6 +7546,13 @@ export type GlobalMemoryStats = {
     peakAllocatedHeapBytes: number;
     wasmLinearMemoryBytes: number;
     spilledDiskBytes: number;
+    /**
+     * Whether the WebAssembly linear memory has grown past `maxWasmLinearBytes`.
+     * Pages never shrink, so this stays true for the instance's lifetime even
+     * when `tryCommit` and `tryReclaimGlobalToBudget` succeed again (live heap at
+     * or below 70% of the ceiling). Recreate the instance to get the pages back.
+     */
+    wasmLinearMemoryExceeded: boolean;
 };
 
 export type DocMemoryStats = {

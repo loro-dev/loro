@@ -79,8 +79,8 @@ pub use loro_internal::Subscription;
 pub use loro_internal::UndoManager as InnerUndoManager;
 pub use loro_internal::{
     global_memory_budget, global_memory_stats, reclaim_global_memory, set_global_memory_budget,
-    try_reclaim_global_to_budget, DocMemoryStats, GlobalMemoryBudget, GlobalMemoryStats,
-    MemoryBudget,
+    try_reclaim_global_to_budget, wasm_linear_memory_exceeded, DocMemoryStats, GlobalMemoryBudget,
+    GlobalMemoryStats, MemoryBudget,
 };
 pub use loro_internal::{loro_value, to_value};
 pub use loro_internal::{
@@ -1738,6 +1738,17 @@ impl LoroDoc {
     #[inline]
     pub fn memory_stats(&self) -> DocMemoryStats {
         self.doc.memory_stats()
+    }
+
+    /// Takes the first failure to write spilled tables to the
+    /// [`MemoryBudget::spill_dir`] since the previous call, or `None`.
+    ///
+    /// Such a failure keeps the tables in memory (no data is lost), so the
+    /// document's memory grows instead of moving to disk. Always `None` without
+    /// a spill directory, and on `wasm32`.
+    #[inline]
+    pub fn take_spill_error(&self) -> Option<String> {
+        self.doc.take_spill_error()
     }
 
     /// Aggressively reclaim caches and demote cold container states, returning estimated freed bytes.

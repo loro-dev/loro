@@ -96,7 +96,7 @@ pub use encoding::json_schema::json;
 pub use fractional_index::FractionalIndex;
 pub use loro::{
     global_memory_budget, global_memory_stats, reclaim_global_memory, set_global_memory_budget,
-    try_reclaim_global_to_budget,
+    try_reclaim_global_to_budget, wasm_linear_memory_exceeded,
 };
 pub use loro_common::{loro_value, to_value};
 pub use loro_common::{
