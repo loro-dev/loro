@@ -7,10 +7,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(__dirname, "..");
 
 const packagesToPublish = [
-  "packages/fractional-index",
   "loro-js",
   "crates/loro-wasm",
   "crates/loro-wasm-map",
+  // This independent package may still require its first npm publish.
+  // Keep it after the established packages so bootstrap cannot block them.
+  "packages/fractional-index",
 ];
 
 function run(command, args, options = {}) {
