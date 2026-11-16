@@ -329,7 +329,9 @@ impl MemKvStore {
                 || (self.compression_type == CompressionType::LZ4
                     && meta.compression_type == CompressionType::None);
 
-            if !overlaps_mem && compression_compatible {
+            // Large blocks cannot be coalesced. Normal blocks must go through
+            // add_new_block for tombstone removal and small-block coalescing.
+            if !overlaps_mem && compression_compatible && meta.is_large {
                 builder.add_raw_block(meta, table.raw_block_slice(block_idx));
                 continue;
             }
@@ -891,6 +893,48 @@ mod tests {
             Some(Bytes::from(vec![(350 % 251) as u8; 128]))
         );
         assert_eq!(round_tripped.len(), 400);
+    }
+
+    #[test]
+    fn incremental_export_removes_imported_tombstones() {
+        let mut source = new_store();
+        source.set(b"a", Bytes::from_static(b"keep"));
+        source.set(b"b", Bytes::new());
+        let mut target = MemKvStore::new(MemKvConfig::default());
+        target.import_all(source.export_all()).unwrap();
+        target.set(b"z", Bytes::from_static(b"tail"));
+        target.export_all();
+        assert_eq!(
+            target
+                .ss_table
+                .iter()
+                .map(|t| t.iter().count())
+                .sum::<usize>(),
+            2
+        );
+        assert_eq!(target.get(b"a").as_deref(), Some(b"keep".as_slice()));
+        assert_eq!(target.get(b"b"), None);
+    }
+
+    #[test]
+    fn incremental_export_coalesces_small_gap_blocks() {
+        use crate::sstable::SsTableBuilder;
+        let mut builder = SsTableBuilder::new(4096, CompressionType::None, false);
+        for key in [b"a", b"c", b"e"] {
+            builder.add(Bytes::copy_from_slice(key), Bytes::from_static(b"v"));
+            builder.finish_current_block();
+        }
+        let mut target =
+            MemKvStore::new(MemKvConfig::default().compression_type(CompressionType::None));
+        target.import_all(builder.build().export_all()).unwrap();
+        target.set(b"b", Bytes::from_static(b"v"));
+        target.set(b"d", Bytes::from_static(b"v"));
+        for _ in 0..3 {
+            target.set(b"f", Bytes::from_static(b"v"));
+            target.export_all();
+            assert_eq!(target.ss_table[0].meta_len(), 1);
+            assert_eq!(target.len(), 6);
+        }
     }
 
     fn new_store() -> MemKvStore {

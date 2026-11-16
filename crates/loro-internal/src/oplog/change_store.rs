@@ -166,10 +166,14 @@ struct ChangeStoreInner {
     retired: bool,
     /// Conservative until a full history walk: headers do not validate block bodies.
     may_have_unparsed_bodies: bool,
-    /// Last `VV_KEY` value already written to `external_kv`.
-    last_flushed_vv: Option<VersionVector>,
-    /// Last `FRONTIERS_KEY` value already written to `external_kv`.
-    last_flushed_frontiers: Option<Frontiers>,
+    /// Allocated only once metadata has been written or imported.
+    flushed_meta: Option<Box<FlushedMeta>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FlushedMeta {
+    vv: Option<VersionVector>,
+    frontiers: Option<Frontiers>,
 }
 
 #[derive(Debug)]
@@ -357,8 +361,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
                 may_have_unparsed_bodies: false,
-                last_flushed_vv: None,
-                last_flushed_frontiers: None,
+                flushed_meta: None,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -1375,8 +1378,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
                 may_have_unparsed_bodies: !vv.is_empty(),
-                last_flushed_vv: inner.last_flushed_vv.clone(),
-                last_flushed_frontiers: inner.last_flushed_frontiers.clone(),
+                flushed_meta: inner.flushed_meta.clone(),
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1768,8 +1770,10 @@ mod mut_external_kv {
             {
                 let mut inner = self.inner.lock();
                 inner.may_have_unparsed_bodies = !vv.is_empty();
-                inner.last_flushed_vv = has_vv_key.then(|| vv.clone());
-                inner.last_flushed_frontiers = has_fr_key.then(|| frontiers.clone());
+                inner.flushed_meta = Some(Box::new(FlushedMeta {
+                    vv: has_vv_key.then(|| vv.clone()),
+                    frontiers: has_fr_key.then(|| frontiers.clone()),
+                }));
             }
             *self.external_vv.lock() = vv.clone();
             let start_frontiers = self
@@ -1785,9 +1789,8 @@ mod mut_external_kv {
             };
 
             for id in frontiers.iter() {
-                if !self.has_id_in_header(id)? {
-                    return Err(LoroError::DecodeDataCorruptionError);
-                }
+                self.get_change(id)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
             }
 
             Ok(BatchDecodeInfo {
@@ -1838,53 +1841,17 @@ mod mut_external_kv {
                     // TODO: makes some assertions here?
                 }
             }
-            if inner.last_flushed_vv.as_ref() != Some(vv) {
+            let meta = inner.flushed_meta.get_or_insert_with(Default::default);
+            if meta.vv.as_ref() != Some(vv) {
                 let vv_bytes = vv.encode();
                 store.set(VV_KEY, vv_bytes.into());
-                inner.last_flushed_vv = Some(vv.clone());
+                meta.vv = Some(vv.clone());
             }
-            if inner.last_flushed_frontiers.as_ref() != Some(frontiers) {
+            if meta.frontiers.as_ref() != Some(frontiers) {
                 let frontiers_bytes = frontiers.encode();
                 store.set(FRONTIERS_KEY, frontiers_bytes.into());
-                inner.last_flushed_frontiers = Some(frontiers.clone());
+                meta.frontiers = Some(frontiers.clone());
             }
-            compact_parsed_blocks_in(&mut inner);
-        }
-
-        fn has_id_in_header(&self, id: ID) -> LoroResult<bool> {
-            let kv = self.external_kv.lock();
-            let inner = self.inner.lock();
-            if inner.retired {
-                return Ok(false);
-            }
-            if let Some((_, block)) = inner.mem_parsed_kv.range(..=id).next_back() {
-                if block.peer == id.peer && block.counter_range.1 > id.counter {
-                    return Ok(block.counter_range.0 <= id.counter);
-                }
-            }
-            let Some((b_id, b_bytes)) = kv
-                .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
-                .rfind(|(key, _)| key.len() == 12)
-            else {
-                return Ok(false);
-            };
-            let block_id = ID::from_bytes(&b_id);
-            if block_id.peer != id.peer {
-                return Ok(false);
-            }
-            let header =
-                decode_header(&b_bytes).map_err(|_| LoroError::DecodeDataCorruptionError)?;
-            if header.peer != id.peer
-                || header.n_changes == 0
-                || header.counters.len() != header.n_changes + 1
-                || header.lamports.len() != header.n_changes
-            {
-                return Err(LoroError::DecodeDataCorruptionError);
-            }
-            let Some(&end) = header.counters.last() else {
-                return Err(LoroError::DecodeDataCorruptionError);
-            };
-            Ok(header.counter <= id.counter && id.counter < end)
         }
     }
 }
@@ -3035,6 +3002,32 @@ mod test {
     };
 
     use super::*;
+
+    #[test]
+    fn ordinary_export_preserves_warm_parsed_blocks_and_lazy_metadata() {
+        let doc = LoroDoc::new_auto_commit();
+        {
+            let oplog = doc.oplog().lock();
+            assert!(oplog.change_store.inner.lock().flushed_meta.is_none());
+        }
+        doc.get_text("t")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+        let oplog = doc.oplog().lock();
+        let store = &oplog.change_store;
+        let id = oplog.frontiers().iter().next().unwrap();
+        let before = store.get_change(id).unwrap().block;
+        let first = store.encode_all(oplog.vv(), oplog.frontiers());
+        let after = store.get_change(id).unwrap().block;
+        // Flushing may clone a dirty block; exporting it again must leave the
+        // parsed representation in place, rather than detaching the tail.
+        assert!(matches!(after.content, ChangesBlockContent::Both(..)));
+        let second = store.encode_all(oplog.vv(), oplog.frontiers());
+        assert!(Arc::ptr_eq(&after, &store.get_change(id).unwrap().block));
+        assert_eq!(first, second);
+        assert_eq!(before.counter_range, after.counter_range);
+    }
 
     fn test_encode_decode(doc: LoroDoc) {
         doc.commit_then_renew();

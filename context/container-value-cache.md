@@ -1,6 +1,6 @@
 # Container Value Cache (InnerStore)
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-16.
 
 ## The funnel
 
@@ -73,8 +73,8 @@ Because of eviction, `store` is strictly a cache over `kv`: all lookup paths
 (`get_or_insert_with`, `ensure_container`, `get_mut`, `with_container_for_read`,
 the ephemeral reads, `contains_id`) fall back to `kv` on a `store` miss
 regardless of `load_state`. Do not reintroduce `load_state != AllLoaded` gates
-on those fallbacks — `load_all`/`decode_twice` (GC snapshot import) put the
-store in `AllLoaded` mode, and evicted entries must stay reachable there.
+on those fallbacks — `load_all` puts the
+store in `AllLoaded` mode; `decode_twice` starts in `Lazy` mode, and evicted entries must stay reachable there.
 
 ## What `AllLoaded` means with eviction
 
@@ -100,8 +100,8 @@ after the first eviction following a full load (the scan's per-entry
 - Tree containers materialize a full `State` on first value read
   (`decode_value_from_bytes` returns `decoded_state` for trees), so tree walks
   still pin state; they are not covered by the bound.
-- `decode_twice`/`load_all` insert one lightweight lazy shell per container
-  into `store` (no decoded value); those shells are small and stay.
+- `load_all` inserts one lightweight lazy shell per container into `store`.
+  `decode_twice` registers container identities but leaves wrappers lazy in KV.
 
 ## Tests
 

@@ -541,7 +541,7 @@ fn js_binary_array_info(data: JsBinaryArray) -> JsResult<(Array, usize, usize)> 
     let mut total_bytes = 0usize;
     for i in 0..len {
         let item = array.get(i as u32);
-        let u8_len = Uint8Array::new(&item).byte_length() as usize;
+        let u8_len = item.dyn_into::<Uint8Array>()?.byte_length() as usize;
         total_bytes = total_bytes.saturating_add(u8_len);
     }
     Ok((array, len, total_bytes))
@@ -549,7 +549,7 @@ fn js_binary_array_info(data: JsBinaryArray) -> JsResult<(Array, usize, usize)> 
 
 fn js_binary_array_to_bytes(array: &Array) -> Vec<Bytes> {
     (0..array.length())
-        .map(|i| Bytes::from(Uint8Array::new(&array.get(i)).to_vec()))
+        .map(|i| Bytes::from(array.get(i).unchecked_into::<Uint8Array>().to_vec()))
         .collect()
 }
 
@@ -1997,11 +1997,14 @@ impl LoroDoc {
         let status = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
             let mut blobs = Vec::with_capacity(len);
             for i in 0..len {
-                let bytes = Bytes::from(Uint8Array::new(&array.get(i as u32)).to_vec());
+                let bytes =
+                    Bytes::from(array.get(i as u32).unchecked_into::<Uint8Array>().to_vec());
                 let meta = LoroDocInner::decode_import_blob_meta_bytes(bytes, false)?;
                 let arr = &array;
                 blobs.push((meta, move || {
-                    Ok(Bytes::from(Uint8Array::new(&arr.get(i as u32)).to_vec()))
+                    Ok(Bytes::from(
+                        arr.get(i as u32).unchecked_into::<Uint8Array>().to_vec(),
+                    ))
                 }));
             }
             self.doc.import_batch_with_loaders(blobs, false)?
@@ -2064,11 +2067,14 @@ impl LoroDoc {
         let detail = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
             let mut blobs = Vec::with_capacity(len);
             for i in 0..len {
-                let bytes = Bytes::from(Uint8Array::new(&array.get(i as u32)).to_vec());
+                let bytes =
+                    Bytes::from(array.get(i as u32).unchecked_into::<Uint8Array>().to_vec());
                 let meta = LoroDocInner::decode_import_blob_meta_bytes(bytes, false);
                 let arr = &array;
                 blobs.push((meta, move || {
-                    Ok(Bytes::from(Uint8Array::new(&arr.get(i as u32)).to_vec()))
+                    Ok(Bytes::from(
+                        arr.get(i as u32).unchecked_into::<Uint8Array>().to_vec(),
+                    ))
                 }));
             }
             self.doc.import_batch_detailed_with_loaders(blobs, false)?

@@ -3068,7 +3068,7 @@ impl LoroDoc {
             .into_iter()
             .enumerate()
             .map(|(index, blob)| {
-                let meta = LoroDoc::decode_import_blob_meta(&blob, false)?;
+                let meta = LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false)?;
                 Ok((index, meta, BatchBlobSource::Bytes(blob)))
             })
             .collect::<LoroResult<Vec<_>>>()?;
@@ -3217,7 +3217,7 @@ impl LoroDoc {
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
         let mut blobs = Vec::with_capacity(bytes.len());
         for (index, blob) in bytes.into_iter().enumerate() {
-            match LoroDoc::decode_import_blob_meta(&blob, false) {
+            match LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false) {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Bytes(blob)));
                     outcomes.push(None);

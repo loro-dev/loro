@@ -612,7 +612,7 @@ impl OpLog {
 
     pub fn free_history_cache(&self) {
         let mut history_cache = self.history_cache.lock();
-        history_cache.free_all();
+        history_cache.free();
     }
 
     #[cfg(test)]

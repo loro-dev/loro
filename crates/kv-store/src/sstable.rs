@@ -119,7 +119,10 @@ impl BlockMeta {
             if data.len() < first_key_len + SIZE_OF_U8 {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
-            let first_key = data.split_to(first_key_len);
+            // Metadata outlives the table during export and spilling. Do not pin
+            // the entire input allocation with these tiny keys.
+            let first_key = Bytes::copy_from_slice(&data[..first_key_len]);
+            data.advance(first_key_len);
             let is_large_and_compression_type = data.get_u8();
             let is_large = is_large_and_compression_type & 0b1000_0000 != 0;
             let compression_type = is_large_and_compression_type & 0b0111_1111;
@@ -140,7 +143,8 @@ impl BlockMeta {
             if data.len() < last_key_len {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
-            let last_key = data.split_to(last_key_len);
+            let last_key = Bytes::copy_from_slice(&data[..last_key_len]);
+            data.advance(last_key_len);
             ans.push(BlockMeta {
                 offset,
                 is_large,
@@ -1053,6 +1057,35 @@ mod test {
 
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn imported_metadata_does_not_retain_input_buffer() {
+        struct OwnedBytes(Vec<u8>, Arc<std::sync::atomic::AtomicBool>);
+        impl AsRef<[u8]> for OwnedBytes {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        impl Drop for OwnedBytes {
+            fn drop(&mut self) {
+                self.1.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let mut builder = SsTableBuilder::new(4096, CompressionType::None, false);
+        builder.add(Bytes::from_static(b"a"), Bytes::from_static(b"value"));
+        builder.add(Bytes::from_static(b"z"), Bytes::from_static(b"value"));
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bytes = Bytes::from_owner(OwnedBytes(
+            builder.build().export_all().to_vec(),
+            dropped.clone(),
+        ));
+        let table = SsTable::import_all(bytes, false).unwrap();
+        let metadata = table.meta.clone();
+        drop(table);
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(metadata[0].first_key.as_ref(), b"a");
+        assert_eq!(metadata[0].last_key.as_deref(), Some(b"z".as_slice()));
+    }
 
     fn malformed_sstable_bytes(block_bytes: &[u8], meta: &[BlockMeta]) -> Bytes {
         let mut bytes = Vec::new();

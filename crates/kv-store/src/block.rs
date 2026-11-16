@@ -157,7 +157,7 @@ impl NormalBlock {
         Self::validate_decoded_data(&data[..data_end], &offsets, &first_key)?;
         data.truncate(data_end);
         Ok(NormalBlock {
-            data: Bytes::from(data),
+            data: Bytes::from(data.into_boxed_slice()),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
             first_key,
