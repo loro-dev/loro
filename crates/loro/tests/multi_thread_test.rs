@@ -432,7 +432,11 @@ mod loom_test {
     #[test]
     fn resolving_a_meta_parent_while_another_thread_reads_the_history() {
         for reader in 0..3 {
-            loom::model(move || {
+            let mut builder = loom::model::Builder::new();
+            // Snapshot setup plus history reads exceed Loom's default branch
+            // limit; keep the same bound as the adjacent parent-resolution test.
+            builder.max_branches = 100_000;
+            builder.check(move || {
                 let (snapshot, child) = deleted_parent_snapshot();
                 let doc = LoroDoc::new();
                 doc.import(&snapshot).unwrap();
