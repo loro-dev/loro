@@ -7,7 +7,11 @@ fn main() {
         let doc = LoroDoc::new();
         let map = doc.get_map("records");
         for i in 0..records {
-            map.insert(&format!("k{i:05}"), LoroValue::from(serde_json::json!({"done":i%2==0,"rank":i}))).unwrap();
+            map.insert(
+                &format!("k{i:05}"),
+                LoroValue::from(serde_json::json!({"done":i%2==0,"rank":i})),
+            )
+            .unwrap();
         }
         doc.commit();
         for (path, expected) in [
@@ -21,7 +25,10 @@ fn main() {
             assert_eq!(string_values.len(), expected);
             assert_eq!(parsed_values.len(), expected);
             let full_values = |values: Vec<loro::ValueOrContainer>| {
-                values.into_iter().map(|v| v.get_deep_value().to_json_value()).collect::<Vec<_>>()
+                values
+                    .into_iter()
+                    .map(|v| v.get_deep_value().to_json_value())
+                    .collect::<Vec<_>>()
             };
             assert_eq!(full_values(string_values), full_values(parsed_values));
             // string and parse-plus-evaluate include parsing; reused excludes the
@@ -31,7 +38,11 @@ fn main() {
             drop(black_box(ParsedJsonPath::parse(black_box(path)).unwrap()));
             let one_parse_ns = parse_start.elapsed().as_nanos();
             for sample in 0..46 {
-                let order = if sample % 2 == 0 { [0, 1, 2] } else { [2, 1, 0] };
+                let order = if sample % 2 == 0 {
+                    [0, 1, 2]
+                } else {
+                    [2, 1, 0]
+                };
                 for mode in order {
                     let start = Instant::now();
                     match mode {
@@ -45,12 +56,19 @@ fn main() {
                         _ => unreachable!(),
                     }
                     let elapsed = start.elapsed().as_nanos();
-                    if sample >= 5 { samples[mode].push(elapsed); }
+                    if sample >= 5 {
+                        samples[mode].push(elapsed);
+                    }
                 }
             }
-            println!("records={records} path={path} results={expected} one_parse_ns={one_parse_ns}");
+            println!(
+                "records={records} path={path} results={expected} one_parse_ns={one_parse_ns}"
+            );
             for (mode, values) in samples.iter().enumerate() {
-                println!("mode={} ordered_ns={values:?}", ["string", "reused", "parse_plus_evaluate"][mode]);
+                println!(
+                    "mode={} ordered_ns={values:?}",
+                    ["string", "reused", "parse_plus_evaluate"][mode]
+                );
             }
         }
     }

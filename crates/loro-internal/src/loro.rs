@@ -20,8 +20,9 @@ use crate::{
         export_fast_updates_in_range, export_shallow_snapshot, export_snapshot_at,
         export_state_only_snapshot,
         json_schema::{encode_change_to_json, json::JsonSchema},
-        parse_header_and_body, EncodeMode, ImportBatchDetail, ImportBlobMetadata,
-        ImportBlobOutcome, ImportStatus, ParsedHeaderAndBody,
+        parse_header_and_body, parse_header_and_body_bytes, EncodeMode, ImportBatchDetail,
+        ImportBlobMetadata, ImportBlobOutcome, ImportStatus, ParsedHeaderAndBody,
+        ParsedHeaderAndBodyBytes,
     },
     event::{str_to_path, EventTriggerKind, Index, InternalDocDiff},
     handler::{Handler, MovableListHandler, TextHandler, TreeHandler, ValueOrHandler},
@@ -706,6 +707,15 @@ impl LoroDoc {
         self.import_with(bytes, Default::default())
     }
 
+    /// Like [`Self::import`], taking owned ref-counted [`bytes::Bytes`] to avoid
+    /// copying the input buffer during decoding.
+    #[inline(always)]
+    pub fn import_bytes(&self, bytes: bytes::Bytes) -> Result<ImportStatus, LoroError> {
+        let s = debug_span!("import_bytes", peer = self.peer_id());
+        let _e = s.enter();
+        self.import_with_bytes(bytes, Default::default())
+    }
+
     #[inline]
     pub fn import_with(
         &self,
@@ -713,6 +723,17 @@ impl LoroDoc {
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
         self.import_with_history_mode(bytes, origin, false)
+    }
+
+    /// Like [`Self::import_with`], taking owned ref-counted [`bytes::Bytes`] to avoid
+    /// copying the input buffer during decoding.
+    #[inline]
+    pub fn import_with_bytes(
+        &self,
+        bytes: bytes::Bytes,
+        origin: InternalString,
+    ) -> Result<ImportStatus, LoroError> {
+        self.import_with_history_mode_bytes(bytes, origin, false)
     }
 
     /// Import binary bytes. `json_lossy` accepts only the equivalences a JSON hop
@@ -723,98 +744,195 @@ impl LoroDoc {
         origin: InternalString,
         json_lossy: bool,
     ) -> Result<ImportStatus, LoroError> {
+        self.import_input_with_history_mode(ImportInput::Slice(bytes), origin, json_lossy)
+    }
+
+    /// Like [`Self::import_with_history_mode`], taking owned ref-counted [`bytes::Bytes`].
+    pub fn import_with_history_mode_bytes(
+        &self,
+        bytes: bytes::Bytes,
+        origin: InternalString,
+        json_lossy: bool,
+    ) -> Result<ImportStatus, LoroError> {
+        self.import_input_with_history_mode(ImportInput::Bytes(bytes), origin, json_lossy)
+    }
+
+    fn import_input_with_history_mode(
+        &self,
+        input: ImportInput<'_>,
+        origin: InternalString,
+        json_lossy: bool,
+    ) -> Result<ImportStatus, LoroError> {
         self.check_import_not_nested()?;
-        let values = if json_lossy {
-            ImportedValues::JsonLossy
-        } else {
-            ImportedValues::Exact
-        };
-        self.with_barrier(|| self._import_with(bytes, origin, values))
+        let values = imported_values_for_mode(json_lossy);
+        self.with_barrier(|| self._import_with_input(input, origin, values))
     }
 
     #[tracing::instrument(skip_all)]
-    fn _import_with(
+    fn _import_with_input(
         &self,
-        bytes: &[u8],
+        input: ImportInput<'_>,
         origin: InternalString,
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
-        let result = self.import_without_emitting(bytes, origin, values);
+        let result = self.import_without_emitting_input(input, origin, values);
         self.emit_events();
         result
     }
 
-    fn import_without_emitting(
+    fn import_without_emitting_input(
         &self,
-        bytes: &[u8],
+        input: ImportInput<'_>,
         origin: InternalString,
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
-        let parsed = parse_header_and_body(bytes, true)?;
-        loro_common::info!("Importing with mode={:?}", &parsed.mode);
-        match parsed.mode {
-            EncodeMode::OutdatedRle => {
-                let s = tracing::span!(
-                    tracing::Level::INFO,
-                    "Import updates ",
-                    peer = self.peer_id()
-                );
-                let _e = s.enter();
-                self.update_oplog_and_apply_delta_to_state_if_needed(
-                    |oplog| oplog.decode(parsed, values),
-                    origin,
-                )
-            }
-            EncodeMode::OutdatedSnapshot => {
-                if self.can_reset_with_snapshot() {
-                    loro_common::info!("Init by snapshot {}", self.peer_id());
-                    decode_snapshot(self, parsed.mode, parsed.body, origin)
-                } else {
-                    self.update_oplog_and_apply_delta_to_state_if_needed(
-                        |oplog| oplog.decode(parsed, values),
-                        origin,
-                    )
+        match input {
+            ImportInput::Slice(bytes) => {
+                let parsed = parse_header_and_body(bytes, true)?;
+                loro_common::info!("Importing with mode={:?}", &parsed.mode);
+                match parsed.mode {
+                    EncodeMode::OutdatedRle => {
+                        let s = tracing::span!(
+                            tracing::Level::INFO,
+                            "Import updates ",
+                            peer = self.peer_id()
+                        );
+                        let _e = s.enter();
+                        self.update_oplog_and_apply_delta_to_state_if_needed(
+                            |oplog| oplog.decode(parsed, values),
+                            origin,
+                        )
+                    }
+                    EncodeMode::OutdatedSnapshot => {
+                        if self.can_reset_with_snapshot() {
+                            loro_common::info!("Init by snapshot {}", self.peer_id());
+                            decode_snapshot(self, parsed.mode, parsed.body, origin)
+                        } else {
+                            self.update_oplog_and_apply_delta_to_state_if_needed(
+                                |oplog| oplog.decode(parsed, values),
+                                origin,
+                            )
+                        }
+                    }
+                    EncodeMode::FastSnapshot => {
+                        if self.can_reset_with_snapshot() {
+                            ensure_cov::notify_cov("loro_internal::import::snapshot");
+                            loro_common::info!("Init by fast snapshot {}", self.peer_id());
+                            self.init_snapshot_preserving_pending(
+                                parsed.mode,
+                                parsed.body,
+                                origin,
+                                values,
+                            )
+                        } else {
+                            self.import_changes_and_apply_delta_to_state_if_needed(
+                                |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
+                                values,
+                                origin,
+                            )
+                        }
+                    }
+                    EncodeMode::FastUpdates => self
+                        .import_changes_and_apply_delta_to_state_if_needed(
+                            |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
+                            values,
+                            origin,
+                        ),
+                    EncodeMode::Auto => unreachable!(),
                 }
             }
-            EncodeMode::FastSnapshot => {
-                if self.can_reset_with_snapshot() {
-                    ensure_cov::notify_cov("loro_internal::import::snapshot");
-                    loro_common::info!("Init by fast snapshot {}", self.peer_id());
-                    self.init_snapshot_preserving_pending(parsed.mode, parsed.body, origin, values)
-                } else {
-                    self.import_changes_and_apply_delta_to_state_if_needed(
-                        |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
-                        values,
-                        origin,
-                    )
-
-                    // let new_doc = LoroDoc::new();
-                    // new_doc.import(bytes)?;
-                    // let updates = new_doc.export(ExportMode::updates(&self.oplog_vv())).unwrap();
-                    // return self.import_with(updates.as_slice(), origin);
+            ImportInput::Bytes(bytes) => {
+                let parsed = parse_header_and_body_bytes(bytes, true)?;
+                loro_common::info!("Importing with mode={:?}", &parsed.mode);
+                match parsed.mode {
+                    EncodeMode::OutdatedRle => {
+                        let s = tracing::span!(
+                            tracing::Level::INFO,
+                            "Import updates ",
+                            peer = self.peer_id()
+                        );
+                        let _e = s.enter();
+                        let borrowed = parsed_as_borrowed(&parsed);
+                        self.update_oplog_and_apply_delta_to_state_if_needed(
+                            |oplog| oplog.decode(borrowed, values),
+                            origin,
+                        )
+                    }
+                    EncodeMode::OutdatedSnapshot => {
+                        if self.can_reset_with_snapshot() {
+                            loro_common::info!("Init by snapshot {}", self.peer_id());
+                            decode_snapshot_bytes(self, parsed.mode, parsed.body, origin)
+                        } else {
+                            let borrowed = parsed_as_borrowed(&parsed);
+                            self.update_oplog_and_apply_delta_to_state_if_needed(
+                                |oplog| oplog.decode(borrowed, values),
+                                origin,
+                            )
+                        }
+                    }
+                    EncodeMode::FastSnapshot => {
+                        if self.can_reset_with_snapshot() {
+                            ensure_cov::notify_cov("loro_internal::import::snapshot");
+                            loro_common::info!("Init by fast snapshot {}", self.peer_id());
+                            self.init_snapshot_preserving_pending_bytes(
+                                parsed.mode,
+                                parsed.body,
+                                origin,
+                                values,
+                            )
+                        } else {
+                            self.import_changes_and_apply_delta_to_state_if_needed(
+                                |oplog| encoding::decode_oplog_changes_bytes(oplog, parsed, values),
+                                values,
+                                origin,
+                            )
+                        }
+                    }
+                    EncodeMode::FastUpdates => self
+                        .import_changes_and_apply_delta_to_state_if_needed(
+                            |oplog| encoding::decode_oplog_changes_bytes(oplog, parsed, values),
+                            values,
+                            origin,
+                        ),
+                    EncodeMode::Auto => unreachable!(),
                 }
-            }
-            EncodeMode::FastUpdates => self.import_changes_and_apply_delta_to_state_if_needed(
-                |oplog| encoding::decode_oplog_changes(oplog, parsed, values),
-                values,
-                origin,
-            ),
-            EncodeMode::Auto => {
-                unreachable!()
             }
         }
     }
 
-    /// Bootstrap state and history together, then replay parked changes against
-    /// that exact snapshot version. On error restore the original parking claims
-    /// as well as empty handles; no queued snapshot event may escape.
     fn init_snapshot_preserving_pending(
         &self,
         mode: EncodeMode,
         body: &[u8],
         origin: InternalString,
         values: ImportedValues,
+    ) -> LoroResult<ImportStatus> {
+        self.init_snapshot_preserving_pending_with(origin, values, |doc, origin| {
+            decode_snapshot(doc, mode, body, origin)
+        })
+    }
+
+    fn init_snapshot_preserving_pending_bytes(
+        &self,
+        mode: EncodeMode,
+        body: bytes::Bytes,
+        origin: InternalString,
+        values: ImportedValues,
+    ) -> LoroResult<ImportStatus> {
+        self.init_snapshot_preserving_pending_with(origin, values, |doc, origin| {
+            decode_snapshot_bytes(doc, mode, body, origin)
+        })
+    }
+
+    /// Bootstrap state and history together, then replay parked changes against
+    /// that exact snapshot version. On error restore the original parking claims
+    /// as well as empty handles; no queued snapshot event may escape.
+    fn init_snapshot_preserving_pending_with(
+        &self,
+        origin: InternalString,
+        values: ImportedValues,
+        decode_fn: impl FnOnce(&Self, InternalString) -> LoroResult<ImportStatus>,
     ) -> LoroResult<ImportStatus> {
         let (checkpoint, empty_containers, pending) = {
             let mut oplog = self.oplog.lock();
@@ -827,7 +945,7 @@ impl LoroDoc {
         };
         let was_detached = self.is_detached();
         let result = (|| {
-            let mut status = decode_snapshot(self, mode, body, origin.clone())?;
+            let mut status = decode_fn(self, origin.clone())?;
             // A replay-only shallow snapshot's decoder temporarily attaches to
             // its retained head. The batch still owns the final checkout.
             self.set_detached(was_detached);
@@ -2894,6 +3012,13 @@ impl LoroDoc {
         self.import_batch_with_history_mode(bytes, false)
     }
 
+    /// Like [`Self::import_batch`], taking owned [`bytes::Bytes`] buffers and
+    /// releasing each buffer as soon as that blob finishes importing.
+    #[tracing::instrument(skip_all)]
+    pub fn import_batch_bytes(&self, bytes: Vec<bytes::Bytes>) -> LoroResult<ImportStatus> {
+        self.import_batch_with_history_mode_bytes(bytes, false)
+    }
+
     /// Like [`Self::import_batch`]. `json_lossy` is the same opt-in as
     /// [`Self::import_with_history_mode`].
     pub fn import_batch_with_history_mode(
@@ -2902,28 +3027,88 @@ impl LoroDoc {
         json_lossy: bool,
     ) -> LoroResult<ImportStatus> {
         self.check_import_not_nested()?;
-        let values = if json_lossy {
-            ImportedValues::JsonLossy
-        } else {
-            ImportedValues::Exact
-        };
         if bytes.is_empty() {
             return Ok(ImportStatus::default());
         }
-
         if bytes.len() == 1 {
             return self.import_with_history_mode(&bytes[0], Default::default(), json_lossy);
         }
 
+        let values = imported_values_for_mode(json_lossy);
         // Metadata that does not decode fails the batch before anything is imported.
         let blobs = bytes
             .iter()
             .enumerate()
             .map(|(index, blob)| {
                 let meta = LoroDoc::decode_import_blob_meta(blob, false)?;
-                Ok((index, meta, blob.as_slice()))
+                Ok((index, meta, BatchBlobSource::Slice(blob.as_slice())))
             })
             .collect::<LoroResult<Vec<_>>>()?;
+        self.finish_batch_status(blobs, values)
+    }
+
+    /// Like [`Self::import_batch_with_history_mode`], taking owned [`bytes::Bytes`]
+    /// buffers and dropping each buffer as soon as its blob finishes importing.
+    pub fn import_batch_with_history_mode_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+        json_lossy: bool,
+    ) -> LoroResult<ImportStatus> {
+        self.check_import_not_nested()?;
+        if bytes.is_empty() {
+            return Ok(ImportStatus::default());
+        }
+        if bytes.len() == 1 {
+            let blob = bytes.into_iter().next().expect("checked len == 1");
+            return self.import_with_history_mode_bytes(blob, Default::default(), json_lossy);
+        }
+
+        let values = imported_values_for_mode(json_lossy);
+        let blobs = bytes
+            .into_iter()
+            .enumerate()
+            .map(|(index, blob)| {
+                let meta = LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false)?;
+                Ok((index, meta, BatchBlobSource::Bytes(blob)))
+            })
+            .collect::<LoroResult<Vec<_>>>()?;
+        self.finish_batch_status(blobs, values)
+    }
+
+    /// Import a batch whose metadata has already been decoded, loading each blob's
+    /// payload on demand and dropping each buffer immediately after its turn.
+    pub fn import_batch_with_loaders<'a, F>(
+        &self,
+        blobs: Vec<(ImportBlobMetadata, F)>,
+        json_lossy: bool,
+    ) -> LoroResult<ImportStatus>
+    where
+        F: FnOnce() -> LoroResult<bytes::Bytes> + 'a,
+    {
+        self.check_import_not_nested()?;
+        if blobs.is_empty() {
+            return Ok(ImportStatus::default());
+        }
+        if blobs.len() == 1 {
+            let (_, load) = blobs.into_iter().next().expect("checked len == 1");
+            let bytes = load()?;
+            return self.import_with_history_mode_bytes(bytes, Default::default(), json_lossy);
+        }
+
+        let values = imported_values_for_mode(json_lossy);
+        let sources = blobs
+            .into_iter()
+            .enumerate()
+            .map(|(index, (meta, load))| (index, meta, BatchBlobSource::Loader(Box::new(load))))
+            .collect();
+        self.finish_batch_status(sources, values)
+    }
+
+    fn finish_batch_status(
+        &self,
+        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        values: ImportedValues,
+    ) -> LoroResult<ImportStatus> {
         let run = self.import_blobs_as_batch(blobs, values)?;
         if let Some(err) = run.rollback_error {
             return Err(err);
@@ -2972,6 +3157,15 @@ impl LoroDoc {
         self.import_batch_detailed_with_history_mode(bytes, false)
     }
 
+    /// Like [`Self::import_batch_detailed`], taking owned [`bytes::Bytes`] buffers
+    /// and dropping each buffer immediately after its blob finishes importing.
+    pub fn import_batch_detailed_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.import_batch_detailed_with_history_mode_bytes(bytes, false)
+    }
+
     /// Like [`Self::import_batch_detailed`]. `json_lossy` is the same opt-in as
     /// [`Self::import_with_history_mode`].
     pub fn import_batch_detailed_with_history_mode(
@@ -2980,47 +3174,12 @@ impl LoroDoc {
         json_lossy: bool,
     ) -> LoroResult<ImportBatchDetail> {
         self.check_import_not_nested()?;
-        let values = if json_lossy {
-            ImportedValues::JsonLossy
-        } else {
-            ImportedValues::Exact
-        };
+        let values = imported_values_for_mode(json_lossy);
         if bytes.is_empty() {
-            let pending = self.oplog.lock().pending_changes.version_range();
-            return Ok(ImportBatchDetail {
-                blobs: Vec::new(),
-                status: ImportStatus {
-                    success: Default::default(),
-                    pending: non_empty(pending),
-                },
-                rollback_error: None,
-            });
+            return Ok(self.empty_batch_detail());
         }
-
         if bytes.len() == 1 {
-            // A plain import, as in `import_batch`. The pending range is read under
-            // the same transaction lock.
-            let (result, pending) = self.with_barrier(|| {
-                let result = self._import_with(&bytes[0], Default::default(), values);
-                (result, self.oplog.lock().pending_changes.version_range())
-            });
-            let (blob, success) = match result {
-                Ok(status) => {
-                    let success = status.success.clone();
-                    (ImportBlobOutcome::Imported(status), success)
-                }
-                // Only the transaction checks return this, before the blob is tried.
-                Err(LoroError::ImportWhenInTxn) => return Err(LoroError::ImportWhenInTxn),
-                Err(err) => (ImportBlobOutcome::Failed(err), Default::default()),
-            };
-            return Ok(ImportBatchDetail {
-                blobs: vec![blob],
-                status: ImportStatus {
-                    success,
-                    pending: non_empty(pending),
-                },
-                rollback_error: None,
-            });
+            return self.import_single_detailed(|| Ok(ImportInput::Slice(&bytes[0])), values);
         }
 
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
@@ -3028,14 +3187,129 @@ impl LoroDoc {
         for (index, blob) in bytes.iter().enumerate() {
             match LoroDoc::decode_import_blob_meta(blob, false) {
                 Ok(meta) => {
-                    blobs.push((index, meta, blob.as_slice()));
+                    blobs.push((index, meta, BatchBlobSource::Slice(blob.as_slice())));
                     outcomes.push(None);
                 }
                 // Unlike `import_batch`, the other blobs are still imported.
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
         }
+        self.finish_batch_detailed(blobs, outcomes, values)
+    }
 
+    /// Like [`Self::import_batch_detailed_with_history_mode`], taking owned
+    /// [`bytes::Bytes`] buffers and dropping each buffer right after its turn.
+    pub fn import_batch_detailed_with_history_mode_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+        json_lossy: bool,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.check_import_not_nested()?;
+        let values = imported_values_for_mode(json_lossy);
+        if bytes.is_empty() {
+            return Ok(self.empty_batch_detail());
+        }
+        if bytes.len() == 1 {
+            let blob = bytes.into_iter().next().expect("checked len == 1");
+            return self.import_single_detailed(|| Ok(ImportInput::Bytes(blob)), values);
+        }
+
+        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
+        let mut blobs = Vec::with_capacity(bytes.len());
+        for (index, blob) in bytes.into_iter().enumerate() {
+            match LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false) {
+                Ok(meta) => {
+                    blobs.push((index, meta, BatchBlobSource::Bytes(blob)));
+                    outcomes.push(None);
+                }
+                Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
+            }
+        }
+        self.finish_batch_detailed(blobs, outcomes, values)
+    }
+
+    /// Detailed counterpart of [`Self::import_batch_with_loaders`].
+    pub fn import_batch_detailed_with_loaders<'a, F>(
+        &self,
+        blobs: Vec<(LoroResult<ImportBlobMetadata>, F)>,
+        json_lossy: bool,
+    ) -> LoroResult<ImportBatchDetail>
+    where
+        F: FnOnce() -> LoroResult<bytes::Bytes> + 'a,
+    {
+        self.check_import_not_nested()?;
+        let values = imported_values_for_mode(json_lossy);
+        if blobs.is_empty() {
+            return Ok(self.empty_batch_detail());
+        }
+        if blobs.len() == 1 {
+            let (_, load) = blobs.into_iter().next().expect("checked len == 1");
+            return self.import_single_detailed(|| load().map(ImportInput::Bytes), values);
+        }
+
+        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(blobs.len());
+        let mut valid = Vec::with_capacity(blobs.len());
+        for (index, (meta, load)) in blobs.into_iter().enumerate() {
+            match meta {
+                Ok(meta) => {
+                    valid.push((index, meta, BatchBlobSource::Loader(Box::new(load))));
+                    outcomes.push(None);
+                }
+                Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
+            }
+        }
+        self.finish_batch_detailed(valid, outcomes, values)
+    }
+
+    fn empty_batch_detail(&self) -> ImportBatchDetail {
+        let pending = self.oplog.lock().pending_changes.version_range();
+        ImportBatchDetail {
+            blobs: Vec::new(),
+            status: ImportStatus {
+                success: Default::default(),
+                pending: non_empty(pending),
+            },
+            rollback_error: None,
+        }
+    }
+
+    fn import_single_detailed<'a>(
+        &self,
+        load_input: impl FnOnce() -> LoroResult<ImportInput<'a>>,
+        values: ImportedValues,
+    ) -> LoroResult<ImportBatchDetail> {
+        // A plain import, as in `import_batch`. The pending range is read under
+        // the same transaction lock.
+        let (result, pending) = self.with_barrier(|| {
+            let result = load_input()
+                .and_then(|input| self._import_with_input(input, Default::default(), values));
+            (result, self.oplog.lock().pending_changes.version_range())
+        });
+        let (blob, success) = match result {
+            Ok(status) => {
+                let success = status.success.clone();
+                (ImportBlobOutcome::Imported(status), success)
+            }
+            // Only the transaction checks return this, before the blob is tried.
+            Err(LoroError::ImportWhenInTxn) => return Err(LoroError::ImportWhenInTxn),
+            Err(err) => (ImportBlobOutcome::Failed(err), Default::default()),
+        };
+        Ok(ImportBatchDetail {
+            blobs: vec![blob],
+            status: ImportStatus {
+                success,
+                pending: non_empty(pending),
+            },
+            rollback_error: None,
+        })
+    }
+
+    fn finish_batch_detailed(
+        &self,
+        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        mut outcomes: Vec<Option<ImportBlobOutcome>>,
+        values: ImportedValues,
+    ) -> LoroResult<ImportBatchDetail> {
         // Nothing decoded, so there is nothing to import. `import_batch` returns
         // before this critical section; entering it would commit the local
         // transaction and, when detached editing is on, renew the peer id.
@@ -3079,13 +3353,13 @@ impl LoroDoc {
     }
 
     /// The critical section of a batch import, for blobs whose metadata decoded:
-    /// `(index in the caller's input, metadata, bytes)`.
+    /// `(index in the caller's input, metadata, payload source)`.
     ///
     /// Returns `Err` only when the batch is refused before anything changes. A blob
     /// that fails, and a failed closing checkout, are in the [`BatchRun`].
     fn import_blobs_as_batch(
         &self,
-        mut blobs: Vec<(usize, ImportBlobMetadata, &[u8])>,
+        mut blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
         values: ImportedValues,
     ) -> LoroResult<BatchRun> {
         let mut success = VersionRange::default();
@@ -3187,21 +3461,39 @@ impl LoroDoc {
         // terminates execution; only returned errors can be recovered there.
         let loop_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut results = Vec::with_capacity(blobs.len());
-            for (order, (index, _meta, data)) in blobs.into_iter().enumerate() {
+            for (order, (index, _meta, source)) in blobs.into_iter().enumerate() {
                 #[cfg(test)]
                 take_panic_at_batch_import_blob_for_test();
+                let loaded = match source {
+                    BatchBlobSource::Slice(data) => Ok(ImportInput::Slice(data)),
+                    BatchBlobSource::Bytes(data) => Ok(ImportInput::Bytes(data)),
+                    BatchBlobSource::Loader(load) => load().map(ImportInput::Bytes),
+                };
                 let result = if let Some(checkpoint) =
                     guard.snapshot_checkpoint.as_ref().filter(|_| order == 0)
                 {
                     // Do not emit the snapshot event until the closing checkout
                     // succeeds. Its state is part of the batch's rollback scope.
-                    let result = parse_header_and_body(data, true).and_then(|parsed| {
-                        guard.doc.init_snapshot_preserving_pending(
-                            parsed.mode,
-                            parsed.body,
-                            Default::default(),
-                            values,
-                        )
+                    let result = loaded.and_then(|input| match input {
+                        ImportInput::Slice(data) => {
+                            parse_header_and_body(data, true).and_then(|parsed| {
+                                guard.doc.init_snapshot_preserving_pending(
+                                    parsed.mode,
+                                    parsed.body,
+                                    Default::default(),
+                                    values,
+                                )
+                            })
+                        }
+                        ImportInput::Bytes(data) => parse_header_and_body_bytes(data, true)
+                            .and_then(|parsed| {
+                                guard.doc.init_snapshot_preserving_pending_bytes(
+                                    parsed.mode,
+                                    parsed.body,
+                                    Default::default(),
+                                    values,
+                                )
+                            }),
                     });
                     if result.is_err() {
                         // The standalone decoder resets a failed snapshot to an
@@ -3218,9 +3510,11 @@ impl LoroDoc {
                     oplog.begin_import_rollback();
                     result
                 } else {
-                    guard
-                        .doc
-                        .import_without_emitting(data, Default::default(), values)
+                    loaded.and_then(|input| {
+                        guard
+                            .doc
+                            .import_without_emitting_input(input, Default::default(), values)
+                    })
                 };
                 if let Ok(s) = &result {
                     for (peer, (start, end)) in s.success.iter() {
@@ -4500,6 +4794,36 @@ struct BatchRun {
     rollback_error: Option<LoroError>,
 }
 
+enum ImportInput<'a> {
+    Slice(&'a [u8]),
+    Bytes(bytes::Bytes),
+}
+
+enum BatchBlobSource<'a> {
+    Slice(&'a [u8]),
+    Bytes(bytes::Bytes),
+    Loader(Box<dyn FnOnce() -> LoroResult<bytes::Bytes> + 'a>),
+}
+
+#[inline]
+fn imported_values_for_mode(json_lossy: bool) -> ImportedValues {
+    if json_lossy {
+        ImportedValues::JsonLossy
+    } else {
+        ImportedValues::Exact
+    }
+}
+
+#[inline]
+fn parsed_as_borrowed(parsed: &ParsedHeaderAndBodyBytes) -> ParsedHeaderAndBody<'_> {
+    ParsedHeaderAndBody {
+        checksum: parsed.checksum,
+        checksum_body: &parsed.checksum_body,
+        mode: parsed.mode,
+        body: &parsed.body,
+    }
+}
+
 fn non_empty(range: VersionRange) -> Option<VersionRange> {
     (!range.is_empty()).then_some(range)
 }
@@ -4568,10 +4892,7 @@ impl BatchImportGuard<'_> {
             // The blobs were imported while detached inside this scope, so their
             // op references (movable-list elements, style end anchors) are validated
             // here, once per batch.
-            let validation = doc
-                .oplog
-                .lock()
-                .validate_op_refs_in_import_scope();
+            let validation = doc.oplog.lock().validate_op_refs_in_import_scope();
             checkout = validation.and_then(|()| doc._checkout_to_latest_without_commit(true));
             if let Err(e) = &checkout {
                 // Validation precedes mutation: state is still at its pre-batch

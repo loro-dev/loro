@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 release = false
 
 [dependencies]
+bytes = { workspace = true }
 js-sys = "0.3.60"
 loro-internal = { path = "../loro-internal", features = [
     "wasm",

@@ -135,3 +135,29 @@ it("fails an update with unreadable metadata alone, where importBatch throws", (
     rollbackError: null,
   });
 });
+
+it.each([false, true])("imports typed-array views without changing their backing buffer (large=%s)", (large) => {
+  let seed = 123456789;
+  const payload = large
+    ? Array.from({ length: 400_000 }, () => {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        return String.fromCharCode(33 + ((seed >>> 0) % 90));
+      }).join("")
+    : "hello";
+  const bytes = update(123, (doc) => doc.getText("text").insert(0, payload));
+  if (large) expect(bytes.length).toBeGreaterThan(256 * 1024);
+  const backing = new Uint8Array(bytes.length + 16).fill(0x7f);
+  backing.set(bytes, 8);
+  const view = backing.subarray(8, 8 + bytes.length);
+  const other = update(124, (doc) => doc.getMap("map").set("ok", true));
+  const doc = new LoroDoc();
+  doc.importBatch([view, other]);
+  expect(doc.getText("text").toString()).toBe(payload);
+  const detailed = new LoroDoc();
+  expect(detailed.importBatchDetailed([view, other]).blobs.map((b) => b.type)).toEqual(["imported", "imported"]);
+  expect(detailed.getText("text").toString()).toBe(payload);
+  expect(backing.subarray(0, 8)).toEqual(new Uint8Array(8).fill(0x7f));
+  expect(view).toEqual(bytes);
+});

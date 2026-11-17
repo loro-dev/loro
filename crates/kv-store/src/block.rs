@@ -155,8 +155,9 @@ impl NormalBlock {
             .map(|mut chunk| chunk.get_u16_le())
             .collect();
         Self::validate_decoded_data(&data[..data_end], &offsets, &first_key)?;
+        data.truncate(data_end);
         Ok(NormalBlock {
-            data: Bytes::copy_from_slice(&data[..data_end]),
+            data: Bytes::from(data.into_boxed_slice()),
             encoded_data: OnceCell::with_value((raw_block_and_check, compression_type)),
             offsets,
             first_key,
@@ -168,7 +169,8 @@ impl NormalBlock {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
 
-        let mut prev_key: Option<Vec<u8>> = None;
+        let mut prev_key: Vec<u8> = Vec::with_capacity(first_key.len());
+        let mut curr_key: Vec<u8> = Vec::with_capacity(first_key.len());
         let mut prev_offset = 0usize;
         for (idx, offset) in offsets.iter().map(|x| *x as usize).enumerate() {
             let offset_end = offsets
@@ -178,8 +180,9 @@ impl NormalBlock {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
 
-            let key = if idx == 0 {
-                first_key.to_vec()
+            curr_key.clear();
+            if idx == 0 {
+                curr_key.extend_from_slice(first_key);
             } else {
                 let header_end = offset
                     .checked_add(SIZE_OF_U8 + SIZE_OF_U16)
@@ -203,22 +206,17 @@ impl NormalBlock {
                     return Err(LoroError::DecodeError("Invalid bytes".into()));
                 }
 
-                let mut key = Vec::with_capacity(common_prefix_len + key_suffix_len);
-                key.extend_from_slice(&first_key[..common_prefix_len]);
-                key.extend_from_slice(&data[header_end..key_end]);
-                key
-            };
+                curr_key.reserve(common_prefix_len + key_suffix_len);
+                curr_key.extend_from_slice(&first_key[..common_prefix_len]);
+                curr_key.extend_from_slice(&data[header_end..key_end]);
+            }
 
-            if key.is_empty()
-                || prev_key
-                    .as_ref()
-                    .is_some_and(|prev_key| prev_key.as_slice() >= key.as_slice())
-            {
+            if curr_key.is_empty() || (idx > 0 && prev_key.as_slice() >= curr_key.as_slice()) {
                 return Err(LoroError::DecodeError("Invalid bytes".into()));
             }
 
             prev_offset = offset;
-            prev_key = Some(key);
+            std::mem::swap(&mut prev_key, &mut curr_key);
         }
 
         Ok(())

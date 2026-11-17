@@ -516,6 +516,7 @@ decorateMethods(LoroDoc.prototype, [
   "diff",
   "applyDiff",
   "setPeerId",
+  "compactChangeStore",
 ]);
 
 decorateMethods(EphemeralStoreWasm.prototype, [

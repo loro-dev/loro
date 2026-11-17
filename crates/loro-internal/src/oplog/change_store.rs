@@ -1,5 +1,6 @@
 use self::block_encode::{
-    decode_block, decode_cids, decode_header, encode_block, ChangesBlockHeader,
+    decode_block, decode_cids, decode_cids_in_header, decode_header, encode_block,
+    encode_block_with_header, ChangesBlockHeader,
 };
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
@@ -16,16 +17,16 @@ use crate::{
 use block_encode::decode_block_range;
 use bytes::Bytes;
 use loro_common::{
-    ContainerID, Counter, HasCounterSpan, HasId, HasIdSpan, HasLamportSpan, IdLp, IdSpan, Lamport,
-    LoroError, LoroResult, PeerID, ID,
+    ContainerID, Counter, HasCounterSpan, HasId, HasIdSpan, IdLp, IdSpan, Lamport, LoroError,
+    LoroResult, PeerID, ID,
 };
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use once_cell::sync::OnceCell;
 use rle::{HasLength, Mergable, RlePush, RleVec, Sliceable};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::atomic::AtomicI64;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering as AtomicOrdering};
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, VecDeque},
@@ -165,6 +166,14 @@ struct ChangeStoreInner {
     retired: bool,
     /// Conservative until a full history walk: headers do not validate block bodies.
     may_have_unparsed_bodies: bool,
+    /// Allocated only once metadata has been written or imported.
+    flushed_meta: Option<Box<FlushedMeta>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FlushedMeta {
+    vv: Option<VersionVector>,
+    frontiers: Option<Frontiers>,
 }
 
 #[derive(Debug)]
@@ -257,6 +266,7 @@ pub(crate) enum ChangesBlockContent {
 pub(crate) struct ChangesBlockBytes {
     bytes: Bytes,
     header: OnceCell<Arc<ChangesBlockHeader>>,
+    body_verified: Arc<AtomicBool>,
 }
 
 pub const START_VV_KEY: &[u8] = b"sv";
@@ -351,6 +361,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
                 may_have_unparsed_bodies: false,
+                flushed_meta: None,
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
@@ -385,19 +396,8 @@ impl ChangeStore {
     ) -> Bytes {
         let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
         for span in latest_vv.sub_iter(start_vv) {
-            // PERF: this can be optimized by reusing the current encoded blocks
-            // In the current method, it needs to parse and re-encode the blocks
-            for c in self.iter_changes(span) {
-                // From `span`, not `start_vv`: a caller's counter can be negative.
-                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
-                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
-
-                if start == end {
-                    continue;
-                }
-
-                let ch = c.slice(start, end);
-                new_store.insert_change(ch, false, false);
+            if self.copy_span_to_store(span, &new_store).is_err() {
+                return Bytes::new();
             }
         }
 
@@ -410,6 +410,9 @@ impl ChangeStore {
     }
 
     pub(super) fn export_blocks_in_range<W: std::io::Write>(&self, spans: &[IdSpan], w: &mut W) {
+        if self.corrupt_block_error().is_err() {
+            return;
+        }
         // A change store needs each peer's counters to be contiguous, so merge the
         // ranges of each peer and put the k-th range of every peer into the k-th
         // store. The blocks of all stores are written one after another, which the
@@ -444,27 +447,11 @@ impl ChangeStore {
         }
 
         for layer in layers {
-            let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
             for span in layer {
-                // PERF: this can be optimized by reusing the current encoded blocks
-                // In the current method, it needs to parse and re-encode the blocks
-                let Ok(changes) = self.try_iter_changes(span) else {
+                if self.stream_span_blocks(span, w).is_err() {
                     return;
-                };
-                for c in changes {
-                    let start =
-                        ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
-                    let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
-                    if start == end {
-                        continue;
-                    }
-
-                    let ch = c.slice(start, end);
-                    new_store.insert_change(ch, false, false);
                 }
             }
-
-            encode_blocks_in_store(new_store, &self.arena, w);
         }
     }
 
@@ -1110,6 +1097,198 @@ impl ChangeStore {
         }))
     }
 
+    /// Read `(change_id, change_deps)` for every change overlapping `id_span` from headers
+    /// without materializing `Changes` into `mem_parsed_kv` when a block is still `Bytes`.
+    /// When `may_have_unparsed_bodies` is set, unverified `Bytes` bodies are transiently
+    /// validated without retaining their decoded ops so corrupt history still fails closed.
+    pub(crate) fn try_iter_change_headers(
+        &self,
+        id_span: IdSpan,
+    ) -> LoroResult<Vec<(ID, Frontiers)>> {
+        if id_span.counter.start >= id_span.counter.end {
+            return Ok(Vec::new());
+        }
+        self.try_ensure_block_loaded_in_range(
+            Bound::Included(id_span.id_start()),
+            Bound::Excluded(id_span.id_end()),
+        )?;
+        let inner = self.inner.lock();
+        let may_have_unparsed = inner.may_have_unparsed_bodies;
+        let start_counter = inner
+            .mem_parsed_kv
+            .range(..=id_span.id_start())
+            .next_back()
+            .filter(|(id, _)| id.peer == id_span.peer)
+            .map_or(id_span.counter.start, |(id, _)| id.counter);
+        let mut out = Vec::new();
+        for (block_id, block) in inner
+            .mem_parsed_kv
+            .range(ID::new(id_span.peer, start_counter)..ID::new(id_span.peer, id_span.counter.end))
+        {
+            if block.peer != id_span.peer || block.counter_range.1 <= id_span.counter.start {
+                continue;
+            }
+            match &block.content {
+                ChangesBlockContent::Changes(changes) | ChangesBlockContent::Both(changes, _) => {
+                    let (start, end) = if id_span.counter.start <= block.counter_range.0
+                        && id_span.counter.end >= block.counter_range.1
+                    {
+                        (0, changes.len())
+                    } else {
+                        let start = block
+                            .get_change_index_by_counter(id_span.counter.start)
+                            .unwrap_or_else(|x| x);
+                        let end = match block.get_change_index_by_counter(id_span.counter.end - 1) {
+                            Ok(end) => end + 1,
+                            Err(0) => continue,
+                            Err(end) => end,
+                        };
+                        (start, end)
+                    };
+                    for c in &changes[start..end] {
+                        out.push((c.id, c.deps.clone()));
+                    }
+                }
+                ChangesBlockContent::Bytes(b) => {
+                    if may_have_unparsed && !b.body_verified.load(AtomicOrdering::Acquire) {
+                        if let Err(err) = b.verify_body(&self.arena) {
+                            warn!(?block_id, ?err, "failed to verify change block");
+                            self.parse_failures.record(*block_id, &err);
+                            return Err(self.corrupt_block_error().unwrap_err());
+                        }
+                    }
+                    b.ensure_header().map_err(|err| {
+                        self.parse_failures.record(*block_id, &err);
+                        self.corrupt_block_error().unwrap_err()
+                    })?;
+                    let header = b.header.get().unwrap();
+                    if header.counters.len() != header.n_changes + 1
+                        || header.deps_groups.len() != header.n_changes
+                    {
+                        let err = LoroError::DecodeDataCorruptionError;
+                        self.parse_failures.record(*block_id, &err);
+                        return Err(self.corrupt_block_error().unwrap_err());
+                    }
+                    let find_idx = |target: Counter| -> Result<usize, usize> {
+                        let starts = &header.counters[..header.n_changes];
+                        match starts.binary_search(&target) {
+                            Ok(i) => Ok(i),
+                            Err(0) => Err(0),
+                            Err(k) => {
+                                if target < header.counters[k] {
+                                    Ok(k - 1)
+                                } else {
+                                    Err(k)
+                                }
+                            }
+                        }
+                    };
+                    let (start, end) = if id_span.counter.start <= block.counter_range.0
+                        && id_span.counter.end >= block.counter_range.1
+                    {
+                        (0, header.n_changes)
+                    } else {
+                        let start = find_idx(id_span.counter.start).unwrap_or_else(|x| x);
+                        let end = match find_idx(id_span.counter.end - 1) {
+                            Ok(end) => end + 1,
+                            Err(0) => continue,
+                            Err(end) => end,
+                        };
+                        (start, end)
+                    };
+                    for i in start..end {
+                        out.push((
+                            ID::new(header.peer, header.counters[i]),
+                            header.deps_groups[i].clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// If `id` belongs to an unparsed `Bytes` block whose verified container ID table
+    /// does not contain `target_cid`, return that block's exclusive end counter so
+    /// container-filtered replay can skip parsing it altogether.
+    pub(crate) fn unparsed_block_skip_end_if_missing_cid(
+        &self,
+        id: ID,
+        target_cid: &ContainerID,
+    ) -> Option<Counter> {
+        {
+            let inner = self.inner.lock();
+            if inner.retired {
+                return None;
+            }
+            if let Some((_, block)) = inner.mem_parsed_kv.range(..=id).next_back() {
+                if block.peer == id.peer
+                    && block.counter_range.0 <= id.counter
+                    && block.counter_range.1 > id.counter
+                {
+                    return match &block.content {
+                        ChangesBlockContent::Bytes(b)
+                            if !inner.may_have_unparsed_bodies
+                                || b.body_verified.load(AtomicOrdering::Acquire) =>
+                        {
+                            let cids = b.ensure_cids().ok()?;
+                            (!cids.contains(target_cid)).then_some(block.counter_range.1)
+                        }
+                        _ => None,
+                    };
+                }
+            }
+        }
+
+        let kv = self.external_kv.lock();
+        let mut inner = self.inner.lock();
+        if inner.retired {
+            return None;
+        }
+        if let Some((_, block)) = inner.mem_parsed_kv.range(..=id).next_back() {
+            if block.peer == id.peer
+                && block.counter_range.0 <= id.counter
+                && block.counter_range.1 > id.counter
+            {
+                return match &block.content {
+                    ChangesBlockContent::Bytes(b)
+                        if !inner.may_have_unparsed_bodies
+                            || b.body_verified.load(AtomicOrdering::Acquire) =>
+                    {
+                        let cids = b.ensure_cids().ok()?;
+                        (!cids.contains(target_cid)).then_some(block.counter_range.1)
+                    }
+                    _ => None,
+                };
+            }
+        }
+        let (b_id, b_bytes) = kv
+            .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
+            .rfind(|(k, _)| k.len() == 12)?;
+        let block_id = ID::from_bytes(&b_id);
+        if block_id.peer != id.peer {
+            return None;
+        }
+        let block = ChangesBlock::from_bytes(b_bytes).ok()?;
+        if block.counter_range.1 <= id.counter || block.counter_range.0 > id.counter {
+            return None;
+        }
+        let end = block.counter_range.1;
+        let skip = if let ChangesBlockContent::Bytes(b) = &block.content {
+            if !inner.may_have_unparsed_bodies || b.body_verified.load(AtomicOrdering::Acquire) {
+                b.ensure_cids()
+                    .ok()
+                    .is_some_and(|cids| !cids.contains(target_cid))
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        inner.mem_parsed_kv.insert(block_id, Arc::new(block));
+        skip.then_some(end)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn get_blocks_in_range(&self, id_span: IdSpan) -> VecDeque<Arc<ChangesBlock>> {
         let mut inner = self.inner.lock();
@@ -1199,6 +1378,7 @@ impl ChangeStore {
                 mem_parsed_kv: BTreeMap::new(),
                 retired: false,
                 may_have_unparsed_bodies: !vv.is_empty(),
+                flushed_meta: inner.flushed_meta.clone(),
             })),
             arena,
             external_vv: Arc::new(Mutex::new(self.external_vv.lock().clone())),
@@ -1219,6 +1399,256 @@ impl ChangeStore {
             .sum()
     }
 
+    /// Evicts non-tail flushed blocks and downgrades remaining `Both` blocks to detached `Bytes`.
+    /// Must not be called while a `ChangeStoreRollback` scope is active on this store.
+    pub(crate) fn compact_parsed_blocks(&self) {
+        let mut inner = self.inner.lock();
+        compact_parsed_blocks_in(&mut inner);
+    }
+
+    fn overlapping_blocks_for_span(
+        &self,
+        span: IdSpan,
+    ) -> LoroResult<Vec<(ID, Arc<ChangesBlock>)>> {
+        self.try_ensure_block_loaded_in_range(
+            Bound::Included(span.id_start()),
+            Bound::Excluded(span.id_end()),
+        )?;
+        let inner = self.inner.lock();
+        let start_counter = inner
+            .mem_parsed_kv
+            .range(..=span.id_start())
+            .next_back()
+            .filter(|(id, _)| id.peer == span.peer)
+            .map_or(span.counter.start, |(id, _)| id.counter);
+        let blocks = inner
+            .mem_parsed_kv
+            .range(ID::new(span.peer, start_counter)..ID::new(span.peer, span.counter.end))
+            .filter(|(_, block)| {
+                block.counter_range.1 > span.counter.start
+                    && block.counter_range.0 < span.counter.end
+            })
+            .map(|(id, block)| (*id, block.clone()))
+            .collect();
+        Ok(blocks)
+    }
+
+    fn push_boundary_slice<F: FnMut(&[Change], &SharedArena)>(
+        pending: &mut Vec<Change>,
+        pending_size: &mut usize,
+        ch: Change,
+        arena: &SharedArena,
+        flush: &mut F,
+    ) {
+        let ch_size = ch.estimate_storage_size();
+        if !pending.is_empty() && *pending_size + ch_size > MAX_BLOCK_SIZE {
+            flush(pending, arena);
+            pending.clear();
+            *pending_size = 0;
+        }
+        *pending_size += ch_size;
+        pending.push(ch);
+    }
+
+    fn stream_span_blocks<W: std::io::Write>(&self, span: IdSpan, w: &mut W) -> LoroResult<()> {
+        if span.counter.start >= span.counter.end {
+            return Ok(());
+        }
+        let blocks = self.overlapping_blocks_for_span(span)?;
+        let may_have_unparsed = self.may_have_unparsed_bodies();
+        let mut pending: Vec<Change> = Vec::new();
+        let mut pending_size = 0usize;
+
+        let write_encoded = |w: &mut W, bytes: &[u8]| {
+            leb128::write::unsigned(w, bytes.len() as u64).unwrap();
+            w.write_all(bytes).unwrap();
+        };
+
+        for (block_id, block) in blocks {
+            let fully_contained = block.counter_range.0 >= span.counter.start
+                && block.counter_range.1 <= span.counter.end;
+            if fully_contained {
+                if !pending.is_empty() {
+                    let encoded = encode_block(&pending, &self.arena);
+                    write_encoded(w, &encoded);
+                    pending.clear();
+                    pending_size = 0;
+                }
+                match &block.content {
+                    ChangesBlockContent::Bytes(b) | ChangesBlockContent::Both(_, b) => {
+                        if may_have_unparsed && !b.body_verified.load(AtomicOrdering::Acquire) {
+                            if let Err(err) = b.verify_body(&self.arena) {
+                                warn!(?block_id, ?err, "failed to verify change block");
+                                self.parse_failures.record(block_id, &err);
+                                return Err(self.corrupt_block_error().unwrap_err());
+                            }
+                        }
+                        write_encoded(w, &b.bytes);
+                    }
+                    ChangesBlockContent::Changes(changes) => {
+                        let encoded = encode_block(changes, &self.arena);
+                        write_encoded(w, &encoded);
+                    }
+                }
+                continue;
+            }
+
+            let owned_changes: Option<Vec<Change>>;
+            let slice: &[Change] = match &block.content {
+                ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => c.as_slice(),
+                ChangesBlockContent::Bytes(b) => {
+                    owned_changes = Some(b.parse(&self.arena).map_err(|err| {
+                        warn!(?block_id, ?err, "failed to parse change block");
+                        self.parse_failures.record(block_id, &err);
+                        self.corrupt_block_error().unwrap_err()
+                    })?);
+                    owned_changes.as_deref().unwrap()
+                }
+            };
+
+            let start_idx = slice
+                .binary_search_by(|c| {
+                    if c.id.counter > span.counter.start {
+                        Ordering::Greater
+                    } else if c.ctr_end() <= span.counter.start {
+                        Ordering::Less
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .unwrap_or_else(|x| x);
+            for c in &slice[start_idx..] {
+                if c.id.counter >= span.counter.end {
+                    break;
+                }
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+                if start < end {
+                    Self::push_boundary_slice(
+                        &mut pending,
+                        &mut pending_size,
+                        c.slice(start, end),
+                        &self.arena,
+                        &mut |chunk, arena| {
+                            let encoded = encode_block(chunk, arena);
+                            write_encoded(w, &encoded);
+                        },
+                    );
+                }
+            }
+        }
+
+        if !pending.is_empty() {
+            let encoded = encode_block(&pending, &self.arena);
+            write_encoded(w, &encoded);
+        }
+        Ok(())
+    }
+
+    fn copy_span_to_store(&self, span: IdSpan, new_store: &ChangeStore) -> LoroResult<()> {
+        if span.counter.start >= span.counter.end {
+            return Ok(());
+        }
+        let blocks = self.overlapping_blocks_for_span(span)?;
+        let may_have_unparsed = self.may_have_unparsed_bodies();
+        let mut pending: Vec<Change> = Vec::new();
+        let mut pending_size = 0usize;
+
+        let flush_to_kv = |chunk: &[Change], arena: &SharedArena| {
+            if chunk.is_empty() {
+                return;
+            }
+            let encoded = encode_block(chunk, arena);
+            let id = chunk[0].id;
+            let end = chunk.last().unwrap().ctr_end();
+            let mut kv = new_store.external_kv.lock();
+            let mut external_vv = new_store.external_vv.lock();
+            kv.set(&id.to_bytes(), encoded.into());
+            external_vv.insert(id.peer, end);
+        };
+
+        for (block_id, block) in blocks {
+            let fully_contained = block.counter_range.0 >= span.counter.start
+                && block.counter_range.1 <= span.counter.end;
+            if fully_contained {
+                if !pending.is_empty() {
+                    flush_to_kv(&pending, &self.arena);
+                    pending.clear();
+                    pending_size = 0;
+                }
+                match &block.content {
+                    ChangesBlockContent::Bytes(b) | ChangesBlockContent::Both(_, b) => {
+                        if may_have_unparsed && !b.body_verified.load(AtomicOrdering::Acquire) {
+                            if let Err(err) = b.verify_body(&self.arena) {
+                                warn!(?block_id, ?err, "failed to verify change block");
+                                self.parse_failures.record(block_id, &err);
+                                return Err(self.corrupt_block_error().unwrap_err());
+                            }
+                        }
+                        let mut kv = new_store.external_kv.lock();
+                        let mut external_vv = new_store.external_vv.lock();
+                        kv.set(&block_id.to_bytes(), b.bytes.clone());
+                        external_vv.insert(block.peer, block.counter_range.1);
+                    }
+                    ChangesBlockContent::Changes(changes) => {
+                        let encoded = encode_block(changes, &self.arena);
+                        let mut kv = new_store.external_kv.lock();
+                        let mut external_vv = new_store.external_vv.lock();
+                        kv.set(&block_id.to_bytes(), encoded.into());
+                        external_vv.insert(block.peer, block.counter_range.1);
+                    }
+                }
+                continue;
+            }
+
+            let owned_changes: Option<Vec<Change>>;
+            let slice: &[Change] = match &block.content {
+                ChangesBlockContent::Changes(c) | ChangesBlockContent::Both(c, _) => c.as_slice(),
+                ChangesBlockContent::Bytes(b) => {
+                    owned_changes = Some(b.parse(&self.arena).map_err(|err| {
+                        warn!(?block_id, ?err, "failed to parse change block");
+                        self.parse_failures.record(block_id, &err);
+                        self.corrupt_block_error().unwrap_err()
+                    })?);
+                    owned_changes.as_deref().unwrap()
+                }
+            };
+
+            let start_idx = slice
+                .binary_search_by(|c| {
+                    if c.id.counter > span.counter.start {
+                        Ordering::Greater
+                    } else if c.ctr_end() <= span.counter.start {
+                        Ordering::Less
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .unwrap_or_else(|x| x);
+            for c in &slice[start_idx..] {
+                if c.id.counter >= span.counter.end {
+                    break;
+                }
+                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
+                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
+                if start < end {
+                    Self::push_boundary_slice(
+                        &mut pending,
+                        &mut pending_size,
+                        c.slice(start, end),
+                        &self.arena,
+                        &mut |chunk, arena| flush_to_kv(chunk, arena),
+                    );
+                }
+            }
+        }
+
+        if !pending.is_empty() {
+            flush_to_kv(&pending, &self.arena);
+        }
+        Ok(())
+    }
+
     pub(crate) fn export_blocks_from<W: std::io::Write>(
         &self,
         start_vv: &VersionVector,
@@ -1226,7 +1656,9 @@ impl ChangeStore {
         latest_vv: &VersionVector,
         w: &mut W,
     ) {
-        let new_store = ChangeStore::new_mem(&self.arena, self.merge_interval.clone());
+        if self.corrupt_block_error().is_err() {
+            return;
+        }
         for mut span in latest_vv.sub_iter(start_vv) {
             let counter_lower_bound = shallow_since_vv.get(&span.peer).copied().unwrap_or(0);
             span.counter.start = span.counter.start.max(counter_lower_bound);
@@ -1234,25 +1666,10 @@ impl ChangeStore {
             if span.counter.start >= span.counter.end {
                 continue;
             }
-
-            // PERF: this can be optimized by reusing the current encoded blocks
-            // In the current method, it needs to parse and re-encode the blocks
-            let Ok(changes) = self.try_iter_changes(span) else {
+            if self.stream_span_blocks(span, w).is_err() {
                 return;
-            };
-            for c in changes {
-                // From `span`, not `start_vv`: a caller's counter can be negative.
-                let start = ((span.counter.start - c.id.counter).max(0) as usize).min(c.atom_len());
-                let end = ((span.counter.end - c.id.counter).max(0) as usize).min(c.atom_len());
-
-                assert_ne!(start, end);
-                let ch = c.slice(start, end);
-                new_store.insert_change(ch, false, false);
             }
         }
-
-        let arena = &self.arena;
-        encode_blocks_in_store(new_store, arena, w);
     }
 
     pub(crate) fn fork_changes_up_to(
@@ -1269,37 +1686,29 @@ impl ChangeStore {
             if span.counter.start >= span.counter.end {
                 continue;
             }
-
-            // PERF: this can be optimized by reusing the current encoded blocks
-            // In the current method, it needs to parse and re-encode the blocks
-            for c in self.try_iter_changes(span)? {
-                let start = ((start_vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
-                let end = ((vv.get(&c.id.peer).copied().unwrap_or(0) - c.id.counter).max(0)
-                    as usize)
-                    .min(c.atom_len());
-
-                assert_ne!(start, end);
-                let ch = c.slice(start, end);
-                new_store.insert_change(ch, false, false);
-            }
+            self.copy_span_to_store(span, &new_store)?;
         }
 
         Ok(new_store.encode_all(vv, frontiers))
     }
 }
 
-fn encode_blocks_in_store<W: std::io::Write>(
-    new_store: ChangeStore,
-    arena: &SharedArena,
-    w: &mut W,
-) {
-    let mut inner = new_store.inner.lock();
-    for (_id, block) in inner.mem_parsed_kv.iter_mut() {
-        let bytes = block.to_bytes(arena);
-        leb128::write::unsigned(w, bytes.bytes.len() as u64).unwrap();
-        w.write_all(&bytes.bytes).unwrap();
+fn compact_parsed_blocks_in(inner: &mut ChangeStoreInner) {
+    let mut seen_tail_peers: FxHashSet<PeerID> = FxHashSet::default();
+    let mut to_remove: Vec<ID> = Vec::new();
+    for (id, block) in inner.mem_parsed_kv.iter_mut().rev() {
+        let is_tail = seen_tail_peers.insert(block.peer);
+        if is_tail {
+            if let ChangesBlockContent::Both(_, b) = &block.content {
+                let detached = b.detached_clone();
+                Arc::make_mut(block).content = ChangesBlockContent::Bytes(detached);
+            }
+        } else if block.flushed {
+            to_remove.push(*id);
+        }
+    }
+    for id in to_remove {
+        inner.mem_parsed_kv.remove(&id);
     }
 }
 
@@ -1323,6 +1732,8 @@ mod mut_external_kv {
             kv_store
                 .import_all(bytes)
                 .map_err(|e| LoroError::DecodeError(e.into_boxed_str()))?;
+            let has_vv_key = kv_store.get(VV_KEY).is_some();
+            let has_fr_key = kv_store.get(FRONTIERS_KEY).is_some();
             drop(kv_store);
             *self.root_history_names.lock() = RootHistoryNamesState::Uninitialized;
             let vv_bytes = self.external_kv.lock().get(VV_KEY).unwrap_or_default();
@@ -1349,8 +1760,6 @@ mod mut_external_kv {
                 }
             }
 
-            self.inner.lock().may_have_unparsed_bodies = !vv.is_empty();
-            *self.external_vv.lock() = vv.clone();
             let frontiers_bytes = self
                 .external_kv
                 .lock()
@@ -1358,6 +1767,15 @@ mod mut_external_kv {
                 .unwrap_or_default();
             let frontiers = Frontiers::decode(&frontiers_bytes)
                 .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+            {
+                let mut inner = self.inner.lock();
+                inner.may_have_unparsed_bodies = !vv.is_empty();
+                inner.flushed_meta = Some(Box::new(FlushedMeta {
+                    vv: has_vv_key.then(|| vv.clone()),
+                    frontiers: has_fr_key.then(|| frontiers.clone()),
+                }));
+            }
+            *self.external_vv.lock() = vv.clone();
             let start_frontiers = self
                 .external_kv
                 .lock()
@@ -1370,26 +1788,9 @@ mod mut_external_kv {
                     .map_err(|_| LoroError::DecodeDataCorruptionError)?
             };
 
-            let mut max_lamport = None;
-            let mut max_timestamp = 0;
             for id in frontiers.iter() {
-                let c = self
-                    .get_change(id)
+                self.get_change(id)
                     .ok_or(LoroError::DecodeDataCorruptionError)?;
-                debug_assert_ne!(c.atom_len(), 0);
-                let l = c.lamport_last();
-                if let Some(x) = max_lamport {
-                    if l > x {
-                        max_lamport = Some(l);
-                    }
-                } else {
-                    max_lamport = Some(l);
-                }
-
-                let t = c.timestamp;
-                if t > max_timestamp {
-                    max_timestamp = t;
-                }
             }
 
             Ok(BatchDecodeInfo {
@@ -1440,10 +1841,17 @@ mod mut_external_kv {
                     // TODO: makes some assertions here?
                 }
             }
-            let vv_bytes = vv.encode();
-            let frontiers_bytes = frontiers.encode();
-            store.set(VV_KEY, vv_bytes.into());
-            store.set(FRONTIERS_KEY, frontiers_bytes.into());
+            let meta = inner.flushed_meta.get_or_insert_with(Default::default);
+            if meta.vv.as_ref() != Some(vv) {
+                let vv_bytes = vv.encode();
+                store.set(VV_KEY, vv_bytes.into());
+                meta.vv = Some(vv.clone());
+            }
+            if meta.frontiers.as_ref() != Some(frontiers) {
+                let frontiers_bytes = frontiers.encode();
+                store.set(FRONTIERS_KEY, frontiers_bytes.into());
+                meta.frontiers = Some(frontiers.clone());
+            }
         }
     }
 }
@@ -2507,12 +2915,45 @@ impl ChangesBlockBytes {
         Self {
             header: OnceCell::new(),
             bytes,
+            body_verified: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn detached_clone(&self) -> Self {
+        let bytes = if self.bytes.len() <= 3072 {
+            Bytes::copy_from_slice(&self.bytes)
+        } else {
+            self.bytes.clone()
+        };
+        Self {
+            bytes,
+            header: self.header.clone(),
+            body_verified: self.body_verified.clone(),
         }
     }
 
     fn ensure_header(&self) -> LoroResult<()> {
         self.header
             .get_or_try_init(|| decode_header(&self.bytes).map(Arc::new))?;
+        Ok(())
+    }
+
+    fn ensure_cids(&self) -> LoroResult<&[ContainerID]> {
+        self.ensure_header()?;
+        let header = self.header.get().unwrap();
+        decode_cids_in_header(&self.bytes, header)
+    }
+
+    fn verify_body(&self, a: &SharedArena) -> LoroResult<()> {
+        if self.body_verified.load(AtomicOrdering::Acquire) {
+            return Ok(());
+        }
+        self.ensure_header()?;
+        let ans: Vec<Change> = decode_block(&self.bytes, a, self.header.get().map(|h| h.as_ref()))?;
+        for c in ans.iter() {
+            register_container_and_parent_link(a, c);
+        }
+        self.body_verified.store(true, AtomicOrdering::Release);
         Ok(())
     }
 
@@ -2523,16 +2964,18 @@ impl ChangesBlockBytes {
             // PERF: This can be made faster (low priority)
             register_container_and_parent_link(a, c)
         }
+        self.body_verified.store(true, AtomicOrdering::Release);
 
         Ok(ans)
     }
 
     fn serialize(changes: &[Change], a: &SharedArena) -> Self {
-        let bytes = encode_block(changes, a);
-        // TODO: Perf we can calculate header directly without parsing the bytes
-        let bytes = ChangesBlockBytes::new(Bytes::from(bytes));
-        bytes.ensure_header().unwrap();
-        bytes
+        let (bytes, header) = encode_block_with_header(changes, a);
+        Self {
+            bytes: Bytes::from(bytes),
+            header: OnceCell::with_value(Arc::new(header)),
+            body_verified: Arc::new(AtomicBool::new(true)),
+        }
     }
 
     fn lamport_range(&mut self) -> LoroResult<(Lamport, Lamport)> {
@@ -2559,6 +3002,32 @@ mod test {
     };
 
     use super::*;
+
+    #[test]
+    fn ordinary_export_preserves_warm_parsed_blocks_and_lazy_metadata() {
+        let doc = LoroDoc::new_auto_commit();
+        {
+            let oplog = doc.oplog().lock();
+            assert!(oplog.change_store.inner.lock().flushed_meta.is_none());
+        }
+        doc.get_text("t")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+        let oplog = doc.oplog().lock();
+        let store = &oplog.change_store;
+        let id = oplog.frontiers().iter().next().unwrap();
+        let before = store.get_change(id).unwrap().block;
+        let first = store.encode_all(oplog.vv(), oplog.frontiers());
+        let after = store.get_change(id).unwrap().block;
+        // Flushing may clone a dirty block; exporting it again must leave the
+        // parsed representation in place, rather than detaching the tail.
+        assert!(matches!(after.content, ChangesBlockContent::Both(..)));
+        let second = store.encode_all(oplog.vv(), oplog.frontiers());
+        assert!(Arc::ptr_eq(&after, &store.get_change(id).unwrap().block));
+        assert_eq!(first, second);
+        assert_eq!(before.counter_range, after.counter_range);
+    }
 
     fn test_encode_decode(doc: LoroDoc) {
         doc.commit_then_renew();

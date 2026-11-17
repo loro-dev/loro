@@ -1068,3 +1068,24 @@ impl MovableListHistoryCache {
             )
     }
 }
+
+#[cfg(test)]
+mod reclamation_tests {
+    #[test]
+    fn freeing_checkout_cache_keeps_tree_import_index() {
+        let doc = crate::LoroDoc::new_auto_commit();
+        let oplog = doc.oplog().lock();
+        oplog.with_history_cache(|cache| {
+            cache.ensure_all_caches_exist();
+            assert!(cache.for_checkout.is_some());
+            assert!(cache.for_importing.is_some());
+        });
+        oplog.free_history_cache();
+        oplog.with_history_cache(|cache| {
+            assert!(cache.for_checkout.is_none());
+            assert!(cache.for_importing.is_some());
+            cache.free_all();
+            assert!(cache.for_importing.is_none());
+        });
+    }
+}

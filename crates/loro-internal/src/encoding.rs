@@ -305,6 +305,22 @@ pub(crate) fn decode_oplog_changes(
     }
 }
 
+pub(crate) fn decode_oplog_changes_bytes(
+    oplog: &mut OpLog,
+    parsed: ParsedHeaderAndBodyBytes,
+    values: ImportedValues,
+) -> Result<Vec<Change>, LoroError> {
+    let ParsedHeaderAndBodyBytes { mode, body, .. } = parsed;
+    match mode {
+        EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+            Err(LoroError::ImportUnsupportedEncodingMode)
+        }
+        EncodeMode::FastSnapshot => fast_snapshot::decode_oplog_bytes(oplog, body, values),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body),
+        EncodeMode::Auto => unreachable!(),
+    }
+}
+
 pub(crate) struct ApplyDecodedChangesResult {
     pub status: ImportStatus,
     pub has_deps_before_shallow_root: bool,
@@ -346,42 +362,58 @@ pub(crate) struct ParsedHeaderAndBody<'a> {
     pub body: &'a [u8],
 }
 
+pub(crate) struct ParsedHeaderAndBodyBytes {
+    #[allow(dead_code)]
+    pub checksum: [u8; 16],
+    pub checksum_body: Bytes,
+    pub mode: EncodeMode,
+    pub body: Bytes,
+}
+
 const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
+fn verify_checksum(mode: EncodeMode, checksum: &[u8; 16], checksum_body: &[u8]) -> LoroResult<()> {
+    match mode {
+        EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+            if md5::compute(checksum_body).0 != *checksum {
+                return Err(LoroError::DecodeChecksumMismatchError);
+            }
+        }
+        EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
+            let mut expected_bytes = [0; 4];
+            expected_bytes.copy_from_slice(&checksum[12..16]);
+            let expected = u32::from_le_bytes(expected_bytes);
+            if xxhash_rust::xxh32::xxh32(checksum_body, XXH_SEED) != expected {
+                return Err(LoroError::DecodeChecksumMismatchError);
+            }
+        }
+        EncodeMode::Auto => {
+            return Err(LoroError::DecodeError(
+                "Invalid import mode `Auto` in encoded blob"
+                    .to_string()
+                    .into_boxed_str(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 impl ParsedHeaderAndBody<'_> {
     /// Return if the checksum is correct.
     fn check_checksum(&self) -> LoroResult<()> {
-        match self.mode {
-            EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
-                if md5::compute(self.checksum_body).0 != self.checksum {
-                    return Err(LoroError::DecodeChecksumMismatchError);
-                }
-            }
-            EncodeMode::FastSnapshot | EncodeMode::FastUpdates => {
-                let mut expected_bytes = [0; 4];
-                expected_bytes.copy_from_slice(&self.checksum[12..16]);
-                let expected = u32::from_le_bytes(expected_bytes);
-                if xxhash_rust::xxh32::xxh32(self.checksum_body, XXH_SEED) != expected {
-                    return Err(LoroError::DecodeChecksumMismatchError);
-                }
-            }
-            EncodeMode::Auto => {
-                return Err(LoroError::DecodeError(
-                    "Invalid import mode `Auto` in encoded blob"
-                        .to_string()
-                        .into_boxed_str(),
-                ));
-            }
-        }
+        verify_checksum(self.mode, &self.checksum, self.checksum_body)
+    }
+}
 
-        Ok(())
+impl ParsedHeaderAndBodyBytes {
+    /// Return if the checksum is correct.
+    fn check_checksum(&self) -> LoroResult<()> {
+        verify_checksum(self.mode, &self.checksum, &self.checksum_body)
     }
 }
 
 const MIN_HEADER_SIZE: usize = 22;
-pub(crate) fn parse_header_and_body(
-    bytes: &[u8],
-    check_checksum: bool,
-) -> Result<ParsedHeaderAndBody<'_>, LoroError> {
+fn parse_header_parts(bytes: &[u8]) -> Result<([u8; 16], EncodeMode), LoroError> {
     let reader = &bytes;
     if bytes.len() < MIN_HEADER_SIZE {
         return Err(LoroError::DecodeError("Invalid import data".into()));
@@ -393,8 +425,7 @@ pub(crate) fn parse_header_and_body(
     }
 
     let (checksum, reader) = reader.split_at(16);
-    let checksum_body = reader;
-    let (mode_bytes, reader) = reader.split_at(2);
+    let (mode_bytes, _) = reader.split_at(2);
     let mode: EncodeMode = [mode_bytes[0], mode_bytes[1]].try_into()?;
     if mode == EncodeMode::Auto {
         return Err(LoroError::DecodeError(
@@ -405,12 +436,19 @@ pub(crate) fn parse_header_and_body(
     }
     let mut checksum_arr = [0; 16];
     checksum_arr.copy_from_slice(checksum);
+    Ok((checksum_arr, mode))
+}
 
+pub(crate) fn parse_header_and_body(
+    bytes: &[u8],
+    check_checksum: bool,
+) -> Result<ParsedHeaderAndBody<'_>, LoroError> {
+    let (checksum, mode) = parse_header_parts(bytes)?;
     let ans = ParsedHeaderAndBody {
         mode,
-        checksum_body,
-        checksum: checksum_arr,
-        body: reader,
+        checksum_body: &bytes[20..],
+        checksum,
+        body: &bytes[MIN_HEADER_SIZE..],
     };
 
     if check_checksum {
@@ -419,28 +457,60 @@ pub(crate) fn parse_header_and_body(
     Ok(ans)
 }
 
-pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Result<Vec<u8>, LoroEncodeError> {
-    let snapshot = fast_snapshot::encode_snapshot_inner(doc)?;
+pub(crate) fn parse_header_and_body_bytes(
+    bytes: Bytes,
+    check_checksum: bool,
+) -> Result<ParsedHeaderAndBodyBytes, LoroError> {
+    let (checksum, mode) = parse_header_parts(&bytes)?;
+    let checksum_body = bytes.slice(20..);
+    let body = bytes.slice(MIN_HEADER_SIZE..);
+    let ans = ParsedHeaderAndBodyBytes {
+        mode,
+        checksum_body,
+        checksum,
+        body,
+    };
+
+    if check_checksum {
+        ans.check_checksum()?;
+    }
+    Ok(ans)
+}
+
+fn encode_snapshot_envelope(
+    snapshot: &fast_snapshot::Snapshot,
+) -> Result<Vec<u8>, LoroEncodeError> {
     let expected_len = snapshot
         .encoded_len()
         .and_then(|len| MIN_HEADER_SIZE.checked_add(len))
         .ok_or_else(|| LoroEncodeError::internal("snapshot length overflow"))?;
     let encoded = encode_with_capacity(EncodeMode::FastSnapshot, expected_len, &mut |ans| {
-        fast_snapshot::_encode_snapshot(&snapshot, ans);
+        fast_snapshot::_encode_snapshot(snapshot, ans);
         Ok(())
     })?;
     debug_assert_eq!(encoded.len(), expected_len);
     Ok(encoded)
 }
 
+pub(crate) fn export_fast_snapshot(doc: &LoroDoc) -> Result<Vec<u8>, LoroEncodeError> {
+    let snapshot = fast_snapshot::encode_snapshot_inner(doc)?;
+    encode_snapshot_envelope(&snapshot)
+}
+
+pub(crate) fn export_snapshot_at_inner(
+    doc: &LoroDoc,
+    frontiers: &Frontiers,
+) -> Result<fast_snapshot::Snapshot, LoroEncodeError> {
+    check_target_version_reachable(doc, frontiers)?;
+    shallow_snapshot::encode_snapshot_at_inner(doc, frontiers)
+}
+
 pub(crate) fn export_snapshot_at(
     doc: &LoroDoc,
     frontiers: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
-    check_target_version_reachable(doc, frontiers)?;
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        shallow_snapshot::encode_snapshot_at(doc, frontiers, ans)
-    })
+    let snapshot = export_snapshot_at_inner(doc, frontiers)?;
+    encode_snapshot_envelope(&snapshot)
 }
 
 pub(crate) fn export_fast_updates(doc: &LoroDoc, vv: &VersionVector) -> Vec<u8> {
@@ -484,13 +554,18 @@ pub(crate) fn export_shallow_snapshot(
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        shallow_snapshot::export_shallow_snapshot(doc, f, ans)?;
-        Ok(())
-    })
+    let (snapshot, _) = shallow_snapshot::export_shallow_snapshot_inner(
+        doc,
+        f,
+        shallow_snapshot::CachedShallowRoot::Prune,
+    )?;
+    encode_snapshot_envelope(&snapshot)
 }
 
-fn check_target_version_reachable(doc: &LoroDoc, f: &Frontiers) -> Result<(), LoroEncodeError> {
+pub(crate) fn check_target_version_reachable(
+    doc: &LoroDoc,
+    f: &Frontiers,
+) -> Result<(), LoroEncodeError> {
     let oplog = doc.oplog.lock();
     if !oplog.dag.can_export_shallow_snapshot_on(f) {
         return Err(LoroEncodeError::FrontiersNotFound(format!("{f:?}")));
@@ -504,10 +579,8 @@ pub(crate) fn export_state_only_snapshot(
     f: &Frontiers,
 ) -> Result<Vec<u8>, LoroEncodeError> {
     check_target_version_reachable(doc, f)?;
-    encode_with(EncodeMode::FastSnapshot, &mut |ans| {
-        shallow_snapshot::export_state_only_snapshot(doc, f, ans)?;
-        Ok(())
-    })
+    let (snapshot, _) = shallow_snapshot::export_state_only_snapshot_inner(doc, f)?;
+    encode_snapshot_envelope(&snapshot)
 }
 
 pub(crate) fn encode_with(
@@ -644,6 +717,22 @@ impl LoroDoc {
             }
             EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta(parsed),
             EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta(parsed),
+        }
+    }
+
+    /// Decodes the metadata for an imported blob from owned ref-counted bytes without extra copies.
+    pub fn decode_import_blob_meta_bytes(
+        blob: Bytes,
+        check_checksum: bool,
+    ) -> LoroResult<ImportBlobMetadata> {
+        let parsed = parse_header_and_body_bytes(blob, check_checksum)?;
+        match parsed.mode {
+            EncodeMode::Auto => unreachable!(),
+            EncodeMode::OutdatedRle | EncodeMode::OutdatedSnapshot => {
+                Err(LoroError::ImportUnsupportedEncodingMode)
+            }
+            EncodeMode::FastSnapshot => fast_snapshot::decode_snapshot_blob_meta_bytes(parsed),
+            EncodeMode::FastUpdates => fast_snapshot::decode_updates_blob_meta_bytes(parsed),
         }
     }
 }

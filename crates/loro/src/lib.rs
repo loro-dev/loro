@@ -254,6 +254,16 @@ impl LoroDoc {
         InnerLoroDoc::decode_import_blob_meta(bytes, check_checksum)
     }
 
+    /// Like [`Self::decode_import_blob_meta`], taking owned ref-counted [`bytes::Bytes`]
+    /// to avoid copying the payload buffer while decoding metadata.
+    #[inline]
+    pub fn decode_import_blob_meta_bytes(
+        bytes: bytes::Bytes,
+        check_checksum: bool,
+    ) -> LoroResult<ImportBlobMetadata> {
+        InnerLoroDoc::decode_import_blob_meta_bytes(bytes, check_checksum)
+    }
+
     /// Set whether to record the timestamp of each change. Default is `false`.
     ///
     /// If enabled, the Unix timestamp will be recorded for each change automatically.
@@ -541,6 +551,13 @@ impl LoroDoc {
         self.doc.import_batch(bytes)
     }
 
+    /// Like [`Self::import_batch`], taking owned ref-counted [`bytes::Bytes`]
+    /// buffers and dropping each buffer right after its blob finishes importing.
+    #[inline]
+    pub fn import_batch_bytes(&self, bytes: Vec<bytes::Bytes>) -> LoroResult<ImportStatus> {
+        self.doc.import_batch_bytes(bytes)
+    }
+
     /// Like [`import_batch`], with the same history mode as [`import_with_history_mode`].
     ///
     /// The existing [`import_batch`] signature stays exact.
@@ -552,6 +569,17 @@ impl LoroDoc {
     ) -> LoroResult<ImportStatus> {
         self.doc
             .import_batch_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
+    }
+
+    /// Like [`Self::import_batch_with_history_mode`], taking owned [`bytes::Bytes`] buffers.
+    #[inline]
+    pub fn import_batch_with_history_mode_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+        mode: ImportHistoryMode,
+    ) -> LoroResult<ImportStatus> {
+        self.doc
+            .import_batch_with_history_mode_bytes(bytes, mode == ImportHistoryMode::JsonLossy)
     }
 
     /// Import a batch of updates/snapshot and report what happened to each blob.
@@ -624,6 +652,16 @@ impl LoroDoc {
         self.doc.import_batch_detailed(bytes)
     }
 
+    /// Like [`Self::import_batch_detailed`], taking owned [`bytes::Bytes`]
+    /// buffers and dropping each buffer right after its blob finishes importing.
+    #[inline]
+    pub fn import_batch_detailed_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.doc.import_batch_detailed_bytes(bytes)
+    }
+
     /// Like [`import_batch_detailed`](Self::import_batch_detailed), with the same history
     /// mode as [`import_with_history_mode`](Self::import_with_history_mode).
     #[inline]
@@ -634,6 +672,20 @@ impl LoroDoc {
     ) -> LoroResult<ImportBatchDetail> {
         self.doc
             .import_batch_detailed_with_history_mode(bytes, mode == ImportHistoryMode::JsonLossy)
+    }
+
+    /// Like [`Self::import_batch_detailed_with_history_mode`], taking owned
+    /// [`bytes::Bytes`] buffers.
+    #[inline]
+    pub fn import_batch_detailed_with_history_mode_bytes(
+        &self,
+        bytes: Vec<bytes::Bytes>,
+        mode: ImportHistoryMode,
+    ) -> LoroResult<ImportBatchDetail> {
+        self.doc.import_batch_detailed_with_history_mode_bytes(
+            bytes,
+            mode == ImportHistoryMode::JsonLossy,
+        )
     }
 
     /// Get a [Container] by container id.
@@ -961,6 +1013,13 @@ impl LoroDoc {
         self.doc.import_with(bytes, "".into())
     }
 
+    /// Like [`Self::import`], taking owned ref-counted [`bytes::Bytes`] to avoid
+    /// copying the input buffer during decoding.
+    #[inline]
+    pub fn import_bytes(&self, bytes: bytes::Bytes) -> Result<ImportStatus, LoroError> {
+        self.doc.import_with_bytes(bytes, "".into())
+    }
+
     /// Import data exported by [`LoroDoc::export`] and mark it with a custom origin.
     ///
     /// The `origin` string will be attached to the ensuing change event, which is handy
@@ -972,6 +1031,16 @@ impl LoroDoc {
     #[inline]
     pub fn import_with(&self, bytes: &[u8], origin: &str) -> Result<ImportStatus, LoroError> {
         self.doc.import_with(bytes, origin.into())
+    }
+
+    /// Like [`Self::import_with`], taking owned ref-counted [`bytes::Bytes`].
+    #[inline]
+    pub fn import_with_bytes(
+        &self,
+        bytes: bytes::Bytes,
+        origin: &str,
+    ) -> Result<ImportStatus, LoroError> {
+        self.doc.import_with_bytes(bytes, origin.into())
     }
 
     /// Import binary bytes, choosing how overlapping op ids are compared.
@@ -987,6 +1056,21 @@ impl LoroDoc {
         mode: ImportHistoryMode,
     ) -> Result<ImportStatus, LoroError> {
         self.doc.import_with_history_mode(
+            bytes,
+            origin.into(),
+            mode == ImportHistoryMode::JsonLossy,
+        )
+    }
+
+    /// Like [`Self::import_with_history_mode`], taking owned ref-counted [`bytes::Bytes`].
+    #[inline]
+    pub fn import_with_history_mode_bytes(
+        &self,
+        bytes: bytes::Bytes,
+        origin: &str,
+        mode: ImportHistoryMode,
+    ) -> Result<ImportStatus, LoroError> {
+        self.doc.import_with_history_mode_bytes(
             bytes,
             origin.into(),
             mode == ImportHistoryMode::JsonLossy,

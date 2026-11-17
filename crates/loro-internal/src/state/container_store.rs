@@ -636,15 +636,18 @@ mod test {
             assert!(!state.store.store.has_materialized_map_value_for_test(idx));
 
             // If an ordinary value read already materialized it, keep it so.
-            assert_eq!(state.store.get_value(idx).unwrap().as_map().unwrap().len(), 2);
+            assert_eq!(
+                state.store.get_value(idx).unwrap().as_map().unwrap().len(),
+                2
+            );
             assert!(state.store.store.has_materialized_map_value_for_test(idx));
             assert!(!state.root_container_is_empty(idx));
             assert!(state.store.store.has_materialized_map_value_for_test(idx));
 
-            let text_idx = state.store.arena.register_container(&ContainerID::new_root(
-                "text",
-                ContainerType::Text,
-            ));
+            let text_idx = state
+                .store
+                .arena
+                .register_container(&ContainerID::new_root("text", ContainerType::Text));
             assert!(!state.root_container_is_empty(text_idx));
         }
     }
@@ -674,7 +677,10 @@ mod test {
         let text_idx = state.store.arena.register_container(&text_id);
         let count = state.store.store.cached_value_count_for_test();
         assert!(state.store.store.has_cached_value_for_test(map_idx));
-        assert!(!state.store.store.has_materialized_map_value_for_test(map_idx));
+        assert!(!state
+            .store
+            .store
+            .has_materialized_map_value_for_test(map_idx));
         for _ in 0..32 {
             assert!(state.root_container_is_empty(map_idx));
             assert!(!state.root_container_is_empty(text_idx));
@@ -691,7 +697,10 @@ mod test {
             assert!(!roots.contains(&map_idx));
         }
         assert_eq!(state.store.store.cached_value_count_for_test(), count);
-        assert!(!state.store.store.has_materialized_map_value_for_test(map_idx));
+        assert!(!state
+            .store
+            .store
+            .has_materialized_map_value_for_test(map_idx));
     }
 
     #[test]
@@ -837,7 +846,11 @@ mod test {
         // assertions, because export/deep reads can change state residency.
         let restored = LoroDoc::new();
         restored
-            .import(&imported.export(crate::encoding::ExportMode::Snapshot).unwrap())
+            .import(
+                &imported
+                    .export(crate::encoding::ExportMode::Snapshot)
+                    .unwrap(),
+            )
             .unwrap();
         assert_eq!(restored.get_map("live").get("keep"), Some(17.into()));
         assert_eq!(restored.get_map("shared").get("gone"), None);

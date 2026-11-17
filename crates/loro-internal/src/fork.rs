@@ -28,10 +28,8 @@
 //! version checkout, the `fork_at` function minimizes overhead and efficiently creates new
 //! document instances representing past versions.
 //!
-use std::borrow::Cow;
-
 use crate::{version::Frontiers, LoroDoc};
-use loro_common::{LoroError, LoroResult};
+use loro_common::{LoroEncodeError, LoroError, LoroResult};
 
 impl LoroDoc {
     /// Creates a new LoroDoc at a specified version (Frontiers)
@@ -45,20 +43,36 @@ impl LoroDoc {
         frontiers: &Frontiers,
         reject_partial_history: bool,
     ) -> LoroResult<Self> {
-        let bytes = self
-            .export_inner(
-                crate::loro::ExportMode::SnapshotAt {
-                    version: Cow::Borrowed(frontiers),
-                },
-                reject_partial_history,
-            )
+        let snapshot = self
+            .with_barrier(|| {
+                if reject_partial_history {
+                    self.oplog
+                        .lock()
+                        .check_history_parsable()
+                        .map_err(LoroEncodeError::from)?;
+                }
+                let snapshot = crate::encoding::export_snapshot_at_inner(self, frontiers)?;
+                if reject_partial_history {
+                    self.oplog
+                        .lock()
+                        .check_history_parsable()
+                        .map_err(LoroEncodeError::from)?;
+                }
+                Ok::<_, LoroEncodeError>(snapshot)
+            })
             .map_err(LoroError::from)?;
         let doc = LoroDoc::new();
         doc.set_config(&self.config);
+        doc.with_barrier(|| {
+            crate::encoding::fast_snapshot::decode_snapshot_inner(
+                snapshot,
+                &doc,
+                Default::default(),
+            )
+        })?;
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
-        doc.import(&bytes)?;
         Ok(doc)
     }
 }

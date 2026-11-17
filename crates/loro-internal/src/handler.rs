@@ -2157,117 +2157,108 @@ impl TextHandler {
             return Ok(Vec::new());
         }
 
-        // Fast path: plain-text insert into a style-free document (non-wasm).
-        // With no style anchors, entity_index == unicode pos and the event index
-        // equals the unicode index, so bounds + no-styles are checked in a single
-        // state access and the entire read phase (cursor location + two
-        // visit_previous_caches walks + styles lookup) is skipped; apply_local_op
-        // then locates the cursor exactly once.
-        #[cfg(not(feature = "wasm"))]
-        if attr.is_none() && pos_type == PosType::Unicode {
-            let inner = self.inner.try_attached_state()?;
-            let fast = inner.with_state(|state| {
-                let rt = state.as_richtext_state_mut().unwrap();
-                if rt.has_styles() {
-                    return Ok(false);
-                }
-                let len = rt.len_unicode();
-                if pos > len {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len,
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-                Ok(true)
-            })?;
-            if fast {
-                let unicode_len = s.chars().count();
-                txn.apply_local_op(
-                    inner.container_idx,
-                    crate::op::RawOpContent::List(
-                        crate::container::list::list_op::ListOp::Insert {
-                            slice: ListSlice::RawStr {
-                                str: Cow::Borrowed(s),
-                                unicode_len,
-                            },
-                            // entity_index == unicode pos (no style anchors)
-                            pos,
-                        },
-                    ),
-                    EventHint::InsertText {
-                        // event index == unicode index (non-wasm)
-                        pos: pos as u32,
-                        styles: StyleMeta::empty(),
-                        unicode_len: unicode_len as u32,
-                        event_len: unicode_len as u32,
-                    },
-                    &inner.doc,
-                )?;
-                return Ok(Vec::new());
-            }
-        }
-
-        match pos_type {
-            PosType::Event => {
-                if pos > self.len_event() {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len: self.len_event(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-            PosType::Bytes => {
-                if pos > self.len_utf8() {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len: self.len_utf8(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-            PosType::Unicode => {
-                if pos > self.len_unicode() {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len: self.len_unicode(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-            PosType::Entity => {}
-            PosType::Utf16 => {
-                if pos > self.len_utf16() {
-                    return Err(LoroError::OutOfBound {
-                        pos,
-                        len: self.len_utf16(),
-                        info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-                    });
-                }
-            }
-        }
-        self.validate_text_boundary(pos, pos_type)?;
-
         let inner = self.inner.try_attached_state()?;
         let (entity_index, event_index, styles) = inner.with_state(|state| {
-            let richtext_state = state.as_richtext_state_mut().unwrap();
-            let ret = richtext_state.get_entity_index_for_text_insert(pos, pos_type);
+            let rt = state.as_richtext_state_mut().unwrap();
+
+            // Bounds check
+            match pos_type {
+                PosType::Event => {
+                    let len = rt.len_event();
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                }
+                PosType::Bytes => {
+                    let len = rt.len_utf8();
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                }
+                PosType::Unicode => {
+                    let len = rt.len_unicode();
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                }
+                PosType::Entity => {}
+                PosType::Utf16 => {
+                    let len = rt.len_utf16();
+                    if pos > len {
+                        return Err(LoroError::OutOfBound {
+                            pos,
+                            len,
+                            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+                        });
+                    }
+                }
+            }
+
+            // Boundary validation inside the same lock
+            let boundary_err = match pos_type {
+                PosType::Bytes => Some(LoroError::UTF8InUnicodeCodePoint { pos }),
+                PosType::Utf16 => Some(LoroError::UTF16InUnicodeCodePoint { pos }),
+                PosType::Event if cfg!(feature = "wasm") => {
+                    Some(LoroError::UTF16InUnicodeCodePoint { pos })
+                }
+                _ => None,
+            };
+            if let Some(err) = boundary_err {
+                let len = rt.len(pos_type);
+                if pos <= len && len != rt.len_unicode() {
+                    let event_idx = if pos_type == PosType::Event {
+                        pos
+                    } else {
+                        rt.index_to_event_index(pos, pos_type)
+                    };
+                    let unicode_pos = rt.event_index_to_unicode_index(event_idx);
+                    let roundtrip_event = rt.index_to_event_index(unicode_pos, PosType::Unicode);
+                    let roundtrip_pos = if pos_type == PosType::Event {
+                        Some(roundtrip_event)
+                    } else if roundtrip_event <= rt.len_event() {
+                        Some(rt.event_index_to_index(roundtrip_event, pos_type))
+                    } else {
+                        None
+                    };
+                    if roundtrip_pos != Some(pos) {
+                        return Err(err);
+                    }
+                }
+            }
+
+            // Fast path: plain-text insert into a style-free document.
+            if attr.is_none() && !rt.has_styles() {
+                if cfg!(not(feature = "wasm"))
+                    && matches!(pos_type, PosType::Unicode | PosType::Event)
+                {
+                    return Ok((pos, pos, StyleMeta::empty()));
+                }
+                if cfg!(feature = "wasm") && matches!(pos_type, PosType::Utf16 | PosType::Event) {
+                    let (entity_index, _) = rt
+                        .get_entity_index_for_text_insert(pos, pos_type)
+                        .map_err(|_| LoroError::UTF16InUnicodeCodePoint { pos })?;
+                    return Ok((entity_index, pos, StyleMeta::empty()));
+                }
+            }
+
+            let ret = rt.get_entity_index_for_text_insert(pos, pos_type);
             let (entity_index, cursor) = match ret {
                 Err(_) => match pos_type {
-                    PosType::Bytes => {
-                        return (
-                            Err(LoroError::UTF8InUnicodeCodePoint { pos }),
-                            0,
-                            StyleMeta::empty(),
-                        );
-                    }
+                    PosType::Bytes => return Err(LoroError::UTF8InUnicodeCodePoint { pos }),
                     PosType::Utf16 | PosType::Event => {
-                        return (
-                            Err(LoroError::UTF16InUnicodeCodePoint { pos }),
-                            0,
-                            StyleMeta::empty(),
-                        );
+                        return Err(LoroError::UTF16InUnicodeCodePoint { pos });
                     }
                     _ => unreachable!(),
                 },
@@ -2276,29 +2267,24 @@ impl TextHandler {
             let event_index = if let Some(cursor) = cursor {
                 if pos_type == PosType::Event {
                     debug_assert_eq!(
-                        richtext_state.get_event_index_by_cursor(cursor),
+                        rt.get_event_index_by_cursor(cursor),
                         pos,
                         "pos={} cursor={:?} state={:#?}",
                         pos,
                         cursor,
-                        &richtext_state
+                        &rt
                     );
                     pos
                 } else {
-                    richtext_state.get_event_index_by_cursor(cursor)
+                    rt.get_event_index_by_cursor(cursor)
                 }
             } else {
                 assert_eq!(entity_index, 0);
                 0
             };
-            let styles = richtext_state.get_styles_at_entity_index(entity_index);
-            (Ok(entity_index), event_index, styles)
-        });
-
-        let entity_index = match entity_index {
-            Err(x) => return Err(x),
-            _ => entity_index.unwrap(),
-        };
+            let styles = rt.get_styles_at_entity_index(entity_index);
+            Ok((entity_index, event_index, styles))
+        })?;
 
         let mut override_styles = Vec::new();
         if let Some(attr) = attr {

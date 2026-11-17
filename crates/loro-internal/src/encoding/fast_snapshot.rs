@@ -30,7 +30,7 @@ use crate::{
 use bytes::{Buf, Bytes};
 use loro_common::{HasCounterSpan, IdSpan, InternalString, LoroEncodeError, LoroError, LoroResult};
 
-use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody};
+use super::{EncodedBlobMode, ImportBlobMetadata, ParsedHeaderAndBody, ParsedHeaderAndBodyBytes};
 pub(crate) const EMPTY_MARK: &[u8] = b"E";
 pub(crate) struct Snapshot {
     pub oplog_bytes: Bytes,
@@ -116,13 +116,14 @@ pub(super) fn _decode_snapshot_bytes(bytes: Bytes) -> LoroResult<Snapshot> {
     })
 }
 
-pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], bool)> {
+fn parse_snapshot_meta_partial_range(bytes: &[u8]) -> LoroResult<(usize, usize, bool)> {
     let mut r = bytes;
     let oplog_bytes_len = read_u32_le_slice(&mut r)? as usize;
     if r.len() < oplog_bytes_len {
         return Err(LoroError::DecodeDataCorruptionError);
     }
-    let oplog_bytes = &r[..oplog_bytes_len];
+    let oplog_start = 4;
+    let oplog_end = oplog_start + oplog_bytes_len;
     r = &r[oplog_bytes_len..];
     let state_bytes_len = read_u32_le_slice(&mut r)? as usize;
     if r.len() < state_bytes_len {
@@ -138,7 +139,17 @@ pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], 
         return Err(LoroError::DecodeDataCorruptionError);
     }
 
-    Ok((oplog_bytes, shallow_bytes_len > 0))
+    Ok((oplog_start, oplog_end, shallow_bytes_len > 0))
+}
+
+pub(super) fn _decode_snapshot_meta_partial(bytes: &[u8]) -> LoroResult<(&[u8], bool)> {
+    let (start, end, is_shallow) = parse_snapshot_meta_partial_range(bytes)?;
+    Ok((&bytes[start..end], is_shallow))
+}
+
+pub(super) fn _decode_snapshot_meta_partial_bytes(bytes: Bytes) -> LoroResult<(Bytes, bool)> {
+    let (start, end, is_shallow) = parse_snapshot_meta_partial_range(&bytes)?;
+    Ok((bytes.slice(start..end), is_shallow))
 }
 
 fn read_u32_le_slice(r: &mut &[u8]) -> LoroResult<u32> {
@@ -355,11 +366,7 @@ fn encode_snapshot_inner_with(
     snapshot
 }
 
-pub(crate) fn decode_oplog(
-    oplog: &mut OpLog,
-    bytes: &[u8],
-    values: crate::oplog::ImportedValues,
-) -> Result<Vec<Change>, LoroError> {
+fn parse_oplog_len_range(bytes: &[u8]) -> Result<usize, LoroError> {
     let oplog_len = bytes
         .get(0..4)
         .ok_or_else(|| LoroError::DecodeError("decode_oplog: missing length prefix".into()))?;
@@ -368,11 +375,34 @@ pub(crate) fn decode_oplog(
             .try_into()
             .expect("slice length checked to be exactly 4"),
     ) as usize;
-    let oplog_bytes = bytes
-        .get(4..4 + oplog_len)
+    let end = 4usize
+        .checked_add(oplog_len)
         .ok_or_else(|| LoroError::DecodeError("decode_oplog: invalid oplog length".into()))?;
-    let mut changes =
-        ChangeStore::decode_snapshot_for_updates(oplog_bytes.to_vec().into(), oplog, values)?;
+    if bytes.len() < end {
+        return Err(LoroError::DecodeError(
+            "decode_oplog: invalid oplog length".into(),
+        ));
+    }
+    Ok(end)
+}
+
+pub(crate) fn decode_oplog(
+    oplog: &mut OpLog,
+    bytes: &[u8],
+    values: crate::oplog::ImportedValues,
+) -> Result<Vec<Change>, LoroError> {
+    let end = parse_oplog_len_range(bytes)?;
+    decode_oplog_bytes(oplog, bytes[..end].to_vec().into(), values)
+}
+
+pub(crate) fn decode_oplog_bytes(
+    oplog: &mut OpLog,
+    bytes: Bytes,
+    values: crate::oplog::ImportedValues,
+) -> Result<Vec<Change>, LoroError> {
+    let end = parse_oplog_len_range(&bytes)?;
+    let oplog_bytes = bytes.slice(4..end);
+    let mut changes = ChangeStore::decode_snapshot_for_updates(oplog_bytes, oplog, values)?;
     changes.sort_unstable_by_key(|x| x.lamport);
     Ok(changes)
 }
@@ -569,10 +599,10 @@ fn new_metadata_oplog() -> OpLog {
     oplog
 }
 
-pub(crate) fn decode_snapshot_blob_meta(
-    parsed: ParsedHeaderAndBody,
+fn decode_snapshot_blob_meta_from_parts(
+    oplog_bytes: Bytes,
+    is_shallow: bool,
 ) -> LoroResult<ImportBlobMetadata> {
-    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial(parsed.body)?;
     let mode = if is_shallow {
         EncodedBlobMode::ShallowSnapshot
     } else {
@@ -580,7 +610,7 @@ pub(crate) fn decode_snapshot_blob_meta(
     };
 
     let mut oplog = new_metadata_oplog();
-    oplog.decode_change_store(oplog_bytes.to_vec().into())?;
+    oplog.decode_change_store(oplog_bytes)?;
     let timestamp = oplog.get_greatest_timestamp(oplog.dag.frontiers());
     let f = oplog.dag.shallow_since_frontiers().clone();
     let start_timestamp = oplog.get_timestamp_of_version(&f);
@@ -597,11 +627,35 @@ pub(crate) fn decode_snapshot_blob_meta(
     })
 }
 
+pub(crate) fn decode_snapshot_blob_meta(
+    parsed: ParsedHeaderAndBody,
+) -> LoroResult<ImportBlobMetadata> {
+    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial(parsed.body)?;
+    decode_snapshot_blob_meta_from_parts(oplog_bytes.to_vec().into(), is_shallow)
+}
+
+pub(crate) fn decode_snapshot_blob_meta_bytes(
+    parsed: ParsedHeaderAndBodyBytes,
+) -> LoroResult<ImportBlobMetadata> {
+    let (oplog_bytes, is_shallow) = _decode_snapshot_meta_partial_bytes(parsed.body)?;
+    decode_snapshot_blob_meta_from_parts(oplog_bytes, is_shallow)
+}
+
 pub(crate) fn decode_updates_blob_meta(
     parsed: ParsedHeaderAndBody,
 ) -> LoroResult<ImportBlobMetadata> {
+    decode_updates_blob_meta_from_body(parsed.body.to_vec().into())
+}
+
+pub(crate) fn decode_updates_blob_meta_bytes(
+    parsed: ParsedHeaderAndBodyBytes,
+) -> LoroResult<ImportBlobMetadata> {
+    decode_updates_blob_meta_from_body(parsed.body)
+}
+
+fn decode_updates_blob_meta_from_body(body: Bytes) -> LoroResult<ImportBlobMetadata> {
     let mut oplog = new_metadata_oplog();
-    let changes = decode_updates(&mut oplog, parsed.body.to_vec().into())?;
+    let changes = decode_updates(&mut oplog, body)?;
     let mut start_vv = VersionVector::new();
     let mut end_vv = VersionVector::new();
     for c in changes.iter() {

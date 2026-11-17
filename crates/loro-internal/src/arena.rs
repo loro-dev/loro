@@ -334,6 +334,7 @@ impl ArenaGuards<'_> {
         self.containers.register_container(id)
     }
 
+    #[allow(dead_code)]
     pub fn set_parent(&mut self, child: ContainerIdx, parent: Option<ContainerIdx>) {
         self.containers.set_parent(child, parent);
     }

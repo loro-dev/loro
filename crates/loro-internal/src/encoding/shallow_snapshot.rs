@@ -277,6 +277,7 @@ fn forward_replay_gate(ops_num: usize, pre_root_ops: usize, pre_root_bytes: usiz
         && pre_root_bytes <= MAX_PRE_ROOT_BYTES_FOR_FORWARD_REPLAY
 }
 
+#[allow(unused)]
 #[tracing::instrument(skip_all)]
 pub(crate) fn export_shallow_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
@@ -468,8 +469,9 @@ pub(crate) fn export_shallow_snapshot_inner(
         }
     }
     drop(oplog);
+    let mut pre_root_updates = pre_root_updates;
     let result = (|| -> Result<Snapshot, LoroEncodeError> {
-        if let Some(pre_root_updates) = pre_root_updates {
+        if let Some(pre_root_updates) = pre_root_updates.take() {
             // The live state is already at the latest version: build the root
             // state by replaying pre-root history forward into a temporary doc
             // instead of checking the live doc out backwards. A reverse
@@ -480,40 +482,43 @@ pub(crate) fn export_shallow_snapshot_inner(
             // magnitude more than forward replay when the doc has many small
             // containers. Forward replay also leaves the live doc untouched,
             // so no state restore is needed.
-            let root_doc = LoroDoc::new();
-            root_doc
-                .import(&pre_root_updates)
-                .map_err(LoroEncodeError::from)?;
-            let mut root_state = root_doc.app_state().lock();
-            // The replay doc does not share the live doc's deleted-root set;
-            // without it a root container deleted before the root would be
-            // re-encoded as an empty entry instead of being dropped at flush.
-            // (`InnerStore::flush` only drops the entry when the value is
-            // still empty, so roots deleted *after* the root keep their
-            // at-root content even with the set mirrored.)
-            *root_state.config.deleted_root_containers.lock() =
-                doc.config().deleted_root_containers.lock().clone();
-            // Root containers exist on the live doc once they are accessed,
-            // even when they have no ops; the replay doc cannot know about
-            // those. Mirror the live store's root entries so the exported root
-            // state ships the same empty root containers the checkout path
-            // would. `existing_retention_roots` is a root-only key scan — a
-            // full `load_all` here would defeat lazily imported docs.
-            {
-                let mut live_state = doc.app_state().lock();
-                for idx in live_state.existing_retention_roots() {
-                    let cid = live_state.arena.get_container_id(idx).unwrap();
-                    root_state.store.ensure_container(&cid);
+            let (shallow_root_state_kv, mut alive_c_bytes) = {
+                let root_doc = LoroDoc::new();
+                root_doc
+                    .import(&pre_root_updates)
+                    .map_err(LoroEncodeError::from)?;
+                drop(pre_root_updates);
+                let mut root_state = root_doc.app_state().lock();
+                // The replay doc does not share the live doc's deleted-root set;
+                // without it a root container deleted before the root would be
+                // re-encoded as an empty entry instead of being dropped at flush.
+                // (`InnerStore::flush` only drops the entry when the value is
+                // still empty, so roots deleted *after* the root keep their
+                // at-root content even with the set mirrored.)
+                *root_state.config.deleted_root_containers.lock() =
+                    doc.config().deleted_root_containers.lock().clone();
+                // Root containers exist on the live doc once they are accessed,
+                // even when they have no ops; the replay doc cannot know about
+                // those. Mirror the live store's root entries so the exported root
+                // state ships the same empty root containers the checkout path
+                // would. `existing_retention_roots` is a root-only key scan — a
+                // full `load_all` here would defeat lazily imported docs.
+                {
+                    let mut live_state = doc.app_state().lock();
+                    for idx in live_state.existing_retention_roots() {
+                        let cid = live_state.arena.get_container_id(idx).unwrap();
+                        root_state.store.ensure_container(&cid);
+                    }
                 }
-            }
-            let alive_containers = root_state.ensure_all_alive_containers()?;
-            if has_unknown_container(alive_containers.iter().copied()) {
-                return Err(LoroEncodeError::UnknownContainer);
-            }
-            let mut alive_c_bytes = alive_indices_to_bytes(&root_state, &alive_containers);
-            root_state.store.flush();
-            let shallow_root_state_kv = root_state.store.get_kv_clone();
-            drop(root_state);
+                let alive_containers = root_state.ensure_all_alive_containers()?;
+                if has_unknown_container(alive_containers.iter().copied()) {
+                    return Err(LoroEncodeError::UnknownContainer);
+                }
+                let alive_c_bytes = alive_indices_to_bytes(&root_state, &alive_containers);
+                root_state.store.flush();
+                let shallow_root_state_kv = root_state.store.get_kv_clone();
+                (shallow_root_state_kv, alive_c_bytes)
+            };
 
             let latest_state_kv = {
                 let mut state = doc.app_state().lock();
@@ -811,11 +816,21 @@ fn redact_dead_text_styles(
     Ok(changed.then_some(redacted))
 }
 
+#[allow(unused)]
 pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     doc: &LoroDoc,
     target_frontiers: &Frontiers,
     w: &mut W,
 ) -> Result<Frontiers, LoroEncodeError> {
+    let (snapshot, start_from) = export_state_only_snapshot_inner(doc, target_frontiers)?;
+    _encode_snapshot(&snapshot, w);
+    Ok(start_from)
+}
+
+pub(crate) fn export_state_only_snapshot_inner(
+    doc: &LoroDoc,
+    target_frontiers: &Frontiers,
+) -> Result<(Snapshot, Frontiers), LoroEncodeError> {
     let oplog = doc.oplog().lock();
     let start_from = calc_shallow_doc_start(&oplog, target_frontiers, target_frontiers)?;
     let root_vv = frontiers_to_vv_for_export(&oplog, &start_from, "export_state_only_snapshot")?;
@@ -837,7 +852,7 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
     let state_frontiers = doc.state_frontiers();
     let is_attached = !doc.is_detached();
     drop(oplog);
-    let result = (|| -> Result<(), LoroEncodeError> {
+    let result = (|| -> Result<Snapshot, LoroEncodeError> {
         doc._checkout_without_emitting(&start_from, false, false)
             .map_err(LoroEncodeError::from)?;
         let mut state = doc.app_state().lock();
@@ -866,19 +881,17 @@ pub(crate) fn export_state_only_snapshot<W: std::io::Write>(
         redact_export_states(&shallow_state_kv, Some(&target_state_kv))?;
         shallow_state_kv.insert(FRONTIERS_KEY, start_from.encode().into());
         let shallow_state_bytes = shallow_state_kv.export();
-        let snapshot = Snapshot {
+        Ok(Snapshot {
             oplog_bytes,
             state_bytes: Some(target_state_kv.export()),
             shallow_root_state_bytes: shallow_state_bytes,
-        };
-        _encode_snapshot(&snapshot, w);
-        Ok(())
+        })
     })();
 
     restore_export_doc_state(doc, &state_frontiers, is_attached)?;
     doc.drop_pending_events();
-    result?;
-    Ok(start_from)
+    let snapshot = result?;
+    Ok((snapshot, start_from))
 }
 
 fn alive_indices_to_bytes(
@@ -1052,11 +1065,21 @@ fn prepare_snapshot_container_state(
     Ok(state_kv)
 }
 
+#[allow(unused)]
 pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     doc: &LoroDoc,
     frontiers: &Frontiers,
     w: &mut W,
 ) -> Result<(), LoroEncodeError> {
+    let snapshot = encode_snapshot_at_inner(doc, frontiers)?;
+    _encode_snapshot(&snapshot, w);
+    Ok(())
+}
+
+pub(crate) fn encode_snapshot_at_inner(
+    doc: &LoroDoc,
+    frontiers: &Frontiers,
+) -> Result<Snapshot, LoroEncodeError> {
     let was_detached = doc.is_detached();
     let version_before_start = doc.state_frontiers().clone();
     doc._checkout_without_emitting(frontiers, true, false)
@@ -1115,16 +1138,11 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
             Err(error) => break 'block Err(error),
         };
         let bytes = state_kv.export();
-        _encode_snapshot(
-            &Snapshot {
-                oplog_bytes,
-                state_bytes: Some(bytes),
-                shallow_root_state_bytes: Bytes::new(),
-            },
-            w,
-        );
-
-        Ok(())
+        Ok(Snapshot {
+            oplog_bytes,
+            state_bytes: Some(bytes),
+            shallow_root_state_bytes: Bytes::new(),
+        })
     };
     let restore_result = doc
         ._checkout_without_emitting(&version_before_start, false, false)
@@ -1132,10 +1150,9 @@ pub(crate) fn encode_snapshot_at<W: std::io::Write>(
     doc.set_detached(was_detached);
     doc.app_state().lock().take_events();
 
-    match result {
-        Err(err) => Err(err),
-        Ok(()) => restore_result,
-    }
+    let snapshot = result?;
+    restore_result?;
+    Ok(snapshot)
 }
 
 #[cfg(test)]
