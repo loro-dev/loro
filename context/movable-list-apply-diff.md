@@ -12,6 +12,10 @@ the same container lifetime, as described below.
 
 ## Undo identities and anchors
 
+Since 2026-11-17 the snapshots and first anchor candidates are usually recorded
+when the op is applied (`RecordedInverse`, [undo-log.md](undo-log.md)); the
+checkouts below remain the fallback and the verification reference.
+
 `src/undo/movable_list.rs` derives affected element ids from the span's ops;
 delete position ids resolve to their original insertion or move. It captures
 those elements during the checkouts already used to calculate its inverse. The

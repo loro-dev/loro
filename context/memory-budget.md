@@ -21,8 +21,8 @@ Verified against code 2026-11-16.
   8. `pending_bytes`: parked out-of-order updates tracked incrementally in `PendingChanges` (`oplog/pending_changes.rs`).
   9. `history_cache_bytes`: `HistoryCache` frontier/vv index (`history_cache.rs`).
   10. `diff_calc_bytes`: persistent CRDT diff trackers in `DiffCalculator` (`diff_calc.rs`).
-  11. `undo_bytes`: stacks tracked by active `UndoManager` instances registered in `LoroDocInner::undo_managers`.
-  12. `uncommitted_txn_bytes`: ops and `event_hints` capacity in the currently open `Transaction`. When `memory_stats()` is called on the thread already holding `self.txn`, `self.txn.is_held_by_current_thread()` avoids self-deadlock and the caller supplies `uncommitted_txn_bytes` explicitly (e.g. `try_commit_with`).
+  11. `undo_bytes`: stacks tracked by active `UndoManager` instances registered in `LoroDocInner::undo_managers`, including each item's recorded inverse with the values it keeps (`undo::CommitInverse::estimated_bytes`, `RecordedInverse::estimated_bytes`; [undo-log.md](undo-log.md)).
+  12. `uncommitted_txn_bytes`: ops, `event_hints` capacity and the inverses recorded so far (`LocalInverseRecorder::Recording { bytes }`) in the currently open `Transaction`. When `memory_stats()` is called on the thread already holding `self.txn`, `self.txn.is_held_by_current_thread()` avoids self-deadlock and the caller supplies `uncommitted_txn_bytes` explicitly (e.g. `try_commit_with`).
 - **`total_bytes`**: exact sum of the 12 RAM component fields above.
 - **`spilled_disk_bytes`**: out-of-core spilled bytes (0 when using in-memory stores; intentionally excluded from `total_bytes`).
 
@@ -402,6 +402,28 @@ now backs off).
 
 ## Remaining work
 
-Open items after this branch (`perf/memory-budget-remaining`), with their
-evidence and the semantic decisions they need, are in
-[prompts/memory-budget/80](prompts/memory-budget/80-remaining-after-incremental-estimate.md).
+The state undo log and recorded UndoManager inverses are documented above and in
+[undo-log.md](undo-log.md). Remaining optimization and validation work:
+
+- File-backed KV flush still rewrites the full table; sweep backoff limits how
+  often it happens. Incremental levels and streaming merges remain future work.
+- WASM short-string conversion and large `importBatchDetailed` metadata can
+  still allocate; no allocation-preflight bypass is allowed to optimize them.
+- The small-oplog shallow-snapshot threshold intentionally retains its input;
+  `pruned_root` retention has not been measured independently.
+- Full interleaved A/B coverage against main for JSON, checkout and unbudgeted
+  workloads remains separate from functional release validation. Raw repair
+  measurements are retained in `benchmarks/memory-budget-repair-20261116/`.
+- Boxed payload accounting is conservative; the suspected overestimate on large
+  text documents has not been established by an allocator comparison.
+
+## Concurrent statistics verification
+
+Verified against code 2026-11-17.
+
+`fresh_doc_stats_unmarked` compares a clean document's cached total against a
+fresh total while still holding its transaction, op log, state and diff locks.
+Releasing those locks before loading the cached total lets a writer and another
+refresh replace the cache between the two reads, causing a false debug panic.
+`last_handle_drop_commits_while_another_thread_scans_the_registry` exercises this
+concurrent statistics path. The comparison does not change release accounting.

@@ -48,7 +48,9 @@ pub(crate) mod undo_log;
 mod unknown_state;
 mod value_decode;
 
-pub(crate) use self::movable_list_state::{IndexType, MovableListState};
+pub(crate) use self::movable_list_state::{
+    Element as MovableListElement, IndexType, MovableListState,
+};
 pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
@@ -1187,6 +1189,12 @@ impl DocState {
         }
     }
 
+    /// The state of `idx`, created or loaded if needed (a reference-returning
+    /// [`Self::with_state_mut`]).
+    pub(crate) fn container_state_mut(&mut self, idx: ContainerIdx) -> &mut State {
+        self.store.get_or_create_mut(idx)
+    }
+
     /// Start recording an import undo log: until [`Self::take_import_undo`],
     /// `apply_diff` asks each container for the record that undoes its diff
     /// before applying it. See `state/undo_log.rs`.
@@ -1546,6 +1554,7 @@ impl DocState {
                     by: EventTriggerKind::Import,
                     diff: unknown_diffs.into(),
                     new_version: Cow::Owned(frontiers.clone()),
+                    local_inverse: None,
                 },
                 DiffMode::Checkout,
             )?;
@@ -1578,6 +1587,7 @@ impl DocState {
                 by: EventTriggerKind::Import,
                 diff: diff.into(),
                 new_version: Cow::Borrowed(&frontiers),
+                local_inverse: None,
             });
         }
 
@@ -2338,6 +2348,13 @@ impl DocState {
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
+        // Several local commits in one event: their inverses chain only if each
+        // continues right after the previous one.
+        let mut local_inverse = diffs[0].local_inverse.clone();
+        for next in diffs[1..].iter() {
+            local_inverse =
+                crate::undo::LocalInverse::chain(local_inverse, next.local_inverse.as_ref());
+        }
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
@@ -2440,6 +2457,7 @@ impl DocState {
             origin,
             by: triggered_by,
             diff,
+            local_inverse,
         }
     }
 

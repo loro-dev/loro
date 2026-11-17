@@ -595,6 +595,47 @@ mod inner {
             ans
         }
 
+        /// Visits the visible elements from user index `start` towards
+        /// `direction` (-1 or 1), with their user index, until `f` returns
+        /// `false`. One B-tree query, then neighbouring leaves.
+        pub fn walk_user(
+            &self,
+            start: usize,
+            direction: isize,
+            mut f: impl FnMut(usize, CompactIdLp, &Element) -> bool,
+        ) {
+            let Some(found) = self.list.query::<UserLenQuery>(&start) else {
+                return;
+            };
+            // The query may land on a dead item (no element) just before the
+            // visible one at `start`; the first visible item from there is it.
+            let mut c = found.cursor;
+            while self.list.get_elem(c.leaf).unwrap().pointed_by.is_none() {
+                match self.list.next_elem(c) {
+                    Some(next) => c = next,
+                    None => return,
+                }
+            }
+            let mut index = start as isize;
+            let mut cursor = Some(c);
+            while let Some(c) = cursor {
+                if let Some(elem_id) = self.list.get_elem(c.leaf).unwrap().pointed_by {
+                    if !f(index as usize, elem_id, &self.elements[&elem_id]) {
+                        return;
+                    }
+                    index += direction;
+                    if index < 0 {
+                        return;
+                    }
+                }
+                cursor = if direction > 0 {
+                    self.list.next_elem(c)
+                } else {
+                    self.list.prev_elem(c)
+                };
+            }
+        }
+
         #[inline]
         pub fn get_list_item_at(&self, pos: usize, index_type: IndexType) -> Option<&ListItem> {
             let index = match index_type {
@@ -1030,6 +1071,16 @@ impl MovableListState {
         let item = self.inner.get_list_item_at(index, kind)?;
         let elem = item.pointed_by?;
         self.inner.elements().get(&elem).map(|x| &x.value)
+    }
+
+    /// See `InnerState::walk_user`.
+    pub(crate) fn walk_user(
+        &self,
+        start: usize,
+        direction: isize,
+        f: impl FnMut(usize, CompactIdLp, &Element) -> bool,
+    ) {
+        self.inner.walk_user(start, direction, f)
     }
 
     pub(crate) fn get_elem_at_given_pos(
@@ -2307,6 +2358,47 @@ mod test {
             list.validate_diff(&InternalDiff::MovableList(diff))
                 .unwrap();
         }
+    }
+
+    /// `walk_user` from every index, both ways, matches indexed lookups,
+    /// including with dead items (left by moves) between elements.
+    #[test]
+    fn walk_user_matches_indexed_lookup_with_dead_items() {
+        let doc = crate::LoroDoc::new_auto_commit();
+        let list = doc.get_movable_list("list");
+        for i in 0..12 {
+            list.push(LoroValue::I64(i)).unwrap();
+        }
+        for (from, to) in [(0, 5), (7, 1), (11, 0), (3, 9), (6, 6)] {
+            list.mov(from, to).unwrap();
+        }
+        doc.commit_then_renew();
+        let state = doc.app_state();
+        let mut state = state.lock();
+        let idx = list.idx();
+        state.with_state(idx, |s| {
+            let s = s.as_movable_list_state().unwrap();
+            let n = s.len();
+            for start in 0..n {
+                for direction in [-1isize, 1] {
+                    let mut walked = Vec::new();
+                    s.walk_user(start, direction, |i, id, _| {
+                        walked.push((i, id));
+                        true
+                    });
+                    let expected: Vec<_> = if direction > 0 {
+                        (start..n).collect()
+                    } else {
+                        (0..=start).rev().collect()
+                    };
+                    let expected: Vec<_> = expected
+                        .into_iter()
+                        .map(|i| (i, s.get_elem_id_at(i, IndexType::ForUser).unwrap()))
+                        .collect();
+                    assert_eq!(walked, expected, "start {start} direction {direction}");
+                }
+            }
+        });
     }
 
     #[test]

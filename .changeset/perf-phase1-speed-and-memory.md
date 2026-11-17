@@ -2,4 +2,4 @@
 "loro-crdt": minor
 ---
 
-Improve snapshot/export speed, reduce peak import and export memory, rewrite WASM `toJSON()` to stream directly from shallow state without building an intermediate tree, stream large WASM `importBatch` / `importBatchDetailed` inputs, and expose `freeHistoryCache()`, `freeDiffCalculator()`, and `compactChangeStore()` on `LoroDoc`.
+Improve snapshot and export speed, reduce peak import/export memory, and stream WASM `toJSON()` and large batch imports. Add `freeHistoryCache()`, `freeDiffCalculator()`, and `compactChangeStore()` for explicit cache reclamation.

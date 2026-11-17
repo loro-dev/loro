@@ -2,4 +2,4 @@
 "loro-crdt": minor
 ---
 
-Add bounded `LoroDoc` memory budget controls (`MemoryBudget`, `DocMemoryStats`, `setMemoryBudget`, `getMemoryBudget`, `memoryStats`, `reclaimMemory`, `tryReclaimToBudget`, `tryCommit`) with Stage 1/2 watermark hysteresis, cold container state demotion, bounded KV block & decoded value caches, `UndoManager` byte quotas (`maxUndoBytes`, `setMaxUndoBytes`, `usedBytes`), and structured `MemoryLimitExceededError` reporting for oversized imports, pending pools, and budget-exceeding commits.
+Add per-document memory budgets, memory statistics, explicit reclamation and `tryCommit()`, plus UndoManager byte limits. Bound caches and demote cold state while preserving exact hard-quota checks and atomic rollback of rejected imports. Reduce retained memory with compact internal layouts and page-cached state statistics. Native Rust supports file-backed history and state spilling, shared immutable spill files, checked reads and reportable storage errors; forks inherit independent memory policies.

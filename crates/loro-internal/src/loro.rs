@@ -53,6 +53,11 @@ use crate::{
 use bytes::Bytes;
 use either::Either;
 
+type CommitResult<'a> = (
+    Option<CommitOptions>,
+    Option<LoroMutexGuard<'a, Option<Transaction>>>,
+);
+
 #[cfg(test)]
 thread_local! {
     pub(crate) static FAIL_APPLY_DIFF_AFTER_HANDLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -427,14 +432,7 @@ impl LoroDoc {
     /// A pre-commit callback that panics does not stop the commit; its panic is
     /// raised after the txn lock is released, so the lock is not poisoned.
     #[instrument(skip_all)]
-    fn commit_internal(
-        &self,
-        config: CommitOptions,
-        preserve_on_empty: bool,
-    ) -> (
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    ) {
+    fn commit_internal(&self, config: CommitOptions, preserve_on_empty: bool) -> CommitResult<'_> {
         let mut panic = DeferredPanic::default();
         let ans = self
             .commit_internal_inner(config, preserve_on_empty, &mut panic, false)
@@ -453,10 +451,7 @@ impl LoroDoc {
         preserve_on_empty: bool,
         panic: &mut DeferredPanic,
         enforce_budget: bool,
-    ) -> LoroResult<(
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    )> {
+    ) -> LoroResult<CommitResult<'_>> {
         if !self.auto_commit.load(Acquire) {
             let txn_guard = self.txn.lock();
             // if not auto_commit, nothing should happen
@@ -535,13 +530,7 @@ impl LoroDoc {
     /// This is used by user-facing explicit commits. If the transaction is empty,
     /// any provided commit options are swallowed and will NOT carry over.
     #[instrument(skip_all)]
-    pub fn commit_with(
-        &self,
-        config: CommitOptions,
-    ) -> (
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    ) {
+    pub fn commit_with(&self, config: CommitOptions) -> CommitResult<'_> {
         self.commit_internal(config, false)
     }
 
@@ -1194,6 +1183,7 @@ impl LoroDoc {
                         diff: (diff).into(),
                         by: EventTriggerKind::Import,
                         new_version: Cow::Owned(oplog.frontiers().clone()),
+                        local_inverse: None,
                     },
                     diff_mode,
                 );
@@ -1521,6 +1511,7 @@ impl LoroDoc {
                     diff: (diff).into(),
                     by: EventTriggerKind::Import,
                     new_version: Cow::Owned(oplog.frontiers().clone()),
+                    local_inverse: None,
                 },
                 diff_mode,
             );
@@ -1936,6 +1927,7 @@ impl LoroDoc {
     ) -> LoroResult<CommitWhenDrop<'_>> {
         self.undo_internal_with(
             id_span,
+            None,
             container_remap,
             post_transform_base,
             before_diff,
@@ -1948,9 +1940,15 @@ impl LoroDoc {
     /// recreate a container of an unknown type, `rejected_step` is set to the
     /// step's own changes, which stay in the doc: the undo manager treats them
     /// like remote changes for the steps before it.
+    /// `inverse`: the recorded inverse of `id_span`'s ops, if the undo manager has
+    /// one (see `crate::undo::LocalInverse`). When `id_span` is one run, it
+    /// replaces checking the document out at the span's last op and its deps.
+    /// See context/undo-log.md.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn undo_internal_with(
         &self,
         id_span: IdSpan,
+        inverse: Option<&crate::undo::LocalInverse>,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
@@ -1983,7 +1981,25 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().split_span_based_on_deps(id_span);
-        let (span_scopes, all_scopes) = match crate::undo::movable_list::scopes(self, &spans) {
+        // The recorded inverse replaces the checkouts only for exactly this
+        // transition, and one run.
+        let verify = crate::undo::verify_recorded_inverses();
+        let mut recorded = inverse
+            .and_then(|inv| inv.seal())
+            .filter(|inv| spans.len() == 1 && inv.span == spans[0].0 && inv.deps == spans[0].1);
+        // Every movable-list op of a recorded span is recorded, so its records
+        // name the elements `scopes` would find by reading history.
+        let scopes = match &recorded {
+            Some(inv) if !verify => {
+                let all = crate::undo::movable_list::scopes_from_records(&inv.movable);
+                Ok((
+                    vec![crate::undo::movable_list::scopes_from_records(&inv.movable)],
+                    all,
+                ))
+            }
+            _ => crate::undo::movable_list::scopes(self, &spans),
+        };
+        let (span_scopes, all_scopes) = match scopes {
             Ok(scopes) => scopes,
             Err(error) => {
                 if was_recording {
@@ -1996,7 +2012,19 @@ impl LoroDoc {
         };
         let inverse_lists = std::cell::RefCell::new(Vec::new());
         let revived_lists = std::cell::RefCell::new(Default::default());
-        let calc_diff = |from: &Frontiers, to: &Frontiers| {
+        if verify {
+            // What production takes from the records must be what history says
+            // (a shallow root trimming the deleted elements' history aside).
+            recorded = recorded.filter(|inv| {
+                crate::undo::movable_list::records_match_scopes(&inv.movable, &all_scopes)
+            });
+        }
+        let recorded = recorded.as_ref();
+        let recorded_diff = std::cell::RefCell::new(recorded.map(|inv| inv.full_diff(self)));
+        let recorded_used = std::cell::Cell::new(false);
+        let checked_out = std::cell::Cell::new(false);
+        let checkout_calc_diff = |from: &Frontiers, to: &Frontiers| {
+            checked_out.set(true);
             self._checkout_without_emitting(from, false, false).unwrap();
             let inverse_index = spans
                 .iter()
@@ -2060,6 +2088,23 @@ impl LoroDoc {
             }
             diff
         };
+        let calc_diff = |from: &Frontiers, to: &Frontiers| {
+            if let Some(inv) = recorded {
+                if *from == Frontiers::from_id(inv.span.id_last()) && *to == inv.deps {
+                    if let Some(diff) = recorded_diff.borrow_mut().take() {
+                        if verify {
+                            let from_checkout = checkout_calc_diff(from, to);
+                            crate::undo::assert_same_undo_diff(&from_checkout, &diff);
+                        }
+                        #[cfg(test)]
+                        crate::undo::RECORDED_INVERSES_USED.with(|n| n.set(n.get() + 1));
+                        recorded_used.set(true);
+                        return diff;
+                    }
+                }
+            }
+            checkout_calc_diff(from, to)
+        };
         // `before_diff` rebases the undo manager's other steps over this one,
         // so it only runs once the step is accepted
         let mut last_event_a = None;
@@ -2073,9 +2118,37 @@ impl LoroDoc {
             &mut |d| last_event_a = Some(d.clone()),
         );
 
-        self._checkout_without_emitting(&latest_frontiers, false, false)?;
-        self.set_detached(false);
+        if checked_out.get() {
+            self._checkout_without_emitting(&latest_frontiers, false, false)?;
+            self.set_detached(false);
+        }
         let mut inverse_lists = inverse_lists.take();
+        if let Some(inv) = recorded.filter(|_| recorded_used.get()) {
+            let mut from_records: Vec<_> = inv
+                .movable
+                .iter()
+                .map(|r| r.to_inverse(&inv.deps))
+                .collect();
+            if verify && !from_records.is_empty() {
+                // `inverse_lists` holds what the checkout captured.
+                for lists in [&mut inverse_lists, &mut from_records] {
+                    crate::undo::movable_list::complete_anchors(
+                        self,
+                        lists,
+                        &latest_frontiers,
+                        &all_scopes,
+                        element_remap,
+                        container_remap,
+                    )?;
+                }
+                crate::undo::movable_list::assert_same_inverses(
+                    &inverse_lists,
+                    &from_records,
+                    self.is_shallow(),
+                );
+            }
+            inverse_lists = from_records;
+        }
         crate::undo::movable_list::complete_anchors(
             self,
             &mut inverse_lists,
@@ -2552,6 +2625,7 @@ impl LoroDoc {
                         by: EventTriggerKind::Checkout,
                         diff: Cow::Owned(diff),
                         new_version: Cow::Owned(before_batch.clone()),
+                        local_inverse: None,
                     },
                     diff_mode,
                 );
@@ -4190,6 +4264,7 @@ impl LoroDoc {
                 diff: Cow::Owned(diff),
                 by: triggered_by,
                 new_version: Cow::Owned(frontiers.clone()),
+                local_inverse: None,
             },
             diff_mode,
         )?;
@@ -6529,20 +6604,9 @@ impl GlobalMemoryPool {
             if Some(doc.pool_doc_id) == active_id || doc.stats_dirty.is_dirty() {
                 continue;
             }
-            let Some(fresh) = fresh_doc_stats_unmarked(&doc) else {
-                continue;
-            };
-            if doc.stats_dirty.is_dirty() {
-                continue;
-            }
-            let cached = doc
-                .cached_doc_bytes
-                .load(std::sync::atomic::Ordering::SeqCst);
-            assert_eq!(
-                cached, fresh.total_bytes,
-                "doc {} is not marked dirty but its cached statistics are stale: {fresh:?}",
-                doc.pool_doc_id
-            );
+            // Compare while the statistics locks are held. A writer and another
+            // refresh can otherwise replace the cache after the fresh read.
+            let _ = fresh_doc_stats_unmarked(&doc);
         }
     }
 
@@ -7087,14 +7151,25 @@ fn fresh_doc_stats_unmarked(doc: &LoroDocInner) -> Option<DocMemoryStats> {
     let uncommitted = txn
         .as_ref()
         .map_or(0, Transaction::estimated_uncommitted_bytes);
-    Some(doc_stats_from_parts(
+    let stats = doc_stats_from_parts(
         doc,
         &oplog,
         &state,
         uncommitted,
         diff_calc.estimated_bytes(),
         undo_bytes,
-    ))
+    );
+    if !doc.stats_dirty.is_dirty() {
+        let cached = doc
+            .cached_doc_bytes
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            cached, stats.total_bytes,
+            "doc {} is not marked dirty but its cached statistics are stale: {stats:?}",
+            doc.pool_doc_id,
+        );
+    }
+    Some(stats)
 }
 
 fn swap_cached(

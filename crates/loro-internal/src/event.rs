@@ -134,6 +134,9 @@ pub struct DocDiff {
     pub origin: InternalString,
     pub by: EventTriggerKind,
     pub diff: Vec<ContainerDiff>,
+    /// The inverse of the local commits in this event, when an undo manager
+    /// asked for it and they are contiguous. See [`crate::undo::LocalInverse`].
+    pub(crate) local_inverse: Option<std::sync::Arc<crate::undo::LocalInverse>>,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +172,8 @@ pub(crate) struct InternalDocDiff<'a> {
     /// The values inside this array is in random order
     pub(crate) diff: Cow<'a, [InternalContainerDiff]>,
     pub(crate) new_version: Cow<'a, Frontiers>,
+    /// For a local commit with an undo manager attached: its inverse.
+    pub(crate) local_inverse: Option<std::sync::Arc<crate::undo::LocalInverse>>,
 }
 
 impl InternalDocDiff<'_> {
@@ -178,6 +183,7 @@ impl InternalDocDiff<'_> {
             by: self.by,
             diff: Cow::Owned((*self.diff).to_owned()),
             new_version: Cow::Owned((*self.new_version).to_owned()),
+            local_inverse: self.local_inverse,
         }
     }
 

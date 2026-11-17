@@ -21,7 +21,11 @@ fn a_writer_waiting_during_undo_cannot_invalidate_its_plan() {
         doc.commit();
         let mut undo = UndoManager::new(&doc);
         undo.set_merge_interval(0);
+        // Two moves of one list in one step: undo reads this step's identities by
+        // checking out (its inverse is not recorded; context/undo-log.md), which
+        // is the window this test covers.
         list.mov(0, 255).unwrap();
+        list.mov(0, 200).unwrap();
         doc.commit();
         let start = Barrier::new(2);
         let done = AtomicBool::new(false);
