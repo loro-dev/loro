@@ -458,6 +458,11 @@ impl MapState {
         result
     }
 
+    /// The entry for `key`, including a deleted key's tombstone.
+    pub(crate) fn get_map_value(&self, key: &InternalString) -> Option<&MapValue> {
+        self.map.get(key)
+    }
+
     pub fn remove(&mut self, key: &InternalString) {
         let result = self.map.remove(key);
         if let Some(x) = result {

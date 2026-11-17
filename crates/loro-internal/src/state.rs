@@ -1190,6 +1190,11 @@ impl DocState {
     /// Start recording an import undo log: until [`Self::take_import_undo`],
     /// `apply_diff` asks each container for the record that undoes its diff
     /// before applying it. See `state/undo_log.rs`.
+    /// The state of `idx`, created or loaded if needed.
+    pub(crate) fn container_state_mut(&mut self, idx: ContainerIdx) -> &mut State {
+        self.store.get_or_create_mut(idx)
+    }
+
     pub(crate) fn begin_import_undo(&mut self) {
         debug_assert!(self.import_undo.is_none(), "import undo logs do not nest");
         self.import_undo = Some(Default::default());
@@ -1546,6 +1551,7 @@ impl DocState {
                     by: EventTriggerKind::Import,
                     diff: unknown_diffs.into(),
                     new_version: Cow::Owned(frontiers.clone()),
+                    local_inverse: None,
                 },
                 DiffMode::Checkout,
             )?;
@@ -1578,6 +1584,7 @@ impl DocState {
                 by: EventTriggerKind::Import,
                 diff: diff.into(),
                 new_version: Cow::Borrowed(&frontiers),
+                local_inverse: None,
             });
         }
 
@@ -2338,6 +2345,15 @@ impl DocState {
         let mut containers = FxHashMap::default();
         let to = (*diffs.last().unwrap().new_version).to_owned();
         let origin = diffs[0].origin.clone();
+        // Several local commits in one event: their inverses chain only if each
+        // continues right after the previous one.
+        let mut local_inverse = diffs[0].local_inverse.clone();
+        for next in diffs[1..].iter() {
+            local_inverse = match (&local_inverse, &next.local_inverse) {
+                (Some(a), Some(b)) => a.then(b).map(Arc::new),
+                _ => None,
+            };
+        }
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]
             for container_diff in diff.diff.into_owned() {
@@ -2440,6 +2456,7 @@ impl DocState {
             origin,
             by: triggered_by,
             diff,
+            local_inverse,
         }
     }
 

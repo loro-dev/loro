@@ -125,7 +125,7 @@ impl DiffBatch {
 
     /// Inverses run in sequence, so a later inverse map write must win even
     /// when it restores a value with an older operation timestamp.
-    fn compose_inverse(&mut self, other: Self) {
+    pub(crate) fn compose_inverse(&mut self, other: Self) {
         if other.cid_to_events.is_empty() {
             return;
         }
@@ -321,6 +321,10 @@ pub(crate) struct UndoManagerInner {
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
+    /// Inverses of the commits made while `processing_undo`: the undo/redo's
+    /// own ops, whose inverse is the opposite stack's item. `None` once one
+    /// was missing.
+    processing_inverses: Option<Vec<Arc<LocalInverse>>>,
     paused: bool,
     last_undo_time: i64,
     merge_interval_in_ms: i64,
@@ -361,6 +365,150 @@ impl UndoGroup {
             start_counter,
             affected_cids: Default::default(),
         }
+    }
+}
+
+/// The inverse of a run of local ops, recorded while they were applied
+/// (`txn::LocalInverseRecorder`). Applying `diff` at the version right after
+/// `span` gives the state at `deps`: it is what undo used to get by checking the
+/// document out at `span`'s last op and then at `deps`. See
+/// context/undo-log.md.
+#[derive(Debug)]
+pub(crate) struct LocalInverse {
+    pub(crate) span: IdSpan,
+    pub(crate) deps: Frontiers,
+    pub(crate) diff: DiffBatch,
+    /// The value each map key written by `span` has right after it. A checkout
+    /// reports no change for a key whose value ends where it started (see
+    /// [`prune_unchanged_map_entries`]).
+    pub(crate) map_values_after: FxHashMap<(ContainerID, crate::InternalString), Option<LoroValue>>,
+}
+
+impl LocalInverse {
+    /// `self` followed by `next`, if `next` continues right after `self` with no
+    /// other op in between.
+    pub(crate) fn then(&self, next: &LocalInverse) -> Option<LocalInverse> {
+        let continues = next.span.peer == self.span.peer
+            && next.span.counter.start == self.span.counter.end
+            && next.deps == Frontiers::from_id(self.span.id_last());
+        if !continues {
+            return None;
+        }
+        let mut diff = next.diff.clone();
+        diff.compose_inverse(self.diff.clone());
+        let span = IdSpan::new(
+            self.span.peer,
+            self.span.counter.start,
+            next.span.counter.end,
+        );
+        let mut map_values_after = self.map_values_after.clone();
+        map_values_after.extend(
+            next.map_values_after
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        prune_unchanged_map_entries(&mut diff, &map_values_after);
+        drop_containers_created_in(&mut diff, span);
+        normalize_deltas(&mut diff);
+        Some(LocalInverse {
+            span,
+            deps: self.deps.clone(),
+            diff,
+            map_values_after,
+        })
+    }
+}
+
+/// Drops map entries that restore the value a key already has after the span:
+/// a checkout reports a key only when its value changes. Entries for keys that
+/// did not exist before (unset) always stay, as in a checkout.
+pub(crate) fn prune_unchanged_map_entries(
+    diff: &mut DiffBatch,
+    values_after: &FxHashMap<(ContainerID, crate::InternalString), Option<LoroValue>>,
+) {
+    for (cid, d) in diff.cid_to_events.iter_mut() {
+        let Diff::Map(m) = d else {
+            continue;
+        };
+        m.updated.retain(|key, restored| {
+            if restored.idlp == crate::delta::ResolvedMapValue::new_unset().idlp {
+                return true;
+            }
+            let Some(after) = values_after.get(&(cid.clone(), key.clone())) else {
+                return true;
+            };
+            let restored = restored.value.as_ref().map(|v| v.to_value());
+            restored != *after
+        });
+    }
+}
+
+/// Containers created by `span`'s ops do not exist at its deps, so a checkout
+/// there reports no diff for them; the inverse must not either.
+/// Merges adjacent items of the same kind, as the deltas a checkout reports
+/// are built. Composing per-op inverses leaves them split (`[delete 1, delete
+/// 1]` instead of `[delete 2]`).
+pub(crate) fn normalize_deltas(diff: &mut DiffBatch) {
+    fn rebuild<V, A>(d: &loro_delta::DeltaRope<V, A>) -> loro_delta::DeltaRope<V, A>
+    where
+        V: loro_delta::delta_trait::DeltaValue + Clone,
+        A: loro_delta::delta_trait::DeltaAttr + Clone,
+    {
+        let mut out = loro_delta::DeltaRope::new();
+        for item in d.iter() {
+            out.push(item.clone());
+        }
+        out
+    }
+    /// Also joins adjacent text inserts with the same attributes, which come
+    /// from different chunks and do not merge by `push`.
+    fn rebuild_text(d: &crate::event::TextDiff) -> crate::event::TextDiff {
+        let mut items: Vec<crate::event::TextDiffItem> = Vec::new();
+        for item in d.iter() {
+            if let (
+                Some(loro_delta::DeltaItem::Replace {
+                    value: last_value,
+                    attr: last_attr,
+                    delete: last_delete,
+                }),
+                loro_delta::DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete: 0,
+                },
+            ) = (items.last_mut(), item)
+            {
+                if last_attr == attr && *last_delete == 0 {
+                    let joined = format!("{}{}", last_value.as_str(), value.as_str());
+                    *last_value = joined.into();
+                    continue;
+                }
+            }
+            items.push(item.clone());
+        }
+        let mut out = loro_delta::DeltaRope::new();
+        for item in items {
+            out.push(item);
+        }
+        out
+    }
+    for d in diff.cid_to_events.values_mut() {
+        match d {
+            Diff::Text(t) => *t = rebuild_text(t),
+            Diff::List(l) => *l = rebuild(l),
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn drop_containers_created_in(diff: &mut DiffBatch, span: IdSpan) {
+    let created = |cid: &ContainerID| {
+        matches!(cid, ContainerID::Normal { peer, counter, .. }
+            if *peer == span.peer && span.counter.contains(*counter))
+    };
+    if diff.cid_to_events.keys().any(created) {
+        diff.cid_to_events.retain(|cid, _| !created(cid));
+        diff.order.retain(|cid| !created(cid));
     }
 }
 
@@ -411,7 +559,10 @@ struct ProcessingUndoGuard {
 
 impl Drop for ProcessingUndoGuard {
     fn drop(&mut self) {
-        self.inner.lock().borrow_mut().processing_undo = false;
+        let lock = self.inner.lock();
+        let mut inner = lock.borrow_mut();
+        inner.processing_undo = false;
+        inner.processing_inverses = None;
     }
 }
 
@@ -426,6 +577,10 @@ struct StackItem {
     span: CounterSpan,
     meta: UndoItemMeta,
     affected_cids: FxHashSet<ContainerID>,
+    /// The inverse of the item's ops, when every op of it was recorded and
+    /// they form one run with no other op in between. Undo then uses it
+    /// instead of checking the document out.
+    inverse: Option<Arc<LocalInverse>>,
 }
 
 impl StackItem {
@@ -448,10 +603,15 @@ impl StackItem {
                 .iter()
                 .map(container_id_estimated_bytes)
                 .sum::<usize>();
+        let inverse_bytes = self
+            .inverse
+            .as_ref()
+            .map_or(0, |inv| inv.diff.estimated_bytes());
         std::mem::size_of::<Self>()
             .saturating_add(value_bytes)
             .saturating_add(cursors_bytes)
             .saturating_add(cids_bytes)
+            .saturating_add(inverse_bytes)
     }
 }
 
@@ -566,7 +726,17 @@ impl Stack {
         meta: UndoItemMeta,
         affected_cids: FxHashSet<ContainerID>,
     ) {
-        self.push_with_merge_cids(span, meta, affected_cids, false, None)
+        self.push_with_merge_cids(span, meta, affected_cids, None, false, None)
+    }
+
+    fn push_with_cids_and_inverse(
+        &mut self,
+        span: CounterSpan,
+        meta: UndoItemMeta,
+        affected_cids: FxHashSet<ContainerID>,
+        inverse: Option<Arc<LocalInverse>>,
+    ) {
+        self.push_with_merge_cids(span, meta, affected_cids, inverse, false, None)
     }
 
     fn restore_popped(&mut self, item: StackItem, remote_diff: &Arc<Mutex<DiffBatch>>) {
@@ -587,7 +757,7 @@ impl Stack {
         can_merge: bool,
         group: Option<&UndoGroup>,
     ) {
-        self.push_with_merge_cids(span, meta, Default::default(), can_merge, group);
+        self.push_with_merge_cids(span, meta, Default::default(), None, can_merge, group);
     }
 
     pub fn push_with_merge_cids(
@@ -595,6 +765,7 @@ impl Stack {
         span: CounterSpan,
         meta: UndoItemMeta,
         affected_cids: FxHashSet<ContainerID>,
+        inverse: Option<Arc<LocalInverse>>,
         can_merge: bool,
         group: Option<&UndoGroup>,
     ) {
@@ -623,6 +794,7 @@ impl Stack {
                 span,
                 meta,
                 affected_cids,
+                inverse,
             });
             self.stack
                 .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
@@ -636,6 +808,10 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
+                    last_span.inverse = match (&last_span.inverse, &inverse) {
+                        (Some(a), Some(b)) => a.then(b).map(Arc::new),
+                        _ => None,
+                    };
                     // An empty set means the checkpoint's containers are unknown.
                     // Merging a known span cannot make that older span known.
                     if last_span.affected_cids.is_empty() || affected_cids.is_empty() {
@@ -654,6 +830,7 @@ impl Stack {
             span,
             meta,
             affected_cids,
+            inverse,
         });
     }
 
@@ -812,6 +989,7 @@ impl UndoManagerInner {
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
+            processing_inverses: None,
             paused: false,
             merge_interval_in_ms: 0,
             last_undo_time: 0,
@@ -860,6 +1038,11 @@ impl UndoManagerInner {
             .iter()
             .flat_map(|e| e.events.iter().map(|item| item.id.clone()))
             .collect();
+        // Usable only if it covers exactly the ops of this checkpoint.
+        let inverse = event
+            .as_ref()
+            .and_then(|e| e.event_meta.local_inverse.clone())
+            .filter(|inv| inv.span.counter == CounterSpan::new(previous, latest_counter));
 
         if let Some(group) = &mut this.borrow_mut().group {
             group.affected_cids.extend(affected_cids.iter().cloned());
@@ -899,11 +1082,13 @@ impl UndoManagerInner {
                 span,
                 meta,
                 affected_cids,
+                inverse,
                 true,
                 this.group.as_ref(),
             );
         } else {
-            this.undo_stack.push_with_cids(span, meta, affected_cids);
+            this.undo_stack
+                .push_with_cids_and_inverse(span, meta, affected_cids, inverse);
         }
         // A requested merge can still create an item (e.g. after an import).
         // Only an actual merge keeps the previous item's window.
@@ -1028,10 +1213,19 @@ impl UndoManager {
         let remap_containers_clone = remap_containers.clone();
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
-                // TODO: PERF undo can be significantly faster if we can get
-                // the DiffBatch for undo here
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 if lock.borrow().processing_undo {
+                    // The undo/redo's own commit: its inverse is the opposite
+                    // stack's next item (see `perform`).
+                    let mut inner = lock.borrow_mut();
+                    let inverse = event.event_meta.local_inverse.clone();
+                    inner.processing_inverses = match (inner.processing_inverses.take(), inverse) {
+                        (Some(mut v), Some(inv)) => {
+                            v.push(inv);
+                            Some(v)
+                        }
+                        _ => None,
+                    };
                     return;
                 }
                 if let Some(id) = event
@@ -1314,6 +1508,7 @@ impl UndoManager {
             let lock = self.lock_inner();
             let mut inner = lock.borrow_mut();
             inner.processing_undo = true;
+            inner.processing_inverses = Some(Vec::new());
             get_stack(&mut inner).pop()
         };
         let _guard = ProcessingUndoGuard {
@@ -1331,11 +1526,13 @@ impl UndoManager {
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
                 let remote_change_clone = remote_diff.lock().clone();
                 let mut rejected_step = None;
+                let item_inverse = span.inverse.clone();
                 let commit = match doc.undo_internal_with(
                     IdSpan {
                         peer: self.peer(),
                         counter: span.span,
                     },
+                    item_inverse.as_deref(),
                     &mut self.container_remap.lock(),
                     Some(&remote_change_clone),
                     &mut |diff| {
@@ -1438,10 +1635,21 @@ impl UndoManager {
                 }
 
                 let mut inner = inner.borrow_mut();
-                get_opposite(&mut inner).push_with_cids(
+                // The inverse of the commit(s) this undo/redo just made.
+                let opposite_inverse = inner
+                    .processing_inverses
+                    .take()
+                    .and_then(|v| {
+                        let mut it = v.into_iter();
+                        let first = it.next()?;
+                        it.try_fold(first, |acc, next| acc.then(&next).map(Arc::new))
+                    })
+                    .filter(|inv| inv.span.counter == CounterSpan::new(end_counter, new_counter));
+                get_opposite(&mut inner).push_with_cids_and_inverse(
                     CounterSpan::new(end_counter, new_counter),
                     meta,
                     next_affected_cids,
+                    opposite_inverse,
                 );
                 inner.trim_undo_stack();
                 inner.next_counter = Some(new_counter);
@@ -1832,6 +2040,7 @@ mod budget_work_tests {
             CounterSpan::new(1, 2),
             Default::default(),
             [cid].into_iter().collect(),
+            None,
             true,
             None,
         );
@@ -1855,5 +2064,202 @@ mod budget_work_tests {
         UNDO_SIZE_WALKS.with(|n| assert_eq!(n.get(), 0));
         manager.set_max_undo_bytes_from_doc(0);
         assert!(manager.undo_stack.is_empty());
+    }
+}
+
+/// Whether undo also checks the document out for steps that have a recorded
+/// inverse, and asserts both agree: always in this crate's tests, and in debug
+/// builds with `LORO_VERIFY_UNDO_LOG` set.
+pub(crate) fn verify_recorded_inverses() -> bool {
+    #[cfg(test)]
+    return !SKIP_VERIFY.with(|s| s.get());
+    #[cfg(not(test))]
+    {
+        if !cfg!(debug_assertions) {
+            return false;
+        }
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("LORO_VERIFY_UNDO_LOG").is_some())
+    }
+}
+
+/// Panics unless the two batches mean the same changes: map entries in any
+/// order, empty diffs ignored, and each text/list delta compared as its
+/// sequence of retains, deletes and inserts with adjacent items of the same
+/// kind merged. A checkout splits inserted text at chunk boundaries and may
+/// keep a delete and the insert after it apart; both apply and transform the
+/// same.
+pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBatch) {
+    #[derive(Debug, PartialEq)]
+    enum Op {
+        Retain(usize, String),
+        Delete(usize),
+        Insert(String, String),
+    }
+    fn push(ops: &mut Vec<Op>, op: Op) {
+        match (ops.last_mut(), op) {
+            (Some(Op::Retain(n, a)), Op::Retain(m, b)) if *a == b => *n += m,
+            (Some(Op::Delete(n)), Op::Delete(m)) => *n += m,
+            (Some(Op::Insert(s, a)), Op::Insert(t, b)) if *a == b => s.push_str(&t),
+            (_, op) => {
+                if !matches!(op, Op::Retain(0, _) | Op::Delete(0))
+                    && !matches!(&op, Op::Insert(s, _) if s.is_empty())
+                {
+                    ops.push(op)
+                }
+            }
+        }
+    }
+    fn delta_ops<V: std::fmt::Debug, A: std::fmt::Debug>(
+        items: impl Iterator<Item = (Option<usize>, usize, String, A)>,
+    ) -> Vec<Op> {
+        let _ = std::marker::PhantomData::<V>;
+        let mut ops = Vec::new();
+        for (retain, delete, insert, attr) in items {
+            let attr = format!("{attr:?}");
+            if let Some(n) = retain {
+                push(&mut ops, Op::Retain(n, attr));
+                continue;
+            }
+            push(&mut ops, Op::Delete(delete));
+            push(&mut ops, Op::Insert(insert, attr));
+        }
+        while matches!(ops.last(), Some(Op::Retain(_, a)) if a == "TextMeta({})" || a == "ListDeltaMeta { from_move: false }")
+        {
+            ops.pop();
+        }
+        ops
+    }
+    fn canonical(batch: &DiffBatch) -> std::collections::BTreeMap<String, String> {
+        batch
+            .cid_to_events
+            .iter()
+            .filter(|(_, d)| !d.is_empty())
+            .map(|(cid, d)| {
+                let s = match d {
+                    Diff::Map(m) => {
+                        let entries: std::collections::BTreeMap<_, _> = m
+                            .updated
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), format!("{v:?}")))
+                            .collect();
+                        format!("Map({entries:?})")
+                    }
+                    Diff::Text(t) => format!(
+                        "Text({:?})",
+                        delta_ops::<(), _>(t.iter().map(|item| match item {
+                            loro_delta::DeltaItem::Retain { len, attr } =>
+                                (Some(*len), 0, String::new(), attr.clone()),
+                            loro_delta::DeltaItem::Replace {
+                                value,
+                                attr,
+                                delete,
+                            } => (None, *delete, value.as_str().to_string(), attr.clone()),
+                        }))
+                    ),
+                    Diff::List(l) => format!(
+                        "List({:?})",
+                        delta_ops::<(), _>(l.iter().map(|item| match item {
+                            loro_delta::DeltaItem::Retain { len, attr } =>
+                                (Some(*len), 0, String::new(), *attr),
+                            loro_delta::DeltaItem::Replace {
+                                value,
+                                attr,
+                                delete,
+                            } => (
+                                None,
+                                *delete,
+                                value.iter().map(|v| format!("{v:?};")).collect::<String>(),
+                                *attr,
+                            ),
+                        }))
+                    ),
+                    d => format!("{d:?}"),
+                };
+                (format!("{cid:?}"), s)
+            })
+            .collect()
+    }
+    let (a, b) = (canonical(from_checkout), canonical(recorded));
+    assert_eq!(
+        a, b,
+        "the recorded inverse differs from the checkout's (left: checkout, right: recorded)"
+    );
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Turns the checkout comparison off, to observe undo without checkouts.
+    pub(crate) static SKIP_VERIFY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Undo steps that used a recorded inverse instead of checking out.
+    pub(crate) static RECORDED_INVERSES_USED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod recorded_inverse_tests {
+    use super::*;
+    use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
+
+    /// Undo and redo of text, list, map and counter edits on a document opened
+    /// from a snapshot compute no diff, so they build no history cache, parsed
+    /// history or diff tracker (the first undo used to, and they stayed).
+    #[test]
+    fn undo_with_recorded_inverses_builds_no_history_state() {
+        let src = LoroDoc::new_auto_commit();
+        src.set_peer_id(1).unwrap();
+        let text = src.get_text("t");
+        for i in 0..200 {
+            text.insert(text.len_unicode(), &format!("{i:09} "), PosType::Unicode)
+                .unwrap();
+            src.get_map("m").insert(&format!("k{i}"), i).unwrap();
+            src.get_list("l").push(i).unwrap();
+            src.commit_then_renew();
+        }
+        let snapshot = src.export(ExportMode::Snapshot).unwrap();
+        let doc = LoroDoc::new_auto_commit();
+        doc.import(&snapshot).unwrap();
+        doc.set_peer_id(9).unwrap();
+        let undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+        let original = doc.get_deep_value();
+        let text = doc.get_text("t");
+        text.insert(5, "hello", PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        text.delete(20, 30, PosType::Unicode).unwrap();
+        doc.commit_then_renew();
+        doc.get_map("m").insert("k3", "changed").unwrap();
+        doc.get_map("m").insert("new", 1).unwrap();
+        doc.commit_then_renew();
+        doc.get_list("l").delete(10, 5).unwrap();
+        doc.get_list("l").insert(0, "front").unwrap();
+        doc.commit_then_renew();
+        #[cfg(feature = "counter")]
+        {
+            doc.get_counter("c").increment(2.5).unwrap();
+            doc.commit_then_renew();
+        }
+        let edited = doc.get_deep_value();
+        let steps = undo.undo_count();
+        let before = doc.memory_stats();
+
+        SKIP_VERIFY.with(|s| s.set(true));
+        RECORDED_INVERSES_USED.with(|n| n.set(0));
+        crate::diff_calc::DIFF_CALCS.with(|n| n.set(0));
+        for _ in 0..steps {
+            assert!(undo.undo().unwrap());
+        }
+        assert_eq!(doc.get_deep_value(), original);
+        for _ in 0..steps {
+            assert!(undo.redo().unwrap());
+        }
+        assert_eq!(doc.get_deep_value(), edited);
+        let after = doc.memory_stats();
+        SKIP_VERIFY.with(|s| s.set(false));
+
+        assert_eq!(RECORDED_INVERSES_USED.with(|n| n.get()), 2 * steps);
+        assert_eq!(crate::diff_calc::DIFF_CALCS.with(|n| n.get()), 0);
+        assert_eq!(after.history_cache_bytes, before.history_cache_bytes);
+        assert_eq!(after.diff_calc_bytes, before.diff_calc_bytes);
     }
 }

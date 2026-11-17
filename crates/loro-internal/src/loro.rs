@@ -1194,6 +1194,7 @@ impl LoroDoc {
                         diff: (diff).into(),
                         by: EventTriggerKind::Import,
                         new_version: Cow::Owned(oplog.frontiers().clone()),
+                        local_inverse: None,
                     },
                     diff_mode,
                 );
@@ -1521,6 +1522,7 @@ impl LoroDoc {
                     diff: (diff).into(),
                     by: EventTriggerKind::Import,
                     new_version: Cow::Owned(oplog.frontiers().clone()),
+                    local_inverse: None,
                 },
                 diff_mode,
             );
@@ -1936,6 +1938,7 @@ impl LoroDoc {
     ) -> LoroResult<CommitWhenDrop<'_>> {
         self.undo_internal_with(
             id_span,
+            None,
             container_remap,
             post_transform_base,
             before_diff,
@@ -1948,9 +1951,15 @@ impl LoroDoc {
     /// recreate a container of an unknown type, `rejected_step` is set to the
     /// step's own changes, which stay in the doc: the undo manager treats them
     /// like remote changes for the steps before it.
+    /// `inverse`: the recorded inverse of `id_span`'s ops, if the undo manager has
+    /// one (see `crate::undo::LocalInverse`). When `id_span` is one run and no
+    /// movable list is involved, it replaces checking the document out at the
+    /// span's last op and its deps. See context/undo-log.md.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn undo_internal_with(
         &self,
         id_span: IdSpan,
+        inverse: Option<&crate::undo::LocalInverse>,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         post_transform_base: Option<&DiffBatch>,
         before_diff: &mut dyn FnMut(&DiffBatch),
@@ -1996,7 +2005,18 @@ impl LoroDoc {
         };
         let inverse_lists = std::cell::RefCell::new(Vec::new());
         let revived_lists = std::cell::RefCell::new(Default::default());
-        let calc_diff = |from: &Frontiers, to: &Frontiers| {
+        // The recorded inverse replaces the checkouts only for exactly this
+        // transition, one run, and no movable list (whose undo needs element
+        // snapshots at both versions).
+        let recorded = inverse.filter(|inv| {
+            spans.len() == 1
+                && all_scopes.is_empty()
+                && inv.span == spans[0].0
+                && inv.deps == spans[0].1
+        });
+        let checked_out = std::cell::Cell::new(false);
+        let checkout_calc_diff = |from: &Frontiers, to: &Frontiers| {
+            checked_out.set(true);
             self._checkout_without_emitting(from, false, false).unwrap();
             let inverse_index = spans
                 .iter()
@@ -2060,6 +2080,20 @@ impl LoroDoc {
             }
             diff
         };
+        let calc_diff = |from: &Frontiers, to: &Frontiers| {
+            if let Some(inv) = recorded {
+                if *from == Frontiers::from_id(inv.span.id_last()) && *to == inv.deps {
+                    if crate::undo::verify_recorded_inverses() {
+                        let from_checkout = checkout_calc_diff(from, to);
+                        crate::undo::assert_same_undo_diff(&from_checkout, &inv.diff);
+                    }
+                    #[cfg(test)]
+                    crate::undo::RECORDED_INVERSES_USED.with(|n| n.set(n.get() + 1));
+                    return inv.diff.clone();
+                }
+            }
+            checkout_calc_diff(from, to)
+        };
         // `before_diff` rebases the undo manager's other steps over this one,
         // so it only runs once the step is accepted
         let mut last_event_a = None;
@@ -2073,8 +2107,10 @@ impl LoroDoc {
             &mut |d| last_event_a = Some(d.clone()),
         );
 
-        self._checkout_without_emitting(&latest_frontiers, false, false)?;
-        self.set_detached(false);
+        if checked_out.get() {
+            self._checkout_without_emitting(&latest_frontiers, false, false)?;
+            self.set_detached(false);
+        }
         let mut inverse_lists = inverse_lists.take();
         crate::undo::movable_list::complete_anchors(
             self,
@@ -2552,6 +2588,7 @@ impl LoroDoc {
                         by: EventTriggerKind::Checkout,
                         diff: Cow::Owned(diff),
                         new_version: Cow::Owned(before_batch.clone()),
+                        local_inverse: None,
                     },
                     diff_mode,
                 );
@@ -4190,6 +4227,7 @@ impl LoroDoc {
                 diff: Cow::Owned(diff),
                 by: triggered_by,
                 new_version: Cow::Owned(frontiers.clone()),
+                local_inverse: None,
             },
             diff_mode,
         )?;
