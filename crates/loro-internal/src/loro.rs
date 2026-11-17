@@ -1182,7 +1182,13 @@ impl LoroDoc {
                     }
                 };
                 let mut state = self.state.lock();
-                if let Err(e) = state.apply_diff(
+                // A quota may reject the import after the state changed; record
+                // how to undo it (see `state/undo_log.rs`).
+                let quota = owns_rollback && self.has_max_doc_bytes();
+                if quota {
+                    state.begin_import_undo();
+                }
+                let applied = state.apply_diff(
                     InternalDocDiff {
                         origin,
                         diff: (diff).into(),
@@ -1190,11 +1196,13 @@ impl LoroDoc {
                         new_version: Cow::Owned(oplog.frontiers().clone()),
                     },
                     diff_mode,
-                ) {
+                );
+                let undo = state.take_import_undo();
+                if let Err(e) = applied {
                     oplog.rollback_owned_import(owns_rollback, &mut state);
                     return Err(e);
                 }
-                if owns_rollback && self.has_max_doc_bytes() {
+                if let Some(undo) = undo {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
                     if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
                         &oplog,
@@ -1202,8 +1210,7 @@ impl LoroDoc {
                         0,
                         Some(linear_before),
                     ) {
-                        let _ = state.take_events();
-                        Self::revert_state_silently(&oplog, &mut state, &old_vv, &old_frontiers)?;
+                        state.undo_import(undo, old_frontiers.clone());
                         oplog.rollback_owned_import(owns_rollback, &mut state);
                         *self.diff_calculator.lock() = DiffCalculator::new(true);
                         return Err(budget_err);
@@ -1504,7 +1511,11 @@ impl LoroDoc {
             if rollback_enabled {
                 state.store.begin_created_journal();
             }
-            if let Err(e) = state.apply_diff(
+            // See the other import path: record how to undo it under a quota.
+            if rollback_enabled && !oplog.batch_importing && self.has_max_doc_bytes() {
+                state.begin_import_undo();
+            }
+            let applied = state.apply_diff(
                 InternalDocDiff {
                     origin,
                     diff: (diff).into(),
@@ -1512,7 +1523,9 @@ impl LoroDoc {
                     new_version: Cow::Owned(oplog.frontiers().clone()),
                 },
                 diff_mode,
-            ) {
+            );
+            let undo = state.take_import_undo();
+            if let Err(e) = applied {
                 if rollback_enabled {
                     let created = state.store.take_created_journal();
                     state.store.remove_created(&created);
@@ -1524,7 +1537,7 @@ impl LoroDoc {
             }
             materialize_touched_roots(&mut state, &calc, &oplog.arena);
             if rollback_enabled {
-                if !oplog.batch_importing && self.has_max_doc_bytes() {
+                if let Some(undo) = undo {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
                     if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
                         &oplog,
@@ -1532,8 +1545,7 @@ impl LoroDoc {
                         0,
                         Some(linear_before),
                     ) {
-                        let _ = state.take_events();
-                        Self::revert_state_silently(&oplog, &mut state, &old_vv, &old_frontiers)?;
+                        state.undo_import(undo, old_frontiers.clone());
                         let created = state.store.take_created_journal();
                         state.store.remove_created(&created);
                         oplog.rollback_import(&mut state);
@@ -3773,14 +3785,13 @@ impl LoroDoc {
         } else {
             None
         };
-        let (pre_batch_vv, pre_batch_frontiers, has_created_journal) =
+        let (pre_batch_frontiers, has_created_journal) =
             if was_attached && snapshot_checkpoint.is_none() && has_doc_budget {
-                let oplog = self.oplog.lock();
                 let mut state = self.state.lock();
                 state.store.begin_created_journal();
-                (oplog.vv().clone(), state.frontiers.clone(), true)
+                (state.frontiers.clone(), true)
             } else {
-                (VersionVector::default(), Frontiers::default(), false)
+                (Frontiers::default(), false)
             };
         self.set_detached(true);
         let has_import_rollback = {
@@ -3806,7 +3817,6 @@ impl LoroDoc {
             has_doc_budget,
             has_import_rollback,
             has_created_journal,
-            pre_batch_vv,
             pre_batch_frontiers,
             txn: Some(txn),
             options,
@@ -5141,7 +5151,6 @@ struct BatchImportGuard<'a> {
     has_doc_budget: bool,
     has_import_rollback: bool,
     has_created_journal: bool,
-    pre_batch_vv: VersionVector,
     pre_batch_frontiers: Frontiers,
     /// Held for the whole batch so no other thread can renew the txn and edit while
     /// we are detached. `_checkout_to_latest_without_commit` requires it to be held.
@@ -5268,6 +5277,12 @@ impl BatchImportGuard<'_> {
             // op references (movable-list elements, style end anchors) are validated
             // here, once per batch.
             let validation = doc.oplog.lock().validate_op_refs_in_import_scope();
+            // A quota may reject the batch after the checkout changed the state;
+            // record how to undo it (see `state/undo_log.rs`).
+            let record_undo = self.has_doc_budget && self.snapshot_checkpoint.is_none();
+            if record_undo {
+                doc.state.lock().begin_import_undo();
+            }
             checkout = validation.and_then(|()| {
                 doc._checkout_to_latest_without_commit_with_event(
                     true,
@@ -5276,6 +5291,11 @@ impl BatchImportGuard<'_> {
                     !self.has_doc_budget,
                 )
             });
+            let mut undo = if record_undo {
+                doc.state.lock().take_import_undo()
+            } else {
+                None
+            };
             if checkout.is_ok() && self.has_doc_budget {
                 doc.enforce_memory_watermarks_with_txn_bytes(0, false);
                 if let Err(budget_err) =
@@ -5285,30 +5305,16 @@ impl BatchImportGuard<'_> {
                         let _ = doc.state.lock().take_events();
                         checkout = Err(budget_err);
                     } else {
-                        let oplog = doc.oplog.lock();
                         let mut state = doc.state.lock();
-                        let _ = state.take_events();
-                        let revert_res = if state.frontiers != self.pre_batch_frontiers {
-                            LoroDoc::revert_state_silently(
-                                &oplog,
-                                &mut state,
-                                &self.pre_batch_vv,
-                                &self.pre_batch_frontiers,
-                            )
-                        } else {
-                            Ok(())
-                        };
+                        let undo = undo.take().expect("a budgeted batch records its undo log");
+                        state.undo_import(undo, self.pre_batch_frontiers.clone());
                         if self.has_created_journal {
                             let created = state.store.take_created_journal();
                             state.store.remove_created(&created);
                             self.has_created_journal = false;
                         }
                         drop(state);
-                        drop(oplog);
-                        checkout = match revert_res {
-                            Ok(()) => Err(budget_err),
-                            Err(e) => Err(e),
-                        };
+                        checkout = Err(budget_err);
                     }
                 }
             }
@@ -8118,37 +8124,6 @@ impl LoroDoc {
             }
         }
         Ok(stats)
-    }
-
-    fn revert_state_silently(
-        oplog: &OpLog,
-        state: &mut DocState,
-        target_vv: &VersionVector,
-        target_frontiers: &Frontiers,
-    ) -> LoroResult<()> {
-        let from_frontiers = state.frontiers.clone();
-        let from_vv = frontiers_to_vv_or_not_found(oplog, &from_frontiers)?;
-        let (diff, diff_mode) = DiffCalculator::new(false).try_calc_diff_internal(
-            oplog,
-            &from_vv,
-            &from_frontiers,
-            target_vv,
-            target_frontiers,
-            None,
-        )?;
-        let recorder = state.take_event_recorder();
-        let res = state.apply_diff(
-            InternalDocDiff {
-                origin: Default::default(),
-                by: EventTriggerKind::Checkout,
-                diff: Cow::Owned(diff),
-                new_version: Cow::Owned(target_frontiers.clone()),
-            },
-            diff_mode,
-        );
-        state.restore_event_recorder(recorder);
-        let _ = state.take_events();
-        res
     }
 }
 

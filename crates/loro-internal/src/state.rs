@@ -44,6 +44,7 @@ mod mergeable;
 mod movable_list_state;
 mod richtext_state;
 mod tree_state;
+pub(crate) mod undo_log;
 mod unknown_state;
 mod value_decode;
 
@@ -183,6 +184,9 @@ pub struct DocState {
     /// Stack of active local rollback scopes (`budget_base_scope` and nested
     /// `apply_diff` / `revert_to` scopes). See [`Self::begin_local_rollback`].
     local_rollback_stack: Vec<LocalRollbackJournal>,
+    /// Records what `apply_diff` changes so a rejected import can be undone
+    /// without reading history; see [`Self::begin_import_undo`].
+    import_undo: Option<undo_log::ImportUndoLog>,
 }
 
 /// What undoing a local transaction's ops by checkout cannot restore exactly,
@@ -301,6 +305,20 @@ pub(crate) trait ContainerState {
     }
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn>;
+
+    /// What undoes `diff` on this state, read before `diff` is applied. Costs
+    /// about as much as the part of the state `diff` changes. See
+    /// `state/undo_log.rs`.
+    fn undo_record(&mut self, diff: &InternalDiff) -> undo_log::StateUndo;
+
+    /// Undo a record from [`Self::undo_record`]. The diffs applied after its
+    /// diff have been undone already, so the state is as it was right after it.
+    fn apply_undo(&mut self, undo: undo_log::StateUndo);
+
+    /// Called after the diff of [`Self::undo_record`] was applied, for states
+    /// that record while applying.
+    fn finish_undo_record(&mut self, _undo: &mut undo_log::StateUndo) {}
+
     /// Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied.
     fn to_diff(&mut self, doc: &Weak<LoroDocInner>) -> Diff;
 
@@ -363,6 +381,18 @@ impl<T: ContainerState> ContainerState for Box<T> {
 
     fn apply_local_op(&mut self, raw_op: &RawOp, op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         self.as_mut().apply_local_op(raw_op, op)
+    }
+
+    fn undo_record(&mut self, diff: &InternalDiff) -> undo_log::StateUndo {
+        self.as_mut().undo_record(diff)
+    }
+
+    fn apply_undo(&mut self, undo: undo_log::StateUndo) {
+        self.as_mut().apply_undo(undo)
+    }
+
+    fn finish_undo_record(&mut self, undo: &mut undo_log::StateUndo) {
+        self.as_mut().finish_undo_record(undo)
     }
 
     #[doc = r" Convert a state to a diff, such that an empty state will be transformed into the same as this state when it's applied."]
@@ -568,6 +598,7 @@ impl DocState {
                 alive_containers_cache: None,
                 record_changes_only: false,
                 local_rollback_stack: Vec::new(),
+                import_undo: None,
             },
             crate::lock::LockKind::DocState,
         ))
@@ -595,6 +626,7 @@ impl DocState {
             alive_containers_cache: None,
             record_changes_only: false,
             local_rollback_stack: Vec::new(),
+            import_undo: None,
         }))
     }
 
@@ -843,7 +875,11 @@ impl DocState {
                 crate::event::DiffVariant::Internal(inner_diff) => {
                     self.ensure_containers_created_by_internal_diff(inner_diff);
                     let cid = self.arena.idx_to_id(idx).unwrap();
-                    info_span!("apply diff on", container_id = ?cid).in_scope(
+                    let undo_record = self
+                        .import_undo
+                        .is_some()
+                        .then(|| self.store.get_or_create_mut(idx).undo_record(inner_diff));
+                    let applied = info_span!("apply diff on", container_id = ?cid).in_scope(
                         || -> LoroResult<()> {
                             if self.in_txn {
                                 self.changed_idx_in_txn.insert(idx);
@@ -917,7 +953,15 @@ impl DocState {
                             }
                             Ok(())
                         },
-                    )?;
+                    );
+                    if let Some(mut undo) = undo_record {
+                        let state = self.store.get_or_create_mut(idx);
+                        state.finish_undo_record(&mut undo);
+                        if let Some(log) = &mut self.import_undo {
+                            log.entries.push((idx, undo));
+                        }
+                    }
+                    applied?;
                 }
                 crate::event::DiffVariant::External(_) => unreachable!(),
             }
@@ -1141,6 +1185,35 @@ impl DocState {
                 self.store.commit_top_created_journal();
             }
         }
+    }
+
+    /// Start recording an import undo log: until [`Self::take_import_undo`],
+    /// `apply_diff` asks each container for the record that undoes its diff
+    /// before applying it. See `state/undo_log.rs`.
+    pub(crate) fn begin_import_undo(&mut self) {
+        debug_assert!(self.import_undo.is_none(), "import undo logs do not nest");
+        self.import_undo = Some(Default::default());
+    }
+
+    /// Stop recording; `None` if nothing was recording.
+    pub(crate) fn take_import_undo(&mut self) -> Option<undo_log::ImportUndoLog> {
+        self.import_undo.take()
+    }
+
+    /// Undo everything `log` recorded, newest first, and set the state's version
+    /// back to `frontiers` (its version when recording began). Reads no
+    /// history, so it cannot fail. Containers the import created keep their
+    /// (emptied) entries: the caller removes them with the created journal,
+    /// after this. Events of the undone changes are discarded.
+    pub(crate) fn undo_import(&mut self, log: undo_log::ImportUndoLog, frontiers: Frontiers) {
+        debug_assert!(self.import_undo.is_none());
+        for (idx, undo) in log.entries.into_iter().rev() {
+            self.store.get_or_create_mut(idx).apply_undo(undo);
+        }
+        self.frontiers = frontiers;
+        self.dead_containers_cache.clear();
+        self.alive_containers_cache = None;
+        let _ = self.take_events();
     }
 
     pub(crate) fn clear_local_rollback_stack(&mut self) {

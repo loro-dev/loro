@@ -5,6 +5,7 @@ fn init() {
 
 mod full_tracker_reuse;
 mod import_atomicity;
+mod import_undo_log;
 mod lazy_history;
 mod op_count;
 mod replay_base;

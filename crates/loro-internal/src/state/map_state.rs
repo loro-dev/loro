@@ -295,6 +295,33 @@ impl ContainerState for MapState {
         Diff::Map(resolved_delta)
     }
 
+    fn undo_record(&mut self, diff: &InternalDiff) -> super::undo_log::StateUndo {
+        let InternalDiff::Map(delta) = diff else {
+            unreachable!()
+        };
+        super::undo_log::StateUndo::Map(
+            delta
+                .updated
+                .keys()
+                .map(|key| (key.clone(), self.map.get(key).cloned()))
+                .collect(),
+        )
+    }
+
+    fn apply_undo(&mut self, undo: super::undo_log::StateUndo) {
+        let super::undo_log::StateUndo::Map(entries) = undo else {
+            unreachable!()
+        };
+        for (key, old) in entries.into_iter().rev() {
+            match old {
+                Some(value) => {
+                    self.insert(key, value);
+                }
+                None => self.remove(&key),
+            }
+        }
+    }
+
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         let _ = self.apply_diff_and_convert(diff, ctx);
         Ok(())

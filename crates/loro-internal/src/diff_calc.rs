@@ -235,6 +235,8 @@ impl DiffCalculator {
         if before == after {
             return Ok((Vec::new(), DiffMode::Linear));
         }
+        #[cfg(test)]
+        DIFF_CALCS.with(|n| n.set(n.get() + 1));
 
         let s = tracing::span!(tracing::Level::INFO, "DiffCalc", ?before, ?after,);
         let _e = s.enter();
@@ -2861,4 +2863,10 @@ fn persisted_walk_does_not_duplicate_style_entries() {
     };
     let ids = text.tracked_style_ids();
     assert_eq!(ids.len(), marks, "duplicate style entries: {ids:?}");
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Diffs computed between two different versions on this thread.
+    pub(crate) static DIFF_CALCS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

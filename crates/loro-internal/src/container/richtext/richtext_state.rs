@@ -2926,6 +2926,38 @@ impl RichtextState {
         result
     }
 
+    /// The chunks covering entities `start..start + len`, sliced at both ends.
+    /// Costs `O(log n + k)` for `k` chunks. Used by the import undo log
+    /// (`state/undo_log.rs`) to keep what a diff deletes.
+    pub(crate) fn chunks_in_entity_range(
+        &self,
+        start: usize,
+        len: usize,
+    ) -> Vec<RichtextStateChunk> {
+        if len == 0 {
+            return Vec::new();
+        }
+        assert!(start + len <= self.len_entity());
+        let from = self.tree.query::<EntityQuery>(&start).unwrap();
+        let to = self.tree.query::<EntityQuery>(&(start + len)).unwrap();
+        let mut ans = Vec::new();
+        for item in self.tree.iter_range(from.cursor..to.cursor) {
+            let chunk_len = item.elem.rle_len();
+            let a = item.start.unwrap_or(0);
+            let b = item.end.map(|v| v.min(chunk_len)).unwrap_or(chunk_len);
+            if b <= a {
+                continue;
+            }
+            if a == 0 && b == chunk_len {
+                ans.push(item.elem.clone());
+            } else {
+                ans.push(item.elem.slice(a..b));
+            }
+        }
+        debug_assert_eq!(ans.iter().map(|c| c.rle_len()).sum::<usize>(), len);
+        ans
+    }
+
     pub(crate) fn get_stable_position_at_event_index(
         &self,
         pos: usize,

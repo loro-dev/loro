@@ -62,6 +62,17 @@ impl ContainerState for CounterState {
         Ok(())
     }
 
+    fn undo_record(&mut self, _diff: &InternalDiff) -> super::undo_log::StateUndo {
+        super::undo_log::StateUndo::Counter(self.value)
+    }
+
+    fn apply_undo(&mut self, undo: super::undo_log::StateUndo) {
+        let super::undo_log::StateUndo::Counter(value) = undo else {
+            unreachable!()
+        };
+        self.value = value;
+    }
+
     fn apply_local_op(&mut self, raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         if let RawOpContent::Counter(diff) = raw_op.content {
             self.value += diff;

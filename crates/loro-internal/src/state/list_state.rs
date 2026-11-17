@@ -708,6 +708,64 @@ impl ContainerState for ListState {
         Ok(())
     }
 
+    fn undo_record(&mut self, diff: &InternalDiff) -> super::undo_log::StateUndo {
+        use super::undo_log::ListUndoStep;
+        let InternalDiff::ListRaw(delta) = diff else {
+            unreachable!()
+        };
+        let mut steps = Vec::new();
+        // `index` is in the list as the diff has changed it so far; `index +
+        // deleted - inserted` is the same position in the list before the diff.
+        let (mut index, mut inserted, mut deleted) = (0usize, 0usize, 0usize);
+        for span in delta.iter() {
+            match span {
+                crate::delta::DeltaItem::Retain { retain: len, .. } => index += len,
+                crate::delta::DeltaItem::Insert { insert: value, .. } => {
+                    let len = match &value.values {
+                        either::Either::Left(values) => values.len(),
+                        either::Either::Right(_) => 1,
+                    };
+                    steps.push(ListUndoStep::Inserted { index, len });
+                    index += len;
+                    inserted += len;
+                }
+                crate::delta::DeltaItem::Delete { delete: len, .. } => {
+                    let old = index + deleted - inserted;
+                    let elems = (old..old + len)
+                        .map(|i| {
+                            (
+                                self.get(i).expect("validated list delete").clone(),
+                                self.get_id_at(i).expect("validated list delete"),
+                            )
+                        })
+                        .collect();
+                    steps.push(ListUndoStep::Deleted { index, elems });
+                    deleted += len;
+                }
+            }
+        }
+        super::undo_log::StateUndo::List(steps)
+    }
+
+    fn apply_undo(&mut self, undo: super::undo_log::StateUndo) {
+        use super::undo_log::ListUndoStep;
+        let super::undo_log::StateUndo::List(steps) = undo else {
+            unreachable!()
+        };
+        for step in steps.into_iter().rev() {
+            match step {
+                ListUndoStep::Inserted { index, len } => {
+                    self.delete_range(index..index + len, None)
+                }
+                ListUndoStep::Deleted { index, elems } => {
+                    for (i, (value, id)) in elems.into_iter().enumerate() {
+                        self.insert(index + i, value, id);
+                    }
+                }
+            }
+        }
+    }
+
     fn apply_diff(&mut self, diff: InternalDiff, _: DiffApplyContext) -> LoroResult<()> {
         match diff {
             InternalDiff::ListRaw(delta) => {

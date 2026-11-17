@@ -32,6 +32,12 @@ before changing mergeable child behavior.
   `movable_list_state.rs` import validation and the Checkout-mode fallback for
   moves of deleted elements, plus the List/Text `validate_diff` bounds checks:
   [../../../../context/movable-list-op-validation.md](../../../../context/movable-list-op-validation.md).
+- `undo_log.rs`: the import undo log. Each `ContainerState` records what undoes a
+  diff before it is applied (`undo_record`, `apply_undo`), so a quota-rejected
+  import is rolled back without reading history. A new state change made while
+  applying a diff must be covered by its record:
+  [../../../../context/memory-budget.md](../../../../context/memory-budget.md),
+  "Import rollback without reading history".
 - `mergeable.rs`: logical child edge resolution for mergeable containers.
 - `dead_containers_cache.rs`: dead/alive tracking. Map/list deletions are
   final; tree and movable-list ones are dropped whenever a move could revive
