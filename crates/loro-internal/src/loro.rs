@@ -2010,10 +2010,11 @@ impl LoroDoc {
         // snapshots at both versions).
         let recorded = inverse.filter(|inv| {
             spans.len() == 1
-                && all_scopes.is_empty()
+                && crate::undo::movable_list::records_match_scopes(&inv.movable, &all_scopes)
                 && inv.span == spans[0].0
                 && inv.deps == spans[0].1
         });
+        let recorded_used = std::cell::Cell::new(false);
         let checked_out = std::cell::Cell::new(false);
         let checkout_calc_diff = |from: &Frontiers, to: &Frontiers| {
             checked_out.set(true);
@@ -2085,11 +2086,12 @@ impl LoroDoc {
                 if *from == Frontiers::from_id(inv.span.id_last()) && *to == inv.deps {
                     if crate::undo::verify_recorded_inverses() {
                         let from_checkout = checkout_calc_diff(from, to);
-                        crate::undo::assert_same_undo_diff(&from_checkout, &inv.diff);
+                        crate::undo::assert_same_undo_diff(&from_checkout, &inv.full_diff(self));
                     }
                     #[cfg(test)]
                     crate::undo::RECORDED_INVERSES_USED.with(|n| n.set(n.get() + 1));
-                    return inv.diff.clone();
+                    recorded_used.set(true);
+                    return inv.full_diff(self);
                 }
             }
             checkout_calc_diff(from, to)
@@ -2112,6 +2114,32 @@ impl LoroDoc {
             self.set_detached(false);
         }
         let mut inverse_lists = inverse_lists.take();
+        if let Some(inv) = recorded.filter(|_| recorded_used.get()) {
+            let mut from_records: Vec<_> = inv
+                .movable
+                .iter()
+                .map(|r| r.to_inverse(&inv.deps))
+                .collect();
+            if crate::undo::verify_recorded_inverses() && !from_records.is_empty() {
+                // `inverse_lists` holds what the checkout captured.
+                for lists in [&mut inverse_lists, &mut from_records] {
+                    crate::undo::movable_list::complete_anchors(
+                        self,
+                        lists,
+                        &latest_frontiers,
+                        &all_scopes,
+                        element_remap,
+                        container_remap,
+                    )?;
+                }
+                crate::undo::movable_list::assert_same_inverses(
+                    &inverse_lists,
+                    &from_records,
+                    self.is_shallow(),
+                );
+            }
+            inverse_lists = from_records;
+        }
         crate::undo::movable_list::complete_anchors(
             self,
             &mut inverse_lists,

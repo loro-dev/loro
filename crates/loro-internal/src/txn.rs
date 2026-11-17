@@ -237,6 +237,18 @@ pub struct Transaction {
     local_inverse: LocalInverseRecorder,
 }
 
+#[derive(Debug)]
+struct RecordedOp {
+    container: ContainerIdx,
+    /// `None` for a movable-list op, whose positional inverse is built from
+    /// its record when used.
+    diff: Option<Diff>,
+    /// For a map op, its key and the value it wrote.
+    map_written: Option<(InternalString, Option<LoroValue>)>,
+    /// For a movable-list op, what its identity undo plan reads.
+    movable: Option<crate::undo::movable_list::RecordedInverse>,
+}
+
 /// Records the inverse of every local op of a transaction while an undo manager
 /// is attached, so undo does not have to check the document out to get it
 /// (context/undo-log.md). Each entry is the event-level diff that undoes one op,
@@ -248,14 +260,8 @@ enum LocalInverseRecorder {
     Unknown,
     /// No undo manager.
     Off,
-    /// Each op's inverse, and for a map op its key and the value it wrote.
-    Recording(
-        Vec<(
-            ContainerIdx,
-            Diff,
-            Option<(InternalString, Option<LoroValue>)>,
-        )>,
-    ),
+    /// Each op's inverse; see [`RecordedOp`].
+    Recording(Vec<RecordedOp>),
     /// An op whose inverse is not recorded (or a rolled back batch): undo checks
     /// the document out for this commit.
     Unsupported,
@@ -700,9 +706,9 @@ impl Transaction {
         }
 
         let local_inverse = match std::mem::take(&mut self.local_inverse) {
-            LocalInverseRecorder::Recording(ops) if diff.is_some() => Some(Arc::new(
-                build_local_inverse(ops, self.id_span(), change_deps, &state.arena),
-            )),
+            LocalInverseRecorder::Recording(ops) if diff.is_some() => {
+                build_local_inverse(ops, self.id_span(), change_deps, &mut state).map(Arc::new)
+            }
             _ => None,
         };
         state.commit_txn(
@@ -961,13 +967,31 @@ impl Transaction {
             .then(|| local_op_inverse(&mut state, container, &raw_op, &event, &doc.inner));
         state.apply_local_op(&raw_op, &op)?;
         match inverse {
-            Some(Some(diff)) => {
-                if let LocalInverseRecorder::Recording(v) = &mut self.local_inverse {
-                    let written = match &event {
+            Some(Some((diff, movable))) => {
+                let movable = match movable {
+                    Some((mut record, edit)) => {
+                        // An op on a list's elements does not change whether
+                        // the list itself is reachable.
+                        let list = state.container_state_mut(container).as_movable_list_state();
+                        list.and_then(|list| record.finish(list, edit))
+                            .map(|()| record)
+                    }
+                    None => None,
+                };
+                let is_movable = container.get_type() == ContainerType::MovableList;
+                if is_movable && movable.is_none() {
+                    self.local_inverse = LocalInverseRecorder::Unsupported;
+                } else if let LocalInverseRecorder::Recording(v) = &mut self.local_inverse {
+                    let map_written = match &event {
                         EventHint::Map { key, value } => Some((key.clone(), value.clone())),
                         _ => None,
                     };
-                    v.push((container, diff, written));
+                    v.push(RecordedOp {
+                        container,
+                        diff: (!is_movable).then_some(diff),
+                        map_written,
+                        movable,
+                    });
                 }
             }
             Some(None) => self.local_inverse = LocalInverseRecorder::Unsupported,
@@ -1443,43 +1467,82 @@ mod tests {
 /// The [`crate::undo::LocalInverse`] of a committed transaction: the inverse of
 /// its last op first, then of each earlier one.
 fn build_local_inverse(
-    ops: Vec<(
-        ContainerIdx,
-        Diff,
-        Option<(InternalString, Option<LoroValue>)>,
-    )>,
+    ops: Vec<RecordedOp>,
     span: IdSpan,
     deps: Frontiers,
-    arena: &SharedArena,
-) -> crate::undo::LocalInverse {
+    state: &mut DocState,
+) -> Option<crate::undo::LocalInverse> {
+    let arena = state.arena.clone();
     let mut diff = crate::undo::DiffBatch::default();
     let mut map_values_after = FxHashMap::default();
-    for (idx, _, written) in ops.iter() {
-        if let Some((key, value)) = written {
+    let mut movable: Vec<crate::undo::movable_list::RecordedInverse> = Vec::new();
+    for op in ops.iter() {
+        if let Some((key, value)) = &op.map_written {
             let cid = arena
-                .idx_to_id(*idx)
+                .idx_to_id(op.container)
                 .expect("an edited container is registered");
             map_values_after.insert((cid, key.clone()), value.clone());
         }
     }
-    for (idx, op_inverse, _) in ops.into_iter().rev() {
+    let single_op = ops.len() == 1;
+    let mut inverses = Vec::with_capacity(ops.len());
+    for op in ops {
+        if let Some(record) = op.movable {
+            // One op per movable list, so its snapshots are those of the span's
+            // two ends; or only inserts, whose final places are read below.
+            match movable.iter_mut().find(|r| r.cid == record.cid) {
+                Some(r) if r.is_insert_only() && record.is_insert_only() => {
+                    r.merge_inserts(&record)
+                }
+                Some(r) if r.is_delete_only() && record.is_delete_only() => {
+                    if !r.merge_deletes(&record) {
+                        return None;
+                    }
+                }
+                Some(_) => return None,
+                None => movable.push(record),
+            }
+        }
+        if let Some(d) = op.diff {
+            inverses.push((op.container, d));
+        }
+    }
+    for (container, op_diff) in inverses.into_iter().rev() {
         let cid = arena
-            .idx_to_id(idx)
+            .idx_to_id(container)
             .expect("an edited container is registered");
         let mut single = crate::undo::DiffBatch::default();
-        single.cid_to_events.insert(cid.clone(), op_inverse);
+        single.cid_to_events.insert(cid.clone(), op_diff);
         single.order.push(cid);
         diff.compose_inverse(single);
     }
+    for record in movable.iter_mut() {
+        record.mark_created_in(span);
+        if record.is_insert_only() {
+            let idx = arena.id_to_idx(&record.cid)?;
+            record.refresh_after(state.container_state_mut(idx).as_movable_list_state()?);
+        }
+    }
+    // Mergeable children are found through their parent's marker, not their
+    // own creation; whether a checkout reports them is not modelled here.
+    if diff.cid_to_events.keys().any(|c| c.is_mergeable())
+        || movable.iter().any(|r| r.cid.is_mergeable())
+    {
+        return None;
+    }
     crate::undo::prune_unchanged_map_entries(&mut diff, &map_values_after);
     crate::undo::drop_containers_created_in(&mut diff, span);
-    crate::undo::normalize_deltas(&mut diff);
-    crate::undo::LocalInverse {
+    // One op's delta is built normalized; only composing splits items.
+    if !single_op {
+        crate::undo::normalize_deltas(&mut diff);
+    }
+    Some(crate::undo::LocalInverse {
         span,
         deps,
         diff,
         map_values_after,
-    }
+        movable,
+    })
 }
 
 /// The event-level diff that undoes one local op, read from the state before
@@ -1487,7 +1550,73 @@ fn build_local_inverse(
 /// whose inverse is not recorded: undo then checks the document out, as before.
 /// It must equal what undo gets from the checkout (`LoroDoc::undo_internal_with`
 /// checks this in tests).
+type MovableRecord = (
+    crate::undo::movable_list::RecordedInverse,
+    crate::undo::movable_list::ListEdit,
+);
+
 fn local_op_inverse(
+    state: &mut DocState,
+    container: ContainerIdx,
+    raw_op: &RawOp,
+    hint: &EventHint,
+    doc: &Arc<LoroDocInner>,
+) -> Option<(Diff, Option<MovableRecord>)> {
+    if container.get_type() == ContainerType::MovableList {
+        return movable_list_op_inverse(state, container, hint, doc);
+    }
+    local_op_inverse_diff(state, container, raw_op, hint, doc).map(|d| (d, None))
+}
+
+/// A movable-list op: the positional inverse event (what the checkout
+/// reports) and the identity record its undo plan reads (`undo::movable_list`).
+fn movable_list_op_inverse(
+    state: &mut DocState,
+    container: ContainerIdx,
+    hint: &EventHint,
+    _doc: &Arc<LoroDocInner>,
+) -> Option<(Diff, Option<MovableRecord>)> {
+    use crate::undo::movable_list::{ListEdit, RecordedInverse};
+    let cid = state.arena.idx_to_id(container)?;
+    let alive = state.get_reachable(&cid);
+    let list = state
+        .container_state_mut(container)
+        .as_movable_list_state()?;
+    let value_at = |i: usize| list.get(i, crate::state::IndexType::ForUser);
+    let edit = match hint {
+        EventHint::InsertList { len, pos } => ListEdit::Insert {
+            pos: *pos,
+            len: *len as usize,
+        },
+        EventHint::DeleteList(span) => {
+            let start = span.start() as usize;
+            // Restoring a child container revives it with its full state.
+            if (start..start + span.len()).any(|i| value_at(i).is_none_or(|v| v.is_container())) {
+                return None;
+            }
+            ListEdit::Delete {
+                start,
+                len: span.len(),
+            }
+        }
+        EventHint::Move { from, to, .. } => ListEdit::Move {
+            from: *from as usize,
+            to: *to as usize,
+        },
+        EventHint::SetList { index, .. } => {
+            if value_at(*index).is_none_or(|v| v.is_container()) {
+                return None;
+            }
+            ListEdit::Set { index: *index }
+        }
+        _ => return None,
+    };
+    let record = RecordedInverse::begin(list, cid, alive, edit)?;
+    // The positional inverse is built from the record when used.
+    Some((Diff::Unknown, Some((record, edit))))
+}
+
+fn local_op_inverse_diff(
     state: &mut DocState,
     container: ContainerIdx,
     raw_op: &RawOp,
@@ -1598,7 +1727,15 @@ fn local_op_inverse(
                     old_index,
                     ..
                 } => {
-                    if tree.parent(&item.target) != Some(*old_parent)
+                    // Into a deleted parent the node is deleted too; undo then
+                    // revives it (a new node with its metadata), as a checkout
+                    // reports.
+                    let into_deleted = match parent {
+                        crate::TreeParentId::Node(p) => tree.is_node_deleted(p) != Some(false),
+                        _ => false,
+                    };
+                    if into_deleted
+                        || tree.parent(&item.target) != Some(*old_parent)
                         || tree.is_node_deleted(&item.target) != Some(false)
                     {
                         return None;

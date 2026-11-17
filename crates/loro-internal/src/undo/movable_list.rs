@@ -24,7 +24,7 @@ use super::DiffBatch;
 
 pub(crate) type ElementRemap = FxHashMap<CompactIdLp, CompactIdLp>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Element {
     index: usize,
     id: CompactIdLp,
@@ -122,6 +122,7 @@ pub(crate) fn scopes(
     Ok((scopes, all))
 }
 
+#[derive(Clone, Debug)]
 struct AnchorSearch {
     next: isize,
     direction: isize,
@@ -262,6 +263,394 @@ impl Snapshot {
         result.elements.sort_by_key(|e| e.index);
         result
     }
+}
+
+/// A local movable-list op, in user indexes, as recorded for undo
+/// ([`RecordedInverse`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ListEdit {
+    Insert { pos: usize, len: usize },
+    Delete { start: usize, len: usize },
+    Move { from: usize, to: usize },
+    Set { index: usize },
+}
+
+/// A range deletion longer than this is not recorded (undo checks out): every
+/// deleted element gets its own anchor searches.
+const MAX_RECORDED_DELETE: usize = 64;
+/// Anchor candidates recorded on each side; [`complete_anchors`] searches
+/// history only when none of them survives.
+const RECORDED_CANDIDATES: usize = 2;
+
+/// What undo of one local movable-list op reads from the versions around it,
+/// recorded while the op is applied instead of checked out later
+/// (context/undo-log.md): the element snapshots of [`Snapshot::capture_span`]
+/// before and after, and the first anchor candidates of each search.
+#[derive(Debug, Clone)]
+pub(crate) struct RecordedInverse {
+    pub(crate) cid: ContainerID,
+    /// The op (for merged inserts or deletes, the first one's kind).
+    edit: ListEdit,
+    before_alive: bool,
+    after_alive: bool,
+    before: Vec<Element>,
+    after: Vec<Element>,
+    targets: FxHashSet<CompactIdLp>,
+    searches: Vec<AnchorSearch>,
+}
+
+impl RecordedInverse {
+    /// Reads the state before `edit`; `None` if it is not recorded.
+    pub(crate) fn begin(
+        list: &MovableListState,
+        cid: ContainerID,
+        alive: bool,
+        edit: ListEdit,
+    ) -> Option<Self> {
+        let mut before = Vec::new();
+        let (start, len) = match edit {
+            ListEdit::Insert { .. } => (0, 0),
+            ListEdit::Delete { start, len } => {
+                if len > MAX_RECORDED_DELETE {
+                    return None;
+                }
+                (start, len)
+            }
+            ListEdit::Move { from: index, .. } | ListEdit::Set { index } => (index, 1),
+        };
+        if len > 0 {
+            list.walk_user(start, 1, |index, id, e| {
+                before.push(Element {
+                    index,
+                    id,
+                    position: e.pos,
+                    value_id: e.value_id,
+                    value: e.value.clone(),
+                });
+                before.len() < len
+            });
+            if before.len() != len {
+                return None;
+            }
+        }
+        let targets: FxHashSet<_> = before.iter().map(|e| e.id).collect();
+        let mut searches = Vec::new();
+        if !before.is_empty() {
+            // The targets are contiguous (one element, or one deleted range),
+            // so every target's nearest non-target neighbours are the range's.
+            let first = before.first().unwrap().index as isize;
+            let last = before.last().unwrap().index as isize;
+            let mut sides = Vec::new();
+            let len = list.len() as isize;
+            for (start, direction) in [(first - 1, -1), (last + 1, 1)] {
+                // As `AnchorSearch::extend` with a width of
+                // `RECORDED_CANDIDATES`, walking instead of one query per index.
+                let mut candidates = Vec::new();
+                let mut next = start;
+                if start >= 0 && start < len {
+                    list.walk_user(start as usize, direction, |index, id, e| {
+                        next = index as isize + direction;
+                        if !targets.contains(&id) {
+                            candidates.push(Element {
+                                index,
+                                id,
+                                position: e.pos,
+                                value_id: e.value_id,
+                                value: e.value.clone(),
+                            });
+                        }
+                        candidates.len() < RECORDED_CANDIDATES
+                    });
+                }
+                sides.push(AnchorSearch {
+                    next,
+                    direction,
+                    width: RECORDED_CANDIDATES * 2,
+                    exhausted: next < 0 || next >= len,
+                    done: false,
+                    candidates,
+                });
+            }
+            for _ in &before {
+                searches.extend(sides.iter().cloned());
+            }
+        }
+        Some(Self {
+            cid,
+            edit,
+            before_alive: alive,
+            after_alive: alive,
+            before,
+            after: Vec::new(),
+            targets,
+            searches,
+        })
+    }
+
+    /// Reads the state after `edit`.
+    pub(crate) fn finish(&mut self, list: &MovableListState, edit: ListEdit) -> Option<()> {
+        match edit {
+            ListEdit::Insert { pos, len } => {
+                for i in pos..pos + len {
+                    let e = element_at(list, i)?;
+                    self.targets.insert(e.id);
+                    self.after.push(e);
+                }
+            }
+            ListEdit::Delete { .. } => {}
+            ListEdit::Set { index } | ListEdit::Move { to: index, .. } => {
+                let e = element_at(list, index)?;
+                (e.id == self.before[0].id).then_some(())?;
+                self.after.push(e);
+            }
+        }
+        Some(())
+    }
+
+    /// The positional list diff a checkout reports for undoing this record (the
+    /// event-level part of the inverse), built from the snapshots on use: it is
+    /// rarely needed, and building it for every op cost more than recording.
+    /// `None` for a list the span created (a checkout reports no diff for it).
+    pub(crate) fn positional_diff(&self, doc: &LoroDoc) -> Option<Diff> {
+        if !self.before_alive {
+            return None;
+        }
+        let value = |v: &LoroValue| ValueOrHandler::from_value(v.clone(), &doc.inner);
+        let delta = match self.edit {
+            ListEdit::Insert { .. } => {
+                // Delete the inserted elements that remain, by their final index.
+                let mut b = DeltaRopeBuilder::new();
+                let mut cursor = 0;
+                for e in &self.after {
+                    b = b.retain(e.index - cursor, Default::default()).delete(1);
+                    cursor = e.index + 1;
+                }
+                b.build()
+            }
+            ListEdit::Delete { .. } => DeltaRopeBuilder::new()
+                .retain(self.before[0].index, Default::default())
+                .insert_many(
+                    self.before.iter().map(|e| value(&e.value)),
+                    Default::default(),
+                )
+                .build(),
+            ListEdit::Move { .. } => {
+                let (from, to) = (self.before[0].index, self.after[0].index);
+                let v = loro_delta::array_vec::ArrayVec::from([value(&self.after[0].value)]);
+                let moved = ListDeltaMeta { from_move: true };
+                if from < to {
+                    DeltaRopeBuilder::new()
+                        .retain(from, Default::default())
+                        .insert(v, moved)
+                        .retain(to - from, Default::default())
+                        .delete(1)
+                        .build()
+                } else {
+                    DeltaRopeBuilder::new()
+                        .retain(to, Default::default())
+                        .delete(1)
+                        .retain(from - to, Default::default())
+                        .insert(v, moved)
+                        .build()
+                }
+            }
+            ListEdit::Set { .. } => {
+                let (old, new) = (&self.before[0], &self.after[0]);
+                if old.value == new.value {
+                    return None;
+                }
+                DeltaRopeBuilder::new()
+                    .retain(new.index, Default::default())
+                    .delete(1)
+                    .insert(
+                        loro_delta::array_vec::ArrayVec::from([value(&old.value)]),
+                        Default::default(),
+                    )
+                    .build()
+            }
+        };
+        Some(Diff::List(delta))
+    }
+
+    /// A list created by the span's own ops did not exist at its deps.
+    pub(crate) fn mark_created_in(&mut self, span: IdSpan) {
+        if matches!(&self.cid, ContainerID::Normal { peer, counter, .. }
+            if *peer == span.peer && span.counter.contains(*counter))
+        {
+            self.before_alive = false;
+        }
+    }
+
+    /// Only inserts: nothing existed before, so there is nothing to anchor.
+    pub(crate) fn is_insert_only(&self) -> bool {
+        self.before.is_empty() && self.searches.is_empty()
+    }
+
+    /// Only deletes (of one contiguous range each).
+    pub(crate) fn is_delete_only(&self) -> bool {
+        !self.before.is_empty() && self.after.is_empty() && self.targets.len() == self.before.len()
+    }
+
+    /// Joins the pieces of one deletion that the list split into several ops
+    /// (dead list items between them), so the record describes the whole range
+    /// as it was before the first piece. `false` (undo checks out) unless the
+    /// pieces form one contiguous range.
+    ///
+    /// Pieces deleted right to left were recorded with their original indices.
+    /// Pieces deleted left to right start at the same index, after the earlier
+    /// pieces left: their indices, and those of their right anchor candidates,
+    /// shift back by the length already deleted.
+    pub(crate) fn merge_deletes(&mut self, other: &RecordedInverse) -> bool {
+        let start = self.before.first().unwrap().index;
+        let (left, right, before) = if other.before.last().unwrap().index + 1 == start {
+            // `other` is to the left: it keeps its left search; the old range
+            // keeps its right one.
+            let mut before = other.before.clone();
+            before.extend(self.before.iter().cloned());
+            (other.searches[0].clone(), self.searches[1].clone(), before)
+        } else if other.before.first().unwrap().index == start {
+            let shift = self.before.len();
+            let mut before = self.before.clone();
+            before.extend(other.before.iter().cloned().map(|mut e| {
+                e.index += shift;
+                e
+            }));
+            let mut right = other.searches[1].clone();
+            right.next += shift as isize;
+            for e in &mut right.candidates {
+                e.index += shift;
+            }
+            (self.searches[0].clone(), right, before)
+        } else {
+            return false;
+        };
+        self.before = before;
+        self.targets.extend(other.targets.iter().copied());
+        self.searches.clear();
+        for _ in &self.before {
+            self.searches.push(left.clone());
+            self.searches.push(right.clone());
+        }
+        self.after_alive = other.after_alive;
+        true
+    }
+
+    /// Adds `other`'s inserted elements, for several insert-only ops on one list.
+    pub(crate) fn merge_inserts(&mut self, other: &RecordedInverse) {
+        debug_assert!(self.is_insert_only() && other.is_insert_only());
+        self.targets.extend(other.targets.iter().copied());
+        self.after_alive = other.after_alive;
+    }
+
+    /// Reads the inserted elements that remain, where they are now: a later
+    /// insert may have shifted an earlier one.
+    pub(crate) fn refresh_after(&mut self, list: &MovableListState) {
+        self.after = self
+            .targets
+            .iter()
+            .filter_map(|id| element_by_id(list, *id))
+            .collect();
+        self.after.sort_by_key(|e| e.index);
+    }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let elems = self.before.len()
+            + self.after.len()
+            + self
+                .searches
+                .iter()
+                .map(|s| s.candidates.len())
+                .sum::<usize>();
+        elems * std::mem::size_of::<Element>()
+            + self.targets.len() * std::mem::size_of::<CompactIdLp>()
+    }
+
+    /// The [`Inverse`] a checkout at `deps` and at the span's last op would
+    /// have produced.
+    pub(crate) fn to_inverse(&self, deps: &Frontiers) -> Inverse {
+        Inverse {
+            span_index: 0,
+            cid: self.cid.clone(),
+            before: Snapshot {
+                alive: self.before_alive,
+                elements: self.before.clone(),
+                targets: self.targets.clone(),
+                full: false,
+                searches: self.searches.clone(),
+            },
+            after: Snapshot {
+                alive: self.after_alive,
+                elements: self.after.clone(),
+                targets: self.targets.clone(),
+                full: false,
+                searches: Vec::new(),
+            },
+            before_frontiers: deps.clone(),
+        }
+    }
+}
+
+/// Whether `records` cover exactly the lists and elements the span's ops name
+/// (`scopes`); otherwise undo captures them by checkout.
+pub(crate) fn records_match_scopes(records: &[RecordedInverse], scopes: &Scopes) -> bool {
+    records.len() == scopes.len()
+        && records.iter().all(|r| {
+            scopes
+                .get(&r.cid)
+                .is_some_and(|scope| !scope.full && scope.ids == r.targets)
+        })
+}
+
+/// Panics unless the two inverses (after [`complete_anchors`]) hold the same
+/// data. Used by the undo log's verification mode.
+///
+/// On a shallow document value ids are not compared: a checkout rebuilds them
+/// from the retained history, and a set trimmed before the shallow root leaves
+/// it with another op's id, while the recorded snapshot reads the live state.
+/// The recorded one is the state's; with the checkout's, undo issued a set that
+/// changed nothing but the value id.
+pub(crate) fn assert_same_inverses(from_checkout: &[Inverse], recorded: &[Inverse], shallow: bool) {
+    let canonical = |inverses: &[Inverse]| -> Vec<String> {
+        let mut out: Vec<String> = inverses
+            .iter()
+            .map(|i| {
+                let elems = |s: &Snapshot| {
+                    let mut v: Vec<_> = s
+                        .elements
+                        .iter()
+                        .map(|e| {
+                            let value_id = (!shallow).then_some(e.value_id);
+                            format!(
+                                "{}:{:?}:{:?}:{:?}:{:?}",
+                                e.index, e.id, e.position, value_id, e.value
+                            )
+                        })
+                        .collect();
+                    v.sort();
+                    v
+                };
+                let mut targets: Vec<_> =
+                    i.before.targets.iter().map(|t| format!("{t:?}")).collect();
+                targets.sort();
+                format!(
+                    "{:?} alive {}/{} targets {:?} before {:?} after {:?}",
+                    i.cid,
+                    i.before.alive,
+                    i.after.alive,
+                    targets,
+                    elems(&i.before),
+                    elems(&i.after)
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    assert_eq!(
+        canonical(from_checkout),
+        canonical(recorded),
+        "the recorded movable-list inverse differs from the checkout's (left: checkout, right: recorded)"
+    );
 }
 
 pub(crate) struct Inverse {

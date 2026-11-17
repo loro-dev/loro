@@ -382,9 +382,24 @@ pub(crate) struct LocalInverse {
     /// reports no change for a key whose value ends where it started (see
     /// [`prune_unchanged_map_entries`]).
     pub(crate) map_values_after: FxHashMap<(ContainerID, crate::InternalString), Option<LoroValue>>,
+    /// The identity records of the span's movable-list ops (one per list).
+    pub(crate) movable: Vec<movable_list::RecordedInverse>,
 }
 
 impl LocalInverse {
+    /// The full event-level inverse: the recorded diffs and the movable lists'
+    /// positional diffs, built now ([`movable_list::RecordedInverse::positional_diff`]).
+    pub(crate) fn full_diff(&self, doc: &LoroDoc) -> DiffBatch {
+        let mut diff = self.diff.clone();
+        for record in &self.movable {
+            if let Some(d) = record.positional_diff(doc) {
+                diff.order.push(record.cid.clone());
+                diff.cid_to_events.insert(record.cid.clone(), d);
+            }
+        }
+        diff
+    }
+
     /// `self` followed by `next`, if `next` continues right after `self` with no
     /// other op in between.
     pub(crate) fn then(&self, next: &LocalInverse) -> Option<LocalInverse> {
@@ -407,6 +422,20 @@ impl LocalInverse {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
+        // Each list's records cover one op; a list edited by both cannot
+        // combine them (undo checks out instead).
+        if next
+            .movable
+            .iter()
+            .any(|r| self.movable.iter().any(|o| o.cid == r.cid))
+        {
+            return None;
+        }
+        let mut movable = self.movable.clone();
+        movable.extend(next.movable.iter().cloned());
+        for record in &mut movable {
+            record.mark_created_in(span);
+        }
         prune_unchanged_map_entries(&mut diff, &map_values_after);
         drop_containers_created_in(&mut diff, span);
         normalize_deltas(&mut diff);
@@ -415,6 +444,7 @@ impl LocalInverse {
             deps: self.deps.clone(),
             diff,
             map_values_after,
+            movable,
         })
     }
 }
@@ -603,10 +633,14 @@ impl StackItem {
                 .iter()
                 .map(container_id_estimated_bytes)
                 .sum::<usize>();
-        let inverse_bytes = self
-            .inverse
-            .as_ref()
-            .map_or(0, |inv| inv.diff.estimated_bytes());
+        let inverse_bytes = self.inverse.as_ref().map_or(0, |inv| {
+            inv.diff.estimated_bytes()
+                + inv
+                    .movable
+                    .iter()
+                    .map(|r| r.estimated_bytes())
+                    .sum::<usize>()
+        });
         std::mem::size_of::<Self>()
             .saturating_add(value_bytes)
             .saturating_add(cursors_bytes)
@@ -2277,6 +2311,76 @@ mod recorded_inverse_tests {
                 roots(&original) + 2,
                 "two remote roots stay"
             );
+        }
+    }
+
+    /// Movable-list inserts, deletes, moves and sets (one op per step, with a
+    /// remote peer's concurrent edits) undo and redo from recorded identity
+    /// snapshots: compared with the checkout's when verifying, and with no diff
+    /// computed otherwise.
+    #[test]
+    fn movable_list_steps_undo_from_recorded_inverses() {
+        for verify in [true, false] {
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(1).unwrap();
+            let remote = LoroDoc::new_auto_commit();
+            remote.set_peer_id(2).unwrap();
+            let list = doc.get_movable_list("list");
+            for i in 0..20 {
+                list.push(LoroValue::I64(i)).unwrap();
+            }
+            doc.commit_then_renew();
+            let sync = || {
+                remote
+                    .import(&doc.export(ExportMode::updates(&remote.oplog_vv())).unwrap())
+                    .unwrap();
+                let r = remote.get_movable_list("list");
+                r.insert(0, -1).unwrap();
+                r.mov(r.len() - 1, 1).unwrap();
+                remote.commit_then_renew();
+                doc.import(&remote.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+                    .unwrap();
+            };
+            sync();
+            let undo = UndoManager::new(&doc);
+            undo.set_merge_interval(0);
+            list.insert(3, 100).unwrap();
+            doc.commit_then_renew();
+            list.delete(5, 3).unwrap();
+            doc.commit_then_renew();
+            sync();
+            list.mov(2, 10).unwrap();
+            doc.commit_then_renew();
+            list.set(4, "set").unwrap();
+            doc.commit_then_renew();
+            sync();
+            let steps = undo.undo_count();
+            assert_eq!(steps, 4);
+            let edited = doc.get_deep_value();
+
+            SKIP_VERIFY.with(|s| s.set(!verify));
+            RECORDED_INVERSES_USED.with(|n| n.set(0));
+            crate::diff_calc::DIFF_CALCS.with(|n| n.set(0));
+            for _ in 0..steps {
+                assert!(undo.undo().unwrap());
+            }
+            for _ in 0..steps {
+                assert!(undo.redo().unwrap());
+            }
+            SKIP_VERIFY.with(|s| s.set(false));
+            assert_eq!(
+                RECORDED_INVERSES_USED.with(|n| n.get()),
+                2 * steps,
+                "verify {verify}"
+            );
+            if !verify {
+                assert_eq!(crate::diff_calc::DIFF_CALCS.with(|n| n.get()), 0);
+            }
+            assert_eq!(doc.get_deep_value(), edited);
+            remote
+                .import(&doc.export(ExportMode::updates(&remote.oplog_vv())).unwrap())
+                .unwrap();
+            assert_eq!(remote.get_deep_value(), doc.get_deep_value());
         }
     }
 
