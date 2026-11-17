@@ -156,6 +156,7 @@ pub trait HandlerTrait: Clone + Sized {
             .ok_or(LoroError::MisuseDetachedContainer {
                 method: "with_state",
             })?;
+        inner.doc.touch_access_tick();
         let state = inner.doc.state.clone();
         let mut guard = state.lock();
         guard.with_state_mut(inner.container_idx, f)
@@ -368,6 +369,7 @@ impl BasicHandler {
 
     #[inline]
     fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
+        self.doc.touch_access_tick();
         let state = self.doc.state.clone();
         let mut guard = state.lock();
         f(&mut guard)
@@ -381,6 +383,7 @@ impl BasicHandler {
     }
 
     fn get_parent(&self) -> Option<Handler> {
+        self.doc.touch_access_tick();
         let parent_idx = self.doc.arena.get_parent(self.container_idx)?;
         let parent_id = self.doc.arena.get_container_id(parent_idx).unwrap();
         {
@@ -418,10 +421,12 @@ impl BasicHandler {
     }
 
     pub fn get_value(&self) -> LoroValue {
+        self.doc.touch_access_tick();
         self.doc.state.lock().get_value_by_idx(self.container_idx)
     }
 
     pub fn get_deep_value(&self) -> LoroValue {
+        self.doc.touch_access_tick();
         self.doc
             .state
             .lock()
@@ -429,6 +434,7 @@ impl BasicHandler {
     }
 
     fn with_state<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
+        self.doc.touch_access_tick();
         let mut guard = self.doc.state.lock();
         guard.with_state_mut(self.container_idx, f)
     }
@@ -438,6 +444,7 @@ impl BasicHandler {
     }
 
     fn is_deleted(&self) -> bool {
+        self.doc.touch_access_tick();
         self.doc.state.lock().is_deleted(self.container_idx)
     }
 

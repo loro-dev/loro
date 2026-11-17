@@ -23,6 +23,7 @@ use loro_internal::{
     diff::diff_impl::UpdateTimeoutError,
     encoding::ImportBlobMetadata,
     event::Index,
+    global_memory_budget, global_memory_stats,
     handler::{
         Handler, ListHandler, MapHandler, TextDelta, TextHandler, TreeHandler, UpdateOptions,
         ValueOrHandler,
@@ -30,7 +31,8 @@ use loro_internal::{
     id::{Counter, PeerID, TreeID, ID},
     loro::{CommitOptions, ExportMode},
     loro_common::{check_root_container_name, IdSpanVector},
-    memory::{DocMemoryStats, MemoryBudget},
+    memory::{DocMemoryStats, GlobalMemoryBudget, GlobalMemoryStats, MemoryBudget},
+    reclaim_global_memory, set_global_memory_budget, try_reclaim_global_to_budget,
     undo::{DiffBatch, UndoItemMeta, UndoOrRedo},
     version::{Frontiers, VersionRange},
     ContainerType, DiffEvent, FxHashMap, HandlerTrait, IdLp, IdSpan, LoroDoc as LoroDocInner,
@@ -104,6 +106,7 @@ fn run() {
 }
 
 fn init_panic_hook() {
+    loro_internal::memory::enable_global_heap_tracker();
     // Clear the slot only when it is absent: if another loro-crdt instance in
     // this realm already trapped and recorded a panic, keep that first record.
     let global = js_sys::global();
@@ -179,18 +182,20 @@ struct ReportingAlloc;
 
 unsafe impl GlobalAlloc for ReportingAlloc {
     // `#[inline(always)]` lets the wrapper collapse into the rustc-generated
-    // `__rust_alloc`/`__rust_dealloc` shims, leaving only the null check.
+    // `__rust_alloc`/`__rust_dealloc` shims, leaving only null check + relaxed counter update.
     #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { System.alloc(layout) };
         if ptr.is_null() {
             report_oom_and_trap(layout.size());
         }
+        loro_internal::memory::record_global_alloc(layout.size());
         ptr
     }
 
     #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        loro_internal::memory::record_global_dealloc(layout.size());
         unsafe { System.dealloc(ptr, layout) }
     }
 
@@ -203,6 +208,7 @@ unsafe impl GlobalAlloc for ReportingAlloc {
         if new_ptr.is_null() {
             report_oom_and_trap(new_size);
         }
+        loro_internal::memory::record_global_realloc(layout.size(), new_size);
         new_ptr
     }
 
@@ -212,6 +218,7 @@ unsafe impl GlobalAlloc for ReportingAlloc {
         if ptr.is_null() {
             report_oom_and_trap(layout.size());
         }
+        loro_internal::memory::record_global_alloc(layout.size());
         ptr
     }
 }
@@ -437,6 +444,10 @@ extern "C" {
     pub type JsContainerPath;
     #[wasm_bindgen(typescript_type = "(text: string) => boolean")]
     pub type JsTextIterCallback;
+    #[wasm_bindgen(typescript_type = "string")]
+    pub type JsStrArg;
+    #[wasm_bindgen(typescript_type = "Uint8Array")]
+    pub type JsUint8Array;
     #[wasm_bindgen(typescript_type = "Uint8Array[]")]
     pub type JsBinaryArray;
     #[wasm_bindgen(typescript_type = "Record<string, Value>")]
@@ -459,6 +470,10 @@ extern "C" {
     pub type JsMemoryBudget;
     #[wasm_bindgen(typescript_type = "DocMemoryStats")]
     pub type JsDocMemoryStats;
+    #[wasm_bindgen(typescript_type = "GlobalMemoryBudget")]
+    pub type JsGlobalMemoryBudget;
+    #[wasm_bindgen(typescript_type = "GlobalMemoryStats")]
+    pub type JsGlobalMemoryStats;
 }
 
 mod observer {
@@ -540,22 +555,66 @@ fn update_error_to_js(err: UpdateTimeoutError) -> JsValue {
 
 const STREAMING_BATCH_BYTES_THRESHOLD: usize = 256 * 1024;
 
+fn js_str_to_string_checked(arg: JsStrArg) -> JsResult<String> {
+    let val: JsValue = arg.into();
+    if loro_internal::loro::has_global_wasm_linear_limit() {
+        if !val.is_string() {
+            return Err(JsError::new("Expected a string").into());
+        }
+        let js_str: &js_sys::JsString = wasm_bindgen::JsCast::unchecked_ref(&val);
+        let code_units = js_str.length() as u64;
+        if code_units >= 64 * 1024 {
+            loro_internal::loro::preflight_wasm_linear_alloc(code_units.saturating_mul(3))?;
+        }
+    }
+    val.as_string()
+        .ok_or_else(|| JsError::new("Expected a string").into())
+}
+
+fn js_u8_byte_len(val: &JsValue) -> usize {
+    if let Some(u8_arr) = val.dyn_ref::<Uint8Array>() {
+        return u8_arr.byte_length() as usize;
+    }
+    if let Some(buf) = val.dyn_ref::<js_sys::ArrayBuffer>() {
+        return buf.byte_length() as usize;
+    }
+    Uint8Array::new(val).byte_length() as usize
+}
+
+fn js_u8_to_bytes_checked(
+    doc: &LoroDocInner,
+    val: &JsValue,
+) -> Result<Bytes, loro_internal::LoroError> {
+    if let Some(u8_arr) = val.dyn_ref::<Uint8Array>() {
+        let len = u8_arr.byte_length() as usize;
+        doc.preflight_external_import_alloc(len)?;
+        return Ok(Bytes::from(u8_arr.to_vec()));
+    }
+    let u8_arr = Uint8Array::new(val);
+    let len = u8_arr.byte_length() as usize;
+    doc.preflight_external_import_alloc(len)?;
+    Ok(Bytes::from(u8_arr.to_vec()))
+}
+
 fn js_binary_array_info(data: JsBinaryArray) -> JsResult<(Array, usize, usize)> {
     let array: Array = data.dyn_into()?;
     let len = array.length() as usize;
     let mut total_bytes = 0usize;
     for i in 0..len {
         let item = array.get(i as u32);
-        let u8_len = item.dyn_into::<Uint8Array>()?.byte_length() as usize;
+        let u8_len = js_u8_byte_len(&item);
         total_bytes = total_bytes.saturating_add(u8_len);
     }
     Ok((array, len, total_bytes))
 }
 
-fn js_binary_array_to_bytes(array: &Array) -> Vec<Bytes> {
-    (0..array.length())
-        .map(|i| Bytes::from(array.get(i).unchecked_into::<Uint8Array>().to_vec()))
-        .collect()
+fn js_binary_array_to_bytes_checked(doc: &LoroDocInner, array: &Array) -> JsResult<Vec<Bytes>> {
+    let len = array.length();
+    let mut out = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        out.push(js_u8_to_bytes_checked(doc, &array.get(i))?);
+    }
+    Ok(out)
 }
 
 fn ids_to_frontiers(ids: Vec<JsID>) -> JsResult<Frontiers> {
@@ -688,6 +747,109 @@ fn doc_memory_stats_to_js(stats: &DocMemoryStats) -> JsResult<JsValue> {
             &JsValue::from_str(key),
             &JsValue::from_f64(value as f64),
         )?;
+    }
+    Ok(obj.into())
+}
+
+const MAX_SAFE_JS_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+fn parse_non_negative_safe_u64(val: &JsValue, label: &str) -> JsResult<u64> {
+    let Some(num) = val.as_f64() else {
+        return Err(JsError::new(&format!("{label} must be a number")).into());
+    };
+    if !num.is_finite() || num < 0.0 || num.fract() != 0.0 || num > MAX_SAFE_JS_INTEGER {
+        return Err(JsError::new(&format!("{label} must be a non-negative integer")).into());
+    }
+    Ok(num as u64)
+}
+
+fn read_optional_global_budget_u64(obj: &JsValue, key: &str) -> JsResult<Option<u64>> {
+    let val = Reflect::get(obj, &JsValue::from_str(key))?;
+    if val.is_undefined() || val.is_null() {
+        return Ok(None);
+    }
+    parse_non_negative_safe_u64(&val, &format!("GlobalMemoryBudget.{key}")).map(Some)
+}
+
+fn read_optional_global_budget_usize(obj: &JsValue, key: &str) -> JsResult<Option<usize>> {
+    let val = Reflect::get(obj, &JsValue::from_str(key))?;
+    if val.is_undefined() || val.is_null() {
+        return Ok(None);
+    }
+    let Some(num) = val.as_f64() else {
+        return Err(JsError::new(&format!("GlobalMemoryBudget.{key} must be a number")).into());
+    };
+    if !num.is_finite() || num < 0.0 || num.fract() != 0.0 || num > usize::MAX as f64 {
+        return Err(JsError::new(&format!(
+            "GlobalMemoryBudget.{key} must be a non-negative integer"
+        ))
+        .into());
+    }
+    Ok(Some(num as usize))
+}
+
+fn js_to_global_memory_budget(js: JsGlobalMemoryBudget) -> JsResult<GlobalMemoryBudget> {
+    let obj: JsValue = js.into();
+    if !obj.is_object() || obj.is_null() {
+        return Err(JsError::new("GlobalMemoryBudget must be an object").into());
+    }
+    Ok(GlobalMemoryBudget {
+        max_heap_bytes: read_optional_global_budget_u64(&obj, "maxHeapBytes")?,
+        max_wasm_linear_bytes: read_optional_global_budget_u64(&obj, "maxWasmLinearBytes")?,
+        high_watermark_bytes: read_optional_global_budget_u64(&obj, "highWatermarkBytes")?,
+        target_watermark_bytes: read_optional_global_budget_u64(&obj, "targetWatermarkBytes")?,
+        max_import_blob_bytes: read_optional_global_budget_usize(&obj, "maxImportBlobBytes")?,
+        max_kv_block_cache_bytes: read_optional_global_budget_usize(&obj, "maxKvBlockCacheBytes")?,
+    })
+}
+
+fn global_memory_budget_to_js(budget: &GlobalMemoryBudget) -> JsResult<JsValue> {
+    let obj = Object::new();
+    let u64_fields: [(&str, Option<u64>); 4] = [
+        ("maxHeapBytes", budget.max_heap_bytes),
+        ("maxWasmLinearBytes", budget.max_wasm_linear_bytes),
+        ("highWatermarkBytes", budget.high_watermark_bytes),
+        ("targetWatermarkBytes", budget.target_watermark_bytes),
+    ];
+    for (key, value) in u64_fields {
+        if let Some(v) = value {
+            Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from_f64(v as f64))?;
+        }
+    }
+    let usize_fields: [(&str, Option<usize>); 2] = [
+        ("maxImportBlobBytes", budget.max_import_blob_bytes),
+        ("maxKvBlockCacheBytes", budget.max_kv_block_cache_bytes),
+    ];
+    for (key, value) in usize_fields {
+        if let Some(v) = value {
+            Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from_f64(v as f64))?;
+        }
+    }
+    Ok(obj.into())
+}
+
+fn global_memory_stats_to_js(stats: &GlobalMemoryStats) -> JsResult<JsValue> {
+    let obj = Object::new();
+    let fields: [(&str, f64); 7] = [
+        ("liveDocCount", stats.live_doc_count as f64),
+        ("docsEstimatedBytes", stats.docs_estimated_bytes as f64),
+        (
+            "globalBlockCacheBytes",
+            stats.global_block_cache_bytes as f64,
+        ),
+        ("allocatedHeapBytes", stats.allocated_heap_bytes as f64),
+        (
+            "peakAllocatedHeapBytes",
+            stats.peak_allocated_heap_bytes as f64,
+        ),
+        (
+            "wasmLinearMemoryBytes",
+            stats.wasm_linear_memory_bytes as f64,
+        ),
+        ("spilledDiskBytes", stats.spilled_disk_bytes as f64),
+    ];
+    for (key, value) in fields {
+        Reflect::set(&obj, &JsValue::from_str(key), &JsValue::from_f64(value))?;
     }
     Ok(obj.into())
 }
@@ -2052,8 +2214,9 @@ impl LoroDoc {
     /// // or import updates
     /// doc2.import(updates);
     /// ```
-    pub fn import(&self, update_or_snapshot: Vec<u8>) -> JsResult<JsImportStatus> {
-        let status = self.doc.import_bytes(Bytes::from(update_or_snapshot))?;
+    pub fn import(&self, update_or_snapshot: JsUint8Array) -> JsResult<JsImportStatus> {
+        let bytes = js_u8_to_bytes_checked(&self.doc, &update_or_snapshot.into())?;
+        let status = self.doc.import_bytes(bytes)?;
         Ok(import_status_to_js_value(status)?.into())
     }
 
@@ -2112,20 +2275,17 @@ impl LoroDoc {
         let status = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
             let mut blobs = Vec::with_capacity(len);
             for i in 0..len {
-                let u8_arr = array.get(i as u32).unchecked_into::<Uint8Array>();
-                self.doc
-                    .check_import_blob_limit(u8_arr.byte_length() as usize)?;
-                let bytes = Bytes::from(u8_arr.to_vec());
+                let item = array.get(i as u32);
+                let bytes = js_u8_to_bytes_checked(&self.doc, &item)?;
                 let meta = LoroDocInner::decode_import_blob_meta_bytes(bytes, false)?;
                 let arr = &array;
                 blobs.push((meta, move || {
-                    let u8_arr = arr.get(i as u32).unchecked_into::<Uint8Array>();
-                    Ok(Bytes::from(u8_arr.to_vec()))
+                    js_u8_to_bytes_checked(&self.doc, &arr.get(i as u32))
                 }));
             }
             self.doc.import_batch_with_loaders(blobs, false)?
         } else {
-            let blobs = js_binary_array_to_bytes(&array);
+            let blobs = js_binary_array_to_bytes_checked(&self.doc, &array)?;
             self.doc.import_batch_bytes(blobs)?
         };
         Ok(import_status_to_js_value(status)?.into())
@@ -2180,29 +2340,29 @@ impl LoroDoc {
     #[wasm_bindgen(js_name = "importBatchDetailed")]
     pub fn import_batch_detailed(&self, data: JsBinaryArray) -> JsResult<JsImportBatchDetail> {
         let (array, len, total_bytes) = js_binary_array_info(data)?;
-        let detail = if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
+        let detail = if len == 0 {
+            self.doc.import_batch_detailed_bytes(Vec::new())?
+        } else if len > 1 && total_bytes > STREAMING_BATCH_BYTES_THRESHOLD {
             let mut blobs = Vec::with_capacity(len);
             for i in 0..len {
-                let u8_arr = array.get(i as u32).unchecked_into::<Uint8Array>();
-                let meta = self
-                    .doc
-                    .check_import_blob_limit(u8_arr.byte_length() as usize)
-                    .and_then(|()| {
-                        let bytes = Bytes::from(u8_arr.to_vec());
-                        LoroDocInner::decode_import_blob_meta_bytes(bytes, false)
-                    });
+                let item = array.get(i as u32);
+                let meta = js_u8_to_bytes_checked(&self.doc, &item)
+                    .and_then(|bytes| LoroDocInner::decode_import_blob_meta_bytes(bytes, false));
                 let arr = &array;
                 blobs.push((meta, move || {
-                    let u8_arr = arr.get(i as u32).unchecked_into::<Uint8Array>();
-                    self.doc
-                        .check_import_blob_limit(u8_arr.byte_length() as usize)?;
-                    Ok(Bytes::from(u8_arr.to_vec()))
+                    js_u8_to_bytes_checked(&self.doc, &arr.get(i as u32))
                 }));
             }
             self.doc.import_batch_detailed_with_loaders(blobs, false)?
         } else {
-            let blobs = js_binary_array_to_bytes(&array);
-            self.doc.import_batch_detailed_bytes(blobs)?
+            // Retain at most the small-batch threshold (or one blob), and share
+            // each allocation between metadata and import. Failed admissions
+            // stay per-blob errors rather than failing the whole batch.
+            let blobs: Vec<_> = (0..len)
+                .map(|i| js_u8_to_bytes_checked(&self.doc, &array.get(i as u32)))
+                .collect();
+            self.doc
+                .import_batch_detailed_with_blob_results(blobs, false)?
         };
         Ok(import_batch_detail_to_js_value(detail)?.into())
     }
@@ -3272,7 +3432,8 @@ impl LoroText {
     /// ```
     ///
     #[wasm_bindgen(skip_typescript)]
-    pub fn update(&self, text: &str, options: JsValue) -> JsResult<()> {
+    pub fn update(&self, text: JsStrArg, options: JsValue) -> JsResult<()> {
+        let text = js_str_to_string_checked(text)?;
         let options = if options.is_null() || options.is_undefined() {
             UpdateOptions {
                 timeout_ms: None,
@@ -3294,7 +3455,7 @@ impl LoroText {
             }
         };
         self.handler
-            .update(text, options)
+            .update(&text, options)
             .map_err(update_error_to_js)
     }
 
@@ -3302,7 +3463,8 @@ impl LoroText {
     ///
     /// It uses Myers' diff algorithm to compute the optimal difference.
     #[wasm_bindgen(js_name = "updateByLine", skip_typescript)]
-    pub fn update_by_line(&self, text: &str, options: JsValue) -> JsResult<()> {
+    pub fn update_by_line(&self, text: JsStrArg, options: JsValue) -> JsResult<()> {
+        let text = js_str_to_string_checked(text)?;
         let options = if options.is_null() || options.is_undefined() {
             UpdateOptions {
                 timeout_ms: None,
@@ -3324,7 +3486,7 @@ impl LoroText {
             }
         };
         self.handler
-            .update_by_line(text, options)
+            .update_by_line(&text, options)
             .map_err(update_error_to_js)
     }
 
@@ -3338,8 +3500,9 @@ impl LoroText {
     /// const text = doc.getText("text");
     /// text.insert(0, "Hello");
     /// ```
-    pub fn insert(&mut self, index: usize, content: &str) -> JsResult<()> {
-        self.handler.insert(index, content, PosType::Utf16)?;
+    pub fn insert(&mut self, index: usize, content: JsStrArg) -> JsResult<()> {
+        let content = js_str_to_string_checked(content)?;
+        self.handler.insert(index, &content, PosType::Utf16)?;
         Ok(())
     }
 
@@ -3391,8 +3554,9 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// text.splice(2, 3, "llo"); // "llo"
     /// ```
-    pub fn splice(&mut self, pos: usize, len: usize, s: &str) -> JsResult<String> {
-        match self.handler.splice(pos, len, s, PosType::Utf16) {
+    pub fn splice(&mut self, pos: usize, len: usize, s: JsStrArg) -> JsResult<String> {
+        let s = js_str_to_string_checked(s)?;
+        match self.handler.splice(pos, len, &s, PosType::Utf16) {
             Ok(x) => Ok(x),
             Err(x) => Err(x.into()),
         }
@@ -3409,8 +3573,9 @@ impl LoroText {
     /// text.insertUtf8(0, "Hello");
     /// ```
     #[wasm_bindgen(js_name = "insertUtf8")]
-    pub fn insert_utf8(&mut self, index: usize, content: &str) -> JsResult<()> {
-        self.handler.insert_utf8(index, content)?;
+    pub fn insert_utf8(&mut self, index: usize, content: JsStrArg) -> JsResult<()> {
+        let content = js_str_to_string_checked(content)?;
+        self.handler.insert_utf8(index, &content)?;
         Ok(())
     }
 
@@ -6686,6 +6851,58 @@ impl Container {
     }
 }
 
+/// Configure the WASM-instance-wide global memory budget across all live `LoroDoc`s.
+#[wasm_bindgen(js_name = "setGlobalMemoryBudget")]
+pub fn wasm_set_global_memory_budget(budget: JsGlobalMemoryBudget) -> JsResult<()> {
+    loro_internal::memory::enable_global_heap_tracker();
+    let budget = js_to_global_memory_budget(budget)?;
+    set_global_memory_budget(budget);
+    Ok(())
+}
+
+/// Get a snapshot of the active global memory budget configuration.
+#[wasm_bindgen(js_name = "getGlobalMemoryBudget")]
+pub fn wasm_get_global_memory_budget() -> JsResult<JsGlobalMemoryBudget> {
+    let budget = global_memory_budget();
+    Ok(global_memory_budget_to_js(&budget)?.into())
+}
+
+/// Get global memory statistics across all live `LoroDoc`s, live WASM heap allocations,
+/// and committed WebAssembly linear memory (`wasmLinearMemoryBytes`).
+#[wasm_bindgen(js_name = "globalMemoryStats")]
+pub fn wasm_global_memory_stats() -> JsResult<JsGlobalMemoryStats> {
+    loro_internal::memory::enable_global_heap_tracker();
+    let stats = global_memory_stats();
+    Ok(global_memory_stats_to_js(&stats)?.into())
+}
+
+/// Trigger cross-document cache eviction and cold-state demotion across idle `LoroDoc`s,
+/// optionally down to `targetBytes`, returning the estimated reclaimed bytes.
+#[wasm_bindgen(js_name = "reclaimGlobalMemory")]
+pub fn wasm_reclaim_global_memory(target_bytes: Option<f64>) -> JsResult<f64> {
+    loro_internal::memory::enable_global_heap_tracker();
+    let target = match target_bytes {
+        Some(num) => {
+            if !num.is_finite() || num < 0.0 || num.fract() != 0.0 || num > MAX_SAFE_JS_INTEGER {
+                return Err(JsError::new("targetBytes must be a non-negative integer").into());
+            }
+            Some(num as u64)
+        }
+        None => None,
+    };
+    Ok(reclaim_global_memory(target) as f64)
+}
+
+/// Aggressively reclaim global memory across all idle documents and throw
+/// `MemoryLimitExceededError` (`kind: "GlobalBudget"`) if usage still exceeds the configured
+/// global hard ceiling.
+#[wasm_bindgen(js_name = "tryReclaimGlobalToBudget")]
+pub fn wasm_try_reclaim_global_to_budget() -> JsResult<JsGlobalMemoryStats> {
+    loro_internal::memory::enable_global_heap_tracker();
+    let stats = try_reclaim_global_to_budget()?;
+    Ok(global_memory_stats_to_js(&stats)?.into())
+}
+
 /// Decode the metadata of the import blob.
 ///
 /// This method is useful to get the following metadata of the import blob:
@@ -7288,7 +7505,11 @@ export type UndoConfig = {
     onPop?: (isUndo: boolean, value: { value: Value, cursors: Cursor[] }, counterRange: { start: number, end: number }) => void
 };
 
-export type MemoryLimitKind = "ImportBlob" | "PendingPool" | "DocBudget";
+export type MemoryLimitKind =
+    | "ImportBlob"
+    | "PendingPool"
+    | "DocBudget"
+    | "GlobalBudget";
 
 export type MemoryBudget = {
     maxDocBytes?: number;
@@ -7299,6 +7520,25 @@ export type MemoryBudget = {
     maxKvBlockCacheBytes?: number;
     maxDecodedValueCacheBytes?: number;
     maxUndoBytes?: number;
+};
+
+export type GlobalMemoryBudget = {
+    maxHeapBytes?: number;
+    maxWasmLinearBytes?: number;
+    highWatermarkBytes?: number;
+    targetWatermarkBytes?: number;
+    maxImportBlobBytes?: number;
+    maxKvBlockCacheBytes?: number;
+};
+
+export type GlobalMemoryStats = {
+    liveDocCount: number;
+    docsEstimatedBytes: number;
+    globalBlockCacheBytes: number;
+    allocatedHeapBytes: number;
+    peakAllocatedHeapBytes: number;
+    wasmLinearMemoryBytes: number;
+    spilledDiskBytes: number;
 };
 
 export type DocMemoryStats = {

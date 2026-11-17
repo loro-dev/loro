@@ -2,6 +2,11 @@
 
 Verified against code 2026-11-16.
 
+Historical first-wave snapshot: later undo, fork, shallow-root, global LRU/sweep
+and small detailed-batch repairs are recorded in the
+[second-wave report](memory-followup-20261116.md). Pending rows below describe
+the state at this first-wave checkpoint, not the latest branch.
+
 This records actual repairs to the stack #1296 -> #1299 -> #1300 -> #1301.
 The original performance investigation is in the sibling worktree's
 `benchmarks/pr-memory-20261116/causes/ROOT_CAUSES.md`; its timings are not
@@ -98,6 +103,39 @@ The old rlib is reused from the original investigation, not rebuilt this turn.
 Raw rows, binary hashes and limitations are in
 `benchmarks/memory-budget-repair-20261116/README.md`.
 
+## #1301: completed subset
+
+Rebased onto repaired #1300. Commit admission keeps the lower layer's captured
+local quota and transaction lock, adds global hard admission and its captured
+linear-page baseline, and retains the pre-copy JS import checks. Native combined
+budget tests pass after resolving these conflicts.
+
+- Added exact-heap/no-local-policy soft-reclamation fast path below global
+  pressure. Explicit stats, local policies, hard rejection and forced reclaim
+  remain on their checked paths. Native builds without tracking do not use it.
+- WASM retained pages alone no longer cause permanent pressure: require both
+  linear pages >80% and live heap >70% of the linear ceiling; reclaim toward an
+  absolute <=65% target. Pure threshold test covers clearing/returning pressure;
+  JS runtime regression checks idle materialized state survives repeated commits
+  after freeing a large allocation.
+- Global setter does not insert a rollback base into an already edited transaction
+  or under an existing batch. New native regression preserves the current edited
+  transaction and rejects/rolls back the next one under the newly installed quota.
+- Large-string preflight now uses 3 bytes per UTF-16 code unit, matching the
+  conservative final UTF-8 conversion bound. The short-string direct-binding
+  optimization remains unimplemented.
+
+Final #1301 validation:
+
+- `cargo test -p loro-internal --lib`: 546 passed, 4 ignored.
+- `cargo test -p loro --test global_memory_budget --test memory_budget --test out_of_core --test apply_diff_atomicity`: 6 + 12 + 2 + 16 passed.
+- `CI=true pnpm release-wasm`: 59 Vitest files; 579 passed, 2 skipped, 2 todo; declarations/CommonJS, Deno 4, Bun 4 passed. This includes the high-pages/low-heap runtime regression.
+- `pnpm test-loom`: existing 10-test suite passed.
+- `cargo fmt --all -- --check`, `git diff --check`: passed.
+
+No global fast-path speedup number is claimed from the native per-document
+benchmark above. No broad fuzzing or browser matrix was run.
+
 ## Still outstanding
 
 This is not the complete four-PR repair. The design issue currently left in #1299
@@ -105,20 +143,19 @@ is failed state restoration during a rejected import: a precomputed inverse or a
 state journal must retain atomicity without reintroducing whole-document copies.
 Those paths must be addressed before treating the hard-quota work as ready.
 
-#1300 has the completed subset above. #1301 has not yet been rebased or changed.
-Remaining review items include:
+All four layers have the completed subsets above. Remaining review items include:
 
 - #1300: actual buffer release after spill (metadata part fixed below), fallible
   spill-directory switching and retries, incremental flush instead of whole-table
   rewriting, fork budget
   inheritance, shallow-root backend propagation, boxed-op memory accounting,
   string-arena shrink copying, remaining stale context.
-- #1301: WASM pressure hysteresis, registry strong-reference/drop race,
-  O(document-count) global accounting, global setter rollback-scope guards,
-  consistent linear-memory recovery verdict, conservative UTF-8 preflight,
+- #1301: registry strong-reference/drop race,
+  O(document-count) native global accounting,
+  consistent explicit linear-memory recovery verdict,
   global cache buffer retention on document drop, handle-read LRU tracking,
   duplicated detailed-batch branches, repeated Stage 1 during Stage 2.
-- Performance investigation: global heap fast path (page accounting is now implemented), all text
+- Performance investigation: broader measurement of page accounting and the global heap fast path, all text
   methods/package entries with short-string direct binding and large-input
   preflight, bounded JSON cache acceptance, and combined checkout block lookup.
   Existing prototype timing is not validation of any change in this report.
@@ -129,5 +166,5 @@ Remote heads before this continuation were verified with `git ls-remote`:
 `35510eff1dfec1a11bd4344064c17c74de5f8946`,
 `4cefe825b2a26db3bfd75cb5b602afab8af32e29`.
 
-#1296 was pushed at `d2e88876` and #1299 at `9ca9cf43`. Final pushed heads are reported in chat; no merge
+#1296 was pushed at `d2e88876`, #1299 at `9ca9cf43`, and #1300 at `1ea1a76f`. Final pushed heads are reported in chat; no merge
 or deployment was performed.

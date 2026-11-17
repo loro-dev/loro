@@ -63,7 +63,19 @@ Unbounded undo stacks skip byte estimation during trimming.
 
 - `LoroDoc`: `setMemoryBudget(budget)`, `getMemoryBudget()`, `memoryStats()`, `reclaimMemory()`, `tryReclaimToBudget()`, and `tryCommit(options?)` (included in `decorateMethods` in `crates/loro-wasm/index.ts` so subscriber delivery runs consistently with `commit`).
 - `UndoManager`: `new UndoManager(doc, { maxUndoBytes })`, `setMaxUndoBytes(bytes)`, `usedBytes()`.
-- Memory limit rejections throw a structured JS `Error` with `name === "MemoryLimitExceededError"`, `code === "MemoryLimitExceeded"`, `kind` (`"ImportBlob" | "PendingPool" | "DocBudget"`), `usedBytes`, and `limitBytes`. `ImportBatchDetail` keeps plain `string` error fields (`error` / `rollbackError`).
+- Top-level global APIs: `setGlobalMemoryBudget(budget)`, `getGlobalMemoryBudget()`, `globalMemoryStats()`, `reclaimGlobalMemory(targetBytes?)`, and `tryReclaimGlobalToBudget()`.
+- Memory limit rejections throw a structured JS `Error` with `name === "MemoryLimitExceededError"`, `code === "MemoryLimitExceeded"`, `kind` (`"ImportBlob" | "PendingPool" | "DocBudget" | "GlobalBudget"`), `usedBytes`, and `limitBytes`. `ImportBatchDetail` keeps plain `string` error fields (`error` / `rollbackError`).
+
+## Process / WASM-Instance Global Memory Budget (`GlobalMemoryBudget`)
+
+- **Registry & zero-Loom-noise fast path (`loro.rs`, `GLOBAL_POOL`, `GLOBAL_BUDGET_FLAGS`)**: Every `LoroDoc` assigns a `pool_doc_id` and stores a `Weak<LoroDocInner>` entry in `GlobalMemoryPool::docs`, automatically removing itself in `Drop for LoroDocInner`. Under `#[cfg(loom)]`, unbudgeted docs use `pool_doc_id = 0` so Loom explores zero extra pool locks when global budgets are unset.
+- **Global `SharedBlockCache` parent delegation (`kv-store/src/sstable.rs`)**: Enabling global memory management attaches `GlobalMemoryPool::global_block_cache` (`16 MiB` default, or `<= max_heap_bytes / 8`) as parent on every `LoroDoc`'s `kv_block_cache`. Because `NEXT_SSTABLE_ID` is process-wide, keys never collide, and `local_used_bytes()` reports `0` on delegating docs so `DocMemoryStats` never double-counts global cache bytes. Explicit per-doc `max_kv_block_cache_bytes` opts that document out into its own local cache.
+- **Cross-doc non-blocking LRU reclamation (`LoroMutex::try_lock` in `lock.rs` / `sync.rs`)**: `last_access_tick` (`GLOBAL_ACCESS_TICK`) advances on mutations, imports, checkouts, exports, and container/value reads whenever a global budget is active. When global usage breaches `effective_high_watermark()` (default 85% of `max_heap_bytes`, or 80% of `max_wasm_linear_bytes` when WASM pages near limit), `reclaim_idle_docs_to_target` clears the global block cache, skips any doc whose `Txn`/`OpLog`/`DocState` is busy, dirty (`!txn.is_empty()`), or inside an import rollback scope, and sweeps idle docs oldest-tick-first through Stage 1 (caches/compact/flush/arena shrink) then Stage 2 (cold state demotion) before falling back to the active doc.
+- **WASM live heap + linear memory tracking & pre-malloc admission (`crates/loro-internal/src/memory.rs`, `crates/loro-wasm/src/lib.rs`)**:
+  - `ReportingAlloc` wires `enable_global_heap_tracker()`, `record_global_alloc`, `record_global_dealloc`, and `record_global_realloc` with relaxed atomics (avoiding `crate::sync` Loom instrumentation), exposing live/peak Rust heap bytes alongside `wasm_linear_memory_bytes()` (`wasm32::memory_size(0) * 65536` in `u64` so 4 GiB never overflows 32-bit `usize`).
+  - `LoroDoc::import`, `importBatch`, and `importBatchDetailed` read JS `Uint8Array.byteLength` and run `preflight_external_import_alloc` **before** `.to_vec()` allocates in WASM linear memory, proactively reclaiming idle docs and rejecting with `MemoryLimitKind::GlobalBudget` before V8's `wasm-max-mem-pages` / 4 GiB ceiling traps.
+  - Large JS strings (`>= 64 KiB` code units) passed to `LoroText` (`insert`, `insertUtf8`, `splice`, `update`, `updateByLine`) check `preflight_wasm_linear_alloc(code_units * 3)` before `wasm-bindgen` copies the string onto the WASM heap when `maxWasmLinearBytes` is configured, keeping moderate edits eligible for `tryCommit` rollback while blocking multi-MiB linear-memory traps early.
+  - Because `memory.grow` never shrinks on `wasm32`, `check_global_budget_with_active` compares `allocated_heap_bytes > max_heap_bytes`, and allows writes after `wasm_linear_memory_bytes` touched `max_wasm_linear_bytes` only if `lin_now <= linear_before` (0 new WASM pages) and live heap dropped `<= 70%` of `max_wasm_linear_bytes` after idle-doc reclamation.
 
 ## Undo accounting and checkpoints without container events
 
@@ -89,6 +101,26 @@ assert cached and fresh totals agree. The work-count regression checks 20 edits
 among 512 containers cause exactly 20 page recomputations. Complexity is page
 count plus containers in dirty pages, rather than strictly constant time.
 
+## Global pressure fast path and recovery
+
+When exact heap tracking is active (WASM), a document with the default local
+memory policy skips per-document soft-reclamation statistics below the global
+high watermark. Explicit statistics and hard admission still run their own
+checks. Local quotas/caches/undo policies and forced reclamation bypass this
+shortcut. Native builds without heap tracking retain the estimate-based path.
+
+Linear memory above 80% of its ceiling triggers extra reclamation only when live
+heap also exceeds 70% of that ceiling. Reclamation then aims at an absolute target
+(no more than 65% of the linear ceiling), rather than 70% of each commit's current
+usage. Thus freeing heap can end pressure while WASM pages remain allocated.
+A runtime regression verifies repeated commits preserve idle materialized state
+once heap has fallen, and a pure threshold test covers pressure returning.
+
+The global quota setter now avoids inserting rollback scopes beneath a batch or
+into a transaction that already accepted edits; the next transaction picks up
+new global hard admission. Local quota snapshots and global linear baselines are
+both retained across the stacked commit paths.
+
 ## Structural Shrinkage & Native Out-of-Core Spilling
 
 - **Lock-free unbudgeted fast paths (`LoroDocInner::budget_flags`)**: `LoroDoc::new()` injects `kv_block_cache` directly into `OpLog` / `DocState` without extra locking, and unbudgeted commits/imports short-circuit on `budget_flags` (`std::sync::atomic::AtomicU8`) before touching `memory_budget` or `txn` locks.
@@ -110,3 +142,19 @@ still bypasses the external import-blob cap; subsequent public imports enforce i
 to both root and latest stores. The root's separate `encoded_state_bytes` can
 still retain RAM: backend propagation alone is not a claim that the entire
 snapshot input allocation was released. Further storage work must account for it.
+
+## Reclamation sweep and retained handler reads
+
+A sweep first checks current usage against its target before clearing shared
+blocks. It records which documents completed Stage 1; Stage 2 skips that work
+for those documents, while retrying Stage 1 for any document that was busy on
+the first pass. Each stage retains its try-lock/dirty-transaction guards.
+`BasicHandler` and `HandlerTrait` state/value read entry points refresh the
+owning document's access tick before taking the state lock. A retained Map read
+therefore keeps its document recent even without a new `get_map` call.
+
+Small `importBatchDetailed` calls retain their already-copied owned buffers
+through metadata ordering and import. `import_batch_detailed_with_blob_results`
+accepts an exact-size iterator, avoiding an extra result vector on the existing
+Rust owned-bytes path. Preflight errors stay per-blob errors, including the
+single-blob special case. Large batches still use the two-pass streaming path.

@@ -105,9 +105,10 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Where a long-lived `LoroDoc`'s memory goes, which operations expand lazy history,
   release paths, the ranked optimization list, and what has landed:
   [context/memory-analysis.md](context/memory-analysis.md).
-- Bounded `LoroDoc` memory budget (`MemoryBudget`, 14 `DocMemoryStats` fields,
-  Stage 1/2 watermark hysteresis & clock cold demotion, Stage 3 hard limits &
-  atomic rollback, `try_commit`, and WASM error shapes):
+- Bounded `LoroDoc` & global WASM memory budgets (`MemoryBudget`,
+  `GlobalMemoryBudget`, 14 `DocMemoryStats` fields, `GlobalMemoryStats`, Stage
+  1/2 hysteresis & clock/LRU demotion, Stage 3 hard limits & atomic rollback,
+  `try_commit`, allocator tracking, and WASM error shapes):
   [context/memory-budget.md](context/memory-budget.md).
 - Context backlog: [context/CONTEXT-GAPS.md](context/CONTEXT-GAPS.md).
 

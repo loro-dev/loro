@@ -94,13 +94,17 @@ pub(crate) use loro_common::InternalString;
 pub use container::ContainerType;
 pub use encoding::json_schema::json;
 pub use fractional_index::FractionalIndex;
+pub use loro::{
+    global_memory_budget, global_memory_stats, reclaim_global_memory, set_global_memory_budget,
+    try_reclaim_global_to_budget,
+};
 pub use loro_common::{loro_value, to_value};
 pub use loro_common::{
     Counter, CounterSpan, IdLp, IdSpan, IdSpanVector, Lamport, LoroEncodeError, LoroError,
     LoroResult, LoroTreeError, MemoryLimitExceeded, MemoryLimitKind, PeerID, TreeID, ID,
 };
 pub use loro_common::{LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue};
-pub use memory::{DocMemoryStats, MemoryBudget};
+pub use memory::{DocMemoryStats, GlobalMemoryBudget, GlobalMemoryStats, MemoryBudget};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
@@ -183,6 +187,19 @@ pub struct LoroDocInner {
     pub(crate) memory_budget: crate::sync::Mutex<memory::MemoryBudget>,
     pub(crate) budget_flags: std::sync::atomic::AtomicU8,
     pub(crate) kv_block_cache: kv_store::SharedBlockCache,
+    pub(crate) pool_doc_id: u64,
+    pub(crate) cached_doc_bytes: std::sync::atomic::AtomicUsize,
+    pub(crate) last_access_tick: std::sync::atomic::AtomicU64,
+}
+
+impl Drop for LoroDocInner {
+    fn drop(&mut self) {
+        loro::unregister_doc_from_global_pool(
+            self.pool_doc_id,
+            self.cached_doc_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
+    }
 }
 
 /// The version of the loro crate

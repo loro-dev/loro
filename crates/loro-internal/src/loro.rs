@@ -1,7 +1,11 @@
 use crate::encoding::json_schema::{encode_change, export_json_in_id_span};
 pub use crate::encoding::ExportMode;
 use crate::kv_store::SharedBlockCache;
-use crate::memory::{DocMemoryStats, MemoryBudget};
+use crate::memory::{
+    heap_tracker_active, tracked_allocated_heap_bytes, tracked_peak_allocated_heap_bytes,
+    wasm_linear_memory_bytes, DocMemoryStats, GlobalMemoryBudget, GlobalMemoryStats, MemoryBudget,
+    DEFAULT_GLOBAL_BLOCK_CACHE_BYTES,
+};
 use crate::pre_commit::{FirstCommitFromPeerCallback, FirstCommitFromPeerPayload};
 pub use crate::state::analyzer::{ContainerAnalysisInfo, DocAnalysis};
 use crate::sync::{AtomicBool, AtomicUsize};
@@ -89,7 +93,7 @@ use std::{
     collections::{hash_map::Entry, BinaryHeap},
     ops::ControlFlow,
     sync::{
-        atomic::Ordering::{Acquire, Release},
+        atomic::Ordering::{AcqRel, Acquire, Relaxed, Release},
         Arc,
     },
 };
@@ -177,6 +181,19 @@ impl LoroDoc {
     pub fn new() -> Self {
         let visible_op_count = Arc::new(AtomicUsize::new(0));
         let kv_block_cache = SharedBlockCache::default_per_doc();
+        let global_flags = global_budget_flags();
+        if global_flags != 0 {
+            kv_block_cache.set_parent(Some(&global_pool().global_block_cache));
+        }
+        #[cfg(not(loom))]
+        let pool_doc_id = NEXT_POOL_DOC_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(loom)]
+        let pool_doc_id = if global_flags != 0 {
+            NEXT_POOL_DOC_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        } else {
+            0
+        };
+        let initial_tick = GLOBAL_ACCESS_TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let oplog = OpLog::new_with_cache(visible_op_count.clone(), kv_block_cache.clone());
         let arena = oplog.arena.clone();
         let config: Configure = oplog.configure.clone();
@@ -211,8 +228,17 @@ impl LoroDoc {
                 memory_budget: crate::sync::Mutex::new(MemoryBudget::default()),
                 budget_flags: std::sync::atomic::AtomicU8::new(0),
                 kv_block_cache,
+                pool_doc_id,
+                cached_doc_bytes: std::sync::atomic::AtomicUsize::new(0),
+                last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
             }
         });
+        if pool_doc_id != 0 {
+            global_pool().register(pool_doc_id, Arc::downgrade(&inner));
+            if global_flags != 0 {
+                refresh_cached_doc_bytes_for_inner(&inner);
+            }
+        }
         LoroDoc { inner }
     }
 
@@ -521,11 +547,12 @@ impl LoroDoc {
     }
 
     /// Commits the pending auto-commit transaction with options, enforcing any
-    /// configured [`MemoryBudget::max_doc_bytes`] hard limit atomically.
+    /// configured [`MemoryBudget::max_doc_bytes`] or global hard memory limit atomically.
     pub fn try_commit_with(&self, options: CommitOptions) -> LoroResult<()> {
         if self.txn.is_held_by_current_thread() {
             return Err(LoroError::DuplicatedTransactionError);
         }
+        self.touch_access_tick();
         let mut panic = DeferredPanic::default();
         let result = self
             .commit_internal_inner(options, false, &mut panic, true)
@@ -539,15 +566,19 @@ impl LoroDoc {
         if txn.is_empty() {
             return Ok(());
         }
-        let Some(limit) = txn.doc_budget_limit else {
+        if txn.doc_budget_limit.is_none()
+            && !(global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0
+                && txn.budget_base_scope().is_some())
+        {
             return Ok(());
-        };
+        }
         if txn.has_rollback_scope() {
             return Err(LoroError::DuplicatedTransactionError);
         }
         let uncommitted = txn.estimated_uncommitted_bytes();
         self.enforce_memory_watermarks_with_txn_bytes(uncommitted, false);
-        if let Err(err) = self.check_doc_budget_with_limit(uncommitted, limit) {
+        if let Err(err) = self.check_transaction_budget(txn, Some(txn.budget_scope_linear_bytes()))
+        {
             let scope = txn
                 .budget_base_scope()
                 .expect("budgeted transaction has a base scope");
@@ -556,6 +587,7 @@ impl LoroDoc {
                 "budget rollback scope must be intact"
             );
             self.rollback_transaction_scope_inner(txn, scope)?;
+            self.refresh_cached_doc_bytes_unlocked();
             txn.doc_budget_limit = None;
             if self.has_max_doc_bytes() {
                 self.arm_budget_scope_on_txn(txn);
@@ -868,6 +900,7 @@ impl LoroDoc {
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
+        self.touch_access_tick();
         match &input {
             ImportInput::Slice(bytes) => self.check_import_blob_limit(bytes.len())?,
             ImportInput::Bytes(bytes) => self.check_import_blob_limit(bytes.len())?,
@@ -1029,6 +1062,7 @@ impl LoroDoc {
             )
         };
         let was_detached = self.is_detached();
+        let linear_before = wasm_linear_memory_bytes();
         let result = (|| {
             let mut status = decode_fn(self, origin.clone())?;
             // A replay-only shallow snapshot's decoder temporarily attaches to
@@ -1047,7 +1081,7 @@ impl LoroDoc {
             }
             if !self.oplog.lock().batch_importing && self.has_max_doc_bytes() {
                 self.enforce_memory_watermarks_with_txn_bytes(0, false);
-                self.check_doc_budget_with_txn_bytes(0)?;
+                self.check_doc_budget_with_txn_bytes_and_linear(0, Some(linear_before))?;
             }
             Ok(status)
         })();
@@ -1066,6 +1100,11 @@ impl LoroDoc {
             drop(state);
             drop(oplog);
             *self.diff_calculator.lock() = DiffCalculator::new(true);
+            if global_budget_flags() != 0 {
+                self.refresh_cached_doc_bytes_unlocked();
+            }
+        } else if global_budget_flags() != 0 && !self.oplog.lock().batch_importing {
+            self.refresh_cached_doc_bytes_unlocked();
         }
         result
     }
@@ -1107,6 +1146,7 @@ impl LoroDoc {
         // scope rolls the whole batch back if its final reattach fails, and commits
         // everything otherwise.
         let owns_rollback = !oplog.has_import_rollback();
+        let linear_before = wasm_linear_memory_bytes();
         if owns_rollback {
             oplog.begin_import_rollback();
         }
@@ -1143,6 +1183,23 @@ impl LoroDoc {
                 ) {
                     oplog.rollback_owned_import(owns_rollback, &mut state);
                     return Err(e);
+                }
+                if owns_rollback && self.has_max_doc_bytes() {
+                    self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
+                    if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
+                        &oplog,
+                        &state,
+                        0,
+                        Some(linear_before),
+                    ) {
+                        let _ = state.take_events();
+                        Self::revert_state_silently(&oplog, &mut state, &old_vv, &old_frontiers)?;
+                        oplog.rollback_owned_import(owns_rollback, &mut state);
+                        *self.diff_calculator.lock() = DiffCalculator::new(true);
+                        return Err(budget_err);
+                    }
+                } else if global_budget_flags() != 0 {
+                    let _ = self.memory_stats_locked(&oplog, &state, 0);
                 }
             }
             match result {
@@ -1185,6 +1242,7 @@ impl LoroDoc {
         values: ImportedValues,
         origin: InternalString,
     ) -> Result<ImportStatus, LoroError> {
+        let linear_before = wasm_linear_memory_bytes();
         let mut oplog = self.oplog.lock();
         Self::check_not_in_txn(&self.state)?;
         oplog.check_history_parsable()?;
@@ -1241,10 +1299,19 @@ impl LoroDoc {
                 if self.has_max_doc_bytes() {
                     let mut state = self.state.lock();
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
-                    if let Err(e) = self.check_doc_budget_locked(&oplog, &state, 0) {
+                    if let Err(e) = self.check_doc_budget_locked_with_linear(
+                        &oplog,
+                        &state,
+                        0,
+                        Some(linear_before),
+                    ) {
                         oplog.rollback_import(&mut state);
+                        let _ = self.memory_stats_locked(&oplog, &state, 0);
                         return Err(e);
                     }
+                } else if global_budget_flags() != 0 {
+                    let state = self.state.lock();
+                    let _ = self.memory_stats_locked(&oplog, &state, 0);
                 }
                 oplog.commit_import_rollback();
             }
@@ -1305,13 +1372,21 @@ impl LoroDoc {
                 }
                 if owns_rollback && self.has_max_doc_bytes() {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
-                    if let Err(e) = self.check_doc_budget_locked(&oplog, &state, 0) {
+                    if let Err(e) = self.check_doc_budget_locked_with_linear(
+                        &oplog,
+                        &state,
+                        0,
+                        Some(linear_before),
+                    ) {
                         let created = state.store.take_created_journal();
                         state.store.remove_created(&created);
                         oplog.rollback_import(&mut state);
+                        let _ = self.memory_stats_locked(&oplog, &state, 0);
                         return Err(e);
                     }
                     let _ = state.store.take_created_journal();
+                } else if !oplog.batch_importing && global_budget_flags() != 0 {
+                    let _ = self.memory_stats_locked(&oplog, &state, 0);
                 }
             }
             if owns_rollback {
@@ -1441,17 +1516,27 @@ impl LoroDoc {
             if rollback_enabled {
                 if !oplog.batch_importing && self.has_max_doc_bytes() {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
-                    if let Err(budget_err) = self.check_doc_budget_locked(&oplog, &state, 0) {
+                    if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
+                        &oplog,
+                        &state,
+                        0,
+                        Some(linear_before),
+                    ) {
                         let _ = state.take_events();
                         Self::revert_state_silently(&oplog, &mut state, &old_vv, &old_frontiers)?;
                         let created = state.store.take_created_journal();
                         state.store.remove_created(&created);
                         oplog.rollback_import(&mut state);
                         *self.diff_calculator.lock() = DiffCalculator::new(true);
+                        let _ = self.memory_stats_locked(&oplog, &state, 0);
                         return Err(budget_err);
                     }
+                } else if !oplog.batch_importing && global_budget_flags() != 0 {
+                    let _ = self.memory_stats_locked(&oplog, &state, 0);
                 }
                 let _ = state.store.take_created_journal();
+            } else if !oplog.batch_importing && global_budget_flags() != 0 {
+                let _ = self.memory_stats_locked(&oplog, &state, 0);
             }
         }
 
@@ -1667,6 +1752,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<TextHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Text);
         if !self.has_container(&id) {
             return None;
@@ -1687,6 +1773,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<ListHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::List);
         if !self.has_container(&id) {
             return None;
@@ -1707,6 +1794,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<MovableListHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
         if !self.has_container(&id) {
             return None;
@@ -1729,6 +1817,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<MapHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Map);
         if !self.has_container(&id) {
             return None;
@@ -1749,6 +1838,7 @@ impl LoroDoc {
     /// if it's str it will use Root container, which will not be None
     #[inline]
     pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<TreeHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
         if !self.has_container(&id) {
             return None;
@@ -1770,6 +1860,7 @@ impl LoroDoc {
         &self,
         id: I,
     ) -> Option<crate::handler::counter::CounterHandler> {
+        self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
         if !self.has_container(&id) {
             return None;
@@ -2229,6 +2320,8 @@ impl LoroDoc {
             frontiers_to_vv_or_not_found(&oplog, &frontiers)?;
         }
 
+        self.touch_access_tick();
+        let linear_before = wasm_linear_memory_bytes();
         let scope = self.begin_apply_diff_scope();
         let mut result = self._apply_diff(
             diff,
@@ -2239,13 +2332,16 @@ impl LoroDoc {
         if result.is_ok() {
             let guard = self.txn.lock();
             if let Some(txn) = guard.as_ref() {
-                if let Some(limit) = txn.doc_budget_limit {
-                    let uncommitted_bytes = txn.estimated_uncommitted_bytes();
-                    self.enforce_memory_watermarks_with_txn_bytes(uncommitted_bytes, false);
-                    if let Err(budget_err) =
-                        self.check_doc_budget_with_limit(uncommitted_bytes, limit)
-                    {
-                        result = Err(budget_err);
+                if txn.doc_budget_limit.is_some()
+                    || (global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0
+                        && txn.budget_base_scope().is_some())
+                {
+                    self.enforce_memory_watermarks_with_txn_bytes(
+                        txn.estimated_uncommitted_bytes(),
+                        false,
+                    );
+                    if let Err(err) = self.check_transaction_budget(txn, Some(linear_before)) {
+                        result = Err(err);
                     }
                 }
             }
@@ -2257,6 +2353,9 @@ impl LoroDoc {
             } else {
                 self.rollback_apply_diff_scope(scope)?;
             }
+        }
+        if global_budget_flags() != 0 {
+            self.refresh_cached_doc_bytes_unlocked();
         }
         result
     }
@@ -3418,19 +3517,42 @@ impl LoroDoc {
         bytes: Vec<bytes::Bytes>,
         json_lossy: bool,
     ) -> LoroResult<ImportBatchDetail> {
+        self.import_batch_detailed_with_blob_results(bytes.into_iter().map(Ok), json_lossy)
+    }
+
+    /// Detailed owned batch whose buffers can fail admission before allocation.
+    /// Keeps per-blob errors and the single-blob import boundary intact.
+    pub fn import_batch_detailed_with_blob_results<I>(
+        &self,
+        bytes: I,
+        json_lossy: bool,
+    ) -> LoroResult<ImportBatchDetail>
+    where
+        I: IntoIterator<Item = LoroResult<bytes::Bytes>>,
+        I::IntoIter: ExactSizeIterator,
+    {
         self.check_import_not_nested()?;
         let values = imported_values_for_mode(json_lossy);
-        if bytes.is_empty() {
+        let mut bytes = bytes.into_iter();
+        let len = bytes.len();
+        if len == 0 {
             return Ok(self.empty_batch_detail());
         }
-        if bytes.len() == 1 {
-            let blob = bytes.into_iter().next().expect("checked len == 1");
-            return self.import_single_detailed(|| Ok(ImportInput::Bytes(blob)), values);
+        if len == 1 {
+            let blob = bytes.next().expect("checked len == 1");
+            return self.import_single_detailed(|| blob.map(ImportInput::Bytes), values);
         }
 
-        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
-        let mut blobs = Vec::with_capacity(bytes.len());
-        for (index, blob) in bytes.into_iter().enumerate() {
+        let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(len);
+        let mut blobs = Vec::with_capacity(len);
+        for (index, result) in bytes.enumerate() {
+            let blob = match result {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    outcomes.push(Some(ImportBlobOutcome::Failed(err)));
+                    continue;
+                }
+            };
             match self
                 .check_import_blob_limit(blob.len())
                 .and_then(|()| LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false))
@@ -3625,7 +3747,9 @@ impl LoroDoc {
         // stops reflecting later imports and local edits. `BatchImportGuard::finish`
         // owns that cleanup and the blob loop runs inside `catch_unwind` so it also
         // runs before a panic is re-raised.
+        self.touch_access_tick();
         let was_attached = !self.is_detached();
+        let linear_before = wasm_linear_memory_bytes();
         let has_doc_budget = self.has_max_doc_bytes();
         // A snapshot can initialize state lazily, just as in `import`, even
         // with parked changes. Keep their original claims for batch rollback.
@@ -3687,6 +3811,7 @@ impl LoroDoc {
             txn: Some(txn),
             options,
             snapshot_checkpoint,
+            linear_before,
             #[cfg(debug_assertions)]
             finished: false,
         };
@@ -3800,18 +3925,21 @@ impl LoroDoc {
     /// Get shallow value of the document.
     #[inline]
     pub fn get_value(&self) -> LoroValue {
+        self.touch_access_tick();
         self.state.lock().get_value()
     }
 
     /// Get deep value of the document.
     #[inline]
     pub fn get_deep_value(&self) -> LoroValue {
+        self.touch_access_tick();
         self.state.lock().get_deep_value()
     }
 
     /// Get deep value of the document with container id
     #[inline]
     pub fn get_deep_value_with_id(&self) -> LoroValue {
+        self.touch_access_tick();
         self.state.lock().get_deep_value_with_id()
     }
 
@@ -3916,6 +4044,7 @@ impl LoroDoc {
     /// its ops are in the DAG and not in the change store yet, so the history cannot
     /// be read. Commit it first.
     pub fn checkout(&self, frontiers: &Frontiers) -> LoroResult<()> {
+        self.touch_access_tick();
         // Checked here and not in `_checkout_without_emitting`: undo, `checkout_to_latest`
         // and the exporters call that and cannot return this error.
         self.oplog.lock().check_history_parsable()?;
@@ -4487,6 +4616,7 @@ impl LoroDoc {
         mode: ExportMode,
         reject_partial_history: bool,
     ) -> Result<Vec<u8>, LoroEncodeError> {
+        self.touch_access_tick();
         self.with_barrier(|| {
             if reject_partial_history {
                 self.oplog.lock().check_history_parsable()?;
@@ -5021,6 +5151,7 @@ struct BatchImportGuard<'a> {
     /// failure both its lazy state and its history must be reset, not just the
     /// updates recorded in the suffix journal.
     snapshot_checkpoint: Option<BatchSnapshotRollback>,
+    linear_before: u64,
     #[cfg(debug_assertions)]
     finished: bool,
 }
@@ -5147,7 +5278,9 @@ impl BatchImportGuard<'_> {
             });
             if checkout.is_ok() && self.has_doc_budget {
                 doc.enforce_memory_watermarks_with_txn_bytes(0, false);
-                if let Err(budget_err) = doc.check_doc_budget_with_txn_bytes(0) {
+                if let Err(budget_err) =
+                    doc.check_doc_budget_with_txn_bytes_and_linear(0, Some(self.linear_before))
+                {
                     if self.snapshot_checkpoint.is_some() {
                         let _ = doc.state.lock().take_events();
                         checkout = Err(budget_err);
@@ -5223,7 +5356,9 @@ impl BatchImportGuard<'_> {
         } else if self.has_import_rollback {
             if self.has_doc_budget {
                 doc.enforce_memory_watermarks_with_txn_bytes(0, false);
-                if let Err(budget_err) = doc.check_doc_budget_with_txn_bytes(0) {
+                if let Err(budget_err) =
+                    doc.check_doc_budget_with_txn_bytes_and_linear(0, Some(self.linear_before))
+                {
                     let mut oplog = doc.oplog.lock();
                     let mut state = doc.state.lock();
                     oplog.rollback_import(&mut state);
@@ -5240,6 +5375,9 @@ impl BatchImportGuard<'_> {
         }
 
         doc.enforce_memory_watermarks_with_txn_bytes(0, false);
+        if global_budget_flags() != 0 {
+            doc.refresh_cached_doc_bytes_unlocked();
+        }
         let pending = doc.oplog.lock().pending_changes.version_range();
         doc._renew_txn_if_auto_commit_with_guard(options, txn);
         (checkout.err(), pending)
@@ -6091,6 +6229,720 @@ const BUDGET_FLAG_MAX_DOC: u8 = 1 << 0;
 const BUDGET_FLAG_WATERMARKS: u8 = 1 << 1;
 const BUDGET_FLAG_MAX_IMPORT_BLOB: u8 = 1 << 2;
 
+static GLOBAL_BUDGET_FLAGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static NEXT_POOL_DOC_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static GLOBAL_ACCESS_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static GLOBAL_POOL: std::sync::OnceLock<GlobalMemoryPool> = std::sync::OnceLock::new();
+
+#[inline]
+pub(crate) fn global_budget_flags() -> u8 {
+    GLOBAL_BUDGET_FLAGS.load(Acquire)
+}
+
+#[inline]
+fn global_watermarks_active() -> bool {
+    global_budget_flags() & BUDGET_FLAG_WATERMARKS != 0
+}
+
+fn compute_global_flags(budget: &GlobalMemoryBudget) -> u8 {
+    let mut flags = 0u8;
+    let has_wasm_limit = cfg!(target_arch = "wasm32") && budget.max_wasm_linear_bytes.is_some();
+    if budget.max_heap_bytes.is_some() || has_wasm_limit {
+        flags |= BUDGET_FLAG_MAX_DOC | BUDGET_FLAG_MAX_IMPORT_BLOB;
+    }
+    if budget.effective_high_watermark().is_some()
+        || budget.max_kv_block_cache_bytes.is_some()
+        || has_wasm_limit
+    {
+        flags |= BUDGET_FLAG_WATERMARKS;
+    }
+    if budget.max_import_blob_bytes.is_some() {
+        flags |= BUDGET_FLAG_MAX_IMPORT_BLOB;
+    }
+    flags
+}
+
+fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
+    let limit_usize = usize::try_from(limit)
+        .unwrap_or(usize::MAX - 1)
+        .min(usize::MAX - 1);
+    let used_usize = usize::try_from(used)
+        .unwrap_or(usize::MAX)
+        .max(limit_usize.saturating_add(1));
+    LoroError::memory_limit_exceeded(MemoryLimitKind::GlobalBudget, used_usize, limit_usize)
+}
+
+struct GlobalMemoryPool {
+    budget: parking_lot::Mutex<GlobalMemoryBudget>,
+    docs: parking_lot::Mutex<FxHashMap<u64, std::sync::Weak<LoroDocInner>>>,
+    total_cached_doc_bytes: std::sync::atomic::AtomicU64,
+    global_block_cache: SharedBlockCache,
+}
+
+impl GlobalMemoryPool {
+    fn new() -> Self {
+        Self {
+            budget: parking_lot::Mutex::new(GlobalMemoryBudget::default()),
+            docs: parking_lot::Mutex::new(FxHashMap::default()),
+            total_cached_doc_bytes: std::sync::atomic::AtomicU64::new(0),
+            global_block_cache: SharedBlockCache::new(DEFAULT_GLOBAL_BLOCK_CACHE_BYTES),
+        }
+    }
+
+    fn register(&self, id: u64, weak: std::sync::Weak<LoroDocInner>) {
+        self.docs.lock().insert(id, weak);
+    }
+
+    fn unregister(&self, id: u64, last_cached_bytes: usize) {
+        self.docs.lock().remove(&id);
+        if last_cached_bytes > 0 {
+            let diff = last_cached_bytes as u64;
+            let _ = self
+                .total_cached_doc_bytes
+                .fetch_update(Relaxed, Relaxed, |cur| Some(cur.saturating_sub(diff)));
+        }
+    }
+
+    fn snapshot_live_docs(&self) -> Vec<Arc<LoroDocInner>> {
+        let mut docs = self.docs.lock();
+        let mut live = Vec::with_capacity(docs.len());
+        docs.retain(|_, weak| {
+            if let Some(arc) = weak.upgrade() {
+                live.push(arc);
+                true
+            } else {
+                false
+            }
+        });
+        live
+    }
+
+    fn update_cached_doc_bytes(&self, doc: &LoroDocInner, new_bytes: usize) {
+        let prev = doc.cached_doc_bytes.swap(new_bytes, AcqRel);
+        if prev != new_bytes {
+            if new_bytes > prev {
+                self.total_cached_doc_bytes
+                    .fetch_add((new_bytes - prev) as u64, Relaxed);
+            } else {
+                let diff = (prev - new_bytes) as u64;
+                let _ = self
+                    .total_cached_doc_bytes
+                    .fetch_update(Relaxed, Relaxed, |cur| Some(cur.saturating_sub(diff)));
+            }
+        }
+    }
+
+    fn docs_estimated_with_override(
+        &self,
+        live: &[Arc<LoroDocInner>],
+        active_override: Option<(u64, usize)>,
+    ) -> (u64, u64) {
+        let mut total_docs = 0u64;
+        let mut total_spilled = 0u64;
+        for doc in live {
+            if let Some((active_id, active_bytes)) = active_override {
+                if doc.pool_doc_id == active_id {
+                    self.update_cached_doc_bytes(doc, active_bytes);
+                    total_docs = total_docs.saturating_add(active_bytes as u64);
+                    continue;
+                }
+            }
+            let (ram, spilled) = try_stats_for_global(doc);
+            total_docs = total_docs.saturating_add(ram as u64);
+            total_spilled = total_spilled.saturating_add(spilled as u64);
+        }
+        let block_cache = self.global_block_cache.used_bytes() as u64;
+        (total_docs.saturating_add(block_cache), total_spilled)
+    }
+
+    fn current_heap_or_estimated_used(&self) -> u64 {
+        if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            let live = self.snapshot_live_docs();
+            self.docs_estimated_with_override(&live, None).0
+        }
+    }
+
+    fn cached_estimated_total(&self) -> u64 {
+        self.total_cached_doc_bytes
+            .load(Relaxed)
+            .saturating_add(self.global_block_cache.used_bytes() as u64)
+    }
+
+    fn reclaim_idle_docs_to_target(
+        &self,
+        live: &[Arc<LoroDocInner>],
+        exclude_doc_id: Option<u64>,
+        target_bytes: u64,
+        force_full: bool,
+    ) -> u64 {
+        let mut cur_used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            self.cached_estimated_total()
+        };
+        if !force_full && cur_used <= target_bytes {
+            return cur_used;
+        }
+        if self.global_block_cache.used_bytes() > 0 {
+            self.global_block_cache.clear();
+            cur_used = if heap_tracker_active() {
+                tracked_allocated_heap_bytes()
+            } else {
+                self.cached_estimated_total()
+            };
+            if !force_full && cur_used <= target_bytes {
+                return cur_used;
+            }
+        }
+
+        let mut candidates: Vec<&Arc<LoroDocInner>> = live
+            .iter()
+            .filter(|doc| exclude_doc_id != Some(doc.pool_doc_id))
+            .collect();
+        candidates.sort_by_key(|doc| doc.last_access_tick.load(Relaxed));
+
+        let mut stage1_done = FxHashSet::default();
+        // Pass 1 (Stage 1): clear auxiliary caches, compact history, flush KV, shrink spare arena.
+        for doc in &candidates {
+            if !force_full && cur_used <= target_bytes {
+                break;
+            }
+            if try_reclaim_idle_doc(doc, false, 0, false) {
+                stage1_done.insert(doc.pool_doc_id);
+            }
+            cur_used = if heap_tracker_active() {
+                tracked_allocated_heap_bytes()
+            } else {
+                self.cached_estimated_total()
+            };
+        }
+
+        if !force_full && cur_used <= target_bytes {
+            return cur_used;
+        }
+
+        // Pass 2 (Stage 2): demote cold materialized containers to compressed KV stores (LRU first).
+        for doc in &candidates {
+            if !force_full && cur_used <= target_bytes {
+                break;
+            }
+            let need = if force_full {
+                usize::MAX
+            } else {
+                usize::try_from(cur_used.saturating_sub(target_bytes)).unwrap_or(usize::MAX)
+            };
+            let _ = try_reclaim_idle_doc(doc, true, need, stage1_done.contains(&doc.pool_doc_id));
+            cur_used = if heap_tracker_active() {
+                tracked_allocated_heap_bytes()
+            } else {
+                self.cached_estimated_total()
+            };
+        }
+
+        cur_used
+    }
+
+    fn reclaim_for_watermark(
+        &self,
+        target_bytes: u64,
+        exclude_doc_id: Option<u64>,
+        force_full: bool,
+    ) {
+        let live = self.snapshot_live_docs();
+        if !heap_tracker_active() {
+            let _ = self.docs_estimated_with_override(&live, None);
+        }
+        let _ = self.reclaim_idle_docs_to_target(&live, exclude_doc_id, target_bytes, force_full);
+    }
+
+    fn enforce_global_watermarks_for_active(
+        &self,
+        active_doc: &LoroDoc,
+        oplog: &OpLog,
+        state: &mut DocState,
+        uncommitted_txn_bytes: usize,
+        active_bytes: usize,
+    ) {
+        self.update_cached_doc_bytes(active_doc, active_bytes);
+        let budget = self.budget.lock().clone();
+        let Some(high) = budget.effective_high_watermark() else {
+            return;
+        };
+        let target = budget.effective_target_watermark().unwrap_or(high);
+        let initial_used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            let live = self.snapshot_live_docs();
+            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
+                .0
+        };
+        let wasm_pressure = cfg!(target_arch = "wasm32")
+            && budget.wasm_heap_pressure(wasm_linear_memory_bytes(), initial_used);
+        if initial_used <= high && !wasm_pressure {
+            return;
+        }
+
+        let effective_target = if wasm_pressure && initial_used <= high {
+            target.min(budget.max_wasm_linear_bytes.unwrap().saturating_mul(65) / 100)
+        } else {
+            target
+        };
+
+        let live = self.snapshot_live_docs();
+        let mut cur_used = if !heap_tracker_active() {
+            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
+                .0
+        } else {
+            initial_used
+        };
+        if cur_used <= effective_target && !wasm_pressure {
+            return;
+        }
+
+        cur_used = self.reclaim_idle_docs_to_target(
+            &live,
+            Some(active_doc.pool_doc_id),
+            effective_target,
+            false,
+        );
+        if cur_used <= effective_target {
+            return;
+        }
+
+        // Fallback: if idle docs alone couldn't meet target, trim Stage 1 + Stage 2 on active doc.
+        state.evict_value_cache_to_bytes(0);
+        state.reclaim_auxiliary_caches();
+        oplog.compact_history();
+        oplog.flush_kv();
+        oplog.with_history_cache(|h| h.free_all());
+        oplog.arena.shrink_spare_capacity();
+        active_doc.diff_calculator.lock().reclaim_cold_caches(0);
+        let _ = shrink_undo_managers_inner(active_doc);
+
+        let after_stage1 = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        cur_used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            self.cached_estimated_total()
+        };
+        if cur_used <= effective_target {
+            let _ = after_stage1;
+            return;
+        }
+
+        let need = usize::try_from(cur_used.saturating_sub(effective_target)).unwrap_or(usize::MAX);
+        let target_state_bytes = state
+            .state_estimated_bytes()
+            .saturating_sub(need.saturating_mul(3) / 2);
+        state.demote_cold_states(target_state_bytes, &Default::default());
+        state.flush_kv();
+        oplog.flush_kv();
+        let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+    }
+
+    fn check_global_budget_with_active(
+        &self,
+        active_doc_id: u64,
+        active_bytes: Option<usize>,
+        linear_before: Option<u64>,
+    ) -> LoroResult<()> {
+        if global_budget_flags() & BUDGET_FLAG_MAX_DOC == 0 {
+            return Ok(());
+        }
+        let budget = self.budget.lock().clone();
+        let used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            let live = self.snapshot_live_docs();
+            self.docs_estimated_with_override(&live, active_bytes.map(|b| (active_doc_id, b)))
+                .0
+        };
+        if let Some(max_heap) = budget.max_heap_bytes {
+            if used > max_heap {
+                return Err(make_global_budget_err(used, max_heap));
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(max_lin) = budget.max_wasm_linear_bytes {
+            let lin_now = wasm_linear_memory_bytes();
+            if lin_now > max_lin {
+                let fits_existing_pages = linear_before.is_some_and(|before| {
+                    lin_now <= before && used <= max_lin.saturating_mul(70) / 100
+                });
+                if !fits_existing_pages {
+                    return Err(make_global_budget_err(lin_now, max_lin));
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = linear_before;
+        Ok(())
+    }
+}
+
+fn global_pool() -> &'static GlobalMemoryPool {
+    GLOBAL_POOL.get_or_init(GlobalMemoryPool::new)
+}
+
+pub(crate) fn unregister_doc_from_global_pool(pool_doc_id: u64, last_cached_bytes: usize) {
+    if pool_doc_id == 0 {
+        return;
+    }
+    if let Some(pool) = GLOBAL_POOL.get() {
+        pool.unregister(pool_doc_id, last_cached_bytes);
+    }
+}
+
+fn shrink_undo_managers_inner(doc: &LoroDocInner) -> usize {
+    let managers = {
+        let mut guard = doc.undo_managers.lock();
+        guard.retain(|w| w.strong_count() > 0);
+        guard.iter().filter_map(|w| w.upgrade()).collect::<Vec<_>>()
+    };
+    let mut freed = 0usize;
+    for manager in managers {
+        if let Some(lock) = manager.try_lock() {
+            if let Ok(mut inner) = lock.try_borrow_mut() {
+                let before = inner.used_bytes();
+                inner.shrink_to_fit();
+                let after = inner.used_bytes();
+                freed = freed.saturating_add(before.saturating_sub(after));
+            }
+        }
+    }
+    freed
+}
+
+fn sum_undo_bytes_inner(doc: &LoroDocInner) -> usize {
+    let managers = {
+        let mut guard = doc.undo_managers.lock();
+        guard.retain(|w| w.strong_count() > 0);
+        guard.iter().filter_map(|w| w.upgrade()).collect::<Vec<_>>()
+    };
+    let mut total = 0usize;
+    for manager in managers {
+        if let Some(lock) = manager.try_lock() {
+            if let Ok(inner) = lock.try_borrow() {
+                total = total.saturating_add(inner.used_bytes());
+            }
+        }
+    }
+    total
+}
+
+fn compute_doc_stats_locked_inner(
+    doc: &LoroDocInner,
+    oplog: &OpLog,
+    state: &DocState,
+    uncommitted_txn_bytes: usize,
+    try_diff_only: bool,
+) -> DocMemoryStats {
+    let oplog_mem = oplog.estimated_memory_breakdown();
+    let state_bytes = state.state_estimated_bytes();
+    let value_cache_bytes = state.value_cache_bytes();
+    let state_kv_bytes = state.kv_estimated_bytes();
+    let state_spilled = state.spilled_disk_bytes();
+    let diff_calc_bytes = if try_diff_only {
+        doc.diff_calculator
+            .try_lock()
+            .map_or(0, |d| d.estimated_bytes())
+    } else {
+        doc.diff_calculator.lock().estimated_bytes()
+    };
+    let kv_bytes = state_kv_bytes.saturating_add(oplog_mem.change_kv_bytes);
+    let block_cache_bytes = doc.kv_block_cache.local_used_bytes();
+    let undo_bytes = sum_undo_bytes_inner(doc);
+    let spilled_disk_bytes = state_spilled.saturating_add(oplog_mem.spilled_disk_bytes);
+
+    let total_bytes = state_bytes
+        .saturating_add(value_cache_bytes)
+        .saturating_add(kv_bytes)
+        .saturating_add(block_cache_bytes)
+        .saturating_add(oplog_mem.change_cache_bytes)
+        .saturating_add(oplog_mem.dag_bytes)
+        .saturating_add(oplog_mem.arena_bytes)
+        .saturating_add(oplog_mem.pending_bytes)
+        .saturating_add(oplog_mem.history_cache_bytes)
+        .saturating_add(diff_calc_bytes)
+        .saturating_add(undo_bytes)
+        .saturating_add(uncommitted_txn_bytes);
+
+    if doc.pool_doc_id != 0 {
+        if let Some(pool) = GLOBAL_POOL.get() {
+            pool.update_cached_doc_bytes(doc, total_bytes);
+        } else {
+            doc.cached_doc_bytes.store(total_bytes, Release);
+        }
+    }
+
+    DocMemoryStats {
+        total_bytes,
+        state_bytes,
+        value_cache_bytes,
+        kv_bytes,
+        block_cache_bytes,
+        change_cache_bytes: oplog_mem.change_cache_bytes,
+        dag_bytes: oplog_mem.dag_bytes,
+        arena_bytes: oplog_mem.arena_bytes,
+        pending_bytes: oplog_mem.pending_bytes,
+        history_cache_bytes: oplog_mem.history_cache_bytes,
+        diff_calc_bytes,
+        undo_bytes,
+        uncommitted_txn_bytes,
+        spilled_disk_bytes,
+    }
+}
+
+fn try_stats_for_global(doc: &Arc<LoroDocInner>) -> (usize, usize) {
+    let Some(txn_guard) = doc.txn.try_lock() else {
+        return (doc.cached_doc_bytes.load(Relaxed), 0);
+    };
+    let uncommitted = txn_guard
+        .as_ref()
+        .map_or(0, Transaction::estimated_uncommitted_bytes);
+    let Some(oplog) = doc.oplog.try_lock() else {
+        return (doc.cached_doc_bytes.load(Relaxed).max(uncommitted), 0);
+    };
+    let Some(state) = doc.state.try_lock() else {
+        return (doc.cached_doc_bytes.load(Relaxed).max(uncommitted), 0);
+    };
+    let stats = compute_doc_stats_locked_inner(doc, &oplog, &state, uncommitted, true);
+    (stats.total_bytes, stats.spilled_disk_bytes)
+}
+
+fn refresh_cached_doc_bytes_for_inner(doc: &Arc<LoroDocInner>) {
+    let _ = try_stats_for_global(doc);
+}
+
+#[cfg(test)]
+thread_local! {
+    static IDLE_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn try_reclaim_idle_doc(
+    doc: &Arc<LoroDocInner>,
+    stage2: bool,
+    target_reduction_bytes: usize,
+    stage1_completed: bool,
+) -> bool {
+    let Some(txn_guard) = doc.txn.try_lock() else {
+        return false;
+    };
+    if txn_guard
+        .as_ref()
+        .is_some_and(|txn| !txn.is_empty() || txn.has_rollback_scope())
+    {
+        return false;
+    }
+    let Some(oplog) = doc.oplog.try_lock() else {
+        return false;
+    };
+    if oplog.batch_importing || oplog.has_import_rollback() || oplog.dag.has_pending_txn() {
+        return false;
+    }
+    let Some(mut state) = doc.state.try_lock() else {
+        return false;
+    };
+
+    if !stage1_completed {
+        #[cfg(test)]
+        IDLE_STAGE1_PASSES.with(|n| n.set(n.get() + 1));
+        state.evict_value_cache_to_bytes(0);
+        if !doc.kv_block_cache.is_delegating_to_parent() {
+            doc.kv_block_cache.clear();
+        }
+        state.reclaim_auxiliary_caches();
+        oplog.compact_history();
+        oplog.flush_kv();
+        oplog.with_history_cache(|h| h.free_all());
+        oplog.arena.shrink_spare_capacity();
+        if let Some(mut diff_calc) = doc.diff_calculator.try_lock() {
+            diff_calc.reclaim_cold_caches(0);
+        }
+        let _ = shrink_undo_managers_inner(doc);
+    }
+
+    if stage2 {
+        let cur_state_bytes = state.state_estimated_bytes();
+        let target_state_bytes = if target_reduction_bytes == usize::MAX {
+            0
+        } else {
+            let demote_budget = target_reduction_bytes.saturating_mul(3) / 2;
+            cur_state_bytes.saturating_sub(demote_budget)
+        };
+        state.demote_cold_states(target_state_bytes, &Default::default());
+        state.flush_kv();
+        oplog.flush_kv();
+    }
+
+    let _ = compute_doc_stats_locked_inner(doc, &oplog, &state, 0, true);
+    true
+}
+
+/// Configures process-wide (or WASM-instance-wide) memory watermarks, shared KV block
+/// cache size, and hard heap / linear-memory limits across all live [`LoroDoc`] instances.
+pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
+    let pool = global_pool();
+    let enabled = budget.is_enabled();
+    let flags = compute_global_flags(&budget);
+    pool.global_block_cache
+        .set_max_bytes(budget.effective_block_cache_bytes());
+    *pool.budget.lock() = budget;
+    GLOBAL_BUDGET_FLAGS.store(flags, Release);
+
+    let live = pool.snapshot_live_docs();
+    if enabled {
+        let arm_hard_scope = flags & BUDGET_FLAG_MAX_DOC != 0;
+        for doc in &live {
+            doc.kv_block_cache
+                .set_parent(Some(&pool.global_block_cache));
+            refresh_cached_doc_bytes_for_inner(doc);
+            if arm_hard_scope {
+                if let Some(mut txn_guard) = doc.txn.try_lock() {
+                    if let Some(txn) = txn_guard.as_mut() {
+                        if txn.is_empty()
+                            && !txn.has_rollback_scope()
+                            && txn.budget_base_scope().is_none()
+                        {
+                            LoroDoc::from_inner(doc.clone()).arm_budget_scope_on_txn(txn);
+                        }
+                    }
+                }
+            }
+        }
+        if flags & BUDGET_FLAG_WATERMARKS != 0 {
+            let high = pool.budget.lock().effective_high_watermark();
+            let target = pool.budget.lock().effective_target_watermark();
+            if let Some(h) = high {
+                let used = pool.current_heap_or_estimated_used();
+                if used > h {
+                    pool.reclaim_for_watermark(target.unwrap_or(h), None, false);
+                }
+            }
+        }
+    } else {
+        for doc in &live {
+            doc.kv_block_cache.set_parent(None);
+        }
+        pool.global_block_cache.clear();
+    }
+}
+
+/// Returns a snapshot of the active [`GlobalMemoryBudget`] configuration.
+pub fn global_memory_budget() -> GlobalMemoryBudget {
+    global_pool().budget.lock().clone()
+}
+
+/// Returns global memory statistics across all live [`LoroDoc`] instances and the active
+/// global allocator (if tracked, as on WASM).
+pub fn global_memory_stats() -> GlobalMemoryStats {
+    let pool = global_pool();
+    let live = pool.snapshot_live_docs();
+    let global_block_cache_bytes = pool.global_block_cache.used_bytes();
+    let (docs_estimated_bytes, spilled_disk_bytes) = pool.docs_estimated_with_override(&live, None);
+    GlobalMemoryStats {
+        live_doc_count: live.len(),
+        docs_estimated_bytes,
+        global_block_cache_bytes,
+        allocated_heap_bytes: tracked_allocated_heap_bytes(),
+        peak_allocated_heap_bytes: tracked_peak_allocated_heap_bytes(),
+        wasm_linear_memory_bytes: wasm_linear_memory_bytes(),
+        spilled_disk_bytes,
+    }
+}
+
+/// Runs cross-document reclamation across idle [`LoroDoc`]s down to `target_bytes`
+/// (or full Stage 1 + Stage 2 reclamation across all idle docs when `None`),
+/// returning the observed byte reduction.
+pub fn reclaim_global_memory(target_bytes: Option<u64>) -> u64 {
+    let pool = global_pool();
+    let live = pool.snapshot_live_docs();
+    let before = if heap_tracker_active() {
+        tracked_allocated_heap_bytes()
+    } else {
+        pool.docs_estimated_with_override(&live, None).0
+    };
+    let (target, force_full) = match target_bytes {
+        Some(t) => (t, false),
+        None => (0, true),
+    };
+    let after = pool.reclaim_idle_docs_to_target(&live, None, target, force_full);
+    before.saturating_sub(after)
+}
+
+/// Returns `true` when running on `wasm32` with an active global WASM linear-memory ceiling.
+#[inline]
+pub fn has_global_wasm_linear_limit() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if global_budget_flags() & BUDGET_FLAG_MAX_DOC == 0 {
+            return false;
+        }
+        global_pool().budget.lock().max_wasm_linear_bytes.is_some()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
+/// Checks whether allocating `needed_bytes` on the WASM heap would exceed
+/// `GlobalMemoryBudget::max_wasm_linear_bytes`, reclaiming idle docs first when possible.
+pub fn preflight_wasm_linear_alloc(needed_bytes: u64) -> LoroResult<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = needed_bytes;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let pool = global_pool();
+        let Some(max_lin) = pool.budget.lock().max_wasm_linear_bytes else {
+            return Ok(());
+        };
+        let mut used = tracked_allocated_heap_bytes();
+        if used.saturating_add(needed_bytes) > max_lin.saturating_mul(80) / 100 {
+            pool.reclaim_for_watermark(max_lin.saturating_mul(50) / 100, None, false);
+            used = tracked_allocated_heap_bytes();
+        }
+        let projected = used.saturating_add(needed_bytes);
+        if projected > max_lin {
+            return Err(make_global_budget_err(projected, max_lin));
+        }
+        Ok(())
+    }
+}
+
+/// Runs full global reclamation and checks whether global usage now satisfies
+/// [`GlobalMemoryBudget::max_heap_bytes`] and [`GlobalMemoryBudget::max_wasm_linear_bytes`].
+pub fn try_reclaim_global_to_budget() -> LoroResult<GlobalMemoryStats> {
+    let _ = reclaim_global_memory(None);
+    let stats = global_memory_stats();
+    let budget = global_memory_budget();
+    if let Some(max_heap) = budget.max_heap_bytes {
+        let used = if heap_tracker_active() {
+            stats.allocated_heap_bytes
+        } else {
+            stats.docs_estimated_bytes
+        };
+        if used > max_heap {
+            return Err(make_global_budget_err(used, max_heap));
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    if let Some(max_lin) = budget.max_wasm_linear_bytes {
+        if stats.wasm_linear_memory_bytes > max_lin {
+            return Err(make_global_budget_err(
+                stats.wasm_linear_memory_bytes,
+                max_lin,
+            ));
+        }
+    }
+    Ok(stats)
+}
+
 impl LoroDoc {
     /// Configures soft memory watermarks and hard memory quotas for this document.
     /// A new hard document quota applies to the next transaction. Pending edits
@@ -6110,11 +6962,8 @@ impl LoroDoc {
         if budget.max_import_blob_bytes.is_some() {
             flags |= BUDGET_FLAG_MAX_IMPORT_BLOB;
         }
-        self.kv_block_cache.set_max_bytes(
-            budget
-                .max_kv_block_cache_bytes
-                .unwrap_or_else(|| SharedBlockCache::default_per_doc().max_bytes()),
-        );
+        self.kv_block_cache
+            .set_explicit_max_bytes(budget.max_kv_block_cache_bytes);
         self.config.set_decoded_value_cache_bytes_limit(
             budget.max_decoded_value_cache_bytes.unwrap_or(usize::MAX),
         );
@@ -6228,31 +7077,136 @@ impl LoroDoc {
     }
 
     #[inline]
+    pub(crate) fn touch_access_tick(&self) {
+        if global_budget_flags() != 0 {
+            let tick = GLOBAL_ACCESS_TICK.fetch_add(1, Relaxed);
+            self.last_access_tick.store(tick, Relaxed);
+        }
+    }
+
+    pub(crate) fn on_commit_completed(&self) {
+        self.touch_access_tick();
+        if self.has_watermark_budget() {
+            self.enforce_memory_watermarks();
+        } else if global_budget_flags() != 0 {
+            self.refresh_cached_doc_bytes_unlocked();
+        }
+    }
+
+    pub(crate) fn refresh_cached_doc_bytes_unlocked(&self) {
+        if self.pool_doc_id == 0 {
+            return;
+        }
+        let uncommitted = if self.txn.is_held_by_current_thread() {
+            0
+        } else {
+            self.txn
+                .try_lock()
+                .and_then(|g| g.as_ref().map(Transaction::estimated_uncommitted_bytes))
+                .unwrap_or(0)
+        };
+        if let (Some(oplog), Some(state)) = (self.oplog.try_lock(), self.state.try_lock()) {
+            let _ = compute_doc_stats_locked_inner(self, &oplog, &state, uncommitted, true);
+        }
+    }
+
+    #[inline]
     pub(crate) fn has_max_doc_bytes(&self) -> bool {
-        self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_DOC != 0
+        (self.budget_flags.load(Acquire) | global_budget_flags()) & BUDGET_FLAG_MAX_DOC != 0
     }
 
     #[inline]
     fn has_watermark_budget(&self) -> bool {
-        self.budget_flags.load(Acquire) & BUDGET_FLAG_WATERMARKS != 0
+        (self.budget_flags.load(Acquire) | global_budget_flags()) & BUDGET_FLAG_WATERMARKS != 0
     }
 
     #[inline]
     fn has_max_import_blob_bytes(&self) -> bool {
-        self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_IMPORT_BLOB != 0
+        (self.budget_flags.load(Acquire) | global_budget_flags()) & BUDGET_FLAG_MAX_IMPORT_BLOB != 0
     }
 
     pub fn check_import_blob_limit(&self, len: usize) -> LoroResult<()> {
+        self.preflight_import_bytes(len, false)
+    }
+
+    /// Pre-allocation check called by bindings (such as `loro-wasm`) immediately before copying
+    /// an external `len`-byte buffer into WASM linear memory / Rust heap.
+    pub fn preflight_external_import_alloc(&self, len: usize) -> LoroResult<()> {
+        self.preflight_import_bytes(len, true)
+    }
+
+    fn preflight_import_bytes(&self, len: usize, include_buffer_alloc: bool) -> LoroResult<()> {
         if !self.has_max_import_blob_bytes() {
             return Ok(());
         }
-        if let Some(limit) = self.memory_budget.lock().max_import_blob_bytes {
-            if len > limit {
-                return Err(LoroError::memory_limit_exceeded(
-                    MemoryLimitKind::ImportBlob,
-                    len,
-                    limit,
-                ));
+        if self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_IMPORT_BLOB != 0 {
+            if let Some(limit) = self.memory_budget.lock().max_import_blob_bytes {
+                if len > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::ImportBlob,
+                        len,
+                        limit,
+                    ));
+                }
+            }
+        }
+        if global_budget_flags() & BUDGET_FLAG_MAX_IMPORT_BLOB != 0 {
+            let pool = global_pool();
+            let budget = pool.budget.lock().clone();
+            if let Some(limit) = budget.max_import_blob_bytes {
+                if len > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::ImportBlob,
+                        len,
+                        limit,
+                    ));
+                }
+            }
+            let wasm_limit = if cfg!(target_arch = "wasm32") {
+                budget.max_wasm_linear_bytes
+            } else {
+                None
+            };
+            let hard_cap = match (budget.max_heap_bytes, wasm_limit) {
+                (Some(h), Some(w)) => Some(h.min(w)),
+                (Some(h), None) => Some(h),
+                (None, Some(w)) => Some(w),
+                (None, None) => None,
+            };
+            if let Some(cap) = hard_cap {
+                let len_u64 = len as u64;
+                if len_u64 > cap {
+                    return Err(make_global_budget_err(len_u64, cap));
+                }
+                let mut used = pool.current_heap_or_estimated_used();
+                let high = budget.effective_high_watermark().unwrap_or(cap);
+                let target = budget.effective_target_watermark().unwrap_or(high);
+                let head_target = target.min(cap.saturating_sub(len_u64));
+                if used.saturating_add(len_u64) > high.min(cap) {
+                    let exclude = if self.txn.is_held_by_current_thread()
+                        || self.oplog.is_locked()
+                        || self.state.is_locked()
+                    {
+                        Some(self.pool_doc_id)
+                    } else {
+                        None
+                    };
+                    pool.reclaim_for_watermark(head_target, exclude, false);
+                    used = pool.current_heap_or_estimated_used();
+                }
+                if include_buffer_alloc {
+                    let projected = used.saturating_add(len_u64);
+                    if let Some(max_heap) = budget.max_heap_bytes {
+                        if projected > max_heap {
+                            return Err(make_global_budget_err(projected, max_heap));
+                        }
+                    }
+                    if let Some(max_lin) = wasm_limit {
+                        if projected > max_lin {
+                            return Err(make_global_budget_err(projected, max_lin));
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -6279,7 +7233,21 @@ impl LoroDoc {
             }
         }
 
-        let Some(limit) = self.memory_budget.lock().max_import_blob_bytes else {
+        let local_limit = if self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_IMPORT_BLOB != 0 {
+            self.memory_budget.lock().max_import_blob_bytes
+        } else {
+            None
+        };
+        let global_limit = if global_budget_flags() & BUDGET_FLAG_MAX_IMPORT_BLOB != 0 {
+            global_pool().budget.lock().max_import_blob_bytes
+        } else {
+            None
+        };
+        let effective_limit = match (local_limit, global_limit) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let Some(limit) = effective_limit else {
             return Ok(());
         };
         let mut writer = CountingWriter { count: 0, limit };
@@ -6302,31 +7270,8 @@ impl LoroDoc {
         guard.iter().filter_map(|w| w.upgrade()).collect()
     }
 
-    fn sum_undo_bytes(&self) -> usize {
-        let mut total = 0usize;
-        for manager in self.live_undo_managers() {
-            if let Some(lock) = manager.try_lock() {
-                if let Ok(inner) = lock.try_borrow() {
-                    total = total.saturating_add(inner.used_bytes());
-                }
-            }
-        }
-        total
-    }
-
     fn shrink_undo_managers(&self) -> usize {
-        let mut freed = 0usize;
-        for manager in self.live_undo_managers() {
-            if let Some(lock) = manager.try_lock() {
-                if let Ok(mut inner) = lock.try_borrow_mut() {
-                    let before = inner.used_bytes();
-                    inner.shrink_to_fit();
-                    let after = inner.used_bytes();
-                    freed = freed.saturating_add(before.saturating_sub(after));
-                };
-            }
-        }
-        freed
+        shrink_undo_managers_inner(self)
     }
 
     /// Returns a snapshot of estimated RAM and disk usage across all document subsystems.
@@ -6354,53 +7299,7 @@ impl LoroDoc {
         state: &DocState,
         uncommitted_txn_bytes: usize,
     ) -> DocMemoryStats {
-        let oplog_mem = oplog.estimated_memory_breakdown();
-        let state_bytes = state.state_estimated_bytes();
-        let value_cache_bytes = state.value_cache_bytes();
-        let state_kv_bytes = state.kv_estimated_bytes();
-        let state_spilled = state.spilled_disk_bytes();
-        let diff_calc_bytes = self.diff_calculator.lock().estimated_bytes();
-        let kv_bytes = state_kv_bytes.saturating_add(oplog_mem.change_kv_bytes);
-        let block_cache_bytes = self.kv_block_cache.used_bytes();
-        let undo_bytes = self.sum_undo_bytes();
-        let spilled_disk_bytes = state_spilled.saturating_add(oplog_mem.spilled_disk_bytes);
-
-        let total_bytes = state_bytes
-            .saturating_add(value_cache_bytes)
-            .saturating_add(kv_bytes)
-            .saturating_add(block_cache_bytes)
-            .saturating_add(oplog_mem.change_cache_bytes)
-            .saturating_add(oplog_mem.dag_bytes)
-            .saturating_add(oplog_mem.arena_bytes)
-            .saturating_add(oplog_mem.pending_bytes)
-            .saturating_add(oplog_mem.history_cache_bytes)
-            .saturating_add(diff_calc_bytes)
-            .saturating_add(undo_bytes)
-            .saturating_add(uncommitted_txn_bytes);
-
-        DocMemoryStats {
-            total_bytes,
-            state_bytes,
-            value_cache_bytes,
-            kv_bytes,
-            block_cache_bytes,
-            change_cache_bytes: oplog_mem.change_cache_bytes,
-            dag_bytes: oplog_mem.dag_bytes,
-            arena_bytes: oplog_mem.arena_bytes,
-            pending_bytes: oplog_mem.pending_bytes,
-            history_cache_bytes: oplog_mem.history_cache_bytes,
-            diff_calc_bytes,
-            undo_bytes,
-            uncommitted_txn_bytes,
-            spilled_disk_bytes,
-        }
-    }
-
-    fn check_doc_budget_with_txn_bytes(&self, uncommitted_txn_bytes: usize) -> LoroResult<()> {
-        let Some(limit) = self.memory_budget.lock().max_doc_bytes else {
-            return Ok(());
-        };
-        self.check_doc_budget_with_limit(uncommitted_txn_bytes, limit)
+        compute_doc_stats_locked_inner(self, oplog, state, uncommitted_txn_bytes, false)
     }
 
     pub(crate) fn check_doc_budget_with_limit(
@@ -6419,22 +7318,110 @@ impl LoroDoc {
         Ok(())
     }
 
-    fn check_doc_budget_locked(
+    pub(crate) fn check_transaction_budget(
+        &self,
+        txn: &Transaction,
+        linear_before: Option<u64>,
+    ) -> LoroResult<()> {
+        if let Some(limit) = txn.doc_budget_limit {
+            self.check_doc_budget_with_limit(txn.estimated_uncommitted_bytes(), limit)?;
+        }
+        if global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0 && txn.budget_base_scope().is_some() {
+            let active_bytes = if heap_tracker_active() {
+                None
+            } else {
+                Some(
+                    self.memory_stats_with_txn_bytes(txn.estimated_uncommitted_bytes())
+                        .total_bytes,
+                )
+            };
+            global_pool().check_global_budget_with_active(
+                self.pool_doc_id,
+                active_bytes,
+                linear_before,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn check_doc_budget_with_txn_bytes_and_linear(
+        &self,
+        uncommitted_txn_bytes: usize,
+        linear_before: Option<u64>,
+    ) -> LoroResult<()> {
+        let local_limit = if self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_DOC != 0 {
+            self.memory_budget.lock().max_doc_bytes
+        } else {
+            None
+        };
+        let has_global = global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0;
+        if local_limit.is_none() && !has_global {
+            return Ok(());
+        }
+        let need_stats = local_limit.is_some() || (has_global && !heap_tracker_active());
+        let active_bytes = if need_stats {
+            let stats = self.memory_stats_with_txn_bytes(uncommitted_txn_bytes);
+            if let Some(limit) = local_limit {
+                if stats.total_bytes > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::DocBudget,
+                        stats.total_bytes,
+                        limit,
+                    ));
+                }
+            }
+            Some(stats.total_bytes)
+        } else {
+            None
+        };
+        if has_global {
+            global_pool().check_global_budget_with_active(
+                self.pool_doc_id,
+                active_bytes,
+                linear_before,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn check_doc_budget_locked_with_linear(
         &self,
         oplog: &OpLog,
         state: &DocState,
         uncommitted_txn_bytes: usize,
+        linear_before: Option<u64>,
     ) -> LoroResult<()> {
-        let Some(limit) = self.memory_budget.lock().max_doc_bytes else {
-            return Ok(());
+        let local_limit = if self.budget_flags.load(Acquire) & BUDGET_FLAG_MAX_DOC != 0 {
+            self.memory_budget.lock().max_doc_bytes
+        } else {
+            None
         };
-        let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
-        if stats.total_bytes > limit {
-            return Err(LoroError::memory_limit_exceeded(
-                MemoryLimitKind::DocBudget,
-                stats.total_bytes,
-                limit,
-            ));
+        let has_global = global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0;
+        if local_limit.is_none() && !has_global {
+            return Ok(());
+        }
+        let need_stats = local_limit.is_some() || (has_global && !heap_tracker_active());
+        let active_bytes = if need_stats {
+            let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+            if let Some(limit) = local_limit {
+                if stats.total_bytes > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::DocBudget,
+                        stats.total_bytes,
+                        limit,
+                    ));
+                }
+            }
+            Some(stats.total_bytes)
+        } else {
+            None
+        };
+        if has_global {
+            global_pool().check_global_budget_with_active(
+                self.pool_doc_id,
+                active_bytes,
+                linear_before,
+            )?;
         }
         Ok(())
     }
@@ -6464,6 +7451,23 @@ impl LoroDoc {
         }
         let budget = self.memory_budget.lock().clone();
         if !force_full
+            && heap_tracker_active()
+            && budget == MemoryBudget::default()
+            && global_watermarks_active()
+        {
+            let global = global_pool().budget.lock().clone();
+            let used = tracked_allocated_heap_bytes();
+            if global
+                .effective_high_watermark()
+                .is_some_and(|high| used <= high)
+                && !(cfg!(target_arch = "wasm32")
+                    && global.wasm_heap_pressure(wasm_linear_memory_bytes(), used))
+            {
+                return;
+            }
+        }
+        if !force_full
+            && !global_watermarks_active()
             && budget.effective_high_watermark().is_none()
             && budget.max_kv_block_cache_bytes.is_none()
             && budget.max_decoded_value_cache_bytes.is_none()
@@ -6494,6 +7498,7 @@ impl LoroDoc {
         }
         let budget = self.memory_budget.lock().clone();
         if !force_full
+            && !global_watermarks_active()
             && budget.effective_high_watermark().is_none()
             && budget.max_kv_block_cache_bytes.is_none()
             && budget.max_decoded_value_cache_bytes.is_none()
@@ -6519,7 +7524,7 @@ impl LoroDoc {
         force_full: bool,
     ) {
         if let Some(limit) = budget.max_kv_block_cache_bytes {
-            self.kv_block_cache.set_max_bytes(limit);
+            self.kv_block_cache.set_explicit_max_bytes(Some(limit));
         }
         if let Some(limit) = budget.max_decoded_value_cache_bytes {
             state.evict_value_cache_to_bytes(limit);
@@ -6536,58 +7541,69 @@ impl LoroDoc {
             budget.effective_target_watermark()
         };
 
-        let Some(high) = high else {
-            return;
-        };
-        let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
-        if stats.total_bytes <= high && !force_full {
-            return;
+        if let Some(high) = high {
+            let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+            if stats.total_bytes > high || force_full {
+                // Stage 1: Reclaim caches and soft buffers before touching materialized states.
+                state.evict_value_cache_to_bytes(if force_full {
+                    0
+                } else {
+                    budget.max_decoded_value_cache_bytes.unwrap_or(0)
+                });
+                if (force_full || budget.max_kv_block_cache_bytes.is_none())
+                    && !self.kv_block_cache.is_delegating_to_parent()
+                {
+                    self.kv_block_cache.clear();
+                }
+                state.reclaim_auxiliary_caches();
+                oplog.compact_history();
+                #[cfg(not(target_arch = "wasm32"))]
+                if force_full || budget.spill_dir.is_some() {
+                    oplog.flush_kv();
+                }
+                #[cfg(target_arch = "wasm32")]
+                if force_full {
+                    oplog.flush_kv();
+                }
+                oplog.with_history_cache(|h| h.free_all());
+                if force_full {
+                    oplog.arena.shrink_spare_capacity();
+                }
+                self.diff_calculator
+                    .lock()
+                    .reclaim_cold_caches(if force_full { 0 } else { 4 });
+                let _ = self.shrink_undo_managers();
+
+                let target_limit = target.unwrap_or(high);
+                let stats_after_stage1 =
+                    self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+                if stats_after_stage1.total_bytes > target_limit || force_full {
+                    // Stage 2: Demote cold materialized container states and compress KV memtables.
+                    let need = stats_after_stage1.total_bytes.saturating_sub(target_limit);
+                    let target_state_bytes = if force_full {
+                        0
+                    } else {
+                        state.state_estimated_bytes().saturating_sub(need)
+                    };
+                    state.demote_cold_states(target_state_bytes, &Default::default());
+                    state.flush_kv();
+                    oplog.flush_kv();
+                }
+            }
         }
 
-        // Stage 1: Reclaim caches and soft buffers before touching materialized states.
-        state.evict_value_cache_to_bytes(if force_full {
-            0
-        } else {
-            budget.max_decoded_value_cache_bytes.unwrap_or(0)
-        });
-        if force_full || budget.max_kv_block_cache_bytes.is_none() {
-            self.kv_block_cache.clear();
+        if !force_full && global_watermarks_active() {
+            let active_stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+            global_pool().enforce_global_watermarks_for_active(
+                self,
+                oplog,
+                state,
+                uncommitted_txn_bytes,
+                active_stats.total_bytes,
+            );
+        } else if global_budget_flags() != 0 {
+            let _ = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
         }
-        state.reclaim_auxiliary_caches();
-        oplog.compact_history();
-        #[cfg(not(target_arch = "wasm32"))]
-        if force_full || budget.spill_dir.is_some() {
-            oplog.flush_kv();
-        }
-        #[cfg(target_arch = "wasm32")]
-        if force_full {
-            oplog.flush_kv();
-        }
-        oplog.with_history_cache(|h| h.free_all());
-        if force_full {
-            oplog.arena.shrink_spare_capacity();
-        }
-        self.diff_calculator
-            .lock()
-            .reclaim_cold_caches(if force_full { 0 } else { 4 });
-        let _ = self.shrink_undo_managers();
-
-        let target_limit = target.unwrap_or(high);
-        let stats_after_stage1 = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
-        if stats_after_stage1.total_bytes <= target_limit && !force_full {
-            return;
-        }
-
-        // Stage 2: Demote cold materialized container states and compress KV memtables.
-        let need = stats_after_stage1.total_bytes.saturating_sub(target_limit);
-        let target_state_bytes = if force_full {
-            0
-        } else {
-            state.state_estimated_bytes().saturating_sub(need)
-        };
-        state.demote_cold_states(target_state_bytes, &Default::default());
-        state.flush_kv();
-        oplog.flush_kv();
     }
 
     /// Reclaims caches and demotes cold container states, returning estimated freed bytes.
@@ -6724,4 +7740,20 @@ struct PlannedAlignment {
     edit: Option<crate::event::Diff>,
     /// Children kept by the alignment, whose own entries are full states too
     kept: FxHashSet<ContainerID>,
+}
+
+#[cfg(test)]
+mod reclamation_work_tests {
+    use super::*;
+    #[test]
+    fn a_two_pass_global_sweep_runs_stage1_once_per_idle_document() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.get_map("map").insert("value", 1).unwrap();
+        doc.commit_then_renew();
+        let pool = GlobalMemoryPool::new();
+        IDLE_STAGE1_PASSES.with(|n| n.set(0));
+        pool.reclaim_idle_docs_to_target(&[doc.inner.clone()], None, 0, true);
+        IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
+        assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
 }

@@ -114,6 +114,7 @@ pub enum MemoryLimitKind {
     ImportBlob,
     PendingPool,
     DocBudget,
+    GlobalBudget,
 }
 
 impl MemoryLimitKind {
@@ -122,6 +123,7 @@ impl MemoryLimitKind {
             Self::ImportBlob => "import_blob",
             Self::PendingPool => "pending_pool",
             Self::DocBudget => "doc_budget",
+            Self::GlobalBudget => "global_budget",
         }
     }
 
@@ -130,6 +132,7 @@ impl MemoryLimitKind {
             Self::ImportBlob => "ImportBlob",
             Self::PendingPool => "PendingPool",
             Self::DocBudget => "DocBudget",
+            Self::GlobalBudget => "GlobalBudget",
         }
     }
 
@@ -138,6 +141,7 @@ impl MemoryLimitKind {
             "import_blob" | "ImportBlob" => Some(Self::ImportBlob),
             "pending_pool" | "PendingPool" => Some(Self::PendingPool),
             "doc_budget" | "DocBudget" => Some(Self::DocBudget),
+            "global_budget" | "GlobalBudget" => Some(Self::GlobalBudget),
             _ => None,
         }
     }
@@ -401,6 +405,7 @@ mod tests {
             MemoryLimitKind::ImportBlob,
             MemoryLimitKind::PendingPool,
             MemoryLimitKind::DocBudget,
+            MemoryLimitKind::GlobalBudget,
         ] {
             let err = LoroError::memory_limit_exceeded(kind, 2048, 1024);
             assert!(err.is_memory_limit_exceeded());
