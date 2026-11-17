@@ -574,6 +574,23 @@ impl SharedBlockCache {
 #[cfg(not(target_arch = "wasm32"))]
 static NEXT_SPILL_FILE_ID: AtomicU64 = AtomicU64::new(1);
 
+/// A spilled table's blocks were checksummed when the table was built or
+/// imported; the file can still be changed or corrupted on disk afterwards.
+/// Reads re-verify each block and fail fast rather than return wrong data
+/// (`context/memory-budget.md`, "Spill IO errors").
+#[cfg(not(target_arch = "wasm32"))]
+const SPILLED_BLOCK_CORRUPT: &str =
+    "spilled SSTable block failed its checksum: the spill file was modified or the disk is corrupt";
+
+#[cfg(not(target_arch = "wasm32"))]
+fn spilled_block_checksum_ok(raw_block_and_check: &[u8]) -> bool {
+    let Some(body_len) = raw_block_and_check.len().checked_sub(SIZE_OF_U32) else {
+        return false;
+    };
+    let expected = u32::from_le_bytes(raw_block_and_check[body_len..].try_into().unwrap());
+    expected == xxhash_rust::xxh32::xxh32(&raw_block_and_check[..body_len], XXH_SEED)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct SpillFile {
@@ -688,10 +705,15 @@ impl SsTable {
         match &self.backing {
             SsTableBacking::Memory(data) => data.clone(),
             #[cfg(not(target_arch = "wasm32"))]
-            SsTableBacking::File(file) => Bytes::from(
-                file.read_slice(0, file.len)
-                    .expect("spilled SSTable file should be readable"),
-            ),
+            SsTableBacking::File(file) => {
+                let bytes = Bytes::from(
+                    file.read_slice(0, file.len)
+                        .expect("spilled SSTable file should be readable"),
+                );
+                Self::check_block_checksum(&self.meta, &bytes, self.meta_offset)
+                    .expect(SPILLED_BLOCK_CORRUPT);
+                bytes
+            }
         }
     }
 
@@ -947,6 +969,7 @@ impl SsTable {
                 let raw = file
                     .read_slice(offset, offset_end - offset)
                     .expect("spilled SSTable block should be readable");
+                assert!(spilled_block_checksum_ok(&raw), "{SPILLED_BLOCK_CORRUPT}");
                 f(&raw)
             }
         }
@@ -961,10 +984,13 @@ impl SsTable {
         let raw_block_and_check = match &self.backing {
             SsTableBacking::Memory(data) => data.slice(offset..offset_end),
             #[cfg(not(target_arch = "wasm32"))]
-            SsTableBacking::File(file) => Bytes::from(
-                file.read_slice(offset, offset_end - offset)
-                    .expect("spilled SSTable block should be readable"),
-            ),
+            SsTableBacking::File(file) => {
+                let raw = file
+                    .read_slice(offset, offset_end - offset)
+                    .expect("spilled SSTable block should be readable");
+                assert!(spilled_block_checksum_ok(&raw), "{SPILLED_BLOCK_CORRUPT}");
+                Bytes::from(raw)
+            }
         };
         Arc::new(Block::decode(
             raw_block_and_check,

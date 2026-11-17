@@ -234,10 +234,52 @@ if neither reported a write failure (`KvStore::take_spill_error`, recorded by
 setter logs it, keeps the previous `spill_dir` (so the same directory can be set
 again to retry) and applies the other fields; `try_set_memory_budget` returns the
 error and changes nothing. A switch only writes what the stores hold encoded at
-that moment; a later flush that cannot write keeps its tables in RAM and only
-logs (`take_spill_error` is not surfaced through a public API yet).
+that moment; a later flush that cannot write keeps its tables in RAM, logs, and
+records the error for `LoroDoc::take_spill_error` (Rust only; spilling is a no-op
+on WASM).
 Tests: `crates/loro/tests/out_of_core.rs` (a file at the path; `/proc/self` as a
 directory that rejects writes, Linux only).
+
+## Spill IO errors
+
+Verified against code 2026-11-16.
+
+- **Write failures** after a switch keep the tables in RAM (no data loss).
+  `LoroDoc::take_spill_error()` returns the first one since the previous call
+  (op log and state stores joined with `"; "`), then `None`. Test:
+  `a_flush_that_cannot_write_is_reported_by_take_spill_error` (`out_of_core.rs`).
+- **Read failures** (`SsTable::read_block`, `with_raw_block`, `export_all` on a
+  file backing, `kv-store/src/sstable.rs`) still panic. The `KvStore` read
+  interface has no error type, and most callers sit under APIs without one.
+  `SpillFile` keeps its handle open and reads with `pread`, so on Unix a deleted
+  spill file stays readable.
+- **Checksums**: blocks read back from a spill file are re-verified with xxh32
+  (`spilled_block_checksum_ok`; `export_all` checks every block). A mismatch
+  panics with "failed its checksum" instead of decoding wrong data. Before, the
+  bytes went straight to `Block::decode`. Test:
+  `a_corrupted_spill_file_fails_its_checksum_instead_of_returning_wrong_data`
+  (`file_store.rs`).
+
+## Spill directory without a budget
+
+A `spill_dir` only chooses where flushed tables live. Without watermarks or
+`max_doc_bytes`, nothing flushes automatically: data moves to disk on
+`reclaim_memory` (or a global sweep), and `set_memory_budget` logs a warning.
+Set watermarks for automatic reclamation. There is no implicit default policy.
+
+## WASM linear memory ceiling
+
+Verified against code 2026-11-16.
+
+WASM pages never shrink. Hard admission (`check_global_budget_with_active`)
+accepts a commit past `max_wasm_linear_bytes` if it added no pages and the live
+heap is at most 70% of the ceiling (`heap_fits_existing_pages`).
+`try_reclaim_global_to_budget` now uses the same heap rule
+(`linear_budget_satisfied`); before, it failed forever once the pages had grown,
+even while commits succeeded. `wasm_linear_memory_exceeded()` (Rust) and the JS
+`GlobalMemoryStats.wasmLinearMemoryExceeded` report whether the pages are past
+the ceiling, so an application can recreate the instance. `GlobalMemoryStats`
+gained no Rust field (it is not `#[non_exhaustive]`).
 
 ## Global soft-sweep backoff
 

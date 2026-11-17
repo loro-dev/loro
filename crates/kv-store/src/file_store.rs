@@ -205,6 +205,53 @@ mod tests {
             .count()
     }
 
+    /// Blocks read back from a spill file are re-verified: a byte changed on disk
+    /// used to be decoded as if it were valid (or panic inside the decoder).
+    #[test]
+    fn a_corrupted_spill_file_fails_its_checksum_instead_of_returning_wrong_data() {
+        let temp = TempDir::new("corrupt");
+        let mut source = MemKvStore::new(MemKvConfig::default());
+        for i in 0..64_u32 {
+            source.set(
+                format!("key-{i:04}").as_bytes(),
+                Bytes::from(vec![i as u8; 1024]),
+            );
+        }
+        let mut store = FileKvStore::new(&temp.0, MemKvConfig::default()).unwrap();
+        store.import_all(source.export_all()).unwrap();
+        assert!(store.spilled_disk_bytes() > 0);
+        let path = std::fs::read_dir(&temp.0)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| p.extension().is_some_and(|e| e == "sst"))
+            .unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[10] ^= 0x01;
+        // Rewrite in place: the store keeps its file handle open.
+        {
+            use std::io::{Seek, Write};
+            let mut file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            file.seek(std::io::SeekFrom::Start(0)).unwrap();
+            file.write_all(&bytes).unwrap();
+        }
+        // A clone has an empty block cache, so the read goes to the file.
+        let cold = store.clone();
+        let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| cold.get(b"key-0000")))
+            .expect_err("a corrupted block was decoded");
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(msg.contains("failed its checksum"), "{msg}");
+        let export =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.clone().export_all()));
+        assert!(
+            export.is_err(),
+            "export of a corrupted spill file succeeded"
+        );
+    }
+
     #[test]
     fn spilling_releases_import_buffer_and_keeps_files_private() {
         struct OwnedBytes(Vec<u8>, std::sync::Arc<std::sync::atomic::AtomicBool>);

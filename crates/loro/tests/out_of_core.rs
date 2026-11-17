@@ -279,3 +279,41 @@ fn a_spill_directory_that_rejects_writes_keeps_the_current_storage() {
         .unwrap();
     assert_eq!(restored.get_deep_value(), doc.get_deep_value());
 }
+
+/// A flush that cannot write after the switch keeps its tables in memory and
+/// used only to log; `take_spill_error` now reports it, once.
+#[test]
+fn a_flush_that_cannot_write_is_reported_by_take_spill_error() {
+    let dir = TempSpillDir::new("flush-error");
+    let doc = text_doc_with_history();
+    doc.set_memory_budget(MemoryBudget::new().with_spill_dir(dir.path()));
+    assert_eq!(doc.take_spill_error(), None);
+    let expected_before = doc.get_deep_value();
+
+    // Spill files keep open handles; replace the directory by a regular file so
+    // the next table cannot be created.
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    std::fs::write(dir.path(), b"not a directory").unwrap();
+    doc.get_text("t")
+        .insert(0, &pseudo_random_text(9, 4096))
+        .unwrap();
+    doc.commit();
+    let _ = doc.reclaim_memory();
+
+    let err = doc
+        .take_spill_error()
+        .expect("the failed flush was not reported");
+    assert!(!err.is_empty());
+    assert_eq!(doc.take_spill_error(), None, "reported twice");
+    // Nothing was lost: the history read from the old files and the new tables
+    // kept in memory.
+    let value = doc.get_deep_value();
+    assert_ne!(value, expected_before);
+    let copy = LoroDoc::new();
+    copy.import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert_eq!(copy.get_deep_value(), value);
+
+    std::fs::remove_file(dir.path()).unwrap();
+    std::fs::create_dir_all(dir.path()).unwrap();
+}
