@@ -703,6 +703,10 @@ impl ContainerWrapper {
         std::mem::take(&mut self.accounted_value_cache_bytes)
     }
 
+    pub(super) fn needs_value_cache_tracking(&self) -> bool {
+        self.accounted_value_cache_bytes != 0 || self.is_evictable_cached_value()
+    }
+
     pub(super) fn is_materialized_state(&self) -> bool {
         matches!(self.data, ContainerData::State(_))
     }

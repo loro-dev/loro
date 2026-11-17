@@ -1,6 +1,12 @@
 # Undo Without Checkouts: Recorded Inverses
 
-Verified against code 2026-11-17.
+Verified against code 2026-11-18.
+
+The isolated hot-path prototype stores a single text insertion's inverse as
+container ID, event position and length, and materializes the delta during
+`LocalInverse::seal`. Other operations retain the composition described below.
+See [hot-path prototypes](hot-path-prototypes.md) for its representation and
+validation boundaries.
 
 ## Why
 

@@ -164,7 +164,7 @@ pub trait HandlerTrait: Clone + Sized {
 }
 
 fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
-    Handler::new_attached(id, inner.doc.clone())
+    Handler::new_attached_with_doc(id, inner.doc.clone())
 }
 
 fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrHandler {
@@ -295,7 +295,24 @@ fn ensure_no_unknown_container_in_attached(handler: &Handler) -> LoroResult<()> 
 pub struct BasicHandler {
     id: ContainerID,
     container_idx: ContainerIdx,
-    doc: LoroDoc,
+    doc: HandlerDoc,
+}
+
+#[derive(Clone, Debug)]
+enum HandlerDoc {
+    Direct(LoroDoc),
+    Shared(Arc<LoroDoc>),
+}
+
+impl std::ops::Deref for HandlerDoc {
+    type Target = LoroDoc;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Direct(doc) => doc,
+            Self::Shared(doc) => doc,
+        }
+    }
 }
 
 struct DetachedInner<T> {
@@ -364,7 +381,18 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 
 impl BasicHandler {
     pub(crate) fn doc(&self) -> LoroDoc {
-        self.doc.clone()
+        (*self.doc).clone()
+    }
+
+    fn shared_for_children(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            container_idx: self.container_idx,
+            doc: match &self.doc {
+                HandlerDoc::Direct(doc) => HandlerDoc::Shared(Arc::new(doc.clone())),
+                HandlerDoc::Shared(doc) => HandlerDoc::Shared(doc.clone()),
+            },
+        }
     }
 
     #[inline]
@@ -1274,6 +1302,10 @@ impl Handler {
     }
 
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
+        Self::new_attached_with_doc(id, HandlerDoc::Direct(doc))
+    }
+
+    fn new_attached_with_doc(id: ContainerID, doc: HandlerDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
             container_idx: doc.arena.register_container(&id),
@@ -3557,11 +3589,12 @@ impl ListHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let shared = inner.shared_for_children();
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_list_values(inner.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(inner, value))
+                        .map(|value| value_to_value_or_handler(&shared, value))
                         .collect::<Vec<_>>()
                 });
                 for v in temp.into_iter() {
@@ -4273,11 +4306,12 @@ impl MovableListHandler {
                 }
             }
             MaybeDetached::Attached(m) => {
+                let shared = m.shared_for_children();
                 let temp = m.with_doc_state(|state| {
                     state
                         .get_list_values(m.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(m, value))
+                        .map(|value| value_to_value_or_handler(&shared, value))
                         .collect::<Vec<_>>()
                 });
 
@@ -4694,6 +4728,7 @@ impl MapHandler {
             // Detached callbacks retain the public iterator's original lock behavior.
             MaybeDetached::Detached(_) => self.for_each(|_, value| f(value)),
             MaybeDetached::Attached(inner) => {
+                let shared = inner.shared_for_children();
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_map_entries(inner.container_idx)
@@ -4704,7 +4739,7 @@ impl MapHandler {
                                 key.as_ref(),
                                 value,
                             );
-                            value_to_value_or_handler(inner, translated)
+                            value_to_value_or_handler(&shared, translated)
                         })
                         .collect::<Vec<_>>()
                 });

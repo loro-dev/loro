@@ -89,6 +89,23 @@ fn visible_container_value_is_empty(kind: ContainerType, value: &LoroValue) -> b
     }
 }
 
+#[test]
+fn small_commits_release_transaction_mark_capacity_after_a_large_batch() {
+    let doc = crate::LoroDoc::new();
+    doc.start_auto_commit();
+    for index in 0..4096 {
+        doc.get_map(format!("map-{index}"))
+            .insert("value", index as i64)
+            .unwrap();
+    }
+    let _ = doc.commit_then_renew();
+    assert!(doc.state.lock().changed_idx_in_txn.capacity() >= 4096);
+    doc.get_map("map-0").insert("value", 42).unwrap();
+    let _ = doc.commit_then_renew();
+    assert!(doc.state.lock().changed_idx_in_txn.capacity() <= 64);
+    assert_eq!(doc.get_map("map-4095").get("value"), Some(4095.into()));
+}
+
 fn deleted_root_container_value_is_cleared(kind: ContainerType, value: &LoroValue) -> bool {
     match kind {
         #[cfg(feature = "counter")]
@@ -1226,12 +1243,18 @@ impl DocState {
 
     pub(crate) fn clear_local_rollback_stack(&mut self) {
         self.local_rollback_stack.clear();
-        self.changed_idx_in_txn.clear();
+        self.clear_changed_idx_in_txn();
         self.store.clear_created_journals();
     }
 
     pub(crate) fn clear_changed_idx_in_txn(&mut self) {
-        self.changed_idx_in_txn.clear();
+        if self.changed_idx_in_txn.capacity()
+            > self.changed_idx_in_txn.len().saturating_mul(4).max(64)
+        {
+            self.changed_idx_in_txn = FxHashSet::default();
+        } else {
+            self.changed_idx_in_txn.clear();
+        }
     }
 
     /// Takes the event recorder out, so that a state change the caller discards

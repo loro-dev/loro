@@ -230,6 +230,7 @@ impl LoroDoc {
                 pre_commit_subs: SubscriberSetWithQueue::new(),
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
                 undo_managers: crate::sync::Mutex::new(Vec::new()),
+                undo_manager_registered: AtomicBool::new(false),
                 memory_budget: crate::sync::Mutex::new(MemoryBudget::default()),
                 budget_flags: std::sync::atomic::AtomicU8::new(0),
                 kv_block_cache,

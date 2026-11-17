@@ -380,7 +380,9 @@ impl InnerStore {
     ) -> Option<R> {
         if let Some(entry) = self.get_entry_mut(idx) {
             let ans = f(entry);
-            self.track_value_cache(idx);
+            if entry.needs_value_cache_tracking() {
+                self.track_value_cache(idx);
+            }
             return Some(ans);
         }
 

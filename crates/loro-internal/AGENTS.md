@@ -7,6 +7,9 @@ over graceful degradation.
 
 ## Internal Map
 
+- Transaction capacity, shared handler ownership and compact text inverse prototypes:
+  [../../context/hot-path-prototypes.md](../../context/hot-path-prototypes.md).
+
 - `src/undo.rs`: one recorded item per undo/redo call, including no-ops:
   [../../context/undo-history-boundaries.md](../../context/undo-history-boundaries.md).
 - Undo transaction rollback and writer gate:

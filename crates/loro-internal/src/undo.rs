@@ -381,6 +381,7 @@ impl UndoGroup {
 pub(crate) struct CommitInverse {
     pub(crate) span: IdSpan,
     pub(crate) diff: DiffBatch,
+    pub(crate) text_insert: Option<(ContainerID, u32, u32)>,
     /// The value each map key written by `span` has right after it. A checkout
     /// reports no change for a key whose value ends where it started (see
     /// [`prune_unchanged_map_entries`]).
@@ -424,6 +425,24 @@ fn counter_inverses<'a>(
 }
 
 impl CommitInverse {
+    fn materialize_diff(&self) -> DiffBatch {
+        if let Some((cid, pos, len)) = &self.text_insert {
+            let mut diff = DiffBatch::default();
+            diff.compose_inverse_one(
+                cid.clone(),
+                Diff::Text(
+                    loro_delta::DeltaRopeBuilder::new()
+                        .retain(*pos as usize, Default::default())
+                        .delete(*len as usize)
+                        .build(),
+                ),
+            );
+            diff
+        } else {
+            self.diff.clone()
+        }
+    }
+
     /// Applies the rules that make a composed inverse equal what a checkout
     /// from the end of `span` to its deps reports.
     pub(crate) fn finish(&mut self, normalize: bool) {
@@ -451,7 +470,13 @@ impl CommitInverse {
                     })
             })
             .sum();
-        self.diff.estimated_bytes()
+        std::mem::size_of::<Self>()
+            + 2 * std::mem::size_of::<usize>()
+            + self.diff.estimated_bytes()
+            + self
+                .text_insert
+                .as_ref()
+                .map_or(0, |(cid, ..)| container_id_estimated_bytes(cid))
             + map_bytes
             + self.counter_ops.len() * std::mem::size_of::<(ContainerID, f64)>()
             + self
@@ -472,7 +497,7 @@ pub(crate) struct LocalInverse {
     /// The deps of the first commit.
     pub(crate) deps: Frontiers,
     /// Oldest first.
-    commits: Vec<Arc<CommitInverse>>,
+    commits: SmallVec<[Arc<CommitInverse>; 1]>,
 }
 
 /// A [`LocalInverse`] composed into one inverse of its whole span: what undo
@@ -491,7 +516,7 @@ impl LocalInverse {
         Self {
             span: commit.span,
             deps,
-            commits: vec![Arc::new(commit)],
+            commits: smallvec::smallvec![Arc::new(commit)],
         }
     }
 
@@ -518,7 +543,7 @@ impl LocalInverse {
     /// movable list edited by two commits; undo checks out instead).
     pub(crate) fn seal(&self) -> Option<SealedInverse> {
         if let [only] = self.commits.as_slice() {
-            let mut diff = only.diff.clone();
+            let mut diff = only.materialize_diff();
             counter_inverses(self.commits.iter().map(|c| &**c), self.span, &mut diff);
             return Some(SealedInverse {
                 span: self.span,
@@ -530,6 +555,7 @@ impl LocalInverse {
         let mut sealed = CommitInverse {
             span: self.span,
             diff: DiffBatch::default(),
+            text_insert: None,
             map_values_after: FxHashMap::default(),
             movable: Vec::new(),
             counter_ops: Vec::new(),
@@ -552,7 +578,7 @@ impl LocalInverse {
         }
         // Newest first: undoing the run undoes its last commit first.
         for commit in self.commits.iter().rev() {
-            sealed.diff.compose_inverse(commit.diff.clone());
+            sealed.diff.compose_inverse(commit.materialize_diff());
         }
         sealed.finish(true);
         counter_inverses(
@@ -569,7 +595,18 @@ impl LocalInverse {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.commits.iter().map(|c| c.estimated_bytes()).sum()
+        std::mem::size_of::<Self>()
+            + 2 * std::mem::size_of::<usize>()
+            + if self.commits.spilled() {
+                self.commits.capacity() * std::mem::size_of::<Arc<CommitInverse>>()
+            } else {
+                0
+            }
+            + self
+                .commits
+                .iter()
+                .map(|c| c.estimated_bytes())
+                .sum::<usize>()
     }
 }
 
@@ -1482,6 +1519,8 @@ impl UndoManager {
             let mut managers = doc.undo_managers.lock();
             managers.retain(|w| w.strong_count() > 0);
             managers.push(Arc::downgrade(&inner));
+            doc.undo_manager_registered
+                .store(true, std::sync::atomic::Ordering::Release);
         }
 
         UndoManager {

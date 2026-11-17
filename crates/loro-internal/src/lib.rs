@@ -204,6 +204,7 @@ pub struct LoroDocInner {
             >,
         >,
     >,
+    pub(crate) undo_manager_registered: AtomicBool,
     pub(crate) memory_budget: crate::sync::Mutex<memory::MemoryBudget>,
     pub(crate) budget_flags: std::sync::atomic::AtomicU8,
     pub(crate) kv_block_cache: kv_store::SharedBlockCache,

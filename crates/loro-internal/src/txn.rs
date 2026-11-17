@@ -239,6 +239,11 @@ pub struct Transaction {
 
 #[derive(Debug)]
 enum RecordedOp {
+    TextInsert {
+        container: ContainerIdx,
+        pos: u32,
+        len: u32,
+    },
     /// The event-level diff that undoes the op.
     Diff {
         container: ContainerIdx,
@@ -259,10 +264,37 @@ enum RecordedOp {
 }
 
 impl RecordedOp {
+    fn try_merge(&mut self, next: &Self) -> bool {
+        let (
+            Self::TextInsert {
+                container,
+                pos,
+                len,
+            },
+            Self::TextInsert {
+                container: next_container,
+                pos: next_pos,
+                len: next_len,
+            },
+        ) = (self, next)
+        else {
+            return false;
+        };
+        if container != next_container || *next_pos < *pos || *next_pos > pos.saturating_add(*len) {
+            return false;
+        }
+        let Some(merged_len) = len.checked_add(*next_len) else {
+            return false;
+        };
+        *len = merged_len;
+        true
+    }
+
     /// What the record holds, for the transaction's memory estimate.
     fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + match self {
+                RecordedOp::TextInsert { .. } => 0,
                 RecordedOp::Diff {
                     diff, map_written, ..
                 } => {
@@ -605,7 +637,10 @@ impl Transaction {
     }
 
     pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
-        if !self.finished && !self.local_ops.is_empty() {
+        if !self.finished
+            && !self.local_ops.is_empty()
+            && (self.doc_budget_limit.is_some() || self.budget_base_scope.is_some())
+        {
             if let Some(doc_inner) = self.doc.upgrade() {
                 let doc = LoroDoc::from_inner(doc_inner);
                 if self.doc_budget_limit.is_some()
@@ -788,7 +823,11 @@ impl Transaction {
                 .map(|v| v.capacity() * std::mem::size_of::<EventHint>())
                 .sum::<usize>();
         let inverse_bytes = match &self.local_inverse {
-            LocalInverseRecorder::Recording { bytes, .. } => *bytes,
+            LocalInverseRecorder::Recording { ops, bytes } => bytes.saturating_add(
+                ops.capacity()
+                    .saturating_sub(ops.len())
+                    .saturating_mul(std::mem::size_of::<RecordedOp>()),
+            ),
             _ => 0,
         };
         ops_bytes
@@ -984,10 +1023,13 @@ impl Transaction {
 
         if matches!(self.local_inverse, LocalInverseRecorder::Unknown) {
             let has_undo = doc
-                .undo_managers
-                .lock()
-                .iter()
-                .any(|m| m.strong_count() > 0);
+                .undo_manager_registered
+                .load(std::sync::atomic::Ordering::Acquire)
+                && doc
+                    .undo_managers
+                    .lock()
+                    .iter()
+                    .any(|manager| manager.strong_count() > 0);
             self.local_inverse = if has_undo {
                 LocalInverseRecorder::Recording {
                     ops: Vec::new(),
@@ -1022,8 +1064,10 @@ impl Transaction {
             };
             match (inverse, &mut self.local_inverse) {
                 (Some(op), LocalInverseRecorder::Recording { ops, bytes }) => {
-                    *bytes += op.estimated_bytes();
-                    ops.push(op);
+                    if !ops.last_mut().is_some_and(|last| last.try_merge(&op)) {
+                        *bytes += op.estimated_bytes();
+                        ops.push(op);
+                    }
                 }
                 _ => self.local_inverse = LocalInverseRecorder::Off,
             }
@@ -1504,9 +1548,37 @@ fn build_local_inverse(
     state: &mut DocState,
 ) -> Option<crate::undo::LocalInverse> {
     let arena = state.arena.clone();
+    if let [RecordedOp::TextInsert {
+        container,
+        pos,
+        len,
+    }] = ops.as_slice()
+    {
+        let cid = arena.idx_to_id(*container)?;
+        if cid.is_mergeable() {
+            return None;
+        }
+        let text_insert = (!crate::undo::created_in(&cid, span)).then_some((cid, *pos, *len));
+        return Some(crate::undo::LocalInverse::new(
+            crate::undo::CommitInverse {
+                span,
+                diff: crate::undo::DiffBatch::default(),
+                text_insert,
+                map_values_after: FxHashMap::default(),
+                movable: Vec::new(),
+                counter_ops: Vec::new(),
+            },
+            deps,
+        ));
+    }
     let single_op = ops.len() == 1;
     let mut cids: FxHashMap<ContainerIdx, loro_common::ContainerID> = FxHashMap::default();
     let mut cid_of = |idx: ContainerIdx| {
+        if single_op {
+            return arena
+                .idx_to_id(idx)
+                .expect("an edited container is registered");
+        }
         cids.entry(idx)
             .or_insert_with(|| {
                 arena
@@ -1519,9 +1591,25 @@ fn build_local_inverse(
     let mut movable: Vec<crate::undo::movable_list::RecordedInverse> = Vec::new();
     #[allow(unused_mut)]
     let mut counter_ops: Vec<(loro_common::ContainerID, f64)> = Vec::new();
-    let mut inverses = Vec::with_capacity(ops.len());
+    let mut inverses =
+        smallvec::SmallVec::<[(loro_common::ContainerID, Diff); 1]>::with_capacity(ops.len());
     for op in ops {
         match op {
+            RecordedOp::TextInsert {
+                container,
+                pos,
+                len,
+            } => {
+                inverses.push((
+                    cid_of(container),
+                    Diff::Text(
+                        DeltaRopeBuilder::new()
+                            .retain(pos as usize, Default::default())
+                            .delete(len as usize)
+                            .build(),
+                    ),
+                ));
+            }
             RecordedOp::Diff {
                 container,
                 diff,
@@ -1573,6 +1661,7 @@ fn build_local_inverse(
     let mut commit = crate::undo::CommitInverse {
         span,
         diff,
+        text_insert: None,
         map_values_after,
         movable,
         counter_ops,
@@ -1595,6 +1684,13 @@ fn local_op_inverse(
     doc: &Arc<LoroDocInner>,
 ) -> Option<RecordedOp> {
     match (container.get_type(), hint) {
+        (ContainerType::Text, EventHint::InsertText { pos, event_len, .. }) => {
+            return Some(RecordedOp::TextInsert {
+                container,
+                pos: *pos,
+                len: *event_len,
+            });
+        }
         (ContainerType::MovableList, _) => {
             return movable_list_op_inverse(state, container, hint).map(RecordedOp::Movable)
         }
