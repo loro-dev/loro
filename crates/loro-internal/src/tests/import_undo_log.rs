@@ -130,8 +130,10 @@ fn random_edits(doc: &LoroDoc, rng: &mut StdRng, n: usize) {
             #[cfg(feature = "counter")]
             11 => {
                 let counter = doc.get_counter("c");
+                // Halves add up exactly in any order, so peers that apply the
+                // same increments in different orders still compare equal.
                 counter
-                    .increment(rng.gen_range(0..10) as f64 + 0.1)
+                    .increment(rng.gen_range(0..10) as f64 + 0.5)
                     .unwrap();
             }
             _ => {
