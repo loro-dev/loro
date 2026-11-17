@@ -33,6 +33,8 @@ over graceful degradation.
   release versus ordinary flushing, and why replay callers must pass a `from`
   that is exactly the vv of `from_frontiers`:
   [../../context/memory-analysis.md](../../context/memory-analysis.md).
+- `src/fork.rs` owns `fork_at_inner`; both fork paths copy the local memory
+  budget. See the memory-budget context below.
 - Bounded `LoroDoc` memory budget (`MemoryBudget`, `DocMemoryStats`, Stage 1/2
   hysteresis & cold demotion, Stage 3 hard quotas, state-before-oplog rollback,
   and `try_commit`):

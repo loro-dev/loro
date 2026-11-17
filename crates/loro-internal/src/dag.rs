@@ -666,19 +666,38 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroRes
     right: &Frontiers,
 ) -> LoroResult<Frontiers> {
     let mut queue: BinaryHeap<OrdIdSpan> = BinaryHeap::new();
+    let mut in_heap: rustc_hash::FxHashSet<(ID, usize)> = Default::default();
+    let push_span = |queue: &mut BinaryHeap<OrdIdSpan<'a>>,
+                     in_heap: &mut rustc_hash::FxHashSet<(ID, usize)>,
+                     span: OrdIdSpan<'a>| {
+        if in_heap.insert((span.id, span.len)) {
+            queue.push(span);
+        }
+    };
+    let pop_span = |queue: &mut BinaryHeap<OrdIdSpan<'a>>,
+                    in_heap: &mut rustc_hash::FxHashSet<(ID, usize)>|
+     -> Option<OrdIdSpan<'a>> {
+        let span = queue.pop()?;
+        in_heap.remove(&(span.id, span.len));
+        Some(span)
+    };
     let Some(spans) = ids_to_ord_id_spans(left, get)? else {
         return Ok(Default::default());
     };
-    queue.extend(spans);
+    for span in spans {
+        push_span(&mut queue, &mut in_heap, span);
+    }
     let Some(spans) = ids_to_ord_id_spans(right, get)? else {
         return Ok(Default::default());
     };
-    queue.extend(spans);
+    for span in spans {
+        push_span(&mut queue, &mut in_heap, span);
+    }
 
-    while let Some(mut node) = queue.pop() {
+    while let Some(mut node) = pop_span(&mut queue, &mut in_heap) {
         while let Some(other) = queue.peek() {
             if node == *other || node.id_last() == other.id_last() {
-                queue.pop();
+                pop_span(&mut queue, &mut in_heap);
             } else {
                 break;
             }
@@ -691,7 +710,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroRes
         if let Some(other) = queue.peek() {
             if node.contains_id(other.id_last()) {
                 node.len = (other.id_last().counter - node.id.counter + 1) as usize;
-                queue.push(node);
+                push_span(&mut queue, &mut in_heap, node);
                 continue;
             }
 
@@ -701,7 +720,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroRes
                 } else {
                     1
                 };
-                queue.push(node);
+                push_span(&mut queue, &mut in_heap, node);
                 continue;
             }
         }
@@ -709,7 +728,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroRes
         match deps_to_ord_id_spans(&node, get)? {
             Some(deps) if !deps.is_empty() => {
                 for dep in deps {
-                    queue.push(dep);
+                    push_span(&mut queue, &mut in_heap, dep);
                 }
             }
             _ => return Ok(Default::default()),
@@ -2050,5 +2069,51 @@ mod tests {
         assert!(short > long);
         assert!(later_peer > short);
         assert_eq!(long.get_min().len, 1);
+    }
+
+    #[test]
+    fn latest_single_head_critical_version_handles_64_diamond_dag_linearly() {
+        let root = node(1, 0, 1, 0, Frontiers::default());
+        let mut nodes = vec![root.clone()];
+        let mut prev_join = root.id;
+        let mut next_lamport = 1;
+        for d in 0..64u64 {
+            let left_peer = 100 + d * 2;
+            let right_peer = 101 + d * 2;
+            let join_peer = 1000 + d;
+            let left_branch = node(left_peer, 0, 1, next_lamport, prev_join.into());
+            let right_branch = node(right_peer, 0, 1, next_lamport, prev_join.into());
+            let join = node(
+                join_peer,
+                0,
+                1,
+                next_lamport + 1,
+                Frontiers::from([left_branch.id, right_branch.id]),
+            );
+            prev_join = join.id;
+            next_lamport += 2;
+            nodes.push(left_branch);
+            nodes.push(right_branch);
+            nodes.push(join);
+        }
+        let side = node(2, 0, 1, 1, root.id.into());
+        nodes.push(side.clone());
+
+        let dag = TestDag::new(nodes, Frontiers::from([prev_join, side.id]));
+        let (base, mode) = dag.find_replay_base(&side.id.into(), &prev_join.into());
+        assert_eq!(base, root.id.into());
+        assert_eq!(mode, DiffMode::Checkout);
+        let lookups = std::cell::Cell::new(0usize);
+        let base = latest_single_head_critical_version(
+            &|id| {
+                lookups.set(lookups.get() + 1);
+                Ok(dag.get(id))
+            },
+            &side.id.into(),
+            &prev_join.into(),
+        )
+        .unwrap();
+        assert_eq!(base, root.id.into());
+        assert!(lookups.get() < 64 * 20, "lookups={}", lookups.get());
     }
 }

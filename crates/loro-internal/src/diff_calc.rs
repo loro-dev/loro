@@ -878,7 +878,7 @@ impl ListTracker {
                     // checkout can replay ops the tracker already has.
                     let values = &mut self.values;
                     self.tracker
-                        .insert_with(op.id_full(), *pos, slice.len(), |skip| {
+                        .insert_with(op.id_full(), *pos as usize, slice.len(), |skip| {
                             RichtextChunk::new_text(values.push(slice.slice(skip, slice.len())))
                         });
                 }
@@ -1329,14 +1329,7 @@ impl RichtextDiffCalculator {
     fn style_for_end_anchor(oplog: &OpLog, op: &RichOp) -> Option<(StyleOp, usize)> {
         let style_start_id = op.id().inc(-1);
         if let Some(start_op) = oplog.get_op_that_includes(style_start_id) {
-            let InnerListOp::StyleStart {
-                start: _,
-                end,
-                key,
-                value,
-                info,
-            } = start_op.content.as_list().unwrap()
-            else {
+            let InnerListOp::StyleStart(style) = start_op.content.as_list().unwrap() else {
                 unreachable!()
             };
 
@@ -1345,11 +1338,11 @@ impl RichtextDiffCalculator {
                     lamport: start_op.lamport(),
                     peer: style_start_id.peer,
                     cnt: style_start_id.counter,
-                    key: key.clone(),
-                    value: value.clone(),
-                    info: *info,
+                    key: style.key.clone(),
+                    value: style.value.clone(),
+                    info: style.info,
                 },
-                *end as usize,
+                style.end as usize,
             ))
         } else {
             oplog.with_history_cache(|history_cache| {
@@ -1491,14 +1484,13 @@ impl RichtextDiffCalculator {
                         del.is_reversed(),
                     );
                 }
-                InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key,
-                    info,
-                    value,
-                } => {
-                    debug_assert!(start < end, "start: {}, end: {}", start, end);
+                InnerListOp::StyleStart(style) => {
+                    debug_assert!(
+                        style.start < style.end,
+                        "start: {}, end: {}",
+                        style.start,
+                        style.end
+                    );
                     // A persisted tracker replays ops it has already
                     // applied whenever the replay base sits below the
                     // version the tracker reached on an earlier round. The
@@ -1529,16 +1521,17 @@ impl RichtextDiffCalculator {
                                     lamport: op.lamport(),
                                     peer: id.peer,
                                     cnt: id.counter,
-                                    key: key.clone(),
-                                    value: value.clone(),
-                                    info: *info,
+                                    key: style.key.clone(),
+                                    value: style.value.clone(),
+                                    info: style.info,
                                 },
-                                *end as usize,
+                                style.end as usize,
                             ));
                             styles.len() - 1
                         }
                     };
-                    let start = Self::shallow_clamped_tracker_pos(oplog, tracker, *start as usize);
+                    let start =
+                        Self::shallow_clamped_tracker_pos(oplog, tracker, style.start as usize);
                     tracker.insert(
                         op.id_full(),
                         start,
@@ -1881,26 +1874,25 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     InnerListOp::Delete(del) => {
                         diff.delete(del.start() as usize, del.atom_len());
                     }
-                    InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        info,
-                        value,
-                    } => {
-                        debug_assert!(start < end, "start: {}, end: {}", start, end);
+                    InnerListOp::StyleStart(style) => {
+                        debug_assert!(
+                            style.start < style.end,
+                            "start: {}, end: {}",
+                            style.start,
+                            style.end
+                        );
                         let style_op = Arc::new(StyleOp {
                             lamport: op.lamport(),
                             peer: op.peer,
                             cnt: op.id_start().counter,
-                            key: key.clone(),
-                            value: value.clone(),
-                            info: *info,
+                            key: style.key.clone(),
+                            value: style.value.clone(),
+                            info: style.info,
                         });
 
-                        *last_style_start = Some((style_op.clone(), *end));
+                        *last_style_start = Some((style_op.clone(), style.end));
                         diff.insert_value(
-                            *start as usize,
+                            style.start as usize,
                             RichtextStateChunk::new_style(style_op, AnchorType::Start),
                             (),
                         );
@@ -2293,7 +2285,9 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                     }
                 }
             }
-            InnerListOp::Set { elem_id, value } => {
+            InnerListOp::Set(set) => {
+                let elem_id = &set.elem_id;
+                let value = &set.value;
                 let idlp = IdLp::new(op.peer, op.lamport());
                 match self.inner.changed_elements.get_mut(&elem_id.compact()) {
                     Some(change) => {

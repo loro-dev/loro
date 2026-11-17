@@ -62,6 +62,7 @@ impl LoroDoc {
             })
             .map_err(LoroError::from)?;
         let doc = LoroDoc::new();
+        doc.set_memory_budget(self.memory_budget());
         doc.set_config(&self.config);
         doc.with_barrier(|| {
             crate::encoding::fast_snapshot::decode_snapshot_inner(

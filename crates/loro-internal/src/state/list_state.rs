@@ -144,11 +144,11 @@ impl UseLengthFinder<ListImpl> for ListImpl {
 enum ListEntries {
     Tiny {
         entries: SmallVec<[Elem; 1]>,
-        child_container_to_index: FxHashMap<ContainerID, usize>,
+        child_container_to_index: Option<Box<FxHashMap<ContainerID, usize>>>,
     },
     Tree {
         tree: BTree<ListImpl>,
-        child_container_to_index: FxHashMap<ContainerID, LeafIndex>,
+        child_container_to_index: Option<Box<FxHashMap<ContainerID, LeafIndex>>>,
     },
 }
 
@@ -156,7 +156,7 @@ impl ListEntries {
     fn new_tiny() -> Self {
         Self::Tiny {
             entries: SmallVec::new(),
-            child_container_to_index: Default::default(),
+            child_container_to_index: None,
         }
     }
 
@@ -199,11 +199,21 @@ impl ListState {
             return;
         };
 
-        child_container_to_index.clear();
+        if let Some(map) = child_container_to_index.as_mut() {
+            map.clear();
+        }
         for (index, elem) in entries.iter().enumerate() {
             if let LoroValue::Container(id) = &elem.v {
-                child_container_to_index.insert(id.clone(), index);
+                child_container_to_index
+                    .get_or_insert_with(Default::default)
+                    .insert(id.clone(), index);
             }
+        }
+        if child_container_to_index
+            .as_ref()
+            .is_some_and(|map| map.is_empty())
+        {
+            *child_container_to_index = None;
         }
     }
 
@@ -215,12 +225,14 @@ impl ListState {
         };
 
         let mut tree = BTree::new();
-        let mut child_container_to_index = FxHashMap::default();
+        let mut child_container_to_index: Option<Box<FxHashMap<ContainerID, LeafIndex>>> = None;
         for elem in entries {
             let container = elem.v.as_container().cloned();
             let leaf = tree.push(elem);
             if let Some(container) = container {
-                child_container_to_index.insert(container, leaf.leaf);
+                child_container_to_index
+                    .get_or_insert_with(Default::default)
+                    .insert(container, leaf.leaf);
             }
         }
 
@@ -242,7 +254,7 @@ impl ListState {
         let entries = tree.iter().cloned().collect();
         self.list = ListEntries::Tiny {
             entries,
-            child_container_to_index: Default::default(),
+            child_container_to_index: None,
         };
         self.rebuild_tiny_child_index();
     }
@@ -262,8 +274,13 @@ impl ListState {
                                 .saturating_sub(std::mem::size_of::<LoroValue>())
                         })
                         .sum::<usize>()
-                    + child_container_to_index.capacity()
-                        * (std::mem::size_of::<ContainerID>() + std::mem::size_of::<usize>() + 8)
+                    + child_container_to_index.as_ref().map_or(0, |map| {
+                        std::mem::size_of::<FxHashMap<ContainerID, usize>>()
+                            + map.capacity()
+                                * (std::mem::size_of::<ContainerID>()
+                                    + std::mem::size_of::<usize>()
+                                    + 8)
+                    })
             }
             ListEntries::Tree {
                 tree,
@@ -279,10 +296,13 @@ impl ListState {
                                 .saturating_sub(std::mem::size_of::<LoroValue>())
                     })
                     .sum::<usize>()
-                    + child_container_to_index.capacity()
-                        * (std::mem::size_of::<ContainerID>()
-                            + std::mem::size_of::<LeafIndex>()
-                            + 8)
+                    + child_container_to_index.as_ref().map_or(0, |map| {
+                        std::mem::size_of::<FxHashMap<ContainerID, LeafIndex>>()
+                            + map.capacity()
+                                * (std::mem::size_of::<ContainerID>()
+                                    + std::mem::size_of::<LeafIndex>()
+                                    + 8)
+                    })
             }
         };
         std::mem::size_of::<Self>().saturating_add(entries_bytes)
@@ -293,16 +313,20 @@ impl ListState {
             ListEntries::Tiny {
                 entries,
                 child_container_to_index,
-            } => child_container_to_index.get(id).is_some_and(|index| {
-                entries
-                    .get(*index)
-                    .is_some_and(|elem| elem.v.as_container() == Some(id))
-            }),
+            } => child_container_to_index
+                .as_ref()
+                .and_then(|map| map.get(id))
+                .is_some_and(|index| {
+                    entries
+                        .get(*index)
+                        .is_some_and(|elem| elem.v.as_container() == Some(id))
+                }),
             ListEntries::Tree {
                 tree,
                 child_container_to_index,
             } => child_container_to_index
-                .get(id)
+                .as_ref()
+                .and_then(|map| map.get(id))
                 .is_some_and(|leaf| tree.get_elem(*leaf).is_some()),
         }
     }
@@ -313,14 +337,14 @@ impl ListState {
                 entries,
                 child_container_to_index,
             } => {
-                let index = *child_container_to_index.get(id)?;
+                let index = *child_container_to_index.as_ref()?.get(id)?;
                 entries.get(index)?;
                 return Some(index);
             }
             ListEntries::Tree {
                 tree,
                 child_container_to_index,
-            } => (*child_container_to_index.get(id)?, tree),
+            } => (*child_container_to_index.as_ref()?.get(id)?, tree),
         };
 
         list.get_elem(leaf)?;
@@ -375,7 +399,9 @@ impl ListState {
         );
 
         if value.is_container() {
-            child_container_to_index.insert(value.into_container().unwrap(), leaf.leaf);
+            child_container_to_index
+                .get_or_insert_with(Default::default)
+                .insert(value.into_container().unwrap(), leaf.leaf);
         }
 
         assert!(data.arr.is_empty());
@@ -408,7 +434,9 @@ impl ListState {
         });
 
         if value.is_container() {
-            child_container_to_index.insert(value.into_container().unwrap(), leaf.leaf);
+            child_container_to_index
+                .get_or_insert_with(Default::default)
+                .insert(value.into_container().unwrap(), leaf.leaf);
         }
     }
 
@@ -429,7 +457,12 @@ impl ListState {
         let leaf = tree.query::<LengthFinder>(&index);
         let leaf = tree.remove_leaf(leaf.unwrap().cursor).unwrap();
         if leaf.v.is_container() {
-            child_container_to_index.remove(leaf.v.as_container().unwrap());
+            if let Some(map) = child_container_to_index.as_mut() {
+                map.remove(leaf.v.as_container().unwrap());
+                if map.is_empty() {
+                    *child_container_to_index = None;
+                }
+            }
         }
         self.downgrade_tree_if_tiny();
         leaf.v
@@ -484,11 +517,19 @@ impl ListState {
         let end1 = tree.query::<LengthFinder>(&q.end);
         for v in iter::Drain::new(tree, start1, end1) {
             if v.v.is_container() {
-                child_container_to_index.remove(v.v.as_container().unwrap());
+                if let Some(map) = child_container_to_index.as_mut() {
+                    map.remove(v.v.as_container().unwrap());
+                }
                 if let Some(notify_deletion) = &mut notify_deletion {
                     notify_deletion.push(v.v.into_container().unwrap());
                 }
             }
+        }
+        if child_container_to_index
+            .as_ref()
+            .is_some_and(|map| map.is_empty())
+        {
+            *child_container_to_index = None;
         }
         self.downgrade_tree_if_tiny();
     }
@@ -1009,5 +1050,46 @@ mod test {
         empty.encode_snapshot_fast(&mut bytes);
         let (_, state_bytes) = ListState::decode_value(&bytes).unwrap();
         assert!(ListState::decode_snapshot_fast(idx, (value, state_bytes), ctx).is_err());
+    }
+
+    #[test]
+    fn lazy_child_container_index_skips_scalar_lists() {
+        let mut list = ListState::new(ContainerIdx::from_index_and_type(
+            0,
+            loro_common::ContainerType::List,
+        ));
+        for i in 0..TINY_LIST_MAX + 8 {
+            list.push(LoroValue::I64(i as i64), IdFull::new(1, i as i32, i as u32));
+            let has_index = match &list.list {
+                ListEntries::Tiny {
+                    child_container_to_index,
+                    ..
+                } => child_container_to_index.is_some(),
+                ListEntries::Tree {
+                    child_container_to_index,
+                    ..
+                } => child_container_to_index.is_some(),
+            };
+            assert!(!has_index, "scalar lists must not allocate child index");
+        }
+
+        let child = ContainerID::new_root("sub", crate::ContainerType::Map);
+        let insert_idx = list.len();
+        list.insert(
+            insert_idx,
+            LoroValue::Container(child.clone()),
+            IdFull::new(1, 100, 100),
+        );
+        assert!(list.contains_child_container(&child));
+        assert_eq!(list.get_child_container_index(&child), Some(insert_idx));
+        list.delete(insert_idx);
+        assert!(!list.contains_child_container(&child));
+        if let ListEntries::Tree {
+            child_container_to_index,
+            ..
+        } = &list.list
+        {
+            assert!(child_container_to_index.is_none());
+        }
     }
 }

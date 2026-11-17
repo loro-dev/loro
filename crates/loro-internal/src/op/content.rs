@@ -18,7 +18,7 @@ use crate::{
 #[derive(EnumAsInner, Debug, Clone)]
 pub enum InnerContent {
     List(InnerListOp),
-    Map(MapSet),
+    Map(Arc<MapSet>),
     Tree(Arc<TreeOp>),
     // The future content should not use any encoded arena context.
     Future(FutureInnerContent),
@@ -35,8 +35,8 @@ impl InnerContent {
                         }
                     }
                 }
-                InnerListOp::Set { value, .. } => {
-                    if let LoroValue::Container(c) = value {
+                InnerListOp::Set(set) => {
+                    if let LoroValue::Container(c) = &set.value {
                         f(c);
                     }
                 }
@@ -44,7 +44,7 @@ impl InnerContent {
                 InnerListOp::Move { .. } => {}
                 InnerListOp::InsertText { .. } => {}
                 InnerListOp::Delete(_) => {}
-                InnerListOp::StyleStart { .. } => {}
+                InnerListOp::StyleStart(_) => {}
                 InnerListOp::StyleEnd => {}
             },
             crate::op::InnerContent::Map(m) => {
@@ -378,10 +378,10 @@ mod tests {
             other => panic!("expected sliced list insert, got {other:?}"),
         }
 
-        let map = InnerContent::Map(MapSet {
+        let map = InnerContent::Map(Arc::new(MapSet {
             key: InternalString::from("flag"),
             value: Some(true.into()),
-        });
+        }));
         assert_eq!(map.content_len(), 1);
         assert_eq!(map.estimate_storage_size(ContainerType::Map), 3);
         assert!(matches!(map.slice(0, 1), InnerContent::Map(_)));
@@ -425,10 +425,10 @@ mod tests {
         assert_eq!(children, vec![list_child.clone(), text_child.clone()]);
 
         let map_child = ContainerID::new_normal(ID::new(2, 1), ContainerType::Map);
-        let map = InnerContent::Map(MapSet {
+        let map = InnerContent::Map(Arc::new(MapSet {
             key: InternalString::from("child"),
             value: Some(LoroValue::Container(map_child.clone())),
-        });
+        }));
         let mut children = Vec::new();
         map.visit_created_children(&mut |id| children.push(id.clone()));
         assert_eq!(children, vec![map_child]);

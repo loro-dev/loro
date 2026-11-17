@@ -67,6 +67,37 @@ Validation executed on the completed subset:
 - `CI=true pnpm release-wasm`: 58 Vitest files, 574 passed (2 skipped, 2 todo); declarations, CommonJS, Deno 4 and Bun 4 passed.
 - `cargo fmt --all -- --check`, `git diff --check`: passed.
 
+## #1300: completed subset
+
+Rebased onto repaired #1299 using its explicit old head as the replay boundary.
+
+- Adopted the investigation's per-64-slot page statistics cache; checked every
+  mutable page access (entry mutation/insertion/removal, mutable traversal,
+  flush, cold demotion). Debug builds compare cached totals to a fresh full walk.
+  New work-count test: 20 commits among 512 maps cause 20 page recomputations.
+- Immutable spilled tables now share `Arc<SpillFile>` on clone. Mutable buffers
+  and block caches remain separate. Existing clone/drop regression now asserts
+  cloning creates no extra file and the last owner controls cleanup.
+- Unix spill files use `0600`. New owner-drop regression proves a freshly imported
+  input buffer is released after spilling; it also reads back both large and
+  small values and checks file modes. This does not prove that arbitrary already
+  cached blocks cannot retain older input buffers.
+- Replaced the 64-diamond regression's 50ms wall-clock gate with a deterministic
+  node-lookup bound, preserving the replay base and mode assertions.
+- Updated paged-cache and immutable spill ownership context.
+
+Validation on this subset: internal library 545 passed, 4 ignored; KV library
+37 passed; public memory budget 12 passed and out-of-core 2 passed; the DAG
+work-count test passed. Full WASM package validation passed (Vitest 574, Deno 4, Bun 4,
+declarations/CommonJS checks) and the 10-test Loom suite passed. These are not a complete security or release acceptance verdict.
+
+A same-source native probe measured the doc-quota case at **76.398 -> 2.530 ms**
+for 2,000 commits among 10,000 maps, 14 rounds each. No-budget controls were
+1.299 / 1.383 ms; the latter is about 6.5% slower and needs broader investigation.
+The old rlib is reused from the original investigation, not rebuilt this turn.
+Raw rows, binary hashes and limitations are in
+`benchmarks/memory-budget-repair-20261116/README.md`.
+
 ## Still outstanding
 
 This is not the complete four-PR repair. The design issue currently left in #1299
@@ -74,20 +105,20 @@ is failed state restoration during a rejected import: a precomputed inverse or a
 state journal must retain atomicity without reintroducing whole-document copies.
 Those paths must be addressed before treating the hard-quota work as ready.
 
-#1300 and #1301 have not been rebased or changed in this continuation. Their
-remaining review items are:
+#1300 has the completed subset above. #1301 has not yet been rebased or changed.
+Remaining review items include:
 
 - #1300: actual buffer release after spill (metadata part fixed below), fallible
   spill-directory switching and retries, incremental flush instead of whole-table
-  rewriting, immutable spill sharing on clone, Unix 0600 files, fork budget
+  rewriting, fork budget
   inheritance, shallow-root backend propagation, boxed-op memory accounting,
-  string-arena shrink copying, deterministic DAG work-count test, stale context.
+  string-arena shrink copying, remaining stale context.
 - #1301: WASM pressure hysteresis, registry strong-reference/drop race,
   O(document-count) global accounting, global setter rollback-scope guards,
   consistent linear-memory recovery verdict, conservative UTF-8 preflight,
   global cache buffer retention on document drop, handle-read LRU tracking,
   duplicated detailed-batch branches, repeated Stage 1 during Stage 2.
-- Performance investigation: page accounting + global heap fast path, all text
+- Performance investigation: global heap fast path (page accounting is now implemented), all text
   methods/package entries with short-string direct binding and large-input
   preflight, bounded JSON cache acceptance, and combined checkout block lookup.
   Existing prototype timing is not validation of any change in this report.
@@ -98,5 +129,5 @@ Remote heads before this continuation were verified with `git ls-remote`:
 `35510eff1dfec1a11bd4344064c17c74de5f8946`,
 `4cefe825b2a26db3bfd75cb5b602afab8af32e29`.
 
-#1296 was pushed at `d2e88876`. Final pushed heads are reported in chat; no merge
+#1296 was pushed at `d2e88876` and #1299 at `9ca9cf43`. Final pushed heads are reported in chat; no merge
 or deployment was performed.

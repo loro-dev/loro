@@ -135,9 +135,13 @@
 #![allow(clippy::uninlined_format_args)]
 pub mod block;
 pub mod compress;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod file_store;
 pub mod iter;
 pub mod mem_store;
 pub mod sstable;
+#[cfg(not(target_arch = "wasm32"))]
+pub use file_store::FileKvStore;
 pub use iter::{KvIterator, MergeIterator};
 pub use mem_store::{MemKvConfig, MemKvStore, MemStoreIterator};
 pub use sstable::SharedBlockCache;

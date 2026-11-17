@@ -135,7 +135,7 @@ describe("MemoryBudget & DocMemoryStats", () => {
     expect(text.toString()).toBe("start");
 
     const baseStats = doc.memoryStats();
-    doc.setMemoryBudget({ maxDocBytes: baseStats.totalBytes + 768 });
+    doc.setMemoryBudget({ maxDocBytes: baseStats.totalBytes + 1024 });
 
     // Oversized edit throws MemoryLimitExceededError, rolls back atomically, and emits 0 events.
     text.insert(5, "too_large_".repeat(128));
@@ -285,4 +285,19 @@ it("applies a changed hard document quota after pending edits commit", () => {
   text.insert(6, "ok");
   doc.tryCommit();
   expect(text.toString()).toBe("beforeok");
+});
+
+it("forks inherit independent document memory policies", () => {
+  const doc = new LoroDoc();
+  doc.getText("text").insert(0, "before");
+  doc.commit();
+  const version = doc.frontiers();
+  doc.setMemoryBudget({ maxDocBytes: 8 * 1024 * 1024, maxImportBlobBytes: 1 });
+  for (const child of [doc.fork(), doc.forkAt(version)]) {
+    expect(child.getMemoryBudget()).toEqual(doc.getMemoryBudget());
+    expect(() => child.import(new Uint8Array(2))).toThrow();
+    child.setMemoryBudget({});
+    expect(doc.getMemoryBudget().maxImportBlobBytes).toBe(1);
+    child.free();
+  }
 });

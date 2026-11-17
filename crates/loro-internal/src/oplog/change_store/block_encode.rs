@@ -1147,7 +1147,7 @@ mod test {
                 unreachable!()
             };
             assert_eq!(slice.len(), 2);
-            *pos = usize::MAX;
+            *pos = u32::MAX;
             encode_block(&changes, &oplog.arena)
         };
         let update = encoding::encode_with(encoding::EncodeMode::FastUpdates, &mut |ans| {

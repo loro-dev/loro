@@ -27,6 +27,9 @@ pub struct Op {
     pub(crate) content: InnerContent,
 }
 
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Op>() <= 40);
+
 impl EstimatedSize for Op {
     fn estimate_storage_size(&self) -> usize {
         // TODO: use benchmark to get the optimal estimated size for each container type

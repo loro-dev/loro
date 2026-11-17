@@ -344,7 +344,7 @@ impl SsTableBuilder {
         let meta_bytes = calc_meta_bytes(&meta);
         SsTable {
             id: next_table_id(),
-            data: Bytes::from(buf),
+            backing: SsTableBacking::Memory(Bytes::from(buf)),
             first_key,
             last_key,
             meta,
@@ -485,11 +485,95 @@ impl SharedBlockCache {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+static NEXT_SPILL_FILE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct SpillFile {
+    file: std::fs::File,
+    path: std::path::PathBuf,
+    len: usize,
+    #[cfg(not(unix))]
+    io_lock: std::sync::Mutex<()>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl SpillFile {
+    fn create_and_write(dir: &std::path::Path, bytes: &[u8]) -> std::io::Result<Self> {
+        std::fs::create_dir_all(dir)?;
+        let pid = std::process::id();
+        loop {
+            let seq = NEXT_SPILL_FILE_ID.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!("loro-kv-{pid}-{seq}.sst"));
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true).write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(mut file) => {
+                    if let Err(err) = (|| -> std::io::Result<()> {
+                        use std::io::Write;
+                        file.write_all(bytes)?;
+                        file.flush()
+                    })() {
+                        drop(file);
+                        let _ = std::fs::remove_file(&path);
+                        return Err(err);
+                    }
+                    return Ok(Self {
+                        file,
+                        path,
+                        len: bytes.len(),
+                        #[cfg(not(unix))]
+                        io_lock: std::sync::Mutex::new(()),
+                    });
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    fn read_slice(&self, offset: usize, len: usize) -> std::io::Result<Vec<u8>> {
+        let mut buf = vec![0u8; len];
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            self.file.read_exact_at(&mut buf, offset as u64)?;
+        }
+        #[cfg(not(unix))]
+        {
+            use std::io::{Read, Seek, SeekFrom};
+            let _guard = self.io_lock.lock().unwrap();
+            (&self.file).seek(SeekFrom::Start(offset as u64))?;
+            (&self.file).read_exact(&mut buf)?;
+        }
+        Ok(buf)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for SpillFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[derive(Debug, Clone)]
+enum SsTableBacking {
+    Memory(Bytes),
+    #[cfg(not(target_arch = "wasm32"))]
+    File(Arc<SpillFile>),
+}
+
 #[derive(Debug)]
 pub struct SsTable {
     id: u64,
-    // TODO: mmap?
-    data: Bytes,
+    backing: SsTableBacking,
     pub(crate) first_key: Bytes,
     pub(crate) last_key: Bytes,
     pub(crate) meta: Arc<[BlockMeta]>,
@@ -502,7 +586,7 @@ impl Clone for SsTable {
     fn clone(&self) -> Self {
         Self {
             id: self.id,
-            data: self.data.clone(),
+            backing: self.backing.clone(),
             first_key: self.first_key.clone(),
             last_key: self.last_key.clone(),
             meta: self.meta.clone(),
@@ -515,7 +599,14 @@ impl Clone for SsTable {
 
 impl SsTable {
     pub fn export_all(&self) -> Bytes {
-        self.data.clone()
+        match &self.backing {
+            SsTableBacking::Memory(data) => data.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(file) => Bytes::from(
+                file.read_slice(0, file.len)
+                    .expect("spilled SSTable file should be readable"),
+            ),
+        }
     }
 
     pub fn set_block_cache(&mut self, block_cache: SharedBlockCache) {
@@ -523,7 +614,33 @@ impl SsTable {
     }
 
     pub fn estimated_memory_bytes(&self) -> usize {
-        self.data.len() + self.meta_bytes + std::mem::size_of::<Self>()
+        let backing_bytes = match &self.backing {
+            SsTableBacking::Memory(data) => data.len(),
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(_) => std::mem::size_of::<SpillFile>(),
+        };
+        backing_bytes + self.meta_bytes + std::mem::size_of::<Self>()
+    }
+
+    pub fn spilled_disk_bytes(&self) -> usize {
+        match &self.backing {
+            SsTableBacking::Memory(_) => 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(file) => file.len,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn spill_to_dir(&mut self, dir: &std::path::Path) -> std::io::Result<()> {
+        let SsTableBacking::Memory(data) = &self.backing else {
+            return Ok(());
+        };
+        if data.is_empty() {
+            return Ok(());
+        }
+        let file = Arc::new(SpillFile::create_and_write(dir, data)?);
+        self.backing = SsTableBacking::File(file);
+        Ok(())
     }
 
     pub fn iter(&self) -> SsTableIter<'_> {
@@ -626,7 +743,7 @@ impl SsTable {
         let meta_bytes = calc_meta_bytes(&meta);
         let ans = Self {
             id: next_table_id(),
-            data: bytes,
+            backing: SsTableBacking::Memory(bytes),
             first_key,
             last_key,
             meta,
@@ -731,13 +848,22 @@ impl SsTable {
             .min(self.meta.len() - 1)
     }
 
-    pub(crate) fn raw_block_slice(&self, block_idx: usize) -> &[u8] {
+    pub(crate) fn with_raw_block<R>(&self, block_idx: usize, f: impl FnOnce(&[u8]) -> R) -> R {
         let offset = self.meta[block_idx].offset;
         let offset_end = self
             .meta
             .get(block_idx + 1)
             .map_or(self.meta_offset, |m| m.offset);
-        &self.data[offset..offset_end]
+        match &self.backing {
+            SsTableBacking::Memory(data) => f(&data[offset..offset_end]),
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(file) => {
+                let raw = file
+                    .read_slice(offset, offset_end - offset)
+                    .expect("spilled SSTable block should be readable");
+                f(&raw)
+            }
+        }
     }
 
     pub(crate) fn read_block(&self, block_idx: usize) -> Arc<Block> {
@@ -746,7 +872,14 @@ impl SsTable {
             .meta
             .get(block_idx + 1)
             .map_or(self.meta_offset, |m| m.offset);
-        let raw_block_and_check = self.data.slice(offset..offset_end);
+        let raw_block_and_check = match &self.backing {
+            SsTableBacking::Memory(data) => data.slice(offset..offset_end),
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(file) => Bytes::from(
+                file.read_slice(offset, offset_end - offset)
+                    .expect("spilled SSTable block should be readable"),
+            ),
+        };
         Arc::new(Block::decode(
             raw_block_and_check,
             self.meta[block_idx].is_large,
@@ -790,7 +923,11 @@ impl SsTable {
     }
 
     pub fn data_size(&self) -> usize {
-        self.data.len()
+        match &self.backing {
+            SsTableBacking::Memory(data) => data.len(),
+            #[cfg(not(target_arch = "wasm32"))]
+            SsTableBacking::File(file) => file.len,
+        }
     }
 
     pub fn meta_len(&self) -> usize {

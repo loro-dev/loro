@@ -227,6 +227,7 @@ impl LoroDoc {
             .with_barrier(|| encoding::fast_snapshot::encode_snapshot_inner_for_fork(self))
             .expect("forking a valid document should encode a snapshot");
         let doc = Self::new();
+        doc.set_memory_budget(self.memory_budget());
         doc.with_barrier(|| {
             encoding::fast_snapshot::decode_snapshot_inner(snapshot, &doc, Default::default())
         })
@@ -6120,8 +6121,80 @@ impl LoroDoc {
         let max_pending = budget.max_pending_bytes;
         let max_undo = budget.max_undo_bytes;
         let has_max_doc = budget.max_doc_bytes.is_some();
-        *self.memory_budget.lock() = budget;
+        #[cfg(not(target_arch = "wasm32"))]
+        let new_spill_dir = budget.spill_dir.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        let prev_spill_dir = {
+            let mut guard = self.memory_budget.lock();
+            let prev = guard.spill_dir.clone();
+            *guard = budget;
+            prev
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            *self.memory_budget.lock() = budget;
+        }
         self.budget_flags.store(flags, Release);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if prev_spill_dir != new_spill_dir {
+            type SpillBackends = (
+                Box<dyn crate::kv_store::KvStore>,
+                Arc<crate::sync::Mutex<dyn crate::kv_store::KvStore>>,
+            );
+            let block_cache = self.kv_block_cache.clone();
+            let make_backends = || -> std::io::Result<SpillBackends> {
+                match &new_spill_dir {
+                    Some(dir) => {
+                        let oplog_kv = crate::kv_store::FileKvStore::new(
+                            dir,
+                            crate::kv_store::MemKvConfig::default()
+                                .block_cache(block_cache.clone()),
+                        )?;
+                        let state_kv = crate::kv_store::FileKvStore::new(
+                            dir,
+                            crate::kv_store::MemKvConfig::default()
+                                .should_encode_none(false)
+                                .block_cache(block_cache.clone()),
+                        )?;
+                        Ok((
+                            Box::new(oplog_kv),
+                            Arc::new(crate::sync::Mutex::new(state_kv)),
+                        ))
+                    }
+                    None => {
+                        let oplog_kv = crate::kv_store::MemKvStore::new(
+                            crate::kv_store::MemKvConfig::default()
+                                .block_cache(block_cache.clone()),
+                        );
+                        let state_kv = crate::kv_store::MemKvStore::new(
+                            crate::kv_store::MemKvConfig::default()
+                                .should_encode_none(false)
+                                .block_cache(block_cache.clone()),
+                        );
+                        Ok((
+                            Box::new(oplog_kv),
+                            Arc::new(crate::sync::Mutex::new(state_kv)),
+                        ))
+                    }
+                }
+            };
+            match make_backends() {
+                Ok((oplog_kv, state_kv)) => {
+                    let oplog = self.oplog.lock();
+                    let mut state = self.state.lock();
+                    oplog.replace_kv_backend(oplog_kv);
+                    state.replace_kv_backend(state_kv);
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        ?err,
+                        dir = ?new_spill_dir,
+                        "failed to switch out-of-core spill directory"
+                    );
+                }
+            }
+        }
 
         self.oplog.lock().set_max_pending_bytes(max_pending);
         if let Some(max_undo_bytes) = max_undo {
@@ -6482,7 +6555,18 @@ impl LoroDoc {
         }
         state.reclaim_auxiliary_caches();
         oplog.compact_history();
+        #[cfg(not(target_arch = "wasm32"))]
+        if force_full || budget.spill_dir.is_some() {
+            oplog.flush_kv();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if force_full {
+            oplog.flush_kv();
+        }
         oplog.with_history_cache(|h| h.free_all());
+        if force_full {
+            oplog.arena.shrink_spare_capacity();
+        }
         self.diff_calculator
             .lock()
             .reclaim_cold_caches(if force_full { 0 } else { 4 });

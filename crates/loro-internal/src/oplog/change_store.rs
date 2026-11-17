@@ -82,7 +82,7 @@ pub struct ChangeStore {
     /// mem_parsed_kv is more up-to-date.
     ///
     /// We cannot directly write into the external_kv except from the initial load
-    external_kv: Arc<Mutex<dyn KvStore>>,
+    external_kv: Arc<Mutex<Box<dyn KvStore>>>,
     /// The version vector of the external kv store.
     external_vv: Arc<Mutex<VersionVector>>,
     merge_interval: Arc<AtomicI64>,
@@ -362,6 +362,20 @@ impl ChangeStore {
         merge_interval: Arc<AtomicI64>,
         block_cache: SharedBlockCache,
     ) -> Self {
+        Self::new_with_kv(
+            a,
+            merge_interval,
+            Box::new(MemKvStore::new(
+                MemKvConfig::default().block_cache(block_cache),
+            )),
+        )
+    }
+
+    pub(crate) fn new_with_kv(
+        a: &SharedArena,
+        merge_interval: Arc<AtomicI64>,
+        external_kv: Box<dyn KvStore>,
+    ) -> Self {
         Self {
             inner: Arc::new(Mutex::new(ChangeStoreInner {
                 start_vv: ImVersionVector::new(),
@@ -373,10 +387,7 @@ impl ChangeStore {
             })),
             arena: a.clone(),
             external_vv: Arc::new(Mutex::new(VersionVector::new())),
-            external_kv: Arc::new(Mutex::new(MemKvStore::new(
-                MemKvConfig::default().block_cache(block_cache),
-            ))),
-            // external_kv: Arc::new(Mutex::new(BTreeMap::default())),
+            external_kv: Arc::new(Mutex::new(external_kv)),
             merge_interval,
             root_history_names: Arc::new(Mutex::new(RootHistoryNamesState::Uninitialized)),
             parse_failures: Default::default(),
@@ -1379,7 +1390,7 @@ impl ChangeStore {
         frontiers: &Frontiers,
     ) -> Self {
         self.flush_and_compact(vv, frontiers);
-        let external_kv = self.external_kv.lock().clone_store();
+        let external_kv = Arc::new(Mutex::new(self.external_kv.lock().clone_boxed()));
         let inner = self.inner.lock();
         Self {
             inner: Arc::new(Mutex::new(ChangeStoreInner {
@@ -1415,6 +1426,21 @@ impl ChangeStore {
 
     pub(crate) fn flush_kv(&self) {
         self.external_kv.lock().flush();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn replace_kv_backend(&self, mut new_backend: Box<dyn KvStore>) {
+        let mut guard = self.external_kv.lock();
+        let entries: Vec<(Bytes, Bytes)> = guard.scan(Bound::Unbounded, Bound::Unbounded).collect();
+        for (k, v) in entries {
+            new_backend.set(&k, v);
+        }
+        new_backend.flush();
+        *guard = new_backend;
+    }
+
+    pub(crate) fn new_empty_kv_backend(&self) -> Box<dyn KvStore> {
+        self.external_kv.lock().new_empty_boxed()
     }
 
     pub(crate) fn spilled_disk_bytes(&self) -> usize {
@@ -2400,7 +2426,7 @@ mod mut_inner_kv {
         /// of a block of `id`'s peer that cannot be decoded or parsed.
         fn load_parsed_block(
             inner: &Mutex<ChangeStoreInner>,
-            external_kv: &Mutex<dyn KvStore>,
+            external_kv: &Mutex<Box<dyn KvStore>>,
             arena: &SharedArena,
             id: ID,
         ) -> Result<Option<Arc<ChangesBlock>>, (ID, LoroError)> {

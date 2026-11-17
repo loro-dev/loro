@@ -110,9 +110,9 @@ mod encode {
                 crate::container::list::list_op::InnerListOp::Set { .. } => 0,
                 crate::container::list::list_op::InnerListOp::Insert { pos, .. } => *pos as i32,
                 crate::container::list::list_op::InnerListOp::InsertText { pos, .. } => *pos as i32,
-                crate::container::list::list_op::InnerListOp::Delete(span) => span.span.pos as i32,
-                crate::container::list::list_op::InnerListOp::StyleStart { start, .. } => {
-                    *start as i32
+                crate::container::list::list_op::InnerListOp::Delete(span) => span.pos,
+                crate::container::list::list_op::InnerListOp::StyleStart(style) => {
+                    style.start as i32
                 }
                 crate::container::list::list_op::InnerListOp::StyleEnd => 0,
             },
@@ -148,29 +148,23 @@ mod encode {
                     delete_start.push(EncodedDeleteStartId {
                         peer_idx: registers.peer_mut().register(&span.id_start.peer),
                         counter: span.id_start.counter,
-                        len: span.span.signed_len,
+                        len: span.signed_len as isize,
                     });
                     Value::DeleteSeq
                 }
-                crate::container::list::list_op::InnerListOp::StyleStart {
-                    start,
-                    end,
-                    key,
-                    value,
-                    info,
-                } => Value::MarkStart(MarkStart {
-                    len: *end - *start,
-                    key: key.clone(),
-                    value: value.clone(),
-                    info: info.to_byte(),
-                }),
-                crate::container::list::list_op::InnerListOp::Set { elem_id, value } => {
-                    Value::ListSet {
-                        peer_idx: registers.peer_mut().register(&elem_id.peer),
-                        lamport: elem_id.lamport,
-                        value: value.clone(),
-                    }
+                crate::container::list::list_op::InnerListOp::StyleStart(style) => {
+                    Value::MarkStart(MarkStart {
+                        len: style.end - style.start,
+                        key: style.key.clone(),
+                        value: style.value.clone(),
+                        info: style.info.to_byte(),
+                    })
                 }
+                crate::container::list::list_op::InnerListOp::Set(set) => Value::ListSet {
+                    peer_idx: registers.peer_mut().register(&set.elem_id.peer),
+                    lamport: set.elem_id.lamport,
+                    value: set.value.clone(),
+                },
                 crate::container::list::list_op::InnerListOp::StyleEnd => Value::Null,
                 crate::container::list::list_op::InnerListOp::Move {
                     from,
@@ -325,7 +319,8 @@ pub(crate) fn decode_op(
                         ),
                         prop as isize,
                         len,
-                    ),
+                    )
+                    .into(),
                 ))
             }
             Value::MarkStart(mark) => {
@@ -335,13 +330,13 @@ pub(crate) fn decode_op(
                     .checked_add(mark.len)
                     .ok_or(LoroError::DecodeDataCorruptionError)?;
                 crate::op::InnerContent::List(
-                    crate::container::list::list_op::InnerListOp::StyleStart {
+                    crate::container::list::list_op::InnerListOp::new_style_start(
                         start,
                         end,
-                        key: mark.key,
-                        value: mark.value,
-                        info: TextStyleInfoFlag::from_byte(mark.info),
-                    },
+                        mark.key,
+                        mark.value,
+                        TextStyleInfoFlag::from_byte(mark.info),
+                    ),
                 )
             }
             Value::Null => crate::op::InnerContent::List(
@@ -356,15 +351,15 @@ pub(crate) fn decode_op(
                 .ok_or(LoroError::DecodeDataCorruptionError)?
                 .clone();
             match value {
-                Value::DeleteOnce => {
-                    crate::op::InnerContent::Map(crate::container::map::MapSet { key, value: None })
-                }
-                Value::LoroValue(v) => {
-                    crate::op::InnerContent::Map(crate::container::map::MapSet {
+                Value::DeleteOnce => crate::op::InnerContent::Map(std::sync::Arc::new(
+                    crate::container::map::MapSet { key, value: None },
+                )),
+                Value::LoroValue(v) => crate::op::InnerContent::Map(std::sync::Arc::new(
+                    crate::container::map::MapSet {
                         key,
                         value: Some(v.clone()),
-                    })
-                }
+                    },
+                )),
                 _ => return Err(LoroError::DecodeDataCorruptionError),
             }
         }
@@ -378,7 +373,7 @@ pub(crate) fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: buffers.push_values(list),
-                            pos,
+                            pos: pos as u32,
                         },
                     )
                 }
@@ -401,7 +396,8 @@ pub(crate) fn decode_op(
                                 ),
                                 pos as isize,
                                 len,
-                            ),
+                            )
+                            .into(),
                         ),
                     )
                 }
@@ -473,7 +469,7 @@ pub(crate) fn decode_op(
                     crate::op::InnerContent::List(
                         crate::container::list::list_op::InnerListOp::Insert {
                             slice: buffers.push_values(list),
-                            pos,
+                            pos: pos as u32,
                         },
                     )
                 }
@@ -496,7 +492,8 @@ pub(crate) fn decode_op(
                                 ),
                                 pos as isize,
                                 len,
-                            ),
+                            )
+                            .into(),
                         ),
                     )
                 }
@@ -522,8 +519,8 @@ pub(crate) fn decode_op(
                     lamport,
                     value,
                 } => crate::op::InnerContent::List(
-                    crate::container::list::list_op::InnerListOp::Set {
-                        elem_id: IdLp::new(
+                    crate::container::list::list_op::InnerListOp::new_set(
+                        IdLp::new(
                             *arenas
                                 .peers()
                                 .get(peer_idx)
@@ -531,7 +528,7 @@ pub(crate) fn decode_op(
                             lamport as Lamport,
                         ),
                         value,
-                    },
+                    ),
                 ),
                 _ => return Err(LoroError::DecodeDataCorruptionError),
             }

@@ -320,17 +320,14 @@ pub(crate) fn encode_change(
                             }
                         });
                         json::ListOp::Insert {
-                            pos: *pos as u32,
+                            pos: *pos,
                             value: values,
                         }
                     }
-                    InnerListOp::Delete(DeleteSpanWithId {
-                        id_start,
-                        span: DeleteSpan { pos, signed_len },
-                    }) => json::ListOp::Delete {
-                        pos: *pos as i32,
-                        len: *signed_len as i32,
-                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    InnerListOp::Delete(span) => json::ListOp::Delete {
+                        pos: span.pos,
+                        len: span.signed_len,
+                        start_id: register_id(&span.id_start, peer_register.as_deref_mut()),
                     },
                     _ => unreachable!(),
                 }),
@@ -351,17 +348,14 @@ pub(crate) fn encode_change(
                             }
                         });
                         json::MovableListOp::Insert {
-                            pos: *pos as u32,
+                            pos: *pos,
                             value: values,
                         }
                     }
-                    InnerListOp::Delete(DeleteSpanWithId {
-                        id_start,
-                        span: DeleteSpan { pos, signed_len },
-                    }) => json::MovableListOp::Delete {
-                        pos: *pos as i32,
-                        len: *signed_len as i32,
-                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    InnerListOp::Delete(span) => json::MovableListOp::Delete {
+                        pos: span.pos,
+                        len: span.signed_len,
+                        start_id: register_id(&span.id_start, peer_register.as_deref_mut()),
                     },
                     InnerListOp::Move {
                         from,
@@ -372,7 +366,9 @@ pub(crate) fn encode_change(
                         to: *to,
                         elem_id: register_idlp(from_id, peer_register.as_deref_mut()),
                     },
-                    InnerListOp::Set { elem_id, value } => {
+                    InnerListOp::Set(set) => {
+                        let elem_id = &set.elem_id;
+                        let value = &set.value;
                         let value = if let LoroValue::Container(id) = value {
                             if id.is_normal() {
                                 LoroValue::Container(register_container_id(
@@ -404,26 +400,17 @@ pub(crate) fn encode_change(
                         let text = String::from_utf8(slice.as_bytes().to_vec()).unwrap();
                         json::TextOp::Insert { pos: *pos, text }
                     }
-                    InnerListOp::Delete(DeleteSpanWithId {
-                        id_start,
-                        span: DeleteSpan { pos, signed_len },
-                    }) => json::TextOp::Delete {
-                        pos: *pos as i32,
-                        len: *signed_len as i32,
-                        start_id: register_id(id_start, peer_register.as_deref_mut()),
+                    InnerListOp::Delete(span) => json::TextOp::Delete {
+                        pos: span.pos,
+                        len: span.signed_len,
+                        start_id: register_id(&span.id_start, peer_register.as_deref_mut()),
                     },
-                    InnerListOp::StyleStart {
-                        start,
-                        end,
-                        key,
-                        value,
-                        info,
-                    } => json::TextOp::Mark {
-                        start: *start,
-                        end: *end,
-                        style_key: key.to_string(),
-                        style_value: value.clone(),
-                        info: info.to_byte(),
+                    InnerListOp::StyleStart(style) => json::TextOp::Mark {
+                        start: style.start,
+                        end: style.end,
+                        style_key: style.key.to_string(),
+                        style_value: style.value.clone(),
+                        info: style.info.to_byte(),
                     },
                     InnerListOp::StyleEnd => json::TextOp::MarkEnd,
                     _ => unreachable!(),
@@ -431,7 +418,9 @@ pub(crate) fn encode_change(
                 _ => unreachable!(),
             },
             ContainerType::Map => match content {
-                InnerContent::Map(MapSet { key, value }) => {
+                InnerContent::Map(map) => {
+                    let key = &map.key;
+                    let value = &map.value;
                     JsonOpContent::Map(if let Some(v) = value {
                         let value = if let LoroValue::Container(id) = v {
                             if id.is_normal() {
@@ -689,19 +678,19 @@ fn validate_json_op_created_container_ids(peer: PeerID, op: &Op) -> LoroResult<(
                     validate_json_created_container_id(id, ID::new(peer, counter))?;
                 }
             }
-            InnerListOp::Set { value, .. } => {
-                if let LoroValue::Container(id) = value {
+            InnerListOp::Set(set) => {
+                if let LoroValue::Container(id) = &set.value {
                     validate_json_created_container_id(id, ID::new(peer, op.counter))?;
                 } else {
-                    validate_json_value_has_no_container_refs(value)?;
+                    validate_json_value_has_no_container_refs(&set.value)?;
                 }
             }
             InnerListOp::Move { .. }
             | InnerListOp::InsertText { .. }
             | InnerListOp::Delete(_)
             | InnerListOp::StyleEnd => {}
-            InnerListOp::StyleStart { value, .. } => {
-                validate_json_value_has_no_container_refs(value)?;
+            InnerListOp::StyleStart(style) => {
+                validate_json_value_has_no_container_refs(&style.value)?;
             }
         },
         InnerContent::Map(map) => {
@@ -804,13 +793,16 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                 } => {
                     let id_start = convert_id(&id_start, peers)?;
                     validate_json_id_counter(id_start, "text delete start id")?;
-                    InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start,
-                        span: DeleteSpan {
-                            pos: pos as isize,
-                            signed_len: len as isize,
-                        },
-                    }))
+                    InnerContent::List(InnerListOp::Delete(
+                        DeleteSpanWithId {
+                            id_start,
+                            span: DeleteSpan {
+                                pos: pos as isize,
+                                signed_len: len as isize,
+                            },
+                        }
+                        .into(),
+                    ))
                 }
                 json::TextOp::Mark {
                     start,
@@ -818,13 +810,13 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     style_key,
                     style_value,
                     info,
-                } => InnerContent::List(InnerListOp::StyleStart {
+                } => InnerContent::List(InnerListOp::new_style_start(
                     start,
                     end,
-                    key: style_key.into(),
-                    value: style_value,
-                    info: TextStyleInfoFlag::from_byte(info),
-                }),
+                    style_key.into(),
+                    style_value,
+                    TextStyleInfoFlag::from_byte(info),
+                )),
                 json::TextOp::MarkEnd => InnerContent::List(InnerListOp::StyleEnd),
             },
             _ => {
@@ -848,19 +840,22 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     }
                     InnerContent::List(InnerListOp::Insert {
                         slice: ValueSlice::new(values),
-                        pos: pos as usize,
+                        pos,
                     })
                 }
                 json::ListOp::Delete { pos, len, start_id } => {
                     let start_id = convert_id(&start_id, peers)?;
                     validate_json_id_counter(start_id, "list delete start id")?;
-                    InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: start_id,
-                        span: DeleteSpan {
-                            pos: pos as isize,
-                            signed_len: len as isize,
-                        },
-                    }))
+                    InnerContent::List(InnerListOp::Delete(
+                        DeleteSpanWithId {
+                            id_start: start_id,
+                            span: DeleteSpan {
+                                pos: pos as isize,
+                                signed_len: len as isize,
+                            },
+                        }
+                        .into(),
+                    ))
                 }
             },
             _ => {
@@ -884,19 +879,22 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     }
                     InnerContent::List(InnerListOp::Insert {
                         slice: ValueSlice::new(values),
-                        pos: pos as usize,
+                        pos,
                     })
                 }
                 json::MovableListOp::Delete { pos, len, start_id } => {
                     let start_id = convert_id(&start_id, peers)?;
                     validate_json_id_counter(start_id, "movable list delete start id")?;
-                    InnerContent::List(InnerListOp::Delete(DeleteSpanWithId {
-                        id_start: start_id,
-                        span: DeleteSpan {
-                            pos: pos as isize,
-                            signed_len: len as isize,
-                        },
-                    }))
+                    InnerContent::List(InnerListOp::Delete(
+                        DeleteSpanWithId {
+                            id_start: start_id,
+                            span: DeleteSpan {
+                                pos: pos as isize,
+                                signed_len: len as isize,
+                            },
+                        }
+                        .into(),
+                    ))
                 }
                 json::MovableListOp::Move {
                     from,
@@ -915,7 +913,7 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers)?;
                     }
-                    InnerContent::List(InnerListOp::Set { elem_id, value })
+                    InnerContent::List(InnerListOp::new_set(elem_id, value))
                 }
             },
             _ => {
@@ -930,15 +928,15 @@ fn decode_op(op: json::JsonOp, arena: &SharedArena, peers: &Option<Vec<PeerID>>)
                     if let LoroValue::Container(id) = &mut value {
                         *id = convert_container_id(id.clone(), peers)?;
                     }
-                    InnerContent::Map(MapSet {
+                    InnerContent::Map(std::sync::Arc::new(MapSet {
                         key: key.into(),
                         value: Some(value),
-                    })
+                    }))
                 }
-                json::MapOp::Delete { key } => InnerContent::Map(MapSet {
+                json::MapOp::Delete { key } => InnerContent::Map(std::sync::Arc::new(MapSet {
                     key: key.into(),
                     value: None,
-                }),
+                })),
             },
             _ => {
                 return Err(LoroError::DecodeError(

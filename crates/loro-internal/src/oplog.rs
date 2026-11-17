@@ -397,16 +397,19 @@ impl OpLog {
                 if op.container.get_type() != ContainerType::MovableList {
                     continue;
                 }
-                if let InnerContent::List(
-                    list_op::InnerListOp::Move { elem_id, .. }
-                    | list_op::InnerListOp::Set { elem_id, .. },
-                ) = &op.content
-                {
+                let elem_id = match &op.content {
+                    InnerContent::List(list_op::InnerListOp::Move { elem_id, .. }) => {
+                        Some(*elem_id)
+                    }
+                    InnerContent::List(list_op::InnerListOp::Set(set)) => Some(set.elem_id),
+                    _ => None,
+                };
+                if let Some(elem_id) = elem_id {
                     rollback.movable_list_refs.push(MovableListElemRef {
                         container: op.container,
                         op_id: ID::new(change.id.peer, op.counter),
                         op_lamport: change.lamport + (op.counter - change.id.counter) as Lamport,
-                        elem_id: *elem_id,
+                        elem_id,
                     });
                 }
             }
@@ -605,8 +608,10 @@ impl OpLog {
         let arena = self.arena.clone();
         let configure = self.configure.clone();
         // Also rolls back the arena; see `ChangeStore::retire`.
+        let empty_kv = self.change_store.new_empty_kv_backend();
         self.change_store.retire(arena_checkpoint);
-        let change_store = ChangeStore::new_mem(&arena, configure.merge_interval_in_s.clone());
+        let change_store =
+            ChangeStore::new_with_kv(&arena, configure.merge_interval_in_s.clone(), empty_kv);
         arena.set_creator_resolver(change_store.creator_resolver());
         self.history_cache = Mutex::new(ContainerHistoryCache::new(change_store.clone(), None));
         self.dag = AppDag::new(change_store.clone());
@@ -644,6 +649,11 @@ impl OpLog {
 
     pub(crate) fn flush_kv(&self) {
         self.change_store.flush_kv();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn replace_kv_backend(&self, new_backend: Box<dyn crate::kv_store::KvStore>) {
+        self.change_store.replace_kv_backend(new_backend);
     }
 
     pub(crate) fn compact_history(&self) {
@@ -1934,7 +1944,7 @@ pub(crate) fn local_op_to_remote(
                 loro_common::ContainerType::List | loro_common::ContainerType::MovableList => {
                     contents.push(RawOpContent::List(list_op::ListOp::Insert {
                         slice: ListSlice::RawData(Cow::Owned(slice.as_slice().to_vec())),
-                        pos: *pos,
+                        pos: *pos as usize,
                     }))
                 }
                 _ => unreachable!(),
@@ -1956,21 +1966,17 @@ pub(crate) fn local_op_to_remote(
                 _ => unreachable!(),
             },
             list_op::InnerListOp::Delete(del) => {
-                contents.push(RawOpContent::List(list_op::ListOp::Delete(*del)))
+                contents.push(RawOpContent::List(list_op::ListOp::Delete((*del).into())))
             }
-            list_op::InnerListOp::StyleStart {
-                start,
-                end,
-                key,
-                value,
-                info,
-            } => contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
-                start: *start,
-                end: *end,
-                key: key.clone(),
-                value: value.clone(),
-                info: *info,
-            })),
+            list_op::InnerListOp::StyleStart(style) => {
+                contents.push(RawOpContent::List(list_op::ListOp::StyleStart {
+                    start: style.start,
+                    end: style.end,
+                    key: style.key.clone(),
+                    value: style.value.clone(),
+                    info: style.info,
+                }))
+            }
             list_op::InnerListOp::StyleEnd => {
                 contents.push(RawOpContent::List(list_op::ListOp::StyleEnd))
             }
@@ -1983,10 +1989,10 @@ pub(crate) fn local_op_to_remote(
                 elem_id: *from_id,
                 to: *to,
             })),
-            list_op::InnerListOp::Set { elem_id, value } => {
+            list_op::InnerListOp::Set(set) => {
                 contents.push(RawOpContent::List(list_op::ListOp::Set {
-                    elem_id: *elem_id,
-                    value: value.clone(),
+                    elem_id: set.elem_id,
+                    value: set.value.clone(),
                 }))
             }
         },

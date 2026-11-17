@@ -89,6 +89,7 @@ macro_rules! ctx {
 }
 
 impl ContainerStore {
+    #[allow(dead_code)]
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
         Self::new_with_cache(arena, conf, peer, SharedBlockCache::default_per_doc())
     }
@@ -276,7 +277,9 @@ impl ContainerStore {
         config: Configure,
     ) -> LoroResult<Option<Frontiers>> {
         assert!(self.shallow_root_store.is_none());
-        let mut inner = InnerStore::new(self.arena.clone(), config);
+        let mut inner = self
+            .store
+            .new_empty_same_backend(self.arena.clone(), config);
         let encoded_state_bytes = shallow_bytes.clone();
         let f = inner.decode(shallow_bytes)?;
         let encoded_state_bytes = if f.as_ref() == Some(&start_frontiers) {
@@ -407,7 +410,28 @@ impl ContainerStore {
         self.store.flush_kv();
     }
 
+    pub(crate) fn new_empty_same_backend(
+        &self,
+        arena: SharedArena,
+        conf: Configure,
+        peer: Arc<AtomicU64>,
+    ) -> Self {
+        ContainerStore {
+            store: self
+                .store
+                .new_empty_same_backend(arena.clone(), conf.clone()),
+            arena,
+            conf,
+            shallow_root_store: None,
+            peer,
+        }
+    }
+
     pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
+        if let Some(root) = &self.shallow_root_store {
+            let empty_gc = kv.lock().new_empty_same_backend();
+            root.store.lock().replace_kv_backend(empty_gc);
+        }
         self.store.replace_kv_backend(kv);
     }
 
@@ -580,6 +604,62 @@ mod test {
         let mut state = doc.app_state().lock();
         state.ensure_all_alive_containers().unwrap();
         state.store.encode()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shallow_root_import_uses_the_preconfigured_spill_backend() {
+        struct TempDir(std::path::PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let dir = TempDir(std::env::temp_dir().join(format!(
+                "loro-shallow-backend-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )));
+        let source = crate::LoroDoc::new_auto_commit();
+        for i in 0..32 {
+            source
+                .get_map("map")
+                .insert(&format!("k{i}"), format!("value-{i}"))
+                .unwrap();
+        }
+        source.commit_then_renew();
+        let shallow = source.oplog_frontiers();
+        source.get_map("map").insert("tail", true).unwrap();
+        source.commit_then_renew();
+        let snapshot = source
+            .export(crate::loro::ExportMode::shallow_snapshot(&shallow))
+            .unwrap();
+        let doc = crate::LoroDoc::new_auto_commit();
+        doc.set_memory_budget(crate::memory::MemoryBudget::new().with_spill_dir(&dir.0));
+        doc.import(&snapshot).unwrap();
+        let state = doc.app_state().lock();
+        let root = state.store.shallow_root_store.as_ref().unwrap();
+        assert!(root.store.lock().spilled_disk_bytes() > 0);
+        drop(state);
+        assert_eq!(doc.get_deep_value(), source.get_deep_value());
+        let fork = doc.fork();
+        let fork_state = fork.app_state().lock();
+        assert!(
+            fork_state
+                .store
+                .shallow_root_store
+                .as_ref()
+                .unwrap()
+                .store
+                .lock()
+                .spilled_disk_bytes()
+                > 0
+        );
+        drop(fork_state);
+        assert_eq!(fork.get_deep_value(), source.get_deep_value());
     }
 
     #[test]

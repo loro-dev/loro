@@ -637,6 +637,7 @@ fn js_to_memory_budget(js: JsMemoryBudget) -> JsResult<MemoryBudget> {
             "maxDecodedValueCacheBytes",
         )?,
         max_undo_bytes: read_optional_budget_usize(&obj, "maxUndoBytes")?,
+        spill_dir: None,
     })
 }
 
@@ -1104,7 +1105,8 @@ impl LoroDoc {
         self.doc.detach()
     }
 
-    /// Duplicate the document with a different PeerID
+    /// Duplicate the document with a different PeerID.
+    /// The fork inherits an independent copy of the document memory budget.
     ///
     /// The time complexity and space complexity of this operation are both O(n),
     ///

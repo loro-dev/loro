@@ -66,6 +66,8 @@ pub use loro_internal::json::{
     JsonOpContent, JsonSchema, ListOp as JsonListOp, MapOp as JsonMapOp,
     MovableListOp as JsonMovableListOp, TextOp as JsonTextOp, TreeOp as JsonTreeOp,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use loro_internal::kv_store::FileKvStore;
 pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
@@ -163,7 +165,9 @@ impl LoroDoc {
         LoroDoc::_new(doc)
     }
 
-    /// Duplicate the document with a different PeerID
+    /// Duplicate the document with a different PeerID.
+    ///
+    /// The fork inherits an independent copy of the document memory budget.
     ///
     /// The time complexity and space complexity of this operation are both O(n),
     ///
@@ -178,6 +182,7 @@ impl LoroDoc {
     /// Fork the document at the given frontiers.
     ///
     /// The created doc will only contain the history before the specified frontiers.
+    /// It inherits an independent copy of the document memory budget.
     pub fn fork_at(&self, frontiers: &Frontiers) -> LoroResult<LoroDoc> {
         let new_doc = self.doc.fork_at(frontiers)?;
         new_doc.start_auto_commit();

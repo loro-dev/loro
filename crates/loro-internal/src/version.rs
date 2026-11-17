@@ -158,16 +158,115 @@ impl VersionRange {
 ///
 /// It's more memory efficient than [VersionVector] when the version vector
 /// can be created from cloning and modifying other similar version vectors.
-#[repr(transparent)]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ImVersionVector(
-    imbl::GenericHashMap<
-        PeerID,
-        Counter,
-        rustc_hash::FxBuildHasher,
-        imbl::shared_ptr::DefaultSharedPtr,
-    >,
-);
+const IM_VV_INLINE_CAP: usize = 4;
+
+type ImVvHeapMap = imbl::GenericHashMap<
+    PeerID,
+    Counter,
+    rustc_hash::FxBuildHasher,
+    imbl::shared_ptr::DefaultSharedPtr,
+>;
+
+#[derive(Debug, Clone)]
+enum ImVersionVectorInner {
+    Inline(SmallVec<[(PeerID, Counter); IM_VV_INLINE_CAP]>),
+    Heap(ImVvHeapMap),
+}
+
+impl Default for ImVersionVectorInner {
+    fn default() -> Self {
+        Self::Inline(SmallVec::new())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ImVersionVector(ImVersionVectorInner);
+
+pub enum ImVersionVectorIter<'a> {
+    Inline(std::slice::Iter<'a, (PeerID, Counter)>),
+    Heap(imbl::hashmap::Iter<'a, PeerID, Counter, imbl::shared_ptr::DefaultSharedPtr>),
+}
+
+impl std::fmt::Debug for ImVersionVectorIter<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImVersionVectorIter").finish()
+    }
+}
+
+impl<'a> Iterator for ImVersionVectorIter<'a> {
+    type Item = (&'a PeerID, &'a Counter);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Inline(iter) => iter.next().map(|(k, v)| (k, v)),
+            Self::Heap(iter) => iter.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Inline(iter) => iter.size_hint(),
+            Self::Heap(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for ImVersionVectorIter<'_> {}
+impl std::iter::FusedIterator for ImVersionVectorIter<'_> {}
+
+impl Serialize for ImVersionVector {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.len()))?;
+        for (k, v) in self.iter() {
+            map.serialize_entry(k, v)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ImVersionVector {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct ImVvVisitor;
+        impl<'de> serde::de::Visitor<'de> for ImVvVisitor {
+            type Value = ImVersionVector;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a version vector map")
+            }
+
+            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'de>,
+            {
+                let mut vv = ImVersionVector::new();
+                while let Some((k, v)) = access.next_entry::<PeerID, Counter>()? {
+                    vv.insert(k, v);
+                }
+                Ok(vv)
+            }
+        }
+        deserializer.deserialize_map(ImVvVisitor)
+    }
+}
+
+impl FromIterator<(PeerID, Counter)> for ImVersionVector {
+    fn from_iter<T: IntoIterator<Item = (PeerID, Counter)>>(iter: T) -> Self {
+        let mut vv = Self::new();
+        for (k, v) in iter {
+            vv.insert(k, v);
+        }
+        vv
+    }
+}
 
 #[inline]
 fn normalize_vv_counter(counter: Counter) -> Counter {
@@ -184,45 +283,108 @@ impl ImVersionVector {
         Self(Default::default())
     }
 
+    #[cfg(test)]
+    pub(crate) fn ptr_eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (ImVersionVectorInner::Heap(a), ImVersionVectorInner::Heap(b)) => a.ptr_eq(b),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        match &self.0 {
+            ImVersionVectorInner::Inline(_) => 0,
+            ImVersionVectorInner::Heap(m) => m.len().saturating_mul(
+                std::mem::size_of::<PeerID>() + std::mem::size_of::<Counter>() + 16,
+            ),
+        }
+    }
+
     pub fn clear(&mut self) {
-        self.0.clear()
+        self.0 = ImVersionVectorInner::Inline(SmallVec::new());
     }
 
     pub fn get(&self, key: &PeerID) -> Option<&Counter> {
-        self.0.get(key)
+        match &self.0 {
+            ImVersionVectorInner::Inline(entries) => {
+                entries.iter().find(|(p, _)| p == key).map(|(_, c)| c)
+            }
+            ImVersionVectorInner::Heap(map) => map.get(key),
+        }
     }
 
     pub fn get_mut(&mut self, key: &PeerID) -> Option<&mut Counter> {
-        self.0.get_mut(key)
+        match &mut self.0 {
+            ImVersionVectorInner::Inline(entries) => {
+                entries.iter_mut().find(|(p, _)| p == key).map(|(_, c)| c)
+            }
+            ImVersionVectorInner::Heap(map) => map.get_mut(key),
+        }
     }
 
     pub fn insert(&mut self, k: PeerID, v: Counter) {
-        if self.0.get(&k).copied() == Some(v) {
+        if self.get(&k).copied() == Some(v) {
             return;
         }
-        self.0.insert(k, v);
+        match &mut self.0 {
+            ImVersionVectorInner::Inline(entries) => {
+                if let Some((_, existing)) = entries.iter_mut().find(|(p, _)| *p == k) {
+                    *existing = v;
+                    return;
+                }
+                if entries.len() < IM_VV_INLINE_CAP {
+                    entries.push((k, v));
+                    return;
+                }
+                let mut heap = ImVvHeapMap::default();
+                for (ek, ev) in entries.drain(..) {
+                    heap.insert(ek, ev);
+                }
+                heap.insert(k, v);
+                self.0 = ImVersionVectorInner::Heap(heap);
+            }
+            ImVersionVectorInner::Heap(map) => {
+                map.insert(k, v);
+            }
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        match &self.0 {
+            ImVersionVectorInner::Inline(entries) => entries.is_empty(),
+            ImVersionVectorInner::Heap(map) => map.is_empty(),
+        }
     }
 
-    pub fn iter(
-        &self,
-    ) -> imbl::hashmap::Iter<'_, PeerID, Counter, imbl::shared_ptr::DefaultSharedPtr> {
-        self.0.iter()
+    pub fn iter(&self) -> ImVersionVectorIter<'_> {
+        match &self.0 {
+            ImVersionVectorInner::Inline(entries) => ImVersionVectorIter::Inline(entries.iter()),
+            ImVersionVectorInner::Heap(map) => ImVersionVectorIter::Heap(map.iter()),
+        }
     }
 
     pub fn remove(&mut self, k: &PeerID) -> Option<Counter> {
-        self.0.remove(k)
+        match &mut self.0 {
+            ImVersionVectorInner::Inline(entries) => {
+                let pos = entries.iter().position(|(p, _)| p == k)?;
+                Some(entries.swap_remove(pos).1)
+            }
+            ImVersionVectorInner::Heap(map) => map.remove(k),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        match &self.0 {
+            ImVersionVectorInner::Inline(entries) => entries.len(),
+            ImVersionVectorInner::Heap(map) => map.len(),
+        }
     }
 
     pub fn contains_key(&self, k: &PeerID) -> bool {
-        self.0.contains_key(k)
+        match &self.0 {
+            ImVersionVectorInner::Inline(entries) => entries.iter().any(|(p, _)| p == k),
+            ImVersionVectorInner::Heap(map) => map.contains_key(k),
+        }
     }
 
     pub fn encode(&self) -> Vec<u8> {
@@ -235,11 +397,11 @@ impl ImVersionVector {
     }
 
     pub fn to_vv(&self) -> VersionVector {
-        VersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
+        VersionVector(self.iter().map(|(&k, &v)| (k, v)).collect())
     }
 
     pub fn from_vv(vv: &VersionVector) -> Self {
-        ImVersionVector(vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+        vv.0.iter().map(|(&k, &v)| (k, v)).collect()
     }
 
     pub fn extend_to_include_vv<'a>(
@@ -254,15 +416,15 @@ impl ImVersionVector {
 
             // `get_mut` would copy the path to the entry even when nothing changes, and every
             // DAG node keeps one of these maps.
-            if self.0.get(&client_id).is_none_or(|my| *my < counter) {
-                self.0.insert(client_id, counter);
+            if self.get(&client_id).is_none_or(|my| *my < counter) {
+                self.insert(client_id, counter);
             }
         }
     }
 
     #[inline]
     pub fn merge(&mut self, other: &Self) {
-        self.extend_to_include_vv(other.0.iter());
+        self.extend_to_include_vv(other.iter());
     }
 
     #[inline]
@@ -274,9 +436,9 @@ impl ImVersionVector {
     pub fn set_last(&mut self, id: ID) {
         let end = last_id_to_vv_end(id);
         if end == 0 {
-            self.0.remove(&id.peer);
+            self.remove(&id.peer);
         } else {
-            self.0.insert(id.peer, end);
+            self.insert(id.peer, end);
         }
     }
 
@@ -286,14 +448,14 @@ impl ImVersionVector {
             return;
         }
 
-        if let Some(&counter) = self.0.get(&id.peer) {
+        if let Some(&counter) = self.get(&id.peer) {
             let normalized = normalize_vv_counter(counter);
             let target = normalized.max(end);
             if target != counter {
-                self.0.insert(id.peer, target);
+                self.insert(id.peer, target);
             }
         } else {
-            self.0.insert(id.peer, end);
+            self.insert(id.peer, end);
         }
     }
 
@@ -320,12 +482,10 @@ impl Eq for VersionVector {}
 
 impl PartialEq for ImVersionVector {
     fn eq(&self, other: &Self) -> bool {
-        self.0.iter().all(|(client, counter)| {
-            normalize_vv_counter(*other.0.get(client).unwrap_or(&0))
-                == normalize_vv_counter(*counter)
-        }) && other.0.iter().all(|(client, counter)| {
-            normalize_vv_counter(*self.0.get(client).unwrap_or(&0))
-                == normalize_vv_counter(*counter)
+        self.iter().all(|(client, counter)| {
+            normalize_vv_counter(*other.get(client).unwrap_or(&0)) == normalize_vv_counter(*counter)
+        }) && other.iter().all(|(client, counter)| {
+            normalize_vv_counter(*self.get(client).unwrap_or(&0)) == normalize_vv_counter(*counter)
         })
     }
 }
@@ -993,11 +1153,11 @@ impl VersionVector {
     }
 
     pub fn to_im_vv(&self) -> ImVersionVector {
-        ImVersionVector(self.0.iter().map(|(&k, &v)| (k, v)).collect())
+        self.0.iter().map(|(&k, &v)| (k, v)).collect()
     }
 
     pub fn from_im_vv(im_vv: &ImVersionVector) -> Self {
-        VersionVector(im_vv.0.iter().map(|(&k, &v)| (k, v)).collect())
+        VersionVector(im_vv.iter().map(|(&k, &v)| (k, v)).collect())
     }
 }
 
@@ -1440,7 +1600,42 @@ mod im_version_vector_merge_tests {
 
         merged.extend_to_include_vv(original.iter());
 
-        assert!(merged.0.ptr_eq(&original.0));
+        assert!(merged.ptr_eq(&original));
+    }
+
+    #[test]
+    fn hybrid_inline_heap_roundtrips_zero_through_eight_peers() {
+        for count in 0..=8u64 {
+            let mut im_vv = ImVersionVector::new();
+            let mut vv = VersionVector::new();
+            for p in 1..=count {
+                let cnt = (p as Counter) * 7;
+                im_vv.insert(p, cnt);
+                vv.insert(p, cnt);
+            }
+            assert_eq!(im_vv.len(), count as usize);
+            assert_eq!(im_vv.is_empty(), count == 0);
+            if count <= 4 {
+                assert_eq!(im_vv.estimated_heap_bytes(), 0);
+            } else {
+                assert!(im_vv.estimated_heap_bytes() > 0);
+            }
+            assert_eq!(im_vv.to_vv(), vv);
+            assert_eq!(vv.to_im_vv(), im_vv);
+
+            let encoded_im = im_vv.encode();
+            let encoded_vv = vv.encode();
+            assert_eq!(ImVersionVector::decode(&encoded_im).unwrap(), im_vv);
+            assert_eq!(ImVersionVector::decode(&encoded_vv).unwrap(), im_vv);
+            assert_eq!(
+                postcard::from_bytes::<ImVersionVector>(&encoded_vv).unwrap(),
+                im_vv
+            );
+            assert_eq!(
+                postcard::from_bytes::<VersionVector>(&encoded_im).unwrap(),
+                vv
+            );
+        }
     }
 
     #[test]

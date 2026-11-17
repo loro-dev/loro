@@ -170,6 +170,20 @@ impl StrArena {
             .truncate(checkpoint.unicode_indexes_len);
         self.len = checkpoint.len;
     }
+
+    pub(crate) fn shrink_spare_capacity(&mut self) {
+        let len = self.bytes.len();
+        if self.bytes.capacity() > len {
+            if len == 0 {
+                self.bytes = AppendOnlyBytes::new();
+            } else {
+                let mut shrunk = AppendOnlyBytes::with_capacity(len);
+                shrunk.push_slice(&self.bytes[..len]);
+                self.bytes = shrunk;
+            }
+        }
+        self.unicode_indexes.shrink_to_fit();
+    }
 }
 
 fn unicode_to_byte_index(index: &[Index], unicode_index: u32, bytes: &AppendOnlyBytes) -> usize {
@@ -254,5 +268,20 @@ mod test {
 
         let slice = arena.slice_by_unicode(..);
         assert_eq!(slice.deref(), b"hello!");
+    }
+
+    #[test]
+    fn shrink_spare_capacity_preserves_contiguous_slices() {
+        let mut arena = StrArena::default();
+        arena.alloc("Hello");
+        let checkpoint = arena.checkpoint();
+        arena.alloc(&"X".repeat(4096));
+        arena.rollback(checkpoint);
+        arena.shrink_spare_capacity();
+        arena.alloc("World");
+
+        assert_eq!(arena.slice_by_unicode(0..5).deref(), b"Hello");
+        assert_eq!(arena.slice_by_unicode(4..8).deref(), b"oWor");
+        assert_eq!(arena.slice_by_unicode(..).deref(), b"HelloWorld");
     }
 }

@@ -944,7 +944,8 @@ impl HistoryCacheTrait for MovableListHistoryCache {
                         counter: cur_id.counter,
                     });
                 }
-                crate::container::list::list_op::InnerListOp::Set { elem_id, .. } => {
+                crate::container::list::list_op::InnerListOp::Set(set) => {
+                    let elem_id = &set.elem_id;
                     self.set_set.insert(MovableListSetDeltaEntry {
                         element_lamport: elem_id.lamport,
                         element_peer: elem_id.peer,
@@ -1046,8 +1047,8 @@ impl MovableListHistoryCache {
                             debug_assert_eq!(op.atom_len(), 1);
                             let lamport = op.lamport();
                             match &op.content {
-                                InnerContent::List(InnerListOp::Set { value, .. }) => {
-                                    (lamport, value.clone())
+                                InnerContent::List(InnerListOp::Set(set)) => {
+                                    (lamport, set.value.clone())
                                 }
                                 _ => {
                                     unreachable!()

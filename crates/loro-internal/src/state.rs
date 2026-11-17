@@ -1592,8 +1592,11 @@ impl DocState {
     pub(crate) fn reset_to_empty_for_failed_snapshot_import(&mut self) {
         let was_recording = self.is_recording();
         self.frontiers = Frontiers::default();
-        self.store =
-            ContainerStore::new(self.arena.clone(), self.config.clone(), self.peer.clone());
+        self.store = self.store.new_empty_same_backend(
+            self.arena.clone(),
+            self.config.clone(),
+            self.peer.clone(),
+        );
         self.in_txn = false;
         self.local_rollback_stack.clear();
         self.changed_idx_in_txn.clear();
@@ -2829,7 +2832,6 @@ impl DocState {
         self.store.flush_kv();
     }
 
-    #[allow(unused)]
     pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
         self.store.replace_kv_backend(kv);
     }
