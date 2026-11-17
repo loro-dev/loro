@@ -53,6 +53,11 @@ use crate::{
 use bytes::Bytes;
 use either::Either;
 
+type CommitResult<'a> = (
+    Option<CommitOptions>,
+    Option<LoroMutexGuard<'a, Option<Transaction>>>,
+);
+
 #[cfg(test)]
 thread_local! {
     pub(crate) static FAIL_APPLY_DIFF_AFTER_HANDLER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -427,14 +432,7 @@ impl LoroDoc {
     /// A pre-commit callback that panics does not stop the commit; its panic is
     /// raised after the txn lock is released, so the lock is not poisoned.
     #[instrument(skip_all)]
-    fn commit_internal(
-        &self,
-        config: CommitOptions,
-        preserve_on_empty: bool,
-    ) -> (
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    ) {
+    fn commit_internal(&self, config: CommitOptions, preserve_on_empty: bool) -> CommitResult<'_> {
         let mut panic = DeferredPanic::default();
         let ans = self
             .commit_internal_inner(config, preserve_on_empty, &mut panic, false)
@@ -453,10 +451,7 @@ impl LoroDoc {
         preserve_on_empty: bool,
         panic: &mut DeferredPanic,
         enforce_budget: bool,
-    ) -> LoroResult<(
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    )> {
+    ) -> LoroResult<CommitResult<'_>> {
         if !self.auto_commit.load(Acquire) {
             let txn_guard = self.txn.lock();
             // if not auto_commit, nothing should happen
@@ -535,13 +530,7 @@ impl LoroDoc {
     /// This is used by user-facing explicit commits. If the transaction is empty,
     /// any provided commit options are swallowed and will NOT carry over.
     #[instrument(skip_all)]
-    pub fn commit_with(
-        &self,
-        config: CommitOptions,
-    ) -> (
-        Option<CommitOptions>,
-        Option<LoroMutexGuard<'_, Option<Transaction>>>,
-    ) {
+    pub fn commit_with(&self, config: CommitOptions) -> CommitResult<'_> {
         self.commit_internal(config, false)
     }
 
@@ -6595,20 +6584,9 @@ impl GlobalMemoryPool {
             if Some(doc.pool_doc_id) == active_id || doc.stats_dirty.is_dirty() {
                 continue;
             }
-            let Some(fresh) = fresh_doc_stats_unmarked(&doc) else {
-                continue;
-            };
-            if doc.stats_dirty.is_dirty() {
-                continue;
-            }
-            let cached = doc
-                .cached_doc_bytes
-                .load(std::sync::atomic::Ordering::SeqCst);
-            assert_eq!(
-                cached, fresh.total_bytes,
-                "doc {} is not marked dirty but its cached statistics are stale: {fresh:?}",
-                doc.pool_doc_id
-            );
+            // Compare while the statistics locks are held. A writer and another
+            // refresh can otherwise replace the cache after the fresh read.
+            let _ = fresh_doc_stats_unmarked(&doc);
         }
     }
 
@@ -7153,14 +7131,25 @@ fn fresh_doc_stats_unmarked(doc: &LoroDocInner) -> Option<DocMemoryStats> {
     let uncommitted = txn
         .as_ref()
         .map_or(0, Transaction::estimated_uncommitted_bytes);
-    Some(doc_stats_from_parts(
+    let stats = doc_stats_from_parts(
         doc,
         &oplog,
         &state,
         uncommitted,
         diff_calc.estimated_bytes(),
         undo_bytes,
-    ))
+    );
+    if !doc.stats_dirty.is_dirty() {
+        let cached = doc
+            .cached_doc_bytes
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            cached, stats.total_bytes,
+            "doc {} is not marked dirty but its cached statistics are stale: {stats:?}",
+            doc.pool_doc_id,
+        );
+    }
+    Some(stats)
 }
 
 fn swap_cached(

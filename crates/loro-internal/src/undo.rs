@@ -2405,6 +2405,9 @@ mod recorded_inverse_tests {
         doc.set_peer_id(9).unwrap();
         let undo = UndoManager::new(&doc);
         undo.set_merge_interval(0);
+        // Undo keeps acquired roots visible, including an empty counter.
+        #[cfg(feature = "counter")]
+        doc.get_counter("c");
         let original = doc.get_deep_value();
         let text = doc.get_text("t");
         text.insert(5, "hello", PosType::Unicode).unwrap();
