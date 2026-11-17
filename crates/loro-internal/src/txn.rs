@@ -238,15 +238,48 @@ pub struct Transaction {
 }
 
 #[derive(Debug)]
-struct RecordedOp {
-    container: ContainerIdx,
-    /// `None` for a movable-list op, whose positional inverse is built from
-    /// its record when used.
-    diff: Option<Diff>,
-    /// For a map op, its key and the value it wrote.
-    map_written: Option<(InternalString, Option<LoroValue>)>,
-    /// For a movable-list op, what its identity undo plan reads.
-    movable: Option<crate::undo::movable_list::RecordedInverse>,
+enum RecordedOp {
+    /// The event-level diff that undoes the op.
+    Diff {
+        container: ContainerIdx,
+        diff: Diff,
+        /// For a map op, its key and the value it wrote.
+        map_written: Option<(InternalString, Option<LoroValue>)>,
+    },
+    /// A movable-list op: what its identity undo plan reads. Its positional
+    /// inverse is built from it when used.
+    Movable(crate::undo::movable_list::RecordedInverse),
+    /// A counter increment, kept as is: a checkout sums a run's increments in
+    /// op order, and float addition is not associative.
+    #[cfg(feature = "counter")]
+    Counter {
+        container: ContainerIdx,
+        increment: f64,
+    },
+}
+
+impl RecordedOp {
+    /// What the record holds, for the transaction's memory estimate.
+    fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + match self {
+                RecordedOp::Diff {
+                    diff, map_written, ..
+                } => {
+                    diff.estimated_bytes()
+                        + map_written.as_ref().map_or(0, |(key, value)| {
+                            key.len()
+                                + value.as_ref().map_or(0, |v| {
+                                    v.estimated_heap_bytes()
+                                        .saturating_sub(std::mem::size_of::<LoroValue>())
+                                })
+                        })
+                }
+                RecordedOp::Movable(record) => record.estimated_bytes(),
+                #[cfg(feature = "counter")]
+                RecordedOp::Counter { .. } => 0,
+            }
+    }
 }
 
 /// Records the inverse of every local op of a transaction while an undo manager
@@ -258,13 +291,12 @@ enum LocalInverseRecorder {
     /// Not decided yet (decided at the first op).
     #[default]
     Unknown,
-    /// No undo manager.
+    /// No undo manager; or an op whose inverse is not recorded (or a rolled
+    /// back batch), so undo checks the document out for this commit.
     Off,
-    /// Each op's inverse; see [`RecordedOp`].
-    Recording(Vec<RecordedOp>),
-    /// An op whose inverse is not recorded (or a rolled back batch): undo checks
-    /// the document out for this commit.
-    Unsupported,
+    /// Each op's inverse; see [`RecordedOp`]. `bytes`: their estimated size,
+    /// counted in the transaction's uncommitted bytes.
+    Recording { ops: Vec<RecordedOp>, bytes: usize },
 }
 
 /// See [`Transaction::begin_rollback_scope`].
@@ -696,7 +728,8 @@ impl Transaction {
         };
 
         let last_id = change.id_last();
-        let change_deps = change.deps.clone();
+        let change_deps = matches!(self.local_inverse, LocalInverseRecorder::Recording { .. })
+            .then(|| change.deps.clone());
         if let Err(err) = oplog.import_local_change(change) {
             state.abort_txn();
             state.clear_local_rollback_stack();
@@ -706,8 +739,9 @@ impl Transaction {
         }
 
         let local_inverse = match std::mem::take(&mut self.local_inverse) {
-            LocalInverseRecorder::Recording(ops) if diff.is_some() => {
-                build_local_inverse(ops, self.id_span(), change_deps, &mut state).map(Arc::new)
+            LocalInverseRecorder::Recording { ops, .. } if diff.is_some() => {
+                build_local_inverse(ops, self.id_span(), change_deps.unwrap(), &mut state)
+                    .map(Arc::new)
             }
             _ => None,
         };
@@ -753,7 +787,13 @@ impl Transaction {
                 .values()
                 .map(|v| v.capacity() * std::mem::size_of::<EventHint>())
                 .sum::<usize>();
-        ops_bytes.saturating_add(hints_bytes)
+        let inverse_bytes = match &self.local_inverse {
+            LocalInverseRecorder::Recording { bytes, .. } => *bytes,
+            _ => 0,
+        };
+        ops_bytes
+            .saturating_add(hints_bytes)
+            .saturating_add(inverse_bytes)
     }
 
     pub(crate) fn budget_base_scope(&self) -> Option<u64> {
@@ -819,8 +859,8 @@ impl Transaction {
     /// version; the caller undoes them.
     pub(crate) fn roll_back_scope(&mut self, id: u64) -> RolledBackBatch {
         assert!(self.rollback_scope_is_intact(id));
-        if matches!(self.local_inverse, LocalInverseRecorder::Recording(_)) {
-            self.local_inverse = LocalInverseRecorder::Unsupported;
+        if matches!(self.local_inverse, LocalInverseRecorder::Recording { .. }) {
+            self.local_inverse = LocalInverseRecorder::Off;
         }
         let scope = self.rollback_scopes.pop().unwrap();
         if self.budget_base_scope == Some(id) {
@@ -949,7 +989,10 @@ impl Transaction {
                 .iter()
                 .any(|m| m.strong_count() > 0);
             self.local_inverse = if has_undo {
-                LocalInverseRecorder::Recording(Vec::new())
+                LocalInverseRecorder::Recording {
+                    ops: Vec::new(),
+                    bytes: 0,
+                }
             } else {
                 LocalInverseRecorder::Off
             };
@@ -963,39 +1006,27 @@ impl Transaction {
         }
 
         let op = self.arena.convert_raw_op(&raw_op);
-        let inverse = matches!(self.local_inverse, LocalInverseRecorder::Recording(_))
+        let inverse = matches!(self.local_inverse, LocalInverseRecorder::Recording { .. })
             .then(|| local_op_inverse(&mut state, container, &raw_op, &event, &doc.inner));
         state.apply_local_op(&raw_op, &op)?;
-        match inverse {
-            Some(Some((diff, movable))) => {
-                let movable = match movable {
-                    Some((mut record, edit)) => {
-                        // An op on a list's elements does not change whether
-                        // the list itself is reachable.
-                        let list = state.container_state_mut(container).as_movable_list_state();
-                        list.and_then(|list| record.finish(list, edit))
-                            .map(|()| record)
-                    }
-                    None => None,
-                };
-                let is_movable = container.get_type() == ContainerType::MovableList;
-                if is_movable && movable.is_none() {
-                    self.local_inverse = LocalInverseRecorder::Unsupported;
-                } else if let LocalInverseRecorder::Recording(v) = &mut self.local_inverse {
-                    let map_written = match &event {
-                        EventHint::Map { key, value } => Some((key.clone(), value.clone())),
-                        _ => None,
-                    };
-                    v.push(RecordedOp {
-                        container,
-                        diff: (!is_movable).then_some(diff),
-                        map_written,
-                        movable,
-                    });
+        if let Some(inverse) = inverse {
+            let inverse = match inverse {
+                // An op on a list's elements does not change whether the list
+                // itself is reachable.
+                Some(RecordedOp::Movable(mut record)) => state
+                    .container_state_mut(container)
+                    .as_movable_list_state()
+                    .and_then(|list| record.finish(list))
+                    .map(|()| RecordedOp::Movable(record)),
+                other => other,
+            };
+            match (inverse, &mut self.local_inverse) {
+                (Some(op), LocalInverseRecorder::Recording { ops, bytes }) => {
+                    *bytes += op.estimated_bytes();
+                    ops.push(op);
                 }
+                _ => self.local_inverse = LocalInverseRecorder::Off,
             }
-            Some(None) => self.local_inverse = LocalInverseRecorder::Unsupported,
-            None => {}
         }
         {
             if !self.is_peer_first_appearance && !oplog.dag.latest_vv_contains_peer(self.peer) {
@@ -1473,24 +1504,38 @@ fn build_local_inverse(
     state: &mut DocState,
 ) -> Option<crate::undo::LocalInverse> {
     let arena = state.arena.clone();
-    let mut diff = crate::undo::DiffBatch::default();
+    let single_op = ops.len() == 1;
+    let mut cids: FxHashMap<ContainerIdx, loro_common::ContainerID> = FxHashMap::default();
+    let mut cid_of = |idx: ContainerIdx| {
+        cids.entry(idx)
+            .or_insert_with(|| {
+                arena
+                    .idx_to_id(idx)
+                    .expect("an edited container is registered")
+            })
+            .clone()
+    };
     let mut map_values_after = FxHashMap::default();
     let mut movable: Vec<crate::undo::movable_list::RecordedInverse> = Vec::new();
-    for op in ops.iter() {
-        if let Some((key, value)) = &op.map_written {
-            let cid = arena
-                .idx_to_id(op.container)
-                .expect("an edited container is registered");
-            map_values_after.insert((cid, key.clone()), value.clone());
-        }
-    }
-    let single_op = ops.len() == 1;
+    #[allow(unused_mut)]
+    let mut counter_ops: Vec<(loro_common::ContainerID, f64)> = Vec::new();
     let mut inverses = Vec::with_capacity(ops.len());
     for op in ops {
-        if let Some(record) = op.movable {
+        match op {
+            RecordedOp::Diff {
+                container,
+                diff,
+                map_written,
+            } => {
+                let cid = cid_of(container);
+                if let Some((key, value)) = map_written {
+                    map_values_after.insert((cid.clone(), key), value);
+                }
+                inverses.push((cid, diff));
+            }
             // One op per movable list, so its snapshots are those of the span's
             // two ends; or only inserts, whose final places are read below.
-            match movable.iter_mut().find(|r| r.cid == record.cid) {
+            RecordedOp::Movable(record) => match movable.iter_mut().find(|r| r.cid == record.cid) {
                 Some(r) if r.is_insert_only() && record.is_insert_only() => {
                     r.merge_inserts(&record)
                 }
@@ -1501,81 +1546,89 @@ fn build_local_inverse(
                 }
                 Some(_) => return None,
                 None => movable.push(record),
-            }
-        }
-        if let Some(d) = op.diff {
-            inverses.push((op.container, d));
+            },
+            #[cfg(feature = "counter")]
+            RecordedOp::Counter {
+                container,
+                increment,
+            } => counter_ops.push((cid_of(container), increment)),
         }
     }
-    for (container, op_diff) in inverses.into_iter().rev() {
-        let cid = arena
-            .idx_to_id(container)
-            .expect("an edited container is registered");
-        let mut single = crate::undo::DiffBatch::default();
-        single.cid_to_events.insert(cid.clone(), op_diff);
-        single.order.push(cid);
-        diff.compose_inverse(single);
-    }
-    for record in movable.iter_mut() {
-        record.mark_created_in(span);
-        if record.is_insert_only() {
-            let idx = arena.id_to_idx(&record.cid)?;
-            record.refresh_after(state.container_state_mut(idx).as_movable_list_state()?);
-        }
+    let mut diff = crate::undo::DiffBatch::default();
+    for (cid, op_diff) in inverses.into_iter().rev() {
+        diff.compose_inverse_one(cid, op_diff);
     }
     // Mergeable children are found through their parent's marker, not their
     // own creation; whether a checkout reports them is not modelled here.
     if diff.cid_to_events.keys().any(|c| c.is_mergeable())
         || movable.iter().any(|r| r.cid.is_mergeable())
+        || counter_ops.iter().any(|(c, _)| c.is_mergeable())
     {
         return None;
     }
-    crate::undo::prune_unchanged_map_entries(&mut diff, &map_values_after);
-    crate::undo::drop_containers_created_in(&mut diff, span);
-    // One op's delta is built normalized; only composing splits items.
-    if !single_op {
-        crate::undo::normalize_deltas(&mut diff);
+    for record in movable.iter_mut().filter(|r| r.is_insert_only()) {
+        let idx = arena.id_to_idx(&record.cid)?;
+        record.refresh_after(state.container_state_mut(idx).as_movable_list_state()?);
     }
-    Some(crate::undo::LocalInverse {
+    let mut commit = crate::undo::CommitInverse {
         span,
-        deps,
         diff,
         map_values_after,
         movable,
-    })
+        counter_ops,
+    };
+    // One op's delta is built normalized; only composing splits items.
+    commit.finish(!single_op);
+    Some(crate::undo::LocalInverse::new(commit, deps))
 }
 
-/// The event-level diff that undoes one local op, read from the state before
-/// the op is applied, in the event coordinates right after it. `None` for ops
-/// whose inverse is not recorded: undo then checks the document out, as before.
-/// It must equal what undo gets from the checkout (`LoroDoc::undo_internal_with`
-/// checks this in tests).
-type MovableRecord = (
-    crate::undo::movable_list::RecordedInverse,
-    crate::undo::movable_list::ListEdit,
-);
-
+/// The inverse of one local op, read from the state before the op is applied,
+/// in the event coordinates right after it. `None` for ops whose inverse is not
+/// recorded: undo then checks the document out, as before. It must equal what
+/// undo gets from the checkout (`LoroDoc::undo_internal_with` checks this in
+/// tests).
 fn local_op_inverse(
     state: &mut DocState,
     container: ContainerIdx,
     raw_op: &RawOp,
     hint: &EventHint,
     doc: &Arc<LoroDocInner>,
-) -> Option<(Diff, Option<MovableRecord>)> {
-    if container.get_type() == ContainerType::MovableList {
-        return movable_list_op_inverse(state, container, hint, doc);
+) -> Option<RecordedOp> {
+    match (container.get_type(), hint) {
+        (ContainerType::MovableList, _) => {
+            return movable_list_op_inverse(state, container, hint).map(RecordedOp::Movable)
+        }
+        #[cfg(feature = "counter")]
+        (ContainerType::Counter, EventHint::Counter(x)) => {
+            return Some(RecordedOp::Counter {
+                container,
+                increment: *x,
+            })
+        }
+        _ => {}
     }
-    local_op_inverse_diff(state, container, raw_op, hint, doc).map(|d| (d, None))
+    let diff = local_op_inverse_diff(state, container, raw_op, hint, doc)?;
+    let map_written = match hint {
+        EventHint::Map { key, value } => Some((key.clone(), value.clone())),
+        _ => None,
+    };
+    Some(RecordedOp::Diff {
+        container,
+        diff,
+        map_written,
+    })
 }
 
-/// A movable-list op: the positional inverse event (what the checkout
-/// reports) and the identity record its undo plan reads (`undo::movable_list`).
+/// A movable-list op: the identity record its undo plan reads
+/// (`undo::movable_list`), before the op; [`RecordedInverse::finish`] reads
+/// the rest after it.
+///
+/// [`RecordedInverse::finish`]: crate::undo::movable_list::RecordedInverse::finish
 fn movable_list_op_inverse(
     state: &mut DocState,
     container: ContainerIdx,
     hint: &EventHint,
-    _doc: &Arc<LoroDocInner>,
-) -> Option<(Diff, Option<MovableRecord>)> {
+) -> Option<crate::undo::movable_list::RecordedInverse> {
     use crate::undo::movable_list::{ListEdit, RecordedInverse};
     let cid = state.arena.idx_to_id(container)?;
     let alive = state.get_reachable(&cid);
@@ -1611,9 +1664,7 @@ fn movable_list_op_inverse(
         }
         _ => return None,
     };
-    let record = RecordedInverse::begin(list, cid, alive, edit)?;
-    // The positional inverse is built from the record when used.
-    Some((Diff::Unknown, Some((record, edit))))
+    RecordedInverse::begin(list, cid, alive, edit)
 }
 
 fn local_op_inverse_diff(
@@ -1681,12 +1732,10 @@ fn local_op_inverse_diff(
             let old = match map.get_map_value(key) {
                 None => ResolvedMapValue::new_unset(),
                 Some(old) => {
-                    if matches!(old.value, Some(LoroValue::Container(_)))
-                        || old
-                            .value
-                            .as_ref()
-                            .is_some_and(|v| matches!(v, LoroValue::Binary(_)))
-                    {
+                    if matches!(
+                        old.value,
+                        Some(LoroValue::Container(_) | LoroValue::Binary(_))
+                    ) {
                         // A child container (or a mergeable marker) would be revived.
                         return None;
                     }
@@ -1766,9 +1815,7 @@ fn local_op_inverse_diff(
                     let position = tree.get_position(&item.target)?;
                     let meta = item.target.associated_meta_container();
                     if let Some(meta_idx) = state.arena.id_to_idx(&meta) {
-                        if !crate::state::ContainerState::is_state_empty(
-                            state.container_state_mut(meta_idx),
-                        ) {
+                        if !state.is_container_state_empty(meta_idx) {
                             return None;
                         }
                     }
@@ -1786,8 +1833,6 @@ fn local_op_inverse_diff(
             });
             Some(Diff::Tree(diff))
         }
-        #[cfg(feature = "counter")]
-        (ContainerType::Counter, EventHint::Counter(x)) => Some(Diff::Counter(-x)),
         _ => None,
     }
 }

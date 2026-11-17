@@ -48,7 +48,9 @@ pub(crate) mod undo_log;
 mod unknown_state;
 mod value_decode;
 
-pub(crate) use self::movable_list_state::{IndexType, MovableListState};
+pub(crate) use self::movable_list_state::{
+    Element as MovableListElement, IndexType, MovableListState,
+};
 pub(crate) use container_store::GcStore;
 pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
@@ -1187,14 +1189,15 @@ impl DocState {
         }
     }
 
-    /// Start recording an import undo log: until [`Self::take_import_undo`],
-    /// `apply_diff` asks each container for the record that undoes its diff
-    /// before applying it. See `state/undo_log.rs`.
-    /// The state of `idx`, created or loaded if needed.
+    /// The state of `idx`, created or loaded if needed (a reference-returning
+    /// [`Self::with_state_mut`]).
     pub(crate) fn container_state_mut(&mut self, idx: ContainerIdx) -> &mut State {
         self.store.get_or_create_mut(idx)
     }
 
+    /// Start recording an import undo log: until [`Self::take_import_undo`],
+    /// `apply_diff` asks each container for the record that undoes its diff
+    /// before applying it. See `state/undo_log.rs`.
     pub(crate) fn begin_import_undo(&mut self) {
         debug_assert!(self.import_undo.is_none(), "import undo logs do not nest");
         self.import_undo = Some(Default::default());
@@ -2349,10 +2352,8 @@ impl DocState {
         // continues right after the previous one.
         let mut local_inverse = diffs[0].local_inverse.clone();
         for next in diffs[1..].iter() {
-            local_inverse = match (&local_inverse, &next.local_inverse) {
-                (Some(a), Some(b)) => a.then(b).map(Arc::new),
-                _ => None,
-            };
+            local_inverse =
+                crate::undo::LocalInverse::chain(local_inverse, next.local_inverse.as_ref());
         }
         for diff in diffs {
             #[allow(clippy::unnecessary_to_owned)]

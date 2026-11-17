@@ -21,8 +21,8 @@ Verified against code 2026-11-16.
   8. `pending_bytes`: parked out-of-order updates tracked incrementally in `PendingChanges` (`oplog/pending_changes.rs`).
   9. `history_cache_bytes`: `HistoryCache` frontier/vv index (`history_cache.rs`).
   10. `diff_calc_bytes`: persistent CRDT diff trackers in `DiffCalculator` (`diff_calc.rs`).
-  11. `undo_bytes`: stacks tracked by active `UndoManager` instances registered in `LoroDocInner::undo_managers`.
-  12. `uncommitted_txn_bytes`: ops and `event_hints` capacity in the currently open `Transaction`. When `memory_stats()` is called on the thread already holding `self.txn`, `self.txn.is_held_by_current_thread()` avoids self-deadlock and the caller supplies `uncommitted_txn_bytes` explicitly (e.g. `try_commit_with`).
+  11. `undo_bytes`: stacks tracked by active `UndoManager` instances registered in `LoroDocInner::undo_managers`, including each item's recorded inverse with the values it keeps (`undo::CommitInverse::estimated_bytes`, `RecordedInverse::estimated_bytes`; [undo-log.md](undo-log.md)).
+  12. `uncommitted_txn_bytes`: ops, `event_hints` capacity and the inverses recorded so far (`LocalInverseRecorder::Recording { bytes }`) in the currently open `Transaction`. When `memory_stats()` is called on the thread already holding `self.txn`, `self.txn.is_held_by_current_thread()` avoids self-deadlock and the caller supplies `uncommitted_txn_bytes` explicitly (e.g. `try_commit_with`).
 - **`total_bytes`**: exact sum of the 12 RAM component fields above.
 - **`spilled_disk_bytes`**: out-of-core spilled bytes (0 when using in-memory stores; intentionally excluded from `total_bytes`).
 

@@ -30,30 +30,41 @@ snapshot (`crates/loro/examples/undo_cold_bench.rs`, before this change):
    with the node's previous fractional index; deleting a leaf whose metadata is
    empty a `Create` at its previous place. Movable lists: see below.
 2. On commit, `build_local_inverse` composes them, newest op first, into a
-   `crate::undo::LocalInverse { span, deps, diff }` attached to the commit's
-   `InternalDocDiff`/`DocDiff` (`local_inverse`). Events merging several commits
-   chain them only when each continues right after the previous
-   (`LocalInverse::then`).
-3. `UndoManagerInner::record_checkpoint_at` stores it on the stack item when
-   its span is exactly the item's; merging an item keeps it only for a
-   contiguous run. An undo/redo's own commit is captured while
-   `processing_undo` (`processing_inverses`) for the opposite stack's item.
-4. `undo_internal_with` uses the stored inverse instead of the two checkouts
-   when the item is one run (`split_span_based_on_deps` gives one span), its
-   span and deps match, and no movable list is involved. The rest (the
-   transform against the stack's composed remote diff, applying it as new ops)
-   is unchanged. No checkout happens, so none is undone afterwards.
+   `crate::undo::CommitInverse`, wrapped in a `LocalInverse { span, deps,
+   commits }` attached to the commit's `InternalDocDiff`/`DocDiff`
+   (`local_inverse`).
+3. Events merging several commits, merged undo items, and an undo/redo's own
+   commits (captured while `processing_undo` in `processing_inverses` for the
+   opposite stack's item) chain them with `LocalInverse::chain`, only when each
+   continues right after the previous. Chaining appends the shared commits
+   (`Arc::make_mut`, usually in place), so an item merged from n commits costs
+   O(n), not O(n²). `UndoManagerInner::record_checkpoint_at` stores it on the
+   stack item when its span is exactly the item's.
+4. `undo_internal_with` seals it (`LocalInverse::seal`: compose the commits,
+   newest first, and apply the rules below once to the whole span) and uses
+   the result instead of the two checkouts when the item is one run
+   (`split_span_based_on_deps` gives one span) and its span and deps match.
+   The movable-list scopes then come from the records
+   (`movable_list::scopes_from_records`) instead of reading the deleted
+   elements' history (`movable_list::scopes`). The rest (the transform
+   against the stack's composed remote diff, applying it as new ops) is
+   unchanged. No checkout happens, so none is undone afterwards.
 
 The inverse must equal what the checkout reports. Rules found by that check:
 
 - Containers created inside the span do not exist at its deps; their entries
-  are dropped (`drop_containers_created_in`).
+  are dropped (`drop_containers_created_in`, `created_in`).
 - A checkout reports a map key only when its value changes; entries that
   restore the value the key has after the span are dropped
   (`prune_unchanged_map_entries`, using `LocalInverse::map_values_after`).
   Unset entries (the key did not exist) always stay.
 - Deltas are normalized (`normalize_deltas`): adjacent items merged and
   same-attribute text inserts joined.
+- Counter increments are kept as they are (`CommitInverse::counter_ops`) and
+  summed when sealed as the checkout's counter calculator does: from 0,
+  subtracting each in op order (`counter_inverses`). Float addition is not
+  associative: composing per-op negations newest first turned
+  `[1e16, -1e16, 1]` into an undo that changed nothing.
 
 ## Movable lists
 
@@ -70,6 +81,10 @@ neighbouring leaves). `complete_anchors` still extends a search through history
 when none of them survives. `RecordedInverse::to_inverse` gives the same
 `Inverse` the checkout produced; `positional_diff` builds the positional list
 diff only when the step is undone.
+
+Each record keeps one pair of anchor searches (`sides`; the targets are one
+contiguous range), expanded to one pair per target in `to_inverse`, as the
+checkout's capture has them.
 
 Recorded: one insert, delete (at most `MAX_RECORDED_DELETE` = 64 elements),
 move or set per list per step; several inserts; one deletion the list split into
@@ -98,20 +113,29 @@ attached (`undo_edit_overhead_bench`, one commit per op): typing about
 writes about the same, movable-list moves and deletes about +1.2 us/op.
 Nothing is recorded without an undo manager.
 
+What a record keeps counts: an item's inverse, the values it restores and the
+map values it compares against included, is part of `undo_bytes` (so
+`max_undo_bytes` evicts it), and the inverses of an open transaction are part of
+`uncommitted_txn_bytes` (`crates/loro/tests/undo_recorded_inverses.rs`).
+
 ## Not recorded yet (undo checks out, as before)
 
 Text marks, movable-list steps outside the shapes above, tree deletions of a subtree or of a node with
 metadata, moves out of a deleted parent, writes that would revive a child
 container (restoring a deleted container value), map binary values (mergeable markers),
 anything touching a mergeable container,
-rolled-back transaction batches, and items whose ops are interleaved with other
+rolled-back transaction batches, a movable list edited by two commits of one
+merged item, and items whose ops are interleaved with other
 peers' ops (more than one span).
 
 ## Verification
 
 `crate::undo::verify_recorded_inverses()` is on in this crate's tests and in debug
-builds with `LORO_VERIFY_UNDO_LOG` set. Then every undo that uses a recorded
-inverse also checks out and asserts both diffs mean the same changes
+builds with `LORO_VERIFY_UNDO_LOG` set. Then the movable-list scopes are read from
+history and must match the records (`records_match_scopes`; when they do not,
+as for deletes trimmed by a shallow root, the step checks out), and every undo
+that uses a recorded inverse also checks out and asserts both diffs mean the
+same changes
 (`assert_same_undo_diff`: checkouts split inserted text at chunk boundaries and
 may keep a delete apart from the insert after it, which apply and transform the
 same). Run the undo suites in `crates/loro/tests`, `crates/loro-internal/tests/undo.rs`

@@ -1952,9 +1952,9 @@ impl LoroDoc {
     /// step's own changes, which stay in the doc: the undo manager treats them
     /// like remote changes for the steps before it.
     /// `inverse`: the recorded inverse of `id_span`'s ops, if the undo manager has
-    /// one (see `crate::undo::LocalInverse`). When `id_span` is one run and no
-    /// movable list is involved, it replaces checking the document out at the
-    /// span's last op and its deps. See context/undo-log.md.
+    /// one (see `crate::undo::LocalInverse`). When `id_span` is one run, it
+    /// replaces checking the document out at the span's last op and its deps.
+    /// See context/undo-log.md.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn undo_internal_with(
         &self,
@@ -1992,7 +1992,25 @@ impl LoroDoc {
         };
 
         let spans = self.oplog.lock().split_span_based_on_deps(id_span);
-        let (span_scopes, all_scopes) = match crate::undo::movable_list::scopes(self, &spans) {
+        // The recorded inverse replaces the checkouts only for exactly this
+        // transition, and one run.
+        let verify = crate::undo::verify_recorded_inverses();
+        let mut recorded = inverse
+            .and_then(|inv| inv.seal())
+            .filter(|inv| spans.len() == 1 && inv.span == spans[0].0 && inv.deps == spans[0].1);
+        // Every movable-list op of a recorded span is recorded, so its records
+        // name the elements `scopes` would find by reading history.
+        let scopes = match &recorded {
+            Some(inv) if !verify => {
+                let all = crate::undo::movable_list::scopes_from_records(&inv.movable);
+                Ok((
+                    vec![crate::undo::movable_list::scopes_from_records(&inv.movable)],
+                    all,
+                ))
+            }
+            _ => crate::undo::movable_list::scopes(self, &spans),
+        };
+        let (span_scopes, all_scopes) = match scopes {
             Ok(scopes) => scopes,
             Err(error) => {
                 if was_recording {
@@ -2005,15 +2023,15 @@ impl LoroDoc {
         };
         let inverse_lists = std::cell::RefCell::new(Vec::new());
         let revived_lists = std::cell::RefCell::new(Default::default());
-        // The recorded inverse replaces the checkouts only for exactly this
-        // transition, one run, and no movable list (whose undo needs element
-        // snapshots at both versions).
-        let recorded = inverse.filter(|inv| {
-            spans.len() == 1
-                && crate::undo::movable_list::records_match_scopes(&inv.movable, &all_scopes)
-                && inv.span == spans[0].0
-                && inv.deps == spans[0].1
-        });
+        if verify {
+            // What production takes from the records must be what history says
+            // (a shallow root trimming the deleted elements' history aside).
+            recorded = recorded.filter(|inv| {
+                crate::undo::movable_list::records_match_scopes(&inv.movable, &all_scopes)
+            });
+        }
+        let recorded = recorded.as_ref();
+        let recorded_diff = std::cell::RefCell::new(recorded.map(|inv| inv.full_diff(self)));
         let recorded_used = std::cell::Cell::new(false);
         let checked_out = std::cell::Cell::new(false);
         let checkout_calc_diff = |from: &Frontiers, to: &Frontiers| {
@@ -2084,14 +2102,16 @@ impl LoroDoc {
         let calc_diff = |from: &Frontiers, to: &Frontiers| {
             if let Some(inv) = recorded {
                 if *from == Frontiers::from_id(inv.span.id_last()) && *to == inv.deps {
-                    if crate::undo::verify_recorded_inverses() {
-                        let from_checkout = checkout_calc_diff(from, to);
-                        crate::undo::assert_same_undo_diff(&from_checkout, &inv.full_diff(self));
+                    if let Some(diff) = recorded_diff.borrow_mut().take() {
+                        if verify {
+                            let from_checkout = checkout_calc_diff(from, to);
+                            crate::undo::assert_same_undo_diff(&from_checkout, &diff);
+                        }
+                        #[cfg(test)]
+                        crate::undo::RECORDED_INVERSES_USED.with(|n| n.set(n.get() + 1));
+                        recorded_used.set(true);
+                        return diff;
                     }
-                    #[cfg(test)]
-                    crate::undo::RECORDED_INVERSES_USED.with(|n| n.set(n.get() + 1));
-                    recorded_used.set(true);
-                    return inv.full_diff(self);
                 }
             }
             checkout_calc_diff(from, to)
@@ -2120,7 +2140,7 @@ impl LoroDoc {
                 .iter()
                 .map(|r| r.to_inverse(&inv.deps))
                 .collect();
-            if crate::undo::verify_recorded_inverses() && !from_records.is_empty() {
+            if verify && !from_records.is_empty() {
                 // `inverse_lists` holds what the checkout captured.
                 for lists in [&mut inverse_lists, &mut from_records] {
                     crate::undo::movable_list::complete_anchors(

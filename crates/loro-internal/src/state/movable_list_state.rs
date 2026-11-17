@@ -595,7 +595,6 @@ mod inner {
             ans
         }
 
-        #[inline]
         /// Visits the visible elements from user index `start` towards
         /// `direction` (-1 or 1), with their user index, until `f` returns
         /// `false`. One B-tree query, then neighbouring leaves.
@@ -637,6 +636,7 @@ mod inner {
             }
         }
 
+        #[inline]
         pub fn get_list_item_at(&self, pos: usize, index_type: IndexType) -> Option<&ListItem> {
             let index = match index_type {
                 IndexType::ForUser => self.list.query::<UserLenQuery>(&pos)?,

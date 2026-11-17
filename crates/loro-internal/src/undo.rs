@@ -4,6 +4,7 @@ use crate::sync::{AtomicU64, Mutex};
 use either::Either;
 use loro_common::{
     ContainerID, Counter, CounterSpan, HasIdSpan, IdSpan, LoroError, LoroResult, LoroValue, PeerID,
+    ID,
 };
 use parking_lot::lock_api::ReentrantMutex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -139,17 +140,22 @@ impl DiffBatch {
         );
 
         for (id, diff) in other.into_iter() {
-            if let Some(this_diff) = self.cid_to_events.get_mut(&id) {
-                match (this_diff, diff) {
-                    (Diff::Map(a), Diff::Map(b)) => {
-                        a.updated.extend(b.updated);
-                    }
-                    (a, b) => a.compose_ref(&b),
+            self.compose_inverse_one(id, diff);
+        }
+    }
+
+    /// [`Self::compose_inverse`] with a batch of one container's diff.
+    pub(crate) fn compose_inverse_one(&mut self, id: ContainerID, diff: Diff) {
+        if let Some(this_diff) = self.cid_to_events.get_mut(&id) {
+            match (this_diff, diff) {
+                (Diff::Map(a), Diff::Map(b)) => {
+                    a.updated.extend(b.updated);
                 }
-            } else {
-                self.cid_to_events.insert(id.clone(), diff);
-                self.order.push(id);
+                (a, b) => a.compose_ref(&b),
             }
+        } else {
+            self.cid_to_events.insert(id.clone(), diff);
+            self.order.push(id);
         }
     }
 
@@ -368,15 +374,12 @@ impl UndoGroup {
     }
 }
 
-/// The inverse of a run of local ops, recorded while they were applied
-/// (`txn::LocalInverseRecorder`). Applying `diff` at the version right after
-/// `span` gives the state at `deps`: it is what undo used to get by checking the
-/// document out at `span`'s last op and then at `deps`. See
-/// context/undo-log.md.
+/// The inverse of one local commit, recorded while its ops were applied
+/// (`txn::LocalInverseRecorder`). Applying `diff` right after `span` gives the
+/// state at the commit's deps. See context/undo-log.md.
 #[derive(Debug)]
-pub(crate) struct LocalInverse {
+pub(crate) struct CommitInverse {
     pub(crate) span: IdSpan,
-    pub(crate) deps: Frontiers,
     pub(crate) diff: DiffBatch,
     /// The value each map key written by `span` has right after it. A checkout
     /// reports no change for a key whose value ends where it started (see
@@ -384,9 +387,193 @@ pub(crate) struct LocalInverse {
     pub(crate) map_values_after: FxHashMap<(ContainerID, crate::InternalString), Option<LoroValue>>,
     /// The identity records of the span's movable-list ops (one per list).
     pub(crate) movable: Vec<movable_list::RecordedInverse>,
+    /// Each counter increment of the span, in op order (see
+    /// [`counter_inverses`]).
+    pub(crate) counter_ops: Vec<(ContainerID, f64)>,
+}
+
+/// The counter part of the inverse of `commits` (oldest first) over `span`:
+/// as the checkout's counter diff calculator computes it, starting at 0 and
+/// subtracting each increment in op order (float addition is not associative,
+/// so composing per-op inverses could give another value). Counters created in
+/// `span` are left out, as in [`drop_containers_created_in`].
+fn counter_inverses<'a>(
+    commits: impl Iterator<Item = &'a CommitInverse>,
+    span: IdSpan,
+    diff: &mut DiffBatch,
+) {
+    #[cfg(feature = "counter")]
+    {
+        let mut sums: Vec<(&ContainerID, f64)> = Vec::new();
+        for (cid, increment) in commits.flat_map(|c| c.counter_ops.iter()) {
+            if created_in(cid, span) {
+                continue;
+            }
+            match sums.iter_mut().find(|(c, _)| *c == cid) {
+                Some((_, sum)) => *sum -= increment,
+                None => sums.push((cid, 0. - increment)),
+            }
+        }
+        for (cid, sum) in sums {
+            diff.order.push(cid.clone());
+            diff.cid_to_events.insert(cid.clone(), Diff::Counter(sum));
+        }
+    }
+    #[cfg(not(feature = "counter"))]
+    let _ = (commits, span, diff);
+}
+
+impl CommitInverse {
+    /// Applies the rules that make a composed inverse equal what a checkout
+    /// from the end of `span` to its deps reports.
+    pub(crate) fn finish(&mut self, normalize: bool) {
+        for record in &mut self.movable {
+            record.mark_created_in(self.span);
+        }
+        prune_unchanged_map_entries(&mut self.diff, &self.map_values_after);
+        drop_containers_created_in(&mut self.diff, self.span);
+        if normalize {
+            normalize_deltas(&mut self.diff);
+        }
+    }
+
+    fn estimated_bytes(&self) -> usize {
+        let map_bytes: usize = self
+            .map_values_after
+            .iter()
+            .map(|((cid, key), v)| {
+                container_id_estimated_bytes(cid)
+                    + key.len()
+                    + std::mem::size_of::<Option<LoroValue>>()
+                    + v.as_ref().map_or(0, |v| {
+                        v.estimated_heap_bytes()
+                            .saturating_sub(std::mem::size_of::<LoroValue>())
+                    })
+            })
+            .sum();
+        self.diff.estimated_bytes()
+            + map_bytes
+            + self.counter_ops.len() * std::mem::size_of::<(ContainerID, f64)>()
+            + self
+                .movable
+                .iter()
+                .map(|r| r.estimated_bytes())
+                .sum::<usize>()
+    }
+}
+
+/// The inverses of a run of local commits, each continuing right after the
+/// previous one with no other op in between. Merging an undo item only appends
+/// (the commits are shared); [`Self::seal`] composes them when the item is
+/// undone.
+#[derive(Debug, Clone)]
+pub(crate) struct LocalInverse {
+    pub(crate) span: IdSpan,
+    /// The deps of the first commit.
+    pub(crate) deps: Frontiers,
+    /// Oldest first.
+    commits: Vec<Arc<CommitInverse>>,
+}
+
+/// A [`LocalInverse`] composed into one inverse of its whole span: what undo
+/// used to get by checking the document out at the span's last op and then at
+/// its deps.
+#[derive(Debug)]
+pub(crate) struct SealedInverse {
+    pub(crate) span: IdSpan,
+    pub(crate) deps: Frontiers,
+    pub(crate) diff: DiffBatch,
+    pub(crate) movable: Vec<movable_list::RecordedInverse>,
 }
 
 impl LocalInverse {
+    pub(crate) fn new(commit: CommitInverse, deps: Frontiers) -> Self {
+        Self {
+            span: commit.span,
+            deps,
+            commits: vec![Arc::new(commit)],
+        }
+    }
+
+    /// `a` followed by `b`, if both are recorded and `b` continues right after
+    /// `a` with no other op in between.
+    pub(crate) fn chain(
+        a: Option<Arc<LocalInverse>>,
+        b: Option<&Arc<LocalInverse>>,
+    ) -> Option<Arc<LocalInverse>> {
+        let (mut a, b) = (a?, b?);
+        let continues = b.span.peer == a.span.peer
+            && b.span.counter.start == a.span.counter.end
+            && b.deps == Frontiers::from_id(a.span.id_last());
+        if !continues {
+            return None;
+        }
+        let this = Arc::make_mut(&mut a);
+        this.span.counter.end = b.span.counter.end;
+        this.commits.extend(b.commits.iter().cloned());
+        Some(a)
+    }
+
+    /// The inverse of the whole span. `None` if it cannot be composed (a
+    /// movable list edited by two commits; undo checks out instead).
+    pub(crate) fn seal(&self) -> Option<SealedInverse> {
+        if let [only] = self.commits.as_slice() {
+            let mut diff = only.diff.clone();
+            counter_inverses(self.commits.iter().map(|c| &**c), self.span, &mut diff);
+            return Some(SealedInverse {
+                span: self.span,
+                deps: self.deps.clone(),
+                diff,
+                movable: only.movable.clone(),
+            });
+        }
+        let mut sealed = CommitInverse {
+            span: self.span,
+            diff: DiffBatch::default(),
+            map_values_after: FxHashMap::default(),
+            movable: Vec::new(),
+            counter_ops: Vec::new(),
+        };
+        // Each list's records cover one commit; a list edited by two cannot
+        // combine them.
+        for commit in &self.commits {
+            for r in &commit.movable {
+                if sealed.movable.iter().any(|o| o.cid == r.cid) {
+                    return None;
+                }
+                sealed.movable.push(r.clone());
+            }
+            sealed.map_values_after.extend(
+                commit
+                    .map_values_after
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
+        }
+        // Newest first: undoing the run undoes its last commit first.
+        for commit in self.commits.iter().rev() {
+            sealed.diff.compose_inverse(commit.diff.clone());
+        }
+        sealed.finish(true);
+        counter_inverses(
+            self.commits.iter().map(|c| &**c),
+            self.span,
+            &mut sealed.diff,
+        );
+        Some(SealedInverse {
+            span: self.span,
+            deps: self.deps.clone(),
+            diff: sealed.diff,
+            movable: sealed.movable,
+        })
+    }
+
+    fn estimated_bytes(&self) -> usize {
+        self.commits.iter().map(|c| c.estimated_bytes()).sum()
+    }
+}
+
+impl SealedInverse {
     /// The full event-level inverse: the recorded diffs and the movable lists'
     /// positional diffs, built now ([`movable_list::RecordedInverse::positional_diff`]).
     pub(crate) fn full_diff(&self, doc: &LoroDoc) -> DiffBatch {
@@ -398,54 +585,6 @@ impl LocalInverse {
             }
         }
         diff
-    }
-
-    /// `self` followed by `next`, if `next` continues right after `self` with no
-    /// other op in between.
-    pub(crate) fn then(&self, next: &LocalInverse) -> Option<LocalInverse> {
-        let continues = next.span.peer == self.span.peer
-            && next.span.counter.start == self.span.counter.end
-            && next.deps == Frontiers::from_id(self.span.id_last());
-        if !continues {
-            return None;
-        }
-        let mut diff = next.diff.clone();
-        diff.compose_inverse(self.diff.clone());
-        let span = IdSpan::new(
-            self.span.peer,
-            self.span.counter.start,
-            next.span.counter.end,
-        );
-        let mut map_values_after = self.map_values_after.clone();
-        map_values_after.extend(
-            next.map_values_after
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
-        // Each list's records cover one op; a list edited by both cannot
-        // combine them (undo checks out instead).
-        if next
-            .movable
-            .iter()
-            .any(|r| self.movable.iter().any(|o| o.cid == r.cid))
-        {
-            return None;
-        }
-        let mut movable = self.movable.clone();
-        movable.extend(next.movable.iter().cloned());
-        for record in &mut movable {
-            record.mark_created_in(span);
-        }
-        prune_unchanged_map_entries(&mut diff, &map_values_after);
-        drop_containers_created_in(&mut diff, span);
-        normalize_deltas(&mut diff);
-        Some(LocalInverse {
-            span,
-            deps: self.deps.clone(),
-            diff,
-            map_values_after,
-            movable,
-        })
     }
 }
 
@@ -473,8 +612,6 @@ pub(crate) fn prune_unchanged_map_entries(
     }
 }
 
-/// Containers created by `span`'s ops do not exist at its deps, so a checkout
-/// there reports no diff for them; the inverse must not either.
 /// Merges adjacent items of the same kind, as the deltas a checkout reports
 /// are built. Composing per-op inverses leaves them split (`[delete 1, delete
 /// 1]` instead of `[delete 2]`).
@@ -509,8 +646,7 @@ pub(crate) fn normalize_deltas(diff: &mut DiffBatch) {
             ) = (items.last_mut(), item)
             {
                 if last_attr == attr && *last_delete == 0 {
-                    let joined = format!("{}{}", last_value.as_str(), value.as_str());
-                    *last_value = joined.into();
+                    last_value.extend(value.as_str());
                     continue;
                 }
             }
@@ -531,11 +667,16 @@ pub(crate) fn normalize_deltas(diff: &mut DiffBatch) {
     }
 }
 
+/// Whether `span`'s ops created `cid`.
+pub(crate) fn created_in(cid: &ContainerID, span: IdSpan) -> bool {
+    matches!(cid, ContainerID::Normal { peer, counter, .. }
+        if span.contains(ID::new(*peer, *counter)))
+}
+
+/// Containers created by `span`'s ops do not exist at its deps, so a checkout
+/// there reports no diff for them; the inverse must not either.
 pub(crate) fn drop_containers_created_in(diff: &mut DiffBatch, span: IdSpan) {
-    let created = |cid: &ContainerID| {
-        matches!(cid, ContainerID::Normal { peer, counter, .. }
-            if *peer == span.peer && span.counter.contains(*counter))
-    };
+    let created = |cid: &ContainerID| created_in(cid, span);
     if diff.cid_to_events.keys().any(created) {
         diff.cid_to_events.retain(|cid, _| !created(cid));
         diff.order.retain(|cid| !created(cid));
@@ -633,14 +774,7 @@ impl StackItem {
                 .iter()
                 .map(container_id_estimated_bytes)
                 .sum::<usize>();
-        let inverse_bytes = self.inverse.as_ref().map_or(0, |inv| {
-            inv.diff.estimated_bytes()
-                + inv
-                    .movable
-                    .iter()
-                    .map(|r| r.estimated_bytes())
-                    .sum::<usize>()
-        });
+        let inverse_bytes = self.inverse.as_ref().map_or(0, |inv| inv.estimated_bytes());
         std::mem::size_of::<Self>()
             .saturating_add(value_bytes)
             .saturating_add(cursors_bytes)
@@ -842,10 +976,8 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
-                    last_span.inverse = match (&last_span.inverse, &inverse) {
-                        (Some(a), Some(b)) => a.then(b).map(Arc::new),
-                        _ => None,
-                    };
+                    last_span.inverse =
+                        LocalInverse::chain(last_span.inverse.take(), inverse.as_ref());
                     // An empty set means the checkpoint's containers are unknown.
                     // Merging a known span cannot make that older span known.
                     if last_span.affected_cids.is_empty() || affected_cids.is_empty() {
@@ -1675,8 +1807,8 @@ impl UndoManager {
                     .take()
                     .and_then(|v| {
                         let mut it = v.into_iter();
-                        let first = it.next()?;
-                        it.try_fold(first, |acc, next| acc.then(&next).map(Arc::new))
+                        let first = it.next();
+                        it.fold(first, |acc, next| LocalInverse::chain(acc, Some(&next)))
                     })
                     .filter(|inv| inv.span.counter == CounterSpan::new(end_counter, new_counter));
                 get_opposite(&mut inner).push_with_cids_and_inverse(
@@ -2144,13 +2276,17 @@ pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBa
             }
         }
     }
-    fn delta_ops<V: std::fmt::Debug, A: std::fmt::Debug>(
+    fn delta_ops<A: loro_delta::delta_trait::DeltaAttr>(
         items: impl Iterator<Item = (Option<usize>, usize, String, A)>,
     ) -> Vec<Op> {
-        let _ = std::marker::PhantomData::<V>;
         let mut ops = Vec::new();
         for (retain, delete, insert, attr) in items {
-            let attr = format!("{attr:?}");
+            // Empty attributes as "", so trailing plain retains can be dropped.
+            let attr = if attr.attr_is_empty() {
+                String::new()
+            } else {
+                format!("{attr:?}")
+            };
             if let Some(n) = retain {
                 push(&mut ops, Op::Retain(n, attr));
                 continue;
@@ -2158,8 +2294,7 @@ pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBa
             push(&mut ops, Op::Delete(delete));
             push(&mut ops, Op::Insert(insert, attr));
         }
-        while matches!(ops.last(), Some(Op::Retain(_, a)) if a == "TextMeta({})" || a == "ListDeltaMeta { from_move: false }")
-        {
+        while matches!(ops.last(), Some(Op::Retain(_, a)) if a.is_empty()) {
             ops.pop();
         }
         ops
@@ -2181,7 +2316,7 @@ pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBa
                     }
                     Diff::Text(t) => format!(
                         "Text({:?})",
-                        delta_ops::<(), _>(t.iter().map(|item| match item {
+                        delta_ops(t.iter().map(|item| match item {
                             loro_delta::DeltaItem::Retain { len, attr } =>
                                 (Some(*len), 0, String::new(), attr.clone()),
                             loro_delta::DeltaItem::Replace {
@@ -2193,7 +2328,7 @@ pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBa
                     ),
                     Diff::List(l) => format!(
                         "List({:?})",
-                        delta_ops::<(), _>(l.iter().map(|item| match item {
+                        delta_ops(l.iter().map(|item| match item {
                             loro_delta::DeltaItem::Retain { len, attr } =>
                                 (Some(*len), 0, String::new(), *attr),
                             loro_delta::DeltaItem::Replace {
@@ -2405,6 +2540,10 @@ mod recorded_inverse_tests {
         doc.set_peer_id(9).unwrap();
         let undo = UndoManager::new(&doc);
         undo.set_merge_interval(0);
+        // A root acquired through a handle stays visible (empty) after undo
+        // (context/root-container-visibility.md), so acquire it first.
+        #[cfg(feature = "counter")]
+        let counter = doc.get_counter("c");
         let original = doc.get_deep_value();
         let text = doc.get_text("t");
         text.insert(5, "hello", PosType::Unicode).unwrap();
@@ -2419,7 +2558,7 @@ mod recorded_inverse_tests {
         doc.commit_then_renew();
         #[cfg(feature = "counter")]
         {
-            doc.get_counter("c").increment(2.5).unwrap();
+            counter.increment(2.5).unwrap();
             doc.commit_then_renew();
         }
         let edited = doc.get_deep_value();

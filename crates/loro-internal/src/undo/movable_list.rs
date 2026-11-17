@@ -132,6 +132,18 @@ struct AnchorSearch {
     candidates: Vec<Element>,
 }
 
+impl Element {
+    fn from_state(index: usize, id: CompactIdLp, e: &crate::state::MovableListElement) -> Self {
+        Self {
+            index,
+            id,
+            position: e.pos,
+            value_id: e.value_id,
+            value: e.value.clone(),
+        }
+    }
+}
+
 fn element_at(list: &MovableListState, index: usize) -> Option<Element> {
     let (id, e) = list.get_elem_at_given_pos(index, IndexType::ForUser)?;
     #[cfg(test)]
@@ -139,13 +151,7 @@ fn element_at(list: &MovableListState, index: usize) -> Option<Element> {
         let (n, model) = stats.get();
         stats.set((n + 1, model));
     });
-    Some(Element {
-        index,
-        id,
-        position: e.pos,
-        value_id: e.value_id,
-        value: e.value.clone(),
-    })
+    Some(Element::from_state(index, id, e))
 }
 
 fn element_by_id(list: &MovableListState, id: CompactIdLp) -> Option<Element> {
@@ -296,7 +302,9 @@ pub(crate) struct RecordedInverse {
     before: Vec<Element>,
     after: Vec<Element>,
     targets: FxHashSet<CompactIdLp>,
-    searches: Vec<AnchorSearch>,
+    /// The anchor searches left and right of the targets (one contiguous
+    /// range, so shared by all of them); `None` without targets before.
+    sides: Option<[AnchorSearch; 2]>,
 }
 
 impl RecordedInverse {
@@ -320,13 +328,7 @@ impl RecordedInverse {
         };
         if len > 0 {
             list.walk_user(start, 1, |index, id, e| {
-                before.push(Element {
-                    index,
-                    id,
-                    position: e.pos,
-                    value_id: e.value_id,
-                    value: e.value.clone(),
-                });
+                before.push(Element::from_state(index, id, e));
                 before.len() < len
             });
             if before.len() != len {
@@ -334,15 +336,14 @@ impl RecordedInverse {
             }
         }
         let targets: FxHashSet<_> = before.iter().map(|e| e.id).collect();
-        let mut searches = Vec::new();
+        let mut sides = None;
         if !before.is_empty() {
             // The targets are contiguous (one element, or one deleted range),
             // so every target's nearest non-target neighbours are the range's.
             let first = before.first().unwrap().index as isize;
             let last = before.last().unwrap().index as isize;
-            let mut sides = Vec::new();
             let len = list.len() as isize;
-            for (start, direction) in [(first - 1, -1), (last + 1, 1)] {
+            sides = Some([(first - 1, -1), (last + 1, 1)].map(|(start, direction)| {
                 // As `AnchorSearch::extend` with a width of
                 // `RECORDED_CANDIDATES`, walking instead of one query per index.
                 let mut candidates = Vec::new();
@@ -351,29 +352,20 @@ impl RecordedInverse {
                     list.walk_user(start as usize, direction, |index, id, e| {
                         next = index as isize + direction;
                         if !targets.contains(&id) {
-                            candidates.push(Element {
-                                index,
-                                id,
-                                position: e.pos,
-                                value_id: e.value_id,
-                                value: e.value.clone(),
-                            });
+                            candidates.push(Element::from_state(index, id, e));
                         }
                         candidates.len() < RECORDED_CANDIDATES
                     });
                 }
-                sides.push(AnchorSearch {
+                AnchorSearch {
                     next,
                     direction,
                     width: RECORDED_CANDIDATES * 2,
                     exhausted: next < 0 || next >= len,
                     done: false,
                     candidates,
-                });
-            }
-            for _ in &before {
-                searches.extend(sides.iter().cloned());
-            }
+                }
+            }));
         }
         Some(Self {
             cid,
@@ -383,19 +375,22 @@ impl RecordedInverse {
             before,
             after: Vec::new(),
             targets,
-            searches,
+            sides,
         })
     }
 
-    /// Reads the state after `edit`.
-    pub(crate) fn finish(&mut self, list: &MovableListState, edit: ListEdit) -> Option<()> {
-        match edit {
+    /// Reads the state after the edit. The inserted elements are read later,
+    /// where they end up ([`Self::refresh_after`]); here only their ids.
+    pub(crate) fn finish(&mut self, list: &MovableListState) -> Option<()> {
+        match self.edit {
             ListEdit::Insert { pos, len } => {
-                for i in pos..pos + len {
-                    let e = element_at(list, i)?;
-                    self.targets.insert(e.id);
-                    self.after.push(e);
-                }
+                let mut n = 0;
+                list.walk_user(pos, 1, |_, id, _| {
+                    self.targets.insert(id);
+                    n += 1;
+                    n < len
+                });
+                (n == len).then_some(())?;
             }
             ListEdit::Delete { .. } => {}
             ListEdit::Set { index } | ListEdit::Move { to: index, .. } => {
@@ -474,16 +469,14 @@ impl RecordedInverse {
 
     /// A list created by the span's own ops did not exist at its deps.
     pub(crate) fn mark_created_in(&mut self, span: IdSpan) {
-        if matches!(&self.cid, ContainerID::Normal { peer, counter, .. }
-            if *peer == span.peer && span.counter.contains(*counter))
-        {
+        if super::created_in(&self.cid, span) {
             self.before_alive = false;
         }
     }
 
     /// Only inserts: nothing existed before, so there is nothing to anchor.
     pub(crate) fn is_insert_only(&self) -> bool {
-        self.before.is_empty() && self.searches.is_empty()
+        self.before.is_empty()
     }
 
     /// Only deletes (of one contiguous range each).
@@ -507,7 +500,11 @@ impl RecordedInverse {
             // keeps its right one.
             let mut before = other.before.clone();
             before.extend(self.before.iter().cloned());
-            (other.searches[0].clone(), self.searches[1].clone(), before)
+            (
+                other.sides.as_ref().unwrap()[0].clone(),
+                self.sides.as_ref().unwrap()[1].clone(),
+                before,
+            )
         } else if other.before.first().unwrap().index == start {
             let shift = self.before.len();
             let mut before = self.before.clone();
@@ -515,22 +512,18 @@ impl RecordedInverse {
                 e.index += shift;
                 e
             }));
-            let mut right = other.searches[1].clone();
+            let mut right = other.sides.as_ref().unwrap()[1].clone();
             right.next += shift as isize;
             for e in &mut right.candidates {
                 e.index += shift;
             }
-            (self.searches[0].clone(), right, before)
+            (self.sides.as_ref().unwrap()[0].clone(), right, before)
         } else {
             return false;
         };
         self.before = before;
         self.targets.extend(other.targets.iter().copied());
-        self.searches.clear();
-        for _ in &self.before {
-            self.searches.push(left.clone());
-            self.searches.push(right.clone());
-        }
+        self.sides = Some([left, right]);
         self.after_alive = other.after_alive;
         true
     }
@@ -553,16 +546,26 @@ impl RecordedInverse {
         self.after.sort_by_key(|e| e.index);
     }
 
+    /// Everything the record keeps, the elements' values included.
     pub(crate) fn estimated_bytes(&self) -> usize {
-        let elems = self.before.len()
-            + self.after.len()
-            + self
-                .searches
+        let elements = self.before.iter().chain(&self.after).chain(
+            self.sides
                 .iter()
-                .map(|s| s.candidates.len())
-                .sum::<usize>();
-        elems * std::mem::size_of::<Element>()
-            + self.targets.len() * std::mem::size_of::<CompactIdLp>()
+                .flatten()
+                .flat_map(|s| s.candidates.iter()),
+        );
+        let element_bytes: usize = elements
+            .map(|e| {
+                std::mem::size_of::<Element>()
+                    + e.value
+                        .estimated_heap_bytes()
+                        .saturating_sub(std::mem::size_of::<LoroValue>())
+            })
+            .sum();
+        std::mem::size_of::<Self>()
+            + crate::event::container_id_estimated_bytes(&self.cid)
+            + element_bytes
+            + self.targets.capacity() * (std::mem::size_of::<CompactIdLp>() + 1)
     }
 
     /// The [`Inverse`] a checkout at `deps` and at the span's last op would
@@ -576,7 +579,12 @@ impl RecordedInverse {
                 elements: self.before.clone(),
                 targets: self.targets.clone(),
                 full: false,
-                searches: self.searches.clone(),
+                // One pair per target, as a checkout's capture gives.
+                searches: self
+                    .sides
+                    .iter()
+                    .flat_map(|sides| self.before.iter().flat_map(move |_| sides.iter().cloned()))
+                    .collect(),
             },
             after: Snapshot {
                 alive: self.after_alive,
@@ -590,8 +598,27 @@ impl RecordedInverse {
     }
 }
 
+/// The [`Scopes`] of a span whose movable-list ops are all recorded: the
+/// records name the same elements that [`scopes`] finds by reading the ops
+/// (and, for deletes, the history of each deleted element), so a recorded
+/// undo reads no history.
+pub(crate) fn scopes_from_records(records: &[RecordedInverse]) -> Scopes {
+    records
+        .iter()
+        .map(|r| {
+            (
+                r.cid.clone(),
+                Scope {
+                    ids: r.targets.clone(),
+                    full: false,
+                },
+            )
+        })
+        .collect()
+}
+
 /// Whether `records` cover exactly the lists and elements the span's ops name
-/// (`scopes`); otherwise undo captures them by checkout.
+/// (`scopes`); checked in the undo log's verification mode.
 pub(crate) fn records_match_scopes(records: &[RecordedInverse], scopes: &Scopes) -> bool {
     records.len() == scopes.len()
         && records.iter().all(|r| {
