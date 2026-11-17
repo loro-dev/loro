@@ -2201,6 +2201,85 @@ mod recorded_inverse_tests {
     use super::*;
     use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
 
+    /// Tree creations and moves between live parents (with a remote peer's
+    /// concurrent tree edits in between) undo and redo from recorded inverses:
+    /// with the checkout comparison on, every step is compared; with it off,
+    /// no diff is computed.
+    #[test]
+    fn tree_creations_and_moves_undo_from_recorded_inverses() {
+        use crate::TreeParentId;
+        for verify in [true, false] {
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(1).unwrap();
+            let remote = LoroDoc::new_auto_commit();
+            remote.set_peer_id(2).unwrap();
+            let tree = doc.get_tree("tree");
+            let mut nodes = Vec::new();
+            for _ in 0..4 {
+                nodes.push(tree.create(TreeParentId::Root).unwrap());
+            }
+            doc.commit_then_renew();
+            let undo = UndoManager::new(&doc);
+            undo.set_merge_interval(0);
+            let original = doc.get_deep_value();
+            let sync = || {
+                remote
+                    .import(&doc.export(ExportMode::updates(&remote.oplog_vv())).unwrap())
+                    .unwrap();
+                let rtree = remote.get_tree("tree");
+                rtree.create(TreeParentId::Root).unwrap();
+                remote.commit_then_renew();
+                doc.import(&remote.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+                    .unwrap();
+            };
+            let child = tree.create(TreeParentId::Node(nodes[0])).unwrap();
+            doc.commit_then_renew();
+            sync();
+            tree.mov(nodes[1], TreeParentId::Node(nodes[2])).unwrap();
+            doc.commit_then_renew();
+            tree.mov(child, TreeParentId::Root).unwrap();
+            doc.commit_then_renew();
+            sync();
+            tree.move_to(nodes[3], TreeParentId::Root, 0).unwrap();
+            doc.commit_then_renew();
+            let steps = undo.undo_count();
+            assert_eq!(steps, 4);
+
+            SKIP_VERIFY.with(|s| s.set(!verify));
+            RECORDED_INVERSES_USED.with(|n| n.set(0));
+            crate::diff_calc::DIFF_CALCS.with(|n| n.set(0));
+            for _ in 0..steps {
+                assert!(undo.undo().unwrap());
+            }
+            let undone = doc.get_deep_value();
+            for _ in 0..steps {
+                assert!(undo.redo().unwrap());
+            }
+            SKIP_VERIFY.with(|s| s.set(false));
+            assert_eq!(
+                RECORDED_INVERSES_USED.with(|n| n.get()),
+                2 * steps,
+                "verify {verify}"
+            );
+            if !verify {
+                assert_eq!(crate::diff_calc::DIFF_CALCS.with(|n| n.get()), 0);
+            }
+            // Only the local nodes' places are undone; the remote nodes stay.
+            let roots = |v: &loro_common::LoroValue| match v {
+                loro_common::LoroValue::Map(m) => match m.get("tree") {
+                    Some(loro_common::LoroValue::List(l)) => l.len(),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            assert_eq!(
+                roots(&undone),
+                roots(&original) + 2,
+                "two remote roots stay"
+            );
+        }
+    }
+
     /// Undo and redo of text, list, map and counter edits on a document opened
     /// from a snapshot compute no diff, so they build no history cache, parsed
     /// history or diff tracker (the first undo used to, and they stayed).

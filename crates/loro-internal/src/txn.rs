@@ -1574,6 +1574,81 @@ fn local_op_inverse(
                 ResolvedMapDelta::new().with_entry(key.clone(), old),
             ))
         }
+        // A node created new, or moved between live parents. Deleting a node, or
+        // moving it out of a deleted parent, revives (or retires) a subtree and
+        // its metadata; those steps still check out.
+        (ContainerType::Tree, EventHint::Tree(items)) if items.len() == 1 => {
+            use crate::delta::TreeExternalDiff;
+            let item = &items[0];
+            let tree = state.container_state_mut(container).as_tree_state_mut()?;
+            let action = match &item.action {
+                TreeExternalDiff::Create { parent, index, .. } => {
+                    if !tree.is_node_unexist(&item.target) {
+                        return None;
+                    }
+                    TreeExternalDiff::Delete {
+                        old_parent: *parent,
+                        old_index: *index,
+                    }
+                }
+                TreeExternalDiff::Move {
+                    parent,
+                    index,
+                    old_parent,
+                    old_index,
+                    ..
+                } => {
+                    if tree.parent(&item.target) != Some(*old_parent)
+                        || tree.is_node_deleted(&item.target) != Some(false)
+                    {
+                        return None;
+                    }
+                    TreeExternalDiff::Move {
+                        parent: *old_parent,
+                        index: *old_index,
+                        position: tree.get_position(&item.target)?,
+                        old_parent: *parent,
+                        old_index: *index,
+                    }
+                }
+                // A leaf with empty metadata comes back with one `Create`; a
+                // subtree or metadata would be revived with their full state.
+                TreeExternalDiff::Delete {
+                    old_parent,
+                    old_index,
+                } => {
+                    if tree.parent(&item.target) != Some(*old_parent)
+                        || tree.is_node_deleted(&item.target) != Some(false)
+                        || tree
+                            .children_num(&crate::TreeParentId::Node(item.target))
+                            .unwrap_or(0)
+                            > 0
+                    {
+                        return None;
+                    }
+                    let position = tree.get_position(&item.target)?;
+                    let meta = item.target.associated_meta_container();
+                    if let Some(meta_idx) = state.arena.id_to_idx(&meta) {
+                        if !crate::state::ContainerState::is_state_empty(
+                            state.container_state_mut(meta_idx),
+                        ) {
+                            return None;
+                        }
+                    }
+                    TreeExternalDiff::Create {
+                        parent: *old_parent,
+                        index: *old_index,
+                        position,
+                    }
+                }
+            };
+            let mut diff = TreeDiff::default();
+            diff.diff.push(TreeDiffItem {
+                target: item.target,
+                action,
+            });
+            Some(Diff::Tree(diff))
+        }
         #[cfg(feature = "counter")]
         (ContainerType::Counter, EventHint::Counter(x)) => Some(Diff::Counter(-x)),
         _ => None,
