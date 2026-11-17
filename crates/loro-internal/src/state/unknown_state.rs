@@ -48,6 +48,12 @@ impl ContainerState for UnknownState {
         Ok(())
     }
 
+    fn undo_record(&mut self, _diff: &InternalDiff) -> super::undo_log::StateUndo {
+        super::undo_log::StateUndo::None
+    }
+
+    fn apply_undo(&mut self, _undo: super::undo_log::StateUndo) {}
+
     fn apply_local_op(&mut self, _raw_op: &RawOp, _op: &Op) -> LoroResult<ApplyLocalOpReturn> {
         unreachable!()
     }

@@ -624,6 +624,76 @@ impl ContainerState for RichtextState {
         Ok(())
     }
 
+    fn undo_record(&mut self, diff: &InternalDiff) -> super::undo_log::StateUndo {
+        use super::undo_log::RichtextUndoStep;
+        let InternalDiff::RichtextRaw(delta) = diff else {
+            unreachable!()
+        };
+        let mut steps = Vec::new();
+        // Entity indexes, as in `apply_diff`: each `Replace` deletes, then
+        // inserts, at `index`; `index + deleted - inserted` is the same
+        // position before the diff.
+        let (mut index, mut inserted, mut deleted) = (0usize, 0usize, 0usize);
+        for span in delta.iter() {
+            match span {
+                loro_delta::DeltaItem::Retain { len, .. } => index += len,
+                loro_delta::DeltaItem::Replace { value, delete, .. } => {
+                    if *delete > 0 {
+                        let old = index + deleted - inserted;
+                        let chunks = self.state.get_mut().chunks_in_entity_range(old, *delete);
+                        steps.push(RichtextUndoStep::Deleted { index, chunks });
+                        deleted += delete;
+                    }
+                    let len = value.rle_len();
+                    if len > 0 {
+                        steps.push(RichtextUndoStep::Inserted { index, len });
+                        index += len;
+                        inserted += len;
+                    }
+                }
+            }
+        }
+        super::undo_log::StateUndo::Richtext(steps)
+    }
+
+    fn apply_undo(&mut self, undo: super::undo_log::StateUndo) {
+        use super::undo_log::RichtextUndoStep;
+        let super::undo_log::StateUndo::Richtext(steps) = undo else {
+            unreachable!()
+        };
+        // Reinserting goes through `apply_diff`, which restores the style
+        // ranges of reinserted anchors as an import would.
+        let doc = Weak::new();
+        for step in steps.into_iter().rev() {
+            let mut delta: DeltaRope<RichtextStateChunk, ()> = DeltaRope::new();
+            let index = match &step {
+                RichtextUndoStep::Inserted { index, .. }
+                | RichtextUndoStep::Deleted { index, .. } => *index,
+            };
+            if index > 0 {
+                delta.push_retain(index, ());
+            }
+            match step {
+                RichtextUndoStep::Inserted { len, .. } => {
+                    delta.push_delete(len);
+                }
+                RichtextUndoStep::Deleted { chunks, .. } => {
+                    for chunk in chunks {
+                        delta.push_insert(chunk, ());
+                    }
+                }
+            }
+            self.apply_diff(
+                InternalDiff::RichtextRaw(delta),
+                DiffApplyContext {
+                    mode: crate::diff_calc::DiffMode::Checkout,
+                    doc: &doc,
+                },
+            )
+            .expect("undoing a rich text diff cannot be rejected");
+        }
+    }
+
     fn apply_diff(&mut self, diff: InternalDiff, _ctx: DiffApplyContext) -> LoroResult<()> {
         self.update_version();
         let InternalDiff::RichtextRaw(richtext) = diff else {

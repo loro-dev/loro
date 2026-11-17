@@ -240,6 +240,48 @@ on WASM).
 Tests: `crates/loro/tests/out_of_core.rs` (a file at the path; `/proc/self` as a
 directory that rejects writes, Linux only).
 
+## Import rollback without reading history
+
+Verified against code 2026-11-17.
+
+An import that a hard quota (`max_doc_bytes` or a global one) may reject
+applies its diff to the state, then checks the quota. A rejected import used
+to restore the state by computing the inverse diff from history
+(`revert_state_silently`). If that read failed (a corrupt block), a single
+import returned an error with state and history left at the new version and
+its import scope open; a batch rolled history back but not state. Computing the
+inverse before applying was correct but cost 3.8 -> 18 ms for a 20k-op import
+and about 250x for small updates into a large text.
+
+Now the state records an undo log (`state/undo_log.rs`) while such an import
+applies: `DocState::begin_import_undo`, `take_import_undo`, `undo_import`. Before
+`DocState::apply_diff` applies a container's diff it asks the container for a
+`StateUndo` (`ContainerState::undo_record`), read from the current state:
+
+| State | Record |
+| --- | --- |
+| Map | each key's previous `MapValue` (or absent) |
+| List | inserted ranges; deleted elements with their ids |
+| Rich text | inserted entity ranges; deleted chunks (`chunks_in_entity_range`), reinserted through `apply_diff` so style ranges are rebuilt |
+| Tree | each node's previous `TreeStateNode` (or absent); moving back with its old `last_move_op` restores sibling order |
+| Movable list | the inverse of each `InnerState` primitive (list item insert/remove, `pointed_by`, element, child map), recorded while applying (`finish_undo_record`) |
+| Counter | the previous value |
+
+`undo_import` replays the records newest first, then restores the frontiers and
+clears the liveness caches; callers then remove created containers (created
+journal) and roll back the op log as before. It reads no history and cannot
+fail. Recording costs about as much as the part of the state the diff changes,
+and nothing is recorded without a hard quota. All three paths use it:
+`update_oplog_and_apply_delta_to_state_if_needed`,
+`import_changes_and_apply_delta_to_state_if_needed`, and `BatchImportGuard::finish`
+(around the reattach checkout). A new kind of state change in `apply_diff` or a
+new state type must extend its record, or rollback is inexact.
+
+Tests (`src/tests/import_undo_log.rs`): a differential test that rejects random
+imports (single and batch) of concurrent edits to every container type and
+compares the document with a fork taken before the import, including after the
+same later edits and imports; and `rolling_back_a_rejected_import_computes_no_diff`.
+
 ## Spill IO errors
 
 Verified against code 2026-11-16.

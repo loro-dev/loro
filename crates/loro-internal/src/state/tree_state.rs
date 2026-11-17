@@ -1362,6 +1362,41 @@ impl ContainerState for TreeState {
 
     // How we apply the diff is coupled with the [DiffMode] we used to calculate the diff.
     // So be careful when you modify this function.
+    fn undo_record(&mut self, diff: &InternalDiff) -> super::undo_log::StateUndo {
+        let InternalDiff::Tree(tree) = diff else {
+            unreachable!()
+        };
+        // Applying an item changes only its target's record (and the target's
+        // entry in the children cache, which follows from the record).
+        let mut seen = FxHashSet::default();
+        let mut nodes = Vec::new();
+        for item in tree.diff.iter() {
+            if seen.insert(item.target) {
+                nodes.push((item.target, self.trees.get(&item.target).cloned()));
+            }
+        }
+        super::undo_log::StateUndo::Tree(nodes)
+    }
+
+    fn apply_undo(&mut self, undo: super::undo_log::StateUndo) {
+        let super::undo_log::StateUndo::Tree(nodes) = undo else {
+            unreachable!()
+        };
+        for (target, old) in nodes.into_iter().rev() {
+            match old {
+                // Its original move op id restores its place among its siblings.
+                Some(node) => self
+                    .mov(target, node.parent, node.last_move_op, node.position, false)
+                    .expect("moving a node back without checks cannot fail"),
+                None => {
+                    if let Some(node) = self.trees.remove(&target) {
+                        self.try_delete_position_cache(&node.parent, &target);
+                    }
+                }
+            }
+        }
+    }
+
     fn apply_diff(&mut self, diff: InternalDiff, ctx: DiffApplyContext) -> LoroResult<()> {
         if let InternalDiff::Tree(tree) = &diff {
             let need_check = !matches!(ctx.mode, DiffMode::Checkout | DiffMode::Linear);

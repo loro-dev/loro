@@ -32,20 +32,12 @@ Verified against code 2026-11-16（基于 `perf/memory-budget-remaining`）。
 
 每项标注：**复现**＝有运行证据；**代码确定**＝读码确定、未运行复现；**猜测**＝待证实。
 
-### A. 导入回滚自身失败时的原子性（复现；语义已定：必须可恢复，不接受 panic）
+### A. 导入回滚自身失败时的原子性（已修：`perf/import-undo-log`，状态侧 undo log）
 
-- 复现（failpoint `FAIL_NEXT_REVERT_DIFF`，本地分支 `wip/a-precompute-inverse`）：额度拒绝的单包更新
-  返回 Err 但状态与历史都停在新版本；批量路径历史回滚而状态未回滚。测试
-  `a_quota_rejected_import_rolls_back_even_if_the_inverse_diff_fails`（在该 WIP 分支上）。
-- 已试“额度下先算逆向 diff 再改状态”（同一 WIP 分支，可用但太慢，未提交）：
-  `budget_import_bench`，base `61da4189` 对 head，两轮交错：
-  20k op 导入 3.8 → 18 ms、峰值 2.45 → 6.6 MB；20 万字文档逐个导入 300 个小更新 2.9 → 710–841 ms（约 250 倍），
-  因为每次逆向 diff 都从历史重建整段文本。无额度时无变化。
-- 建议方案：状态侧 undo log。额度可能拒绝的导入在 `DocState::apply_diff` 时让各容器状态记录自己覆盖掉的内容
-  （Map 旧值；List/Text 被删内容与插入区间；RichText 样式锚点；MovableList 旧位置/值；Tree 旧父节点/位置与被删子树；
-  Counter 已有 journal；新建容器已有 created journal；从 KV 载入的冷容器可丢回 KV），回滚按逆序应用，不读历史，
-  代价与本次改动大小成正比。工作量大（7 种状态），需要与现有逆向 diff 回滚做随机差分测试。
-- 验收同 70 的 A，另加上面两个场景的 A/B。
+见 memory-budget.md “Import rollback without reading history”。下一步（用户已定）：用同一套 undo log
+重写 UndoManager，去掉 undo/redo 中的 checkout，行为必须与现在完全一致（现有测试不改 + 新旧差分测试）。
+难点：日志是提交时的位置，需要在本地提交时转成那一刻的逆向 `DiffBatch`（A_i）；B_i 改用栈里已合成的远端 diff
+是否与 checkout 等价需要差分测试证明（#1245、#1228 曾因合成有损出错）。
 
 ### B'. 增量全局估算的后续（代码确定）
 
