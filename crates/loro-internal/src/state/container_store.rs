@@ -40,6 +40,12 @@ mod inner_store;
 /// │                                                   │
 /// │                                                   │
 /// └───────────────────────────────────────────────────┘
+/// Backends filled by [`ContainerStore::prepare_kv_backend`].
+pub(crate) struct PreparedKvBackend {
+    main: Arc<Mutex<dyn KvStore>>,
+    root: Option<Arc<Mutex<dyn KvStore>>>,
+}
+
 pub(crate) struct ContainerStore {
     arena: SharedArena,
     store: InnerStore,
@@ -427,12 +433,29 @@ impl ContainerStore {
         }
     }
 
-    pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
-        if let Some(root) = &self.shallow_root_store {
-            let empty_gc = kv.lock().new_empty_same_backend();
-            root.store.lock().replace_kv_backend(empty_gc);
+    /// Fill `kv` (and a backend of the same kind for the shallow root) with this
+    /// store's entries without installing them. See [`Self::install_kv_backend`].
+    pub(crate) fn prepare_kv_backend(
+        &self,
+        kv: Arc<Mutex<dyn KvStore>>,
+    ) -> Result<PreparedKvBackend, String> {
+        self.store.fill_kv_backend(&kv)?;
+        let root = match &self.shallow_root_store {
+            Some(root) => {
+                let empty_gc = kv.lock().new_empty_same_backend();
+                root.store.lock().fill_kv_backend(&empty_gc)?;
+                Some(empty_gc)
+            }
+            None => None,
+        };
+        Ok(PreparedKvBackend { main: kv, root })
+    }
+
+    pub(crate) fn install_kv_backend(&mut self, prepared: PreparedKvBackend) {
+        if let (Some(root), Some(root_kv)) = (&self.shallow_root_store, prepared.root) {
+            root.store.lock().install_kv_backend(root_kv);
         }
-        self.store.replace_kv_backend(kv);
+        self.store.install_kv_backend(prepared.main);
     }
 
     pub(crate) fn demote_cold_states(

@@ -48,6 +48,11 @@ pub trait KvStore: std::fmt::Debug + Send + Sync {
     }
     fn set_block_cache(&mut self, _cache: SharedBlockCache) {}
     fn flush(&mut self) {}
+    /// The first failure to write spilled tables to disk since the previous call.
+    /// Such tables stay in memory; only out-of-core backends report anything.
+    fn take_spill_error(&mut self) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Debug)]
@@ -137,6 +142,10 @@ impl KvStore for SharedKvStore {
 
     fn flush(&mut self) {
         self.0.lock().flush()
+    }
+
+    fn take_spill_error(&mut self) -> Option<String> {
+        self.0.lock().take_spill_error()
     }
 }
 
@@ -326,6 +335,10 @@ impl KvStore for FileKvStore {
 
     fn flush(&mut self) {
         self.flush()
+    }
+
+    fn take_spill_error(&mut self) -> Option<String> {
+        self.take_spill_error()
     }
 }
 

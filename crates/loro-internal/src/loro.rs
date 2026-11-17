@@ -231,15 +231,16 @@ impl LoroDoc {
                 pool_doc_id,
                 cached_doc_bytes: std::sync::atomic::AtomicUsize::new(0),
                 last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
+                drop_gate: Default::default(),
             }
         });
         if pool_doc_id != 0 {
-            global_pool().register(pool_doc_id, Arc::downgrade(&inner));
+            global_pool().register(pool_doc_id, Arc::downgrade(&inner), inner.drop_gate.clone());
             if global_flags != 0 {
                 refresh_cached_doc_bytes_for_inner(&inner);
             }
         }
-        LoroDoc { inner }
+        LoroDoc::from_inner(inner)
     }
 
     pub fn fork(&self) -> Self {
@@ -2409,16 +2410,6 @@ impl LoroDoc {
         txn.begin_rollback_scope(id);
         self.state.lock().begin_local_rollback(id);
         Some(id)
-    }
-
-    pub(crate) fn arm_budget_scope_on_txn(&self, txn: &mut Transaction) {
-        if txn.budget_base_scope().is_some() || txn.has_rollback_scope() {
-            return;
-        }
-        txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
-        let id = Self::next_rollback_scope_id();
-        txn.begin_budget_rollback_scope(id);
-        self.state.lock().begin_local_rollback(id);
     }
 
     fn end_apply_diff_scope(&self, scope: u64) {
@@ -6272,12 +6263,28 @@ fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
     LoroError::memory_limit_exceeded(MemoryLimitKind::GlobalBudget, used_usize, limit_usize)
 }
 
+/// Registered documents and the drop gate each shares with its handles.
+type RegistryEntries = FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>;
+
 struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
-    docs: parking_lot::Mutex<FxHashMap<u64, std::sync::Weak<LoroDocInner>>>,
+    docs: parking_lot::Mutex<RegistryEntries>,
     total_cached_doc_bytes: std::sync::atomic::AtomicU64,
     global_block_cache: SharedBlockCache,
+    /// Usage left by the last soft sweep that could not reach its target, or 0.
+    /// See [`GlobalMemoryPool::soft_reclaim_backed_off`].
+    soft_backoff_floor: std::sync::atomic::AtomicU64,
+    /// Soft sweeps skipped since `soft_backoff_floor` was set.
+    soft_backoff_skips: std::sync::atomic::AtomicU32,
 }
+
+/// A failed soft sweep is retried once usage grows by this fraction of what it
+/// left (at least [`SOFT_BACKOFF_MIN_GROWTH`]) ...
+const SOFT_BACKOFF_GROWTH_DIVISOR: u64 = 8;
+const SOFT_BACKOFF_MIN_GROWTH: u64 = 256 * 1024;
+/// ... or after this many skipped checks, so documents that became idle in the
+/// meantime are still reclaimed without growth.
+const SOFT_BACKOFF_MAX_SKIPS: u32 = 64;
 
 impl GlobalMemoryPool {
     fn new() -> Self {
@@ -6286,11 +6293,45 @@ impl GlobalMemoryPool {
             docs: parking_lot::Mutex::new(FxHashMap::default()),
             total_cached_doc_bytes: std::sync::atomic::AtomicU64::new(0),
             global_block_cache: SharedBlockCache::new(DEFAULT_GLOBAL_BLOCK_CACHE_BYTES),
+            soft_backoff_floor: std::sync::atomic::AtomicU64::new(0),
+            soft_backoff_skips: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
-    fn register(&self, id: u64, weak: std::sync::Weak<LoroDocInner>) {
-        self.docs.lock().insert(id, weak);
+    /// Whether the soft sweep should be skipped for usage `used` above the high
+    /// watermark: the previous sweep could not get below its target, usage has
+    /// not grown meaningfully since, and fewer than [`SOFT_BACKOFF_MAX_SKIPS`]
+    /// checks were skipped. Each sweep runs Stage 1 (including a full KV flush
+    /// and arena copy) on the active document, so repeating one that cannot
+    /// succeed made every commit pay for it. Hard admission does not use this.
+    fn soft_reclaim_backed_off(&self, used: u64) -> bool {
+        let floor = self.soft_backoff_floor.load(Relaxed);
+        if floor == 0 {
+            return false;
+        }
+        let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+        used <= floor.saturating_add(growth)
+            && self.soft_backoff_skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
+    }
+
+    fn record_soft_sweep_result(&self, reached_target: bool, used: u64) {
+        if reached_target {
+            if self.soft_backoff_floor.load(Relaxed) != 0 {
+                self.soft_backoff_floor.store(0, Relaxed);
+            }
+        } else {
+            self.soft_backoff_skips.store(0, Relaxed);
+            self.soft_backoff_floor.store(used.max(1), Relaxed);
+        }
+    }
+
+    fn register(
+        &self,
+        id: u64,
+        weak: std::sync::Weak<LoroDocInner>,
+        gate: Arc<crate::DocDropGate>,
+    ) {
+        self.docs.lock().insert(id, (weak, gate));
     }
 
     fn unregister(&self, id: u64, last_cached_bytes: usize) {
@@ -6303,18 +6344,23 @@ impl GlobalMemoryPool {
         }
     }
 
-    fn snapshot_live_docs(&self) -> Vec<Arc<LoroDocInner>> {
-        let mut docs = self.docs.lock();
-        let mut live = Vec::with_capacity(docs.len());
-        docs.retain(|_, weak| {
-            if let Some(arc) = weak.upgrade() {
-                live.push(arc);
-                true
-            } else {
-                false
-            }
-        });
-        live
+    /// Upgrades every registered document under its drop gate. The returned
+    /// references release under the same gate, so they never make a document's
+    /// last handle skip its final commit (see `crate::DocDropGate`). The registry
+    /// lock is not held while a gate is taken: the final drop of a document may
+    /// run under its gate and then takes the registry lock to unregister.
+    fn snapshot_live_docs(&self) -> Vec<RegistryRef> {
+        let entries: Vec<_> = {
+            let mut docs = self.docs.lock();
+            docs.retain(|_, (weak, _)| weak.strong_count() > 0);
+            docs.values()
+                .map(|(weak, gate)| (weak.clone(), gate.clone()))
+                .collect()
+        };
+        entries
+            .into_iter()
+            .filter_map(|(weak, gate)| RegistryRef::upgrade(&weak, gate))
+            .collect()
     }
 
     fn update_cached_doc_bytes(&self, doc: &LoroDocInner, new_bytes: usize) {
@@ -6334,7 +6380,7 @@ impl GlobalMemoryPool {
 
     fn docs_estimated_with_override(
         &self,
-        live: &[Arc<LoroDocInner>],
+        live: &[RegistryRef],
         active_override: Option<(u64, usize)>,
     ) -> (u64, u64) {
         let mut total_docs = 0u64;
@@ -6372,7 +6418,7 @@ impl GlobalMemoryPool {
 
     fn reclaim_idle_docs_to_target(
         &self,
-        live: &[Arc<LoroDocInner>],
+        live: &[RegistryRef],
         exclude_doc_id: Option<u64>,
         target_bytes: u64,
         force_full: bool,
@@ -6397,7 +6443,7 @@ impl GlobalMemoryPool {
             }
         }
 
-        let mut candidates: Vec<&Arc<LoroDocInner>> = live
+        let mut candidates: Vec<&RegistryRef> = live
             .iter()
             .filter(|doc| exclude_doc_id != Some(doc.pool_doc_id))
             .collect();
@@ -6471,16 +6517,18 @@ impl GlobalMemoryPool {
             return;
         };
         let target = budget.effective_target_watermark().unwrap_or(high);
+        let mut live = None;
         let initial_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
-            let live = self.snapshot_live_docs();
-            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
+            let docs = live.insert(self.snapshot_live_docs());
+            self.docs_estimated_with_override(docs, Some((active_doc.pool_doc_id, active_bytes)))
                 .0
         };
         let wasm_pressure = cfg!(target_arch = "wasm32")
             && budget.wasm_heap_pressure(wasm_linear_memory_bytes(), initial_used);
         if initial_used <= high && !wasm_pressure {
+            self.record_soft_sweep_result(true, initial_used);
             return;
         }
 
@@ -6489,29 +6537,28 @@ impl GlobalMemoryPool {
         } else {
             target
         };
-
-        let live = self.snapshot_live_docs();
-        let mut cur_used = if !heap_tracker_active() {
-            self.docs_estimated_with_override(&live, Some((active_doc.pool_doc_id, active_bytes)))
-                .0
-        } else {
-            initial_used
-        };
-        if cur_used <= effective_target && !wasm_pressure {
+        if initial_used <= effective_target && !wasm_pressure {
+            return;
+        }
+        if self.soft_reclaim_backed_off(initial_used) {
             return;
         }
 
-        cur_used = self.reclaim_idle_docs_to_target(
+        let live = live.unwrap_or_else(|| self.snapshot_live_docs());
+        let mut cur_used = self.reclaim_idle_docs_to_target(
             &live,
             Some(active_doc.pool_doc_id),
             effective_target,
             false,
         );
         if cur_used <= effective_target {
+            self.record_soft_sweep_result(true, cur_used);
             return;
         }
 
         // Fallback: if idle docs alone couldn't meet target, trim Stage 1 + Stage 2 on active doc.
+        #[cfg(test)]
+        ACTIVE_FALLBACK_PASSES.with(|n| n.set(n.get() + 1));
         state.evict_value_cache_to_bytes(0);
         state.reclaim_auxiliary_caches();
         oplog.compact_history();
@@ -6521,14 +6568,14 @@ impl GlobalMemoryPool {
         active_doc.diff_calculator.lock().reclaim_cold_caches(0);
         let _ = shrink_undo_managers_inner(active_doc);
 
-        let after_stage1 = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
         cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
             self.cached_estimated_total()
         };
         if cur_used <= effective_target {
-            let _ = after_stage1;
+            self.record_soft_sweep_result(true, cur_used);
             return;
         }
 
@@ -6540,6 +6587,12 @@ impl GlobalMemoryPool {
         state.flush_kv();
         oplog.flush_kv();
         let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        cur_used = if heap_tracker_active() {
+            tracked_allocated_heap_bytes()
+        } else {
+            self.cached_estimated_total()
+        };
+        self.record_soft_sweep_result(cur_used <= effective_target, cur_used);
     }
 
     fn check_global_budget_with_active(
@@ -6579,6 +6632,73 @@ impl GlobalMemoryPool {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = linear_before;
         Ok(())
+    }
+}
+
+impl LoroDocInner {
+    /// On the inner document, so the registry can arm a scope without creating a
+    /// temporary `LoroDoc` handle while it holds the transaction lock.
+    pub(crate) fn arm_budget_scope_on_txn(&self, txn: &mut Transaction) {
+        if txn.budget_base_scope().is_some() || txn.has_rollback_scope() {
+            return;
+        }
+        txn.doc_budget_limit = self.memory_budget.lock().max_doc_bytes;
+        let id = LoroDoc::next_rollback_scope_id();
+        txn.begin_budget_rollback_scope(id);
+        self.state.lock().begin_local_rollback(id);
+    }
+}
+
+/// A temporary strong reference taken by the global registry. See
+/// [`GlobalMemoryPool::snapshot_live_docs`].
+pub(crate) struct RegistryRef {
+    doc: Option<Arc<LoroDocInner>>,
+    gate: Arc<crate::DocDropGate>,
+}
+
+impl RegistryRef {
+    #[cfg(test)]
+    fn from_doc(doc: &LoroDoc) -> Self {
+        let gate = doc.drop_gate.clone();
+        let weak = Arc::downgrade(&doc.inner);
+        Self::upgrade(&weak, gate).unwrap()
+    }
+
+    fn upgrade(
+        weak: &std::sync::Weak<LoroDocInner>,
+        gate: Arc<crate::DocDropGate>,
+    ) -> Option<Self> {
+        let doc = {
+            let mut refs = gate.registry_refs.lock_ignoring_poison();
+            let doc = weak.upgrade()?;
+            *refs += 1;
+            doc
+        };
+        Some(Self {
+            doc: Some(doc),
+            gate,
+        })
+    }
+}
+
+impl std::ops::Deref for RegistryRef {
+    type Target = Arc<LoroDocInner>;
+
+    fn deref(&self) -> &Self::Target {
+        self.doc
+            .as_ref()
+            .expect("registry reference is alive until drop")
+    }
+}
+
+impl Drop for RegistryRef {
+    fn drop(&mut self) {
+        let mut refs = self.gate.registry_refs.lock_ignoring_poison();
+        // Drop before decrementing: the gate must never see this reference in
+        // `strong_count` without also seeing it in `registry_refs`. If this was
+        // the last reference, the last handle has already committed.
+        drop(self.doc.take());
+        *refs -= 1;
     }
 }
 
@@ -6719,6 +6839,7 @@ fn refresh_cached_doc_bytes_for_inner(doc: &Arc<LoroDocInner>) {
 #[cfg(test)]
 thread_local! {
     static IDLE_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static ACTIVE_FALLBACK_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn try_reclaim_idle_doc(
@@ -6790,6 +6911,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
     pool.global_block_cache
         .set_max_bytes(budget.effective_block_cache_bytes());
     *pool.budget.lock() = budget;
+    pool.record_soft_sweep_result(true, 0);
     GLOBAL_BUDGET_FLAGS.store(flags, Release);
 
     let live = pool.snapshot_live_docs();
@@ -6806,7 +6928,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
                             && !txn.has_rollback_scope()
                             && txn.budget_base_scope().is_none()
                         {
-                            LoroDoc::from_inner(doc.clone()).arm_budget_scope_on_txn(txn);
+                            doc.arm_budget_scope_on_txn(txn);
                         }
                     }
                 }
@@ -6947,7 +7069,42 @@ impl LoroDoc {
     /// Configures soft memory watermarks and hard memory quotas for this document.
     /// A new hard document quota applies to the next transaction. Pending edits
     /// retain the quota captured when that transaction began accepting edits.
+    ///
+    /// If moving the document to a new `spill_dir` fails, the document keeps its
+    /// current storage (and [`Self::memory_budget`] keeps reporting the previous
+    /// directory, so setting the same directory again retries), the failure is
+    /// logged, and the other settings are applied. Use
+    /// [`Self::try_set_memory_budget`] to get the error instead.
     pub fn set_memory_budget(&self, budget: MemoryBudget) {
+        let _ = self.set_memory_budget_inner(budget, false);
+    }
+
+    /// Like [`Self::set_memory_budget`], but if moving the document to a new
+    /// `spill_dir` fails (the directory cannot be created, or the spilled tables
+    /// cannot be written), returns the error and changes nothing.
+    pub fn try_set_memory_budget(&self, budget: MemoryBudget) -> LoroResult<()> {
+        self.set_memory_budget_inner(budget, true)
+    }
+
+    fn set_memory_budget_inner(&self, mut budget: MemoryBudget, strict: bool) -> LoroResult<()> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let prev_spill_dir = self.memory_budget.lock().spill_dir.clone();
+            if prev_spill_dir != budget.spill_dir {
+                if let Err(err) = self.switch_spill_backend(budget.spill_dir.as_deref()) {
+                    let err = LoroError::Unknown(
+                        format!("failed to switch the out-of-core spill directory: {err}")
+                            .into_boxed_str(),
+                    );
+                    if strict {
+                        return Err(err);
+                    }
+                    tracing::warn!(dir = ?budget.spill_dir, "{err}");
+                    budget.spill_dir = prev_spill_dir;
+                }
+            }
+        }
+        let _ = strict;
         let mut flags = 0u8;
         if budget.max_doc_bytes.is_some() {
             flags |= BUDGET_FLAG_MAX_DOC;
@@ -6970,80 +7127,8 @@ impl LoroDoc {
         let max_pending = budget.max_pending_bytes;
         let max_undo = budget.max_undo_bytes;
         let has_max_doc = budget.max_doc_bytes.is_some();
-        #[cfg(not(target_arch = "wasm32"))]
-        let new_spill_dir = budget.spill_dir.clone();
-        #[cfg(not(target_arch = "wasm32"))]
-        let prev_spill_dir = {
-            let mut guard = self.memory_budget.lock();
-            let prev = guard.spill_dir.clone();
-            *guard = budget;
-            prev
-        };
-        #[cfg(target_arch = "wasm32")]
-        {
-            *self.memory_budget.lock() = budget;
-        }
+        *self.memory_budget.lock() = budget;
         self.budget_flags.store(flags, Release);
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if prev_spill_dir != new_spill_dir {
-            type SpillBackends = (
-                Box<dyn crate::kv_store::KvStore>,
-                Arc<crate::sync::Mutex<dyn crate::kv_store::KvStore>>,
-            );
-            let block_cache = self.kv_block_cache.clone();
-            let make_backends = || -> std::io::Result<SpillBackends> {
-                match &new_spill_dir {
-                    Some(dir) => {
-                        let oplog_kv = crate::kv_store::FileKvStore::new(
-                            dir,
-                            crate::kv_store::MemKvConfig::default()
-                                .block_cache(block_cache.clone()),
-                        )?;
-                        let state_kv = crate::kv_store::FileKvStore::new(
-                            dir,
-                            crate::kv_store::MemKvConfig::default()
-                                .should_encode_none(false)
-                                .block_cache(block_cache.clone()),
-                        )?;
-                        Ok((
-                            Box::new(oplog_kv),
-                            Arc::new(crate::sync::Mutex::new(state_kv)),
-                        ))
-                    }
-                    None => {
-                        let oplog_kv = crate::kv_store::MemKvStore::new(
-                            crate::kv_store::MemKvConfig::default()
-                                .block_cache(block_cache.clone()),
-                        );
-                        let state_kv = crate::kv_store::MemKvStore::new(
-                            crate::kv_store::MemKvConfig::default()
-                                .should_encode_none(false)
-                                .block_cache(block_cache.clone()),
-                        );
-                        Ok((
-                            Box::new(oplog_kv),
-                            Arc::new(crate::sync::Mutex::new(state_kv)),
-                        ))
-                    }
-                }
-            };
-            match make_backends() {
-                Ok((oplog_kv, state_kv)) => {
-                    let oplog = self.oplog.lock();
-                    let mut state = self.state.lock();
-                    oplog.replace_kv_backend(oplog_kv);
-                    state.replace_kv_backend(state_kv);
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        ?err,
-                        dir = ?new_spill_dir,
-                        "failed to switch out-of-core spill directory"
-                    );
-                }
-            }
-        }
 
         self.oplog.lock().set_max_pending_bytes(max_pending);
         if let Some(max_undo_bytes) = max_undo {
@@ -7069,6 +7154,54 @@ impl LoroDoc {
         }
 
         self.enforce_memory_watermarks();
+        Ok(())
+    }
+
+    /// Move the op log and state stores (including a shallow root) to new
+    /// backends: out-of-core files under `dir`, or memory for `None`. Both new
+    /// stores are filled and flushed before either is installed, under the op
+    /// log and state locks, so a failure leaves the current stores in place.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn switch_spill_backend(&self, dir: Option<&std::path::Path>) -> Result<(), String> {
+        let block_cache = self.kv_block_cache.clone();
+        let (oplog_kv, state_kv): (
+            Box<dyn crate::kv_store::KvStore>,
+            Arc<crate::sync::Mutex<dyn crate::kv_store::KvStore>>,
+        ) = match dir {
+            Some(dir) => {
+                let make = |config: crate::kv_store::MemKvConfig| {
+                    crate::kv_store::FileKvStore::new(dir, config)
+                        .map_err(|e| format!("{}: {e}", dir.display()))
+                };
+                (
+                    Box::new(make(
+                        crate::kv_store::MemKvConfig::default().block_cache(block_cache.clone()),
+                    )?),
+                    Arc::new(crate::sync::Mutex::new(make(
+                        crate::kv_store::MemKvConfig::default()
+                            .should_encode_none(false)
+                            .block_cache(block_cache.clone()),
+                    )?)),
+                )
+            }
+            None => (
+                Box::new(crate::kv_store::MemKvStore::new(
+                    crate::kv_store::MemKvConfig::default().block_cache(block_cache.clone()),
+                )),
+                Arc::new(crate::sync::Mutex::new(crate::kv_store::MemKvStore::new(
+                    crate::kv_store::MemKvConfig::default()
+                        .should_encode_none(false)
+                        .block_cache(block_cache.clone()),
+                ))),
+            ),
+        };
+        let oplog = self.oplog.lock();
+        let mut state = self.state.lock();
+        let oplog_kv = oplog.prepare_kv_backend(oplog_kv)?;
+        let state_kv = state.prepare_kv_backend(state_kv)?;
+        oplog.install_kv_backend(oplog_kv);
+        state.install_kv_backend(state_kv);
+        Ok(())
     }
 
     /// Returns a clone of the current [`MemoryBudget`] configuration.
@@ -7752,8 +7885,101 @@ mod reclamation_work_tests {
         doc.commit_then_renew();
         let pool = GlobalMemoryPool::new();
         IDLE_STAGE1_PASSES.with(|n| n.set(0));
-        pool.reclaim_idle_docs_to_target(&[doc.inner.clone()], None, 0, true);
+        pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true);
         IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
         assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
+    }
+
+    /// A soft sweep that cannot reach its target is not repeated on every
+    /// commit; it is retried after usage grows or after a bounded number of
+    /// skipped checks. (Hard admission, `check_global_budget_with_active`, never
+    /// reads the backoff.)
+    #[test]
+    fn a_failed_global_soft_sweep_backs_off_until_usage_grows() {
+        let pool = GlobalMemoryPool::new();
+        *pool.budget.lock() = GlobalMemoryBudget {
+            high_watermark_bytes: Some(1),
+            target_watermark_bytes: Some(1),
+            ..Default::default()
+        };
+        let doc = LoroDoc::new_auto_commit();
+        pool.register(
+            doc.pool_doc_id,
+            Arc::downgrade(&doc.inner),
+            doc.drop_gate.clone(),
+        );
+        let text = doc.get_text("t");
+        let edit_and_check = |s: &str| {
+            text.insert(0, s, crate::cursor::PosType::Unicode).unwrap();
+            doc.commit_then_renew();
+            let oplog = doc.oplog.lock();
+            let mut state = doc.state.lock();
+            let bytes = doc.memory_stats_locked(&oplog, &state, 0).total_bytes;
+            // `cached_doc_bytes` is shared with the process-wide pool; start this
+            // private pool's total from the active document alone.
+            doc.cached_doc_bytes.store(0, Relaxed);
+            pool.total_cached_doc_bytes.store(0, Relaxed);
+            pool.enforce_global_watermarks_for_active(&doc, &oplog, &mut state, 0, bytes);
+        };
+        let passes = || ACTIVE_FALLBACK_PASSES.with(|n| n.get());
+        let start = passes();
+        edit_and_check("first");
+        assert_eq!(passes() - start, 1);
+        for _ in 0..10 {
+            edit_and_check("x");
+        }
+        assert_eq!(passes() - start, 1, "no growth: backed off");
+
+        edit_and_check(&"grow".repeat(256 * 1024));
+        assert_eq!(passes() - start, 2, "usage grew: swept again");
+
+        for _ in 0..SOFT_BACKOFF_MAX_SKIPS + 1 {
+            edit_and_check("y");
+        }
+        assert_eq!(passes() - start, 3, "retried after the skip limit");
+    }
+
+    /// The registry's temporary reference must not make the last handle skip its
+    /// implicit commit; the registry's own release must not commit either.
+    #[test]
+    fn last_handle_commits_while_the_registry_holds_a_reference() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let doc = LoroDoc::new_auto_commit();
+        let updates = Arc::new(AtomicUsize::new(0));
+        let counter = updates.clone();
+        doc.subscribe_local_update(Box::new(move |_| {
+            counter.fetch_add(1, SeqCst);
+            true
+        }))
+        .detach();
+        doc.get_text("t")
+            .insert(0, "x", crate::cursor::PosType::Unicode)
+            .unwrap();
+        let weak = Arc::downgrade(&doc.inner);
+        let held = RegistryRef::from_doc(&doc);
+        let other = doc.clone();
+        drop(doc);
+        assert_eq!(updates.load(SeqCst), 0, "another handle is still alive");
+        drop(other);
+        assert_eq!(updates.load(SeqCst), 1, "the last handle commits");
+        assert!(weak.upgrade().is_some());
+        drop(held);
+        assert_eq!(updates.load(SeqCst), 1);
+        assert!(weak.upgrade().is_none());
+    }
+
+    /// Arming the hard scope from `set_global_memory_budget` used to create a
+    /// temporary `LoroDoc` while holding the transaction lock.
+    #[test]
+    fn arming_a_global_scope_does_not_create_a_handle() {
+        let doc = LoroDoc::new_auto_commit();
+        let before = Arc::strong_count(&doc.inner);
+        let held = RegistryRef::from_doc(&doc);
+        let mut guard = held.txn.try_lock().unwrap();
+        held.arm_budget_scope_on_txn(guard.as_mut().unwrap());
+        assert_eq!(Arc::strong_count(&doc.inner), before + 1);
+        drop(guard);
+        drop(held);
+        assert_eq!(Arc::strong_count(&doc.inner), before);
     }
 }

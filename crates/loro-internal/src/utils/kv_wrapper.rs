@@ -177,15 +177,21 @@ impl KvWrapper {
         self.kv.lock().flush();
     }
 
-    pub(crate) fn replace_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
-        let entries = self.scan_all_entries();
-        {
-            let mut dst = new_backend.lock();
-            for (k, v) in entries {
-                dst.set(&k, v);
-            }
-            dst.flush();
+    /// Copy every entry into `new_backend` (a store no one else uses yet) and
+    /// flush it, without installing it. Fails if the backend could not write its
+    /// tables out of core; `self` is unchanged either way.
+    pub(crate) fn fill_backend(&self, new_backend: &Arc<Mutex<dyn KvStore>>) -> Result<(), String> {
+        let kv = self.kv.lock();
+        let mut dst = new_backend.lock();
+        for (k, v) in kv.scan(Bound::Unbounded, Bound::Unbounded) {
+            dst.set(&k, v);
         }
+        dst.flush();
+        dst.take_spill_error().map_or(Ok(()), Err)
+    }
+
+    /// Install a backend filled by [`Self::fill_backend`].
+    pub(crate) fn install_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
         self.kv = new_backend;
     }
 }

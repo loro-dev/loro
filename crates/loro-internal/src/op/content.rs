@@ -67,7 +67,60 @@ impl InnerContent {
     }
 }
 
+/// The heap header of an `Arc` allocation (strong + weak counts).
+const ARC_HEADER_BYTES: usize = 16;
+
+fn value_payload_bytes(value: &LoroValue) -> usize {
+    value
+        .estimated_heap_bytes()
+        .saturating_sub(std::mem::size_of::<LoroValue>())
+}
+
 impl InnerContent {
+    /// Heap bytes this content owns beyond `size_of::<Op>()`: its boxed payload
+    /// (`Arc<MapSet>`, `Arc<SetListOp>`, `Arc<StyleOp>`, `Arc<TreeOp>`, future
+    /// values) and the values of a list insert, including nested values.
+    ///
+    /// This is a conservative per-document estimate. A payload that is shared
+    /// with materialized state, or a value buffer shared by the ops of one parsed
+    /// block, is counted once per op that refers to it. Text inserts point into
+    /// the string arena or the block's encoded bytes, which are accounted there.
+    /// O(size of the payload's value tree); callers cache the result per op batch.
+    pub(crate) fn payload_heap_bytes(&self) -> usize {
+        match self {
+            InnerContent::Map(set) => ARC_HEADER_BYTES
+                .saturating_add(std::mem::size_of::<MapSet>())
+                .saturating_add(set.key.len())
+                .saturating_add(set.value.as_ref().map_or(0, value_payload_bytes)),
+            InnerContent::Tree(_) => ARC_HEADER_BYTES.saturating_add(std::mem::size_of::<TreeOp>()),
+            InnerContent::List(list) => match list {
+                InnerListOp::Insert { slice, .. } => slice
+                    .as_slice()
+                    .iter()
+                    .map(value_payload_bytes)
+                    .fold(0usize, usize::saturating_add),
+                InnerListOp::Set(set) => ARC_HEADER_BYTES
+                    .saturating_add(std::mem::size_of_val::<
+                        crate::container::list::list_op::SetListOp,
+                    >(set))
+                    .saturating_add(value_payload_bytes(&set.value)),
+                InnerListOp::StyleStart(style) => ARC_HEADER_BYTES
+                    .saturating_add(std::mem::size_of_val(style.as_ref()))
+                    .saturating_add(style.key.len())
+                    .saturating_add(value_payload_bytes(&style.value)),
+                InnerListOp::InsertText { .. }
+                | InnerListOp::Delete(_)
+                | InnerListOp::Move { .. }
+                | InnerListOp::StyleEnd => 0,
+            },
+            InnerContent::Future(f) => match f {
+                #[cfg(feature = "counter")]
+                FutureInnerContent::Counter(_) => 0,
+                FutureInnerContent::Unknown { .. } => std::mem::size_of::<OwnedValue>(),
+            },
+        }
+    }
+
     pub fn estimate_storage_size(&self, kind: ContainerType) -> usize {
         match self {
             InnerContent::List(l) => l.estimate_storage_size(kind),

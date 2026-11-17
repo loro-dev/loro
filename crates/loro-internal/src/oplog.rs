@@ -652,8 +652,16 @@ impl OpLog {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn replace_kv_backend(&self, new_backend: Box<dyn crate::kv_store::KvStore>) {
-        self.change_store.replace_kv_backend(new_backend);
+    pub(crate) fn prepare_kv_backend(
+        &self,
+        new_backend: Box<dyn crate::kv_store::KvStore>,
+    ) -> Result<Box<dyn crate::kv_store::KvStore>, String> {
+        self.change_store.prepare_kv_backend(new_backend)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn install_kv_backend(&self, new_backend: Box<dyn crate::kv_store::KvStore>) {
+        self.change_store.install_kv_backend(new_backend);
     }
 
     pub(crate) fn compact_history(&self) {

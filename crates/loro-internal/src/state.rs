@@ -2832,8 +2832,15 @@ impl DocState {
         self.store.flush_kv();
     }
 
-    pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
-        self.store.replace_kv_backend(kv);
+    pub(crate) fn prepare_kv_backend(
+        &self,
+        kv: Arc<Mutex<dyn KvStore>>,
+    ) -> Result<container_store::PreparedKvBackend, String> {
+        self.store.prepare_kv_backend(kv)
+    }
+
+    pub(crate) fn install_kv_backend(&mut self, prepared: container_store::PreparedKvBackend) {
+        self.store.install_kv_backend(prepared);
     }
 
     pub(crate) fn demote_cold_states(

@@ -158,3 +158,90 @@ through metadata ordering and import. `import_batch_detailed_with_blob_results`
 accepts an exact-size iterator, avoiding an extra result vector on the existing
 Rust owned-bytes path. Preflight errors stay per-blob errors, including the
 single-blob special case. Large batches still use the two-pass streaming path.
+
+## Last handle and registry references
+
+Verified against code 2026-11-16.
+
+`Drop for LoroDoc` (`lib.rs`) commits pending edits only when it releases the last
+handle. The global registry (`GlobalMemoryPool::snapshot_live_docs`, `loro.rs`)
+holds temporary `Arc<LoroDocInner>`s; a plain `strong_count == 1` check made the
+last handle skip its commit while a scan held one, and the edits were lost when
+the registry released it (reproduced: about half of 20,000 drops with a thread
+calling `global_memory_stats`). `DocDropGate` (a mutex outside `LoroDocInner`,
+shared with the registry entry) fixes it:
+
+- `RegistryRef::upgrade` upgrades and increments `registry_refs` under the gate;
+  `RegistryRef::drop` drops its `Arc`, then decrements, under the gate.
+- A handle drop reads `strong_count - 1 - registry_refs` under the gate. If other
+  handles remain, it releases its `Arc` inside the gate (`ManuallyDrop`), so two
+  handles dropped concurrently cannot both see each other. Otherwise it commits.
+- The registry never commits. Its final release may drop the document under the
+  gate; that drop takes the registry lock, so `snapshot_live_docs` never holds
+  the registry lock while taking a gate.
+- Registry code must not create a `LoroDoc` handle from a registry reference
+  (`LoroDocInner::arm_budget_scope_on_txn` exists for that reason).
+- Short-lived `Weak` upgrades inside state code happen while a handle is in use,
+  so they cannot be the reference that outlives the last handle.
+
+Tests: `reclamation_work_tests` in `loro.rs`, two threaded tests in
+`crates/loro/tests/global_memory_budget.rs`, and the Loom model
+`crates/loro/tests/global_registry_loom.rs` (part of `pnpm test-loom`). The model
+starts the scan before the drop through a loom atomic; without that, DPOR sees
+no conflict (the registry map and `Arc` counts are not loom objects) and explores
+one execution. It fails against the old `strong_count` rule.
+
+## Boxed op payloads
+
+`InnerContent::payload_heap_bytes` (`op/content.rs`) estimates heap owned beyond
+`size_of::<Op>()`: `Arc<MapSet>`, `Arc<SetListOp>`, `Arc<StyleOp>`, `Arc<TreeOp>`,
+future values, and list-insert values. It is conservative: a value shared with
+state, or a parsed block's value buffer, is counted for each op that holds it.
+`Transaction` keeps the sum in `local_ops_payload_bytes` (pushed ops, recomputed
+from the kept ops in `roll_back_scope`). `ChangesBlock::parsed_bytes` caches the
+parsed-change total per block; every content mutation goes through
+`ChangesBlock::content_mut` (or invalidates directly in `push_change`), so a
+statistics read walks only blocks changed since the previous read. Before this,
+twenty 512 KiB overwrites of one key in a transaction were estimated at a few KiB
+and `try_commit` accepted them under a 2 MiB quota.
+
+## Spill directory switches
+
+`LoroDoc::set_memory_budget_inner` (`loro.rs`) moves the stores before it records
+a new `spill_dir`. `switch_spill_backend` builds both backends, then under the op
+log and state locks fills and flushes them (`ChangeStore::prepare_kv_backend`,
+`ContainerStore::prepare_kv_backend` including the shallow root, both scanning
+straight into the new store instead of collecting a `Vec`) and installs both only
+if neither reported a write failure (`KvStore::take_spill_error`, recorded by
+`FileKvStore::spill_tables`). On failure the current stores stay; the infallible
+setter logs it, keeps the previous `spill_dir` (so the same directory can be set
+again to retry) and applies the other fields; `try_set_memory_budget` returns the
+error and changes nothing. A switch only writes what the stores hold encoded at
+that moment; a later flush that cannot write keeps its tables in RAM and only
+logs (`take_spill_error` is not surfaced through a public API yet).
+Tests: `crates/loro/tests/out_of_core.rs` (a file at the path; `/proc/self` as a
+directory that rejects writes, Linux only).
+
+## Global soft-sweep backoff
+
+`GlobalMemoryPool::enforce_global_watermarks_for_active` falls back to Stage 1
+and Stage 2 on the active document when idle documents cannot bring usage to the
+target. When even that fails (live state larger than the target), every commit
+used to repeat it, including `oplog.flush_kv()` (rewrites the whole KV table)
+and `arena.shrink_spare_capacity()` (copies the string arena). Now
+`record_soft_sweep_result` stores the usage left by a failed sweep, and
+`soft_reclaim_backed_off` skips later sweeps until usage exceeds that by
+`max(floor / 8, 256 KiB)` or `SOFT_BACKOFF_MAX_SKIPS` (64) checks were skipped,
+so documents that become idle are still reclaimed without growth. Usage below
+the high watermark, a successful sweep, or `set_global_memory_budget` clears the
+backoff. Hard admission (`check_global_budget_with_active`) never reads it.
+The native estimate path now snapshots the registry once per sweep instead of
+twice. Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`. The
+per-document Stage 1 in `enforce_watermarks_with_budget_locked` has no backoff
+yet (see the follow-up prompt).
+
+## Remaining work
+
+Open items after `perf/memory-budget-followup-fixes`, with their evidence and the
+semantic decisions they need, are in
+[prompts/memory-budget/70](prompts/memory-budget/70-remaining-after-followup-fixes.md).

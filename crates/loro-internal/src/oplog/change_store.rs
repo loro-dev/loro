@@ -252,6 +252,68 @@ pub(crate) struct ChangesBlock {
     /// Where the arena reached when `content` was parsed from its bytes (`Both`). See
     /// [`ChangeStore::rollback_arena`].
     parsed_extent: ArenaExtent,
+    /// Memory of the parsed changes in `content`. Every mutation of `content` goes
+    /// through [`ChangesBlock::content_mut`], which clears it.
+    parsed_bytes: ParsedBytesCache,
+}
+
+/// The `change_cache_bytes` contribution of a block's parsed changes: change and
+/// op structs plus each op's [`Op::payload_heap_bytes`]. Computed when statistics
+/// first need it after the block's content last changed, so repeated statistics
+/// do not walk every op of every cached block. A block receiving appends (the
+/// tail of a peer's history) is recomputed once per append that is followed by
+/// a statistics read.
+#[derive(Debug)]
+struct ParsedBytesCache(std::sync::atomic::AtomicUsize);
+
+impl ParsedBytesCache {
+    const UNCOMPUTED: usize = usize::MAX;
+
+    fn get_or_compute(&self, changes: &[Change]) -> usize {
+        use std::sync::atomic::Ordering::Relaxed;
+        let cached = self.0.load(Relaxed);
+        if cached != Self::UNCOMPUTED {
+            return cached;
+        }
+        #[cfg(test)]
+        PARSED_BYTES_RECOMPUTES.with(|n| n.set(n.get() + 1));
+        let bytes = changes
+            .iter()
+            .map(|c| {
+                c.ops.iter().map(Op::payload_heap_bytes).fold(
+                    std::mem::size_of::<Change>()
+                        .saturating_add(c.ops.len().saturating_mul(std::mem::size_of::<Op>())),
+                    usize::saturating_add,
+                )
+            })
+            .fold(0usize, usize::saturating_add)
+            .min(Self::UNCOMPUTED - 1);
+        self.0.store(bytes, Relaxed);
+        bytes
+    }
+
+    fn invalidate(&mut self) {
+        *self.0.get_mut() = Self::UNCOMPUTED;
+    }
+}
+
+impl Default for ParsedBytesCache {
+    fn default() -> Self {
+        Self(std::sync::atomic::AtomicUsize::new(Self::UNCOMPUTED))
+    }
+}
+
+impl Clone for ParsedBytesCache {
+    fn clone(&self) -> Self {
+        Self(std::sync::atomic::AtomicUsize::new(
+            self.0.load(std::sync::atomic::Ordering::Relaxed),
+        ))
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static PARSED_BYTES_RECOMPUTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone)]
@@ -706,7 +768,7 @@ impl ChangeStore {
             let block = Arc::make_mut(block);
             let changes = Arc::make_mut(
                 block
-                    .content
+                    .content_mut()
                     .changes_mut(arena)
                     .expect("an unflushed block always holds parsed changes"),
             );
@@ -764,7 +826,7 @@ impl ChangeStore {
             if let ChangesBlockContent::Both(_, bytes) = &block.content {
                 if !arena.keeps(block.parsed_extent) {
                     let bytes = bytes.clone();
-                    Arc::make_mut(block).content = ChangesBlockContent::Bytes(bytes);
+                    *Arc::make_mut(block).content_mut() = ChangesBlockContent::Bytes(bytes);
                     dropped_body = true;
                 }
             }
@@ -1429,14 +1491,29 @@ impl ChangeStore {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn replace_kv_backend(&self, mut new_backend: Box<dyn KvStore>) {
-        let mut guard = self.external_kv.lock();
-        let entries: Vec<(Bytes, Bytes)> = guard.scan(Bound::Unbounded, Bound::Unbounded).collect();
-        for (k, v) in entries {
-            new_backend.set(&k, v);
+    /// Copy every entry into `new_backend` and flush it, without installing it.
+    /// Fails if the backend could not write its tables out of core. The caller
+    /// holds the op log lock until [`Self::install_kv_backend`], so no flush or
+    /// compaction writes the current store in between.
+    pub(crate) fn prepare_kv_backend(
+        &self,
+        mut new_backend: Box<dyn KvStore>,
+    ) -> Result<Box<dyn KvStore>, String> {
+        {
+            let guard = self.external_kv.lock();
+            for (k, v) in guard.scan(Bound::Unbounded, Bound::Unbounded) {
+                new_backend.set(&k, v);
+            }
         }
         new_backend.flush();
-        *guard = new_backend;
+        match new_backend.take_spill_error() {
+            Some(err) => Err(err),
+            None => Ok(new_backend),
+        }
+    }
+
+    pub(crate) fn install_kv_backend(&self, new_backend: Box<dyn KvStore>) {
+        *self.external_kv.lock() = new_backend;
     }
 
     pub(crate) fn new_empty_kv_backend(&self) -> Box<dyn KvStore> {
@@ -1454,33 +1531,20 @@ impl ChangeStore {
         for block in inner.mem_parsed_kv.values() {
             let base = std::mem::size_of::<ChangesBlock>() + 64;
             let content_bytes = match &block.content {
-                ChangesBlockContent::Changes(changes) => {
-                    let op_bytes: usize = changes
-                        .iter()
-                        .map(|c| {
-                            std::mem::size_of::<Change>()
-                                + c.ops.len().saturating_mul(std::mem::size_of::<Op>())
-                        })
-                        .sum();
-                    op_bytes.saturating_add(block.estimated_size)
-                }
+                ChangesBlockContent::Changes(changes) => block
+                    .parsed_bytes
+                    .get_or_compute(changes)
+                    .saturating_add(block.estimated_size),
                 ChangesBlockContent::Bytes(b) => b
                     .bytes
                     .len()
                     .saturating_add(if b.header.get().is_some() { 128 } else { 0 }),
-                ChangesBlockContent::Both(changes, b) => {
-                    let op_bytes: usize = changes
-                        .iter()
-                        .map(|c| {
-                            std::mem::size_of::<Change>()
-                                + c.ops.len().saturating_mul(std::mem::size_of::<Op>())
-                        })
-                        .sum();
-                    op_bytes
-                        .saturating_add(block.estimated_size)
-                        .saturating_add(b.bytes.len())
-                        .saturating_add(if b.header.get().is_some() { 128 } else { 0 })
-                }
+                ChangesBlockContent::Both(changes, b) => block
+                    .parsed_bytes
+                    .get_or_compute(changes)
+                    .saturating_add(block.estimated_size)
+                    .saturating_add(b.bytes.len())
+                    .saturating_add(if b.header.get().is_some() { 128 } else { 0 }),
             };
             change_cache_bytes = change_cache_bytes
                 .saturating_add(base)
@@ -1791,7 +1855,7 @@ fn compact_parsed_blocks_in(inner: &mut ChangeStoreInner) {
         if is_tail {
             if let ChangesBlockContent::Both(_, b) = &block.content {
                 let detached = b.detached_clone();
-                Arc::make_mut(block).content = ChangesBlockContent::Bytes(detached);
+                *Arc::make_mut(block).content_mut() = ChangesBlockContent::Bytes(detached);
             }
         } else if block.flushed {
             to_remove.push(*id);
@@ -2712,12 +2776,19 @@ impl ChangesBlock {
             flushed: true,
             content,
             parsed_extent: ArenaExtent::default(),
+            parsed_bytes: ParsedBytesCache::default(),
         })
     }
 
     #[allow(dead_code)]
     pub(crate) fn content(&self) -> &ChangesBlockContent {
         &self.content
+    }
+
+    /// The only way to change `content`: clears the cached parsed-change bytes.
+    fn content_mut(&mut self) -> &mut ChangesBlockContent {
+        self.parsed_bytes.invalidate();
+        &mut self.content
     }
 
     fn new(change: Change, _a: &SharedArena) -> Self {
@@ -2735,6 +2806,7 @@ impl ChangesBlock {
             content,
             flushed: false,
             parsed_extent: ArenaExtent::default(),
+            parsed_bytes: ParsedBytesCache::default(),
         }
     }
 
@@ -2787,6 +2859,7 @@ impl ChangesBlock {
 
         let is_full = new_change_size + self.estimated_size > MAX_BLOCK_SIZE;
         let this = Arc::make_mut(self);
+        this.parsed_bytes.invalidate();
         let changes = this.content.changes_mut(a).unwrap();
         let changes = Arc::make_mut(changes);
         match changes.last_mut() {
@@ -2825,13 +2898,13 @@ impl ChangesBlock {
             ChangesBlockContent::Both(_, bytes) => {
                 let bytes = bytes.clone();
                 let this = Arc::make_mut(self);
-                this.content = ChangesBlockContent::Bytes(bytes.clone());
+                *this.content_mut() = ChangesBlockContent::Bytes(bytes.clone());
                 bytes
             }
             ChangesBlockContent::Changes(changes) => {
                 let bytes = ChangesBlockBytes::serialize(changes, a);
                 let this = Arc::make_mut(self);
-                this.content = ChangesBlockContent::Bytes(bytes.clone());
+                *this.content_mut() = ChangesBlockContent::Bytes(bytes.clone());
                 bytes
             }
         }
@@ -2845,7 +2918,7 @@ impl ChangesBlock {
                 let changes = bytes.parse(a)?;
                 let b = bytes.clone();
                 let this = Arc::make_mut(self);
-                this.content = ChangesBlockContent::Both(Arc::new(changes), b);
+                *this.content_mut() = ChangesBlockContent::Both(Arc::new(changes), b);
                 this.parsed_extent = a.extent();
                 Ok(())
             }
@@ -3093,6 +3166,55 @@ mod test {
 
     use super::*;
 
+    fn parsed_bytes_recomputes() -> usize {
+        PARSED_BYTES_RECOMPUTES.with(|n| n.get())
+    }
+
+    /// Statistics include the boxed payload of parsed ops, and only blocks whose
+    /// content changed since the last statistics read are walked again.
+    #[test]
+    fn parsed_block_statistics_count_payloads_and_walk_only_changed_blocks() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        for i in 0..8 {
+            doc.get_map("m")
+                .insert("k", format!("{i:08}").repeat(8 * 1024).as_str())
+                .unwrap();
+            doc.commit_then_renew();
+        }
+        let first = doc.memory_stats();
+        assert!(
+            first.change_cache_bytes >= 8 * 64 * 1024,
+            "the overwritten values held by parsed history ops must be counted: {}",
+            first.change_cache_bytes
+        );
+
+        for peer in 2..=8u64 {
+            doc.set_peer_id(peer).unwrap();
+            doc.get_map("m").insert("p", peer as i64).unwrap();
+            doc.commit_then_renew();
+        }
+        let first = doc.memory_stats();
+        let before = parsed_bytes_recomputes();
+        let again = doc.memory_stats();
+        assert_eq!(
+            parsed_bytes_recomputes(),
+            before,
+            "clean blocks reuse their sums"
+        );
+        assert_eq!(again.change_cache_bytes, first.change_cache_bytes);
+
+        doc.get_map("m").insert("k", 1).unwrap();
+        doc.commit_then_renew();
+        let before = parsed_bytes_recomputes();
+        let _ = doc.memory_stats();
+        assert_eq!(
+            parsed_bytes_recomputes() - before,
+            1,
+            "only the appended block"
+        );
+    }
+
     #[test]
     fn ordinary_export_preserves_warm_parsed_blocks_and_lazy_metadata() {
         let doc = LoroDoc::new_auto_commit();
@@ -3179,7 +3301,7 @@ mod test {
         // shortcut, even if the imported bytes match that old copy exactly.
         let mut changes = dirty.content.try_changes().unwrap().clone();
         changes[0].deps = Frontiers::from_id(ID::new(9, 0));
-        dirty.content = ChangesBlockContent::Changes(Arc::new(changes));
+        *dirty.content_mut() = ChangesBlockContent::Changes(Arc::new(changes));
         dirty.flushed = false;
         store.inner.lock().mem_parsed_kv.insert(id, Arc::new(dirty));
         assert!(!store.contains_encoded_block(id, &block_bytes));
