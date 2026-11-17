@@ -3,7 +3,7 @@ use bytes::Bytes;
 use loro_kv_store::{mem_store::MemKvConfig, MemKvStore};
 use std::{collections::BTreeSet, ops::Bound, sync::Arc};
 
-use crate::kv_store::KvStore;
+use crate::kv_store::{KvStore, SharedBlockCache};
 
 /// This thin wrapper aims to limit the ability to modify the kv store and make
 /// it easy to find all the modifications.
@@ -21,12 +21,19 @@ impl Clone for KvWrapper {
 }
 
 impl KvWrapper {
+    #[allow(dead_code)]
     pub fn new_mem() -> Self {
+        Self::new_mem_with_cache(SharedBlockCache::default_per_doc())
+    }
+
+    pub fn new_mem_with_cache(block_cache: SharedBlockCache) -> Self {
         Self {
             // kv: Arc::new(Mutex::new(BTreeMap::new())),
             kv: Arc::new(Mutex::new(MemKvStore::new(
                 // set false because it's depended by GC snapshot's import & export
-                MemKvConfig::default().should_encode_none(false),
+                MemKvConfig::default()
+                    .should_encode_none(false)
+                    .block_cache(block_cache),
             ))),
         }
     }
@@ -146,6 +153,34 @@ impl KvWrapper {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.kv.lock().is_empty()
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> usize {
+        self.kv.lock().estimated_memory_bytes()
+    }
+
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.kv.lock().spilled_disk_bytes()
+    }
+
+    pub(crate) fn set_block_cache(&self, cache: SharedBlockCache) {
+        self.kv.lock().set_block_cache(cache);
+    }
+
+    pub(crate) fn flush_compressed(&self) {
+        self.kv.lock().flush();
+    }
+
+    pub(crate) fn replace_backend(&mut self, new_backend: Arc<Mutex<dyn KvStore>>) {
+        let entries = self.scan_all_entries();
+        {
+            let mut dst = new_backend.lock();
+            for (k, v) in entries {
+                dst.set(&k, v);
+            }
+            dst.flush();
+        }
+        self.kv = new_backend;
     }
 }
 

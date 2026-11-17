@@ -1,15 +1,16 @@
 use crate::block::BlockIter;
 use crate::compress::CompressionType;
-use crate::sstable::{SsTable, SsTableBuilder, SsTableIter};
+use crate::sstable::{SharedBlockCache, SsTable, SsTableBuilder, SsTableIter};
 use crate::{KvIterator, MergeIterator};
 use bytes::Bytes;
 
 use std::ops::Bound;
 use std::{cmp::Ordering, collections::BTreeMap};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MemKvStore {
     mem_table: BTreeMap<Bytes, Bytes>,
+    mem_table_bytes: usize,
     // From the oldest to the newest
     ss_table: Vec<SsTable>,
     block_size: usize,
@@ -17,12 +18,39 @@ pub struct MemKvStore {
     /// It's only true when using it to fuzz.
     /// Otherwise, importing and exporting GC snapshot relies on this field being false to work.
     should_encode_none: bool,
+    block_cache: SharedBlockCache,
 }
 
+impl Clone for MemKvStore {
+    fn clone(&self) -> Self {
+        let block_cache = SharedBlockCache::new(self.block_cache.max_bytes());
+        let ss_table = self
+            .ss_table
+            .iter()
+            .map(|t| {
+                let mut cloned = t.clone();
+                cloned.set_block_cache(block_cache.clone());
+                cloned
+            })
+            .collect();
+        Self {
+            mem_table: self.mem_table.clone(),
+            mem_table_bytes: self.mem_table_bytes,
+            ss_table,
+            block_size: self.block_size,
+            compression_type: self.compression_type,
+            should_encode_none: self.should_encode_none,
+            block_cache,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct MemKvConfig {
     block_size: usize,
     compression_type: CompressionType,
     should_encode_none: bool,
+    block_cache: SharedBlockCache,
 }
 
 impl Default for MemKvConfig {
@@ -31,6 +59,7 @@ impl Default for MemKvConfig {
             block_size: MemKvStore::DEFAULT_BLOCK_SIZE,
             compression_type: CompressionType::LZ4,
             should_encode_none: false,
+            block_cache: SharedBlockCache::default_per_doc(),
         }
     }
 }
@@ -55,6 +84,11 @@ impl MemKvConfig {
         self
     }
 
+    pub fn block_cache(mut self, block_cache: SharedBlockCache) -> Self {
+        self.block_cache = block_cache;
+        self
+    }
+
     pub fn build(self) -> MemKvStore {
         MemKvStore::new(self)
     }
@@ -63,14 +97,45 @@ impl MemKvConfig {
 impl MemKvStore {
     pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
     const EXPORT_ENTRY_OVERHEAD: usize = 8;
+    const MEM_ENTRY_OVERHEAD: usize = 64;
 
     pub fn new(config: MemKvConfig) -> Self {
         Self {
             mem_table: BTreeMap::new(),
+            mem_table_bytes: 0,
             ss_table: Vec::new(),
             block_size: config.block_size,
             compression_type: config.compression_type,
             should_encode_none: config.should_encode_none,
+            block_cache: config.block_cache,
+        }
+    }
+
+    pub fn set_block_cache(&mut self, block_cache: SharedBlockCache) {
+        self.block_cache = block_cache.clone();
+        for table in &mut self.ss_table {
+            table.set_block_cache(block_cache.clone());
+        }
+    }
+
+    pub fn block_cache(&self) -> &SharedBlockCache {
+        &self.block_cache
+    }
+
+    /// Approximate RAM footprint of this KV store excluding the `SharedBlockCache`
+    /// (which may be shared across stores and should be accounted once per cache).
+    pub fn estimated_memory_bytes(&self) -> usize {
+        self.mem_table_bytes
+            + self
+                .ss_table
+                .iter()
+                .map(SsTable::estimated_memory_bytes)
+                .sum::<usize>()
+    }
+
+    pub fn flush(&mut self) {
+        if !self.mem_table.is_empty() || self.ss_table.len() > 1 {
+            let _ = self.export_all();
         }
     }
 
@@ -95,7 +160,16 @@ impl MemKvStore {
             return;
         }
 
-        self.mem_table.insert(Bytes::copy_from_slice(key), value);
+        let k = Bytes::copy_from_slice(key);
+        let added = k.len() + value.len() + Self::MEM_ENTRY_OVERHEAD;
+        if let Some(old) = self.mem_table.insert(k, value) {
+            self.mem_table_bytes = self
+                .mem_table_bytes
+                .saturating_sub(key.len() + old.len() + Self::MEM_ENTRY_OVERHEAD)
+                .saturating_add(added);
+        } else {
+            self.mem_table_bytes = self.mem_table_bytes.saturating_add(added);
+        }
     }
 
     pub fn compare_and_swap(&mut self, key: &[u8], old: Option<Bytes>, new: Bytes) -> bool {
@@ -180,7 +254,7 @@ impl MemKvStore {
 
     #[cfg(test)]
     fn cached_block_bytes(&self) -> u64 {
-        self.ss_table.iter().map(SsTable::cached_block_bytes).sum()
+        self.block_cache.used_bytes() as u64
     }
 
     /// The number of valid keys in the mem table and sstable, it's expensive to call
@@ -271,7 +345,8 @@ impl MemKvStore {
             return Bytes::new();
         }
         self.mem_table.clear();
-        let ss = builder.build();
+        self.mem_table_bytes = 0;
+        let ss = builder.build_with_cache(self.block_cache.clone());
         let ans = ss.export_all();
         let _ = std::mem::replace(&mut self.ss_table, vec![ss]);
         ans
@@ -284,7 +359,8 @@ impl MemKvStore {
             return Ok(());
         }
 
-        let ss_table = SsTable::import_all(bytes, false).map_err(|e| e.to_string())?;
+        let ss_table = SsTable::import_all_with_cache(bytes, false, true, self.block_cache.clone())
+            .map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())
     }
@@ -300,7 +376,9 @@ impl MemKvStore {
             return Ok(());
         }
 
-        let ss_table = SsTable::import_all_unchecked(bytes).map_err(|e| e.to_string())?;
+        let ss_table =
+            SsTable::import_all_with_cache(bytes, false, false, self.block_cache.clone())
+                .map_err(|e| e.to_string())?;
         self.ss_table.push(ss_table);
         Ok(())
     }
@@ -390,7 +468,8 @@ impl MemKvStore {
         }
 
         self.mem_table.clear();
-        let ss = builder.build();
+        self.mem_table_bytes = 0;
+        let ss = builder.build_with_cache(self.block_cache.clone());
         let ans = ss.export_all();
         let _ = std::mem::replace(&mut self.ss_table, vec![ss]);
         ans

@@ -59,6 +59,7 @@ pub mod id;
 pub mod jsonpath;
 pub mod kv_store;
 pub mod loro;
+pub mod memory;
 pub mod op;
 pub mod oplog;
 pub mod subscription;
@@ -96,9 +97,10 @@ pub use fractional_index::FractionalIndex;
 pub use loro_common::{loro_value, to_value};
 pub use loro_common::{
     Counter, CounterSpan, IdLp, IdSpan, IdSpanVector, Lamport, LoroEncodeError, LoroError,
-    LoroResult, LoroTreeError, PeerID, TreeID, ID,
+    LoroResult, LoroTreeError, MemoryLimitExceeded, MemoryLimitKind, PeerID, TreeID, ID,
 };
 pub use loro_common::{LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue};
+pub use memory::{DocMemoryStats, MemoryBudget};
 #[cfg(feature = "wasm")]
 pub use value::wasm;
 pub use value::{ApplyDiff, LoroValue, ToJson};
@@ -171,6 +173,16 @@ pub struct LoroDocInner {
     first_commit_from_peer_subs:
         SubscriberSetWithQueue<(), FirstCommitFromPeerCallback, FirstCommitFromPeerPayload>,
     pre_commit_subs: SubscriberSetWithQueue<(), PreCommitCallback, PreCommitCallbackPayload>,
+    pub(crate) undo_managers: crate::sync::Mutex<
+        Vec<
+            std::sync::Weak<
+                parking_lot::ReentrantMutex<std::cell::RefCell<undo::UndoManagerInner>>,
+            >,
+        >,
+    >,
+    pub(crate) memory_budget: crate::sync::Mutex<memory::MemoryBudget>,
+    pub(crate) budget_flags: std::sync::atomic::AtomicU8,
+    pub(crate) kv_block_cache: kv_store::SharedBlockCache,
 }
 
 /// The version of the loro crate

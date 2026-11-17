@@ -136,6 +136,12 @@ impl TrackerTexts {
             f(offset, prev);
         }
     }
+
+    pub fn estimated_bytes(&self) -> usize {
+        let slice_vec_bytes = self.pieces.capacity() * std::mem::size_of::<(u32, BytesSlice)>();
+        let text_bytes: usize = self.pieces.iter().map(|(_, s)| s.len()).sum();
+        slice_vec_bytes.saturating_add(text_bytes)
+    }
 }
 
 fn as_str(text: &BytesSlice) -> &str {

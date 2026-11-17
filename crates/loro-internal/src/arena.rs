@@ -1,5 +1,6 @@
 mod str_arena;
-use self::str_arena::{StrArena, StrArenaCheckpoint};
+use self::str_arena::StrArena;
+pub(crate) use self::str_arena::StrArenaCheckpoint;
 use crate::sync::{Mutex, MutexGuard, RwLock, RwLockWriteGuard};
 use crate::{
     change::Lamport,
@@ -418,6 +419,14 @@ impl SharedArena {
         }
 
         self.inner.str.lock().rollback(checkpoint.str);
+    }
+
+    pub(crate) fn str_checkpoint(&self) -> StrArenaCheckpoint {
+        self.inner.str.lock().checkpoint()
+    }
+
+    pub(crate) fn rollback_str(&self, checkpoint: StrArenaCheckpoint) {
+        self.inner.str.lock().rollback(checkpoint);
     }
 
     pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
@@ -942,6 +951,36 @@ impl SharedArena {
         F: Fn(&SharedArena, ID) -> CreatorOp + Send + Sync + 'static,
     {
         self.inner.containers.write().creator_resolver = Some(Arc::new(resolver));
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> usize {
+        let c = self.inner.containers.read();
+        let container_bytes = c
+            .container_idx_to_id
+            .capacity()
+            .saturating_mul(std::mem::size_of::<ContainerID>())
+            .saturating_add(
+                c.depth
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<NonZeroU32>>()),
+            )
+            .saturating_add(c.container_id_to_idx.capacity().saturating_mul(
+                std::mem::size_of::<ContainerID>() + std::mem::size_of::<ContainerIdx>() + 8,
+            ))
+            .saturating_add(
+                c.parents
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ContainerIdx>() * 2 + 8),
+            )
+            .saturating_add(
+                c.root_c_idx
+                    .capacity()
+                    .saturating_add(c.top_level_root_c_idx.capacity())
+                    .saturating_mul(std::mem::size_of::<ContainerIdx>()),
+            );
+        drop(c);
+        let str_bytes = self.inner.str.lock().bytes_len();
+        container_bytes.saturating_add(str_bytes)
     }
 }
 

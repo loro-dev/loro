@@ -31,6 +31,10 @@ pub(crate) struct ContainerWrapper {
     /// that uses the cached value, cleared when the eviction pass considers
     /// this wrapper.
     value_cache_referenced: bool,
+    /// Second-chance bit for cold state demotion (`InnerStore::demote_cold_states`).
+    state_referenced: bool,
+    /// Exact contribution currently included in `InnerStore::value_cache_bytes`.
+    accounted_value_cache_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -140,6 +144,24 @@ impl LazyDecodedValue {
             _ => None,
         }
     }
+
+    fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::Value(value) | Self::Text { value, .. } => std::mem::size_of::<Self>()
+                .saturating_add(value.estimated_heap_bytes())
+                .saturating_sub(std::mem::size_of::<LoroValue>()),
+            Self::Map { ordered, value } => {
+                let ordered_bytes: usize = ordered
+                    .iter()
+                    .map(|(k, v)| k.capacity() + v.estimated_heap_bytes() + 32)
+                    .sum();
+                let materialized = value.get().map_or(0, |v| v.estimated_heap_bytes());
+                std::mem::size_of::<Self>()
+                    .saturating_add(ordered_bytes)
+                    .saturating_add(materialized)
+            }
+        }
+    }
 }
 
 impl ContainerWrapper {
@@ -160,6 +182,8 @@ impl ContainerWrapper {
             flushed: false,
             in_value_cache_queue: false,
             value_cache_referenced: false,
+            state_referenced: true,
+            accounted_value_cache_bytes: 0,
         }
     }
 
@@ -183,6 +207,7 @@ impl ContainerWrapper {
     /// It will decode the state if it is not decoded
     pub fn get_state(&mut self, idx: ContainerIdx, ctx: ContainerCreationContext) -> &State {
         self.decode_state(idx, ctx).unwrap();
+        self.state_referenced = true;
         match &self.data {
             ContainerData::State(state) => state,
             ContainerData::Lazy(_) => unreachable!("ContainerWrapper state should be decoded"),
@@ -197,6 +222,7 @@ impl ContainerWrapper {
     ) -> &mut State {
         self.decode_state(idx, ctx).unwrap();
         self.flushed = false;
+        self.state_referenced = true;
         match &mut self.data {
             ContainerData::State(state) => state,
             ContainerData::Lazy(_) => unreachable!("ContainerWrapper state should be decoded"),
@@ -211,6 +237,7 @@ impl ContainerWrapper {
         match &mut self.data {
             ContainerData::State(state) => {
                 trace!("state");
+                self.state_referenced = true;
                 Ok(state.get_value())
             }
             ContainerData::Lazy(lazy) if lazy.value.is_some() => {
@@ -602,6 +629,8 @@ impl ContainerWrapper {
             flushed: true,
             in_value_cache_queue: false,
             value_cache_referenced: false,
+            state_referenced: false,
+            accounted_value_cache_bytes: 0,
         })
     }
 
@@ -657,6 +686,46 @@ impl ContainerWrapper {
     /// Returns and clears the second-chance bit.
     pub(super) fn take_value_cache_referenced(&mut self) -> bool {
         std::mem::take(&mut self.value_cache_referenced)
+    }
+
+    pub(super) fn estimated_cached_value_bytes(&self) -> usize {
+        match &self.data {
+            ContainerData::State(_) => 0,
+            ContainerData::Lazy(lazy) => lazy.value.as_ref().map_or(0, |v| v.estimated_bytes()),
+        }
+    }
+
+    pub(super) fn replace_accounted_value_cache_bytes(&mut self, bytes: usize) -> usize {
+        std::mem::replace(&mut self.accounted_value_cache_bytes, bytes)
+    }
+
+    pub(super) fn take_accounted_value_cache_bytes(&mut self) -> usize {
+        std::mem::take(&mut self.accounted_value_cache_bytes)
+    }
+
+    pub(super) fn is_materialized_state(&self) -> bool {
+        matches!(self.data, ContainerData::State(_))
+    }
+
+    pub(super) fn take_state_referenced(&mut self) -> bool {
+        std::mem::take(&mut self.state_referenced)
+    }
+
+    pub(crate) fn estimated_state_bytes(&self) -> usize {
+        match &self.data {
+            ContainerData::State(state) => {
+                std::mem::size_of::<Self>().saturating_add(state.estimated_heap_bytes())
+            }
+            ContainerData::Lazy(_) => {
+                std::mem::size_of::<Self>().saturating_add(std::mem::size_of::<LazyContainerData>())
+            }
+        }
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) {
+        if let ContainerData::State(state) = &mut self.data {
+            state.reclaim_auxiliary_caches();
+        }
     }
 
     #[cfg(test)]
@@ -800,6 +869,7 @@ impl ContainerWrapper {
             }
         };
         self.data = ContainerData::State(state);
+        self.state_referenced = true;
         Ok(())
     }
 

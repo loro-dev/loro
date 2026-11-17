@@ -321,6 +321,17 @@ impl IdToCursor {
             fragment_num, insert_pieces, max_insert_len
         );
     }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let map_table_bytes = self.map.capacity()
+            * (std::mem::size_of::<PeerID>() + std::mem::size_of::<Vec<Fragment>>() + 8);
+        let frags_bytes: usize = self
+            .map
+            .values()
+            .map(|v| v.capacity() * std::mem::size_of::<Fragment>())
+            .sum();
+        map_table_bytes.saturating_add(frags_bytes)
+    }
 }
 
 #[derive(Debug)]

@@ -1,5 +1,6 @@
 use super::{ContainerCreationContext, State};
 use crate::arena::LoadAllFlag;
+use crate::kv_store::{KvStore, SharedBlockCache};
 use crate::sync::{AtomicU64, Mutex};
 use crate::{
     arena::SharedArena, configure::Configure, container::idx::ContainerIdx,
@@ -9,6 +10,7 @@ use bytes::Bytes;
 use inner_store::InnerStore;
 use loro_common::{ContainerID, InternalString, LoroResult, LoroValue};
 use once_cell::sync::OnceCell;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 pub(crate) use container_wrapper::ContainerWrapper;
@@ -88,8 +90,17 @@ macro_rules! ctx {
 
 impl ContainerStore {
     pub fn new(arena: SharedArena, conf: Configure, peer: Arc<AtomicU64>) -> Self {
+        Self::new_with_cache(arena, conf, peer, SharedBlockCache::default_per_doc())
+    }
+
+    pub(crate) fn new_with_cache(
+        arena: SharedArena,
+        conf: Configure,
+        peer: Arc<AtomicU64>,
+        block_cache: SharedBlockCache,
+    ) -> Self {
         ContainerStore {
-            store: InnerStore::new(arena.clone(), conf.clone()),
+            store: InnerStore::new_with_cache(arena.clone(), conf.clone(), block_cache),
             arena,
             conf,
             shallow_root_store: None,
@@ -329,16 +340,91 @@ impl ContainerStore {
         LoadAllFlag
     }
 
-    pub(super) fn begin_created_journal(&mut self) {
+    pub(crate) fn begin_created_journal(&mut self) {
         self.store.begin_created_journal();
     }
 
-    pub(super) fn take_created_journal(&mut self) -> Vec<ContainerIdx> {
+    pub(crate) fn take_created_journal(&mut self) -> Vec<ContainerIdx> {
         self.store.take_created_journal()
     }
 
-    pub(super) fn remove_created(&mut self, created: &[ContainerIdx]) {
+    pub(crate) fn commit_top_created_journal(&mut self) {
+        self.store.commit_top_created_journal();
+    }
+
+    pub(crate) fn clear_created_journals(&mut self) {
+        self.store.clear_created_journals();
+    }
+
+    pub(crate) fn remove_created(&mut self, created: &[ContainerIdx]) {
         self.store.remove_created(created);
+    }
+
+    pub(crate) fn evict_value_cache_to_bytes(&mut self, max_bytes: usize) -> usize {
+        let mut evicted = self.store.evict_value_cache_to_bytes(max_bytes);
+        if let Some(root) = &self.shallow_root_store {
+            evicted += root.store.lock().evict_value_cache_to_bytes(0);
+        }
+        evicted
+    }
+
+    pub(crate) fn value_cache_bytes(&self) -> usize {
+        self.store.value_cache_bytes()
+            + self
+                .shallow_root_store
+                .as_ref()
+                .map_or(0, |root| root.store.lock().value_cache_bytes())
+    }
+
+    pub(crate) fn estimated_state_bytes(&self) -> usize {
+        self.store.estimated_state_bytes()
+    }
+
+    pub(crate) fn kv_estimated_bytes(&self) -> usize {
+        self.store.kv_estimated_bytes()
+            + self.shallow_root_store.as_ref().map_or(0, |root| {
+                let s = root.store.lock();
+                s.kv_estimated_bytes() + s.estimated_state_bytes() + root.encoded_state_bytes.len()
+            })
+    }
+
+    pub(crate) fn spilled_disk_bytes(&self) -> usize {
+        self.store.spilled_disk_bytes()
+            + self
+                .shallow_root_store
+                .as_ref()
+                .map_or(0, |root| root.store.lock().spilled_disk_bytes())
+    }
+
+    pub(crate) fn set_block_cache(&mut self, cache: SharedBlockCache) {
+        self.store.set_block_cache(cache.clone());
+        if let Some(root) = &self.shallow_root_store {
+            root.store.lock().set_block_cache(cache);
+        }
+    }
+
+    pub(crate) fn flush_kv(&mut self) {
+        self.store.flush_kv();
+    }
+
+    pub(crate) fn replace_kv_backend(&mut self, kv: Arc<Mutex<dyn KvStore>>) {
+        self.store.replace_kv_backend(kv);
+    }
+
+    pub(crate) fn demote_cold_states(
+        &mut self,
+        target_state_bytes: usize,
+        pinned: &FxHashSet<ContainerIdx>,
+    ) -> usize {
+        self.store.demote_cold_states(target_state_bytes, pinned)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) -> usize {
+        let mut freed = self.store.reclaim_auxiliary_caches();
+        if let Some(root) = &self.shallow_root_store {
+            freed = freed.saturating_add(root.store.lock().reclaim_auxiliary_caches());
+        }
+        freed
     }
 
     pub(super) fn get_or_create_mut(&mut self, idx: ContainerIdx) -> &mut State {

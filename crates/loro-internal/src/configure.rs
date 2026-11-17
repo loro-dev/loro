@@ -22,6 +22,7 @@ pub struct Configure {
     pub(crate) deleted_root_containers: Arc<Mutex<FxHashSet<ContainerID>>>,
     pub(crate) hide_empty_root_containers: Arc<AtomicBool>,
     decoded_value_cache_limit: Arc<AtomicUsize>,
+    decoded_value_cache_bytes_limit: Arc<AtomicUsize>,
 }
 
 impl LoroDoc {
@@ -34,6 +35,8 @@ impl LoroDoc {
         self.set_change_merge_interval(config.merge_interval());
         self.set_detached_editing(config.detached_editing());
         self.set_decoded_value_cache_limit(config.decoded_value_cache_limit());
+        self.config
+            .set_decoded_value_cache_bytes_limit(config.decoded_value_cache_bytes_limit());
     }
 }
 
@@ -49,6 +52,7 @@ impl Default for Configure {
             decoded_value_cache_limit: Arc::new(AtomicUsize::new(
                 DEFAULT_DECODED_VALUE_CACHE_LIMIT,
             )),
+            decoded_value_cache_bytes_limit: Arc::new(AtomicUsize::new(usize::MAX)),
         }
     }
 }
@@ -77,6 +81,9 @@ impl Configure {
                     .load(std::sync::atomic::Ordering::Relaxed),
             )),
             decoded_value_cache_limit: Arc::new(AtomicUsize::new(self.decoded_value_cache_limit())),
+            decoded_value_cache_bytes_limit: Arc::new(AtomicUsize::new(
+                self.decoded_value_cache_bytes_limit(),
+            )),
         }
     }
 
@@ -91,6 +98,15 @@ impl Configure {
     pub(crate) fn set_decoded_value_cache_limit(&self, limit: usize) {
         self.decoded_value_cache_limit
             .store(limit, Ordering::Relaxed);
+    }
+
+    pub(crate) fn decoded_value_cache_bytes_limit(&self) -> usize {
+        self.decoded_value_cache_bytes_limit.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn set_decoded_value_cache_bytes_limit(&self, bytes: usize) {
+        self.decoded_value_cache_bytes_limit
+            .store(bytes, Ordering::Relaxed);
     }
 
     pub fn record_timestamp(&self) -> bool {

@@ -107,6 +107,50 @@ pub enum LoroError {
     ImportUnsupportedEncodingMode,
 }
 
+/// The category of memory limit exceeded by an operation when a `MemoryBudget`
+/// is configured on a document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLimitKind {
+    ImportBlob,
+    PendingPool,
+    DocBudget,
+}
+
+impl MemoryLimitKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ImportBlob => "import_blob",
+            Self::PendingPool => "pending_pool",
+            Self::DocBudget => "doc_budget",
+        }
+    }
+
+    pub fn js_name(&self) -> &'static str {
+        match self {
+            Self::ImportBlob => "ImportBlob",
+            Self::PendingPool => "PendingPool",
+            Self::DocBudget => "DocBudget",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "import_blob" | "ImportBlob" => Some(Self::ImportBlob),
+            "pending_pool" | "PendingPool" => Some(Self::PendingPool),
+            "doc_budget" | "DocBudget" => Some(Self::DocBudget),
+            _ => None,
+        }
+    }
+}
+
+/// Structured details about a rejected operation due to a configured memory limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryLimitExceeded {
+    pub kind: MemoryLimitKind,
+    pub used_bytes: usize,
+    pub limit_bytes: usize,
+}
+
 impl LoroError {
     #[track_caller]
     pub fn internal(message: impl Into<String>) -> Self {
@@ -114,6 +158,55 @@ impl LoroError {
             message.into(),
             Location::caller(),
         ))
+    }
+
+    /// Construct a memory-limit error without adding a breaking enum variant to
+    /// `LoroError` (which is not `#[non_exhaustive]`).
+    pub fn memory_limit_exceeded(
+        kind: MemoryLimitKind,
+        used_bytes: usize,
+        limit_bytes: usize,
+    ) -> Self {
+        Self::Unknown(
+            format!(
+                "MemoryLimitExceeded:kind={},used={},limit={}",
+                kind.as_str(),
+                used_bytes,
+                limit_bytes
+            )
+            .into_boxed_str(),
+        )
+    }
+
+    /// Returns `true` if this error represents a memory-budget or import-limit rejection.
+    pub fn is_memory_limit_exceeded(&self) -> bool {
+        self.memory_limit_info().is_some()
+    }
+
+    /// Parses structured memory-limit details when `self` was created via
+    /// [`Self::memory_limit_exceeded`].
+    pub fn memory_limit_info(&self) -> Option<MemoryLimitExceeded> {
+        let Self::Unknown(msg) = self else {
+            return None;
+        };
+        let rest = msg.strip_prefix("MemoryLimitExceeded:")?;
+        let mut kind = None;
+        let mut used_bytes = None;
+        let mut limit_bytes = None;
+        for part in rest.split(',') {
+            let (k, v) = part.split_once('=')?;
+            match k {
+                "kind" => kind = MemoryLimitKind::parse(v),
+                "used" => used_bytes = v.parse::<usize>().ok(),
+                "limit" => limit_bytes = v.parse::<usize>().ok(),
+                _ => return None,
+            }
+        }
+        Some(MemoryLimitExceeded {
+            kind: kind?,
+            used_bytes: used_bytes?,
+            limit_bytes: limit_bytes?,
+        })
     }
 }
 
@@ -168,6 +261,32 @@ pub mod wasm {
 
     impl From<LoroError> for JsValue {
         fn from(value: LoroError) -> Self {
+            if let Some(info) = value.memory_limit_info() {
+                let err = js_sys::Error::new(&value.to_string());
+                err.set_name("MemoryLimitExceededError");
+                let err_val: JsValue = err.into();
+                let _ = js_sys::Reflect::set(
+                    &err_val,
+                    &JsValue::from_str("code"),
+                    &JsValue::from_str("MemoryLimitExceeded"),
+                );
+                let _ = js_sys::Reflect::set(
+                    &err_val,
+                    &JsValue::from_str("kind"),
+                    &JsValue::from_str(info.kind.js_name()),
+                );
+                let _ = js_sys::Reflect::set(
+                    &err_val,
+                    &JsValue::from_str("usedBytes"),
+                    &JsValue::from_f64(info.used_bytes as f64),
+                );
+                let _ = js_sys::Reflect::set(
+                    &err_val,
+                    &JsValue::from_str("limitBytes"),
+                    &JsValue::from_f64(info.limit_bytes as f64),
+                );
+                return err_val;
+            }
             JsValue::from_str(&value.to_string())
         }
     }
@@ -274,5 +393,29 @@ mod tests {
         };
         assert!(msg.contains("boom"));
         assert!(msg.contains(file!()));
+    }
+
+    #[test]
+    fn memory_limit_error_roundtrip() {
+        for kind in [
+            MemoryLimitKind::ImportBlob,
+            MemoryLimitKind::PendingPool,
+            MemoryLimitKind::DocBudget,
+        ] {
+            let err = LoroError::memory_limit_exceeded(kind, 2048, 1024);
+            assert!(err.is_memory_limit_exceeded());
+            assert_eq!(
+                err.memory_limit_info(),
+                Some(MemoryLimitExceeded {
+                    kind,
+                    used_bytes: 2048,
+                    limit_bytes: 1024,
+                })
+            );
+        }
+        assert!(!LoroError::Unknown("other".into()).is_memory_limit_exceeded());
+        assert!(LoroError::DecodeDataCorruptionError
+            .memory_limit_info()
+            .is_none());
     }
 }

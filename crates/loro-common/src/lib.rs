@@ -16,7 +16,9 @@ mod macros;
 mod span;
 mod value;
 
-pub use error::{LoroEncodeError, LoroError, LoroResult, LoroTreeError};
+pub use error::{
+    LoroEncodeError, LoroError, LoroResult, LoroTreeError, MemoryLimitExceeded, MemoryLimitKind,
+};
 pub use internal_string::InternalString;
 pub use logging::log::*;
 #[doc(hidden)]

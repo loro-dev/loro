@@ -113,6 +113,10 @@ impl crate::LoroDoc {
             panic.resume();
         }));
 
+        if self.has_max_doc_bytes() {
+            self.arm_budget_scope_on_txn(&mut txn);
+        }
+
         Ok(txn)
     }
 
@@ -217,9 +221,13 @@ pub struct Transaction {
     pub(super) is_peer_first_appearance: bool,
     /// The DAG's frontiers when the txn began, before its first op.
     dag_frontiers_at_start: Frontiers,
-    /// Set while `LoroDoc::apply_diff` or `revert_to` runs a batch in this txn,
-    /// which is rolled back if the batch fails (context/apply-diff-atomicity.md).
-    rollback_scope: Option<RollbackScope>,
+    /// Active nested rollback scopes on this transaction (`budget_base_scope`
+    /// and any inner `apply_diff` / `revert_to` / `undo` batch).
+    rollback_scopes: Vec<RollbackScope>,
+    /// Outermost rollback scope armed when `MemoryBudget::max_doc_bytes` is set.
+    budget_base_scope: Option<u64>,
+    /// Hard quota captured before this transaction accepts edits.
+    pub(crate) doc_budget_limit: Option<usize>,
 }
 
 /// See [`Transaction::begin_rollback_scope`].
@@ -227,6 +235,7 @@ pub struct Transaction {
 struct RollbackScope {
     id: u64,
     thread: usize,
+    ignore_thread: bool,
     /// Another thread applied an op in this txn while the batch ran.
     foreign_ops: bool,
     /// The txn's next counter and lamport when the batch began.
@@ -474,7 +483,9 @@ impl Transaction {
             latest_timestamp,
             is_peer_first_appearance: false,
             dag_frontiers_at_start,
-            rollback_scope: None,
+            rollback_scopes: Vec::new(),
+            budget_base_scope: None,
+            doc_budget_limit: None,
         })
     }
 
@@ -522,6 +533,26 @@ impl Transaction {
     }
 
     pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
+        if !self.finished && !self.local_ops.is_empty() {
+            if let Some(doc_inner) = self.doc.upgrade() {
+                let doc = LoroDoc::from_inner(doc_inner);
+                if let Some(limit) = self.doc_budget_limit {
+                    let _txn_guard = doc.txn.lock();
+                    let uncommitted = self.estimated_uncommitted_bytes();
+                    doc.enforce_memory_watermarks_with_txn_bytes(uncommitted, false);
+                    if let Err(budget_err) = doc.check_doc_budget_with_limit(uncommitted, limit) {
+                        if let Some(scope) = self.budget_base_scope.take() {
+                            self.finished = true;
+                            doc.rollback_transaction_scope(&mut self, scope)?;
+                            let mut state = doc.state.lock();
+                            state.abort_txn();
+                            state.clear_local_rollback_stack();
+                            return Err(budget_err);
+                        }
+                    }
+                }
+            }
+        }
         let mut panic = DeferredPanic::default();
         let ans = self._commit(&mut panic);
         panic.resume();
@@ -553,9 +584,12 @@ impl Transaction {
             return Ok(None);
         };
         self.finished = true;
+        self.rollback_scopes.clear();
+        self.budget_base_scope = None;
         if self.local_ops.is_empty() {
             let mut state = doc.state.lock();
             state.abort_txn();
+            state.clear_local_rollback_stack();
             return Ok(Some(self.take_options()));
         }
 
@@ -617,6 +651,7 @@ impl Transaction {
         let last_id = change.id_last();
         if let Err(err) = oplog.import_local_change(change) {
             state.abort_txn();
+            state.clear_local_rollback_stack();
             drop(state);
             drop(oplog);
             return Err(err);
@@ -649,16 +684,43 @@ impl Transaction {
             debug_assert!(doc.txn.can_lock_in_this_thread());
             on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
         }
+        LoroDoc::from_inner(doc).enforce_memory_watermarks();
         Ok(None)
+    }
+
+    pub(crate) fn estimated_uncommitted_bytes(&self) -> usize {
+        let ops_bytes = self.local_ops.len() * std::mem::size_of::<Op>();
+        let hints_bytes = self.event_hints.capacity()
+            * (std::mem::size_of::<ContainerIdx>() + std::mem::size_of::<Vec<EventHint>>() + 8)
+            + self
+                .event_hints
+                .values()
+                .map(|v| v.capacity() * std::mem::size_of::<EventHint>())
+                .sum::<usize>();
+        ops_bytes.saturating_add(hints_bytes)
+    }
+
+    pub(crate) fn budget_base_scope(&self) -> Option<u64> {
+        self.budget_base_scope
     }
 
     /// Mark the start of a batch that `LoroDoc` rolls back if it fails
     /// ([`Self::roll_back_scope`]). The txn may already hold ops; they are kept.
     pub(crate) fn begin_rollback_scope(&mut self, id: u64) {
-        debug_assert!(self.rollback_scope.is_none());
-        self.rollback_scope = Some(RollbackScope {
+        self.begin_rollback_scope_inner(id, false);
+    }
+
+    pub(crate) fn begin_budget_rollback_scope(&mut self, id: u64) {
+        debug_assert!(self.rollback_scopes.is_empty());
+        self.budget_base_scope = Some(id);
+        self.begin_rollback_scope_inner(id, true);
+    }
+
+    fn begin_rollback_scope_inner(&mut self, id: u64, ignore_thread: bool) {
+        self.rollback_scopes.push(RollbackScope {
             id,
             thread: current_thread_mark(),
+            ignore_thread,
             foreign_ops: false,
             counter: self.next_counter,
             lamport: self.next_lamport,
@@ -668,20 +730,25 @@ impl Transaction {
     }
 
     pub(crate) fn has_rollback_scope(&self) -> bool {
-        self.rollback_scope.is_some()
+        self.rollback_scopes
+            .iter()
+            .any(|s| Some(s.id) != self.budget_base_scope)
     }
 
     pub(crate) fn end_rollback_scope(&mut self, id: u64) {
-        if self.rollback_scope.as_ref().is_some_and(|s| s.id == id) {
-            self.rollback_scope = None;
+        if self.rollback_scopes.last().is_some_and(|s| s.id == id) {
+            self.rollback_scopes.pop();
+            if self.budget_base_scope == Some(id) {
+                self.budget_base_scope = None;
+            }
         }
     }
 
-    /// Whether this is the txn scope `id` began in and every op in it came from
-    /// the thread that began it.
+    /// Whether `id` is currently the innermost txn scope and every op in it came
+    /// from the thread that began it (unless `ignore_thread` is set).
     pub(crate) fn rollback_scope_is_intact(&self, id: u64) -> bool {
-        self.rollback_scope
-            .as_ref()
+        self.rollback_scopes
+            .last()
             .is_some_and(|s| s.id == id && !s.foreign_ops)
     }
 
@@ -691,7 +758,10 @@ impl Transaction {
     /// version; the caller undoes them.
     pub(crate) fn roll_back_scope(&mut self, id: u64) -> RolledBackBatch {
         assert!(self.rollback_scope_is_intact(id));
-        let scope = self.rollback_scope.take().unwrap();
+        let scope = self.rollback_scopes.pop().unwrap();
+        if self.budget_base_scope == Some(id) {
+            self.budget_base_scope = None;
+        }
         let ops = take(&mut self.local_ops);
         for op in ops.iter() {
             let end = op.counter + op.atom_len() as Counter;
@@ -710,6 +780,11 @@ impl Transaction {
             let hints = self.event_hints.get_mut(&container).unwrap();
             hints.truncate(len);
             *hints.last_mut().unwrap() = last.unwrap();
+        }
+        if self.event_hints.is_empty() {
+            self.event_hints = FxHashMap::default();
+        } else if self.event_hints.capacity() > self.event_hints.len().saturating_mul(2).max(4) {
+            self.event_hints.shrink_to_fit();
         }
         let batch_end = self.next_counter;
         self.next_counter = scope.counter;
@@ -776,8 +851,8 @@ impl Transaction {
             return Err(LoroError::UnmatchedContext { expected, found });
         }
 
-        if let Some(scope) = &mut self.rollback_scope {
-            if scope.thread != current_thread_mark() {
+        for scope in &mut self.rollback_scopes {
+            if !scope.ignore_thread && scope.thread != current_thread_mark() {
                 scope.foreign_ops = true;
             }
         }
@@ -841,7 +916,7 @@ impl Transaction {
         );
 
         let container_hints = self.event_hints.entry(container).or_default();
-        if let Some(scope) = &mut self.rollback_scope {
+        for scope in &mut self.rollback_scopes {
             scope
                 .event_hints
                 .entry(container)

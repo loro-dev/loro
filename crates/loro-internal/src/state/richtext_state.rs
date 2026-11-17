@@ -1042,6 +1042,41 @@ impl RichtextState {
         self.state.get_mut().len_unicode()
     }
 
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let inner = match &self.state {
+            LazyLoad::Src(loader) => {
+                let text_bytes: usize = loader
+                    .elements
+                    .iter()
+                    .map(|c| match c {
+                        RichtextStateChunk::Text(t) => {
+                            t.as_str().len() + std::mem::size_of::<RichtextStateChunk>()
+                        }
+                        RichtextStateChunk::Style { .. } => {
+                            std::mem::size_of::<RichtextStateChunk>() + 64
+                        }
+                    })
+                    .sum();
+                let anchor_bytes = loader.start_anchor_pos.capacity()
+                    * (std::mem::size_of::<ID>() + std::mem::size_of::<usize>() + 8);
+                let style_bytes = loader.style_ranges.capacity()
+                    * std::mem::size_of::<(Arc<StyleOp>, Range<usize>)>();
+                std::mem::size_of::<RichtextStateLoader>()
+                    .saturating_add(text_bytes)
+                    .saturating_add(anchor_bytes)
+                    .saturating_add(style_bytes)
+            }
+            LazyLoad::Dst(inner) => inner.estimated_heap_bytes(),
+        };
+        std::mem::size_of::<Self>().saturating_add(inner)
+    }
+
+    pub(crate) fn reclaim_auxiliary_caches(&mut self) {
+        if let LazyLoad::Dst(inner) = &mut self.state {
+            inner.reclaim_auxiliary_caches();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn inner_state_mut(&mut self) -> &mut InnerState {
         self.state.get_mut()

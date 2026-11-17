@@ -100,6 +100,20 @@ impl TrackerValues {
         }
         self.hint.set(i);
     }
+
+    pub fn estimated_bytes(&self) -> usize {
+        let starts_bytes = self.starts.capacity() * std::mem::size_of::<u32>();
+        let slices_vec_bytes = self.slices.capacity() * std::mem::size_of::<ValueSlice>();
+        let value_bytes: usize = self
+            .slices
+            .iter()
+            .flat_map(|s| s.as_slice().iter())
+            .map(|v| v.estimated_heap_bytes())
+            .sum();
+        starts_bytes
+            .saturating_add(slices_vec_bytes)
+            .saturating_add(value_bytes)
+    }
 }
 
 #[cfg(test)]

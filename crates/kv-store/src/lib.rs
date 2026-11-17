@@ -139,4 +139,5 @@ pub mod iter;
 pub mod mem_store;
 pub mod sstable;
 pub use iter::{KvIterator, MergeIterator};
-pub use mem_store::{MemKvStore, MemStoreIterator};
+pub use mem_store::{MemKvConfig, MemKvStore, MemStoreIterator};
+pub use sstable::SharedBlockCache;

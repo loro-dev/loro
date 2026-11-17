@@ -7,7 +7,14 @@ use crate::{
 use bytes::{Buf, BufMut, Bytes};
 use ensure_cov::*;
 use loro_common::{LoroError, LoroResult};
-use std::{fmt::Debug, ops::Bound, sync::Arc};
+use std::{
+    fmt::Debug,
+    ops::Bound,
+    sync::{
+        atomic::{AtomicU64, AtomicUsize, Ordering},
+        Arc, RwLock,
+    },
+};
 
 pub(crate) const XXH_SEED: u32 = u32::from_le_bytes(*b"LORO");
 const MAGIC_BYTES: [u8; 4] = *b"LORO";
@@ -333,58 +340,175 @@ impl SsTableBuilder {
                 )
             })
             .unwrap_or_default();
-        let block_cache = new_block_cache(self.meta.len());
+        let meta: Arc<[BlockMeta]> = Arc::from(self.meta);
+        let meta_bytes = calc_meta_bytes(&meta);
         SsTable {
+            id: next_table_id(),
             data: Bytes::from(buf),
             first_key,
             last_key,
-            meta: Arc::from(self.meta),
+            meta,
+            meta_bytes,
             meta_offset: meta_offset as usize,
-            block_cache,
+            block_cache: SharedBlockCache::default_per_doc(),
         }
+    }
+
+    pub fn build_with_cache(self, block_cache: SharedBlockCache) -> SsTable {
+        let mut ss = self.build();
+        ss.set_block_cache(block_cache);
+        ss
     }
 }
 
-type BlockCache = quick_cache::sync::Cache<usize, Arc<Block>, BlockDataWeighter>;
+static NEXT_SSTABLE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_table_id() -> u64 {
+    NEXT_SSTABLE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn calc_meta_bytes(meta: &[BlockMeta]) -> usize {
+    meta.iter()
+        .map(|m| {
+            std::mem::size_of::<BlockMeta>()
+                + m.first_key.len()
+                + m.last_key.as_ref().map_or(0, Bytes::len)
+        })
+        .sum()
+}
+
+type BlockCache = quick_cache::sync::Cache<(u64, usize), Arc<Block>, BlockDataWeighter>;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct BlockDataWeighter;
 
-impl quick_cache::Weighter<usize, Arc<Block>> for BlockDataWeighter {
-    fn weight(&self, _idx: &usize, block: &Arc<Block>) -> u64 {
+impl quick_cache::Weighter<(u64, usize), Arc<Block>> for BlockDataWeighter {
+    fn weight(&self, _key: &(u64, usize), block: &Arc<Block>) -> u64 {
         // Zero-weight entries are never evicted; clamp so empty blocks cannot pin themselves.
         (block.data().len() as u64).max(1)
     }
 }
 
-/// `table_blocks` sizes what the cache reserves up front: a process can hold many small tables.
-fn new_block_cache(table_blocks: usize) -> BlockCache {
-    let max_blocks =
-        (BLOCK_CACHE_MAX_BYTES / crate::MemKvStore::DEFAULT_BLOCK_SIZE as u64) as usize;
-    let estimated_blocks = table_blocks.clamp(1, max_blocks);
-    BlockCache::with_weighter(estimated_blocks, BLOCK_CACHE_MAX_BYTES, BlockDataWeighter)
+#[derive(Debug)]
+struct SharedBlockCacheInner {
+    max_bytes: AtomicUsize,
+    cache: RwLock<Option<BlockCache>>,
+}
+
+/// A lazily-allocated, byte-bounded block cache that can be shared across all SSTables
+/// owned by a document (including both `ChangeStore` and `DocState` stores).
+#[derive(Clone, Debug)]
+pub struct SharedBlockCache {
+    inner: Arc<SharedBlockCacheInner>,
+}
+
+impl Default for SharedBlockCache {
+    fn default() -> Self {
+        Self::default_per_doc()
+    }
+}
+
+impl SharedBlockCache {
+    /// Creates a new shared block cache bounded to at most `max_bytes` decompressed block bytes.
+    /// When `max_bytes == 0`, block reads decode on demand without caching.
+    pub fn new(max_bytes: usize) -> Self {
+        Self {
+            inner: Arc::new(SharedBlockCacheInner {
+                max_bytes: AtomicUsize::new(max_bytes),
+                cache: RwLock::new(None),
+            }),
+        }
+    }
+
+    /// Creates a shared block cache with the default 4 MiB per-document budget.
+    pub fn default_per_doc() -> Self {
+        Self::new(BLOCK_CACHE_MAX_BYTES as usize)
+    }
+
+    pub fn max_bytes(&self) -> usize {
+        self.inner.max_bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn used_bytes(&self) -> usize {
+        let guard = self.inner.cache.read().unwrap();
+        guard.as_ref().map_or(0, |c| c.weight() as usize)
+    }
+
+    pub fn clear(&self) {
+        let mut guard = self.inner.cache.write().unwrap();
+        *guard = None;
+    }
+
+    pub fn set_max_bytes(&self, max_bytes: usize) {
+        let old = self.inner.max_bytes.swap(max_bytes, Ordering::Relaxed);
+        if max_bytes == 0 || old != max_bytes {
+            self.clear();
+        }
+    }
+
+    pub fn get_or_insert_with(
+        &self,
+        table_id: u64,
+        block_idx: usize,
+        table_blocks_hint: usize,
+        decode: impl FnOnce() -> Arc<Block>,
+    ) -> Arc<Block> {
+        let max_bytes = self.max_bytes();
+        if max_bytes == 0 {
+            return decode();
+        }
+        {
+            let guard = self.inner.cache.read().unwrap();
+            if let Some(cache) = guard.as_ref() {
+                return cache
+                    .get_or_insert_with(&(table_id, block_idx), || Ok::<_, LoroError>(decode()))
+                    .expect("validated SSTable block cache insert should succeed");
+            }
+        }
+        {
+            let mut guard = self.inner.cache.write().unwrap();
+            if guard.is_none() {
+                let max_blocks = (max_bytes / crate::MemKvStore::DEFAULT_BLOCK_SIZE).max(1);
+                let estimated_blocks = table_blocks_hint.clamp(1, max_blocks);
+                *guard = Some(BlockCache::with_weighter(
+                    estimated_blocks,
+                    max_bytes as u64,
+                    BlockDataWeighter,
+                ));
+            }
+            guard
+                .as_ref()
+                .unwrap()
+                .get_or_insert_with(&(table_id, block_idx), || Ok::<_, LoroError>(decode()))
+                .expect("validated SSTable block cache insert should succeed")
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct SsTable {
+    id: u64,
     // TODO: mmap?
     data: Bytes,
     pub(crate) first_key: Bytes,
     pub(crate) last_key: Bytes,
     pub(crate) meta: Arc<[BlockMeta]>,
+    meta_bytes: usize,
     pub(crate) meta_offset: usize,
-    block_cache: BlockCache,
+    block_cache: SharedBlockCache,
 }
 
 impl Clone for SsTable {
     fn clone(&self) -> Self {
         Self {
+            id: self.id,
             data: self.data.clone(),
             first_key: self.first_key.clone(),
             last_key: self.last_key.clone(),
             meta: self.meta.clone(),
+            meta_bytes: self.meta_bytes,
             meta_offset: self.meta_offset,
-            block_cache: new_block_cache(self.meta.len()),
+            block_cache: SharedBlockCache::new(self.block_cache.max_bytes()),
         }
     }
 }
@@ -392,6 +516,14 @@ impl Clone for SsTable {
 impl SsTable {
     pub fn export_all(&self) -> Bytes {
         self.data.clone()
+    }
+
+    pub fn set_block_cache(&mut self, block_cache: SharedBlockCache) {
+        self.block_cache = block_cache;
+    }
+
+    pub fn estimated_memory_bytes(&self) -> usize {
+        self.data.len() + self.meta_bytes + std::mem::size_of::<Self>()
     }
 
     pub fn iter(&self) -> SsTableIter<'_> {
@@ -411,7 +543,21 @@ impl SsTable {
     ///    - "Invalid magic number"
     ///    - "Invalid schema version"
     pub fn import_all(bytes: Bytes, validate_blocks: bool) -> LoroResult<Self> {
-        Self::import_all_with(bytes, validate_blocks, true)
+        Self::import_all_with(
+            bytes,
+            validate_blocks,
+            true,
+            SharedBlockCache::default_per_doc(),
+        )
+    }
+
+    pub(crate) fn import_all_with_cache(
+        bytes: Bytes,
+        validate_blocks: bool,
+        check_checksum: bool,
+        block_cache: SharedBlockCache,
+    ) -> LoroResult<Self> {
+        Self::import_all_with(bytes, validate_blocks, check_checksum, block_cache)
     }
 
     /// Import without per-block checksum verification (and without eager block
@@ -422,13 +568,14 @@ impl SsTable {
     /// checksum alone is insufficient because it can be recomputed over malformed
     /// inner blocks.
     pub fn import_all_unchecked(bytes: Bytes) -> LoroResult<Self> {
-        Self::import_all_with(bytes, false, false)
+        Self::import_all_with(bytes, false, false, SharedBlockCache::default_per_doc())
     }
 
     fn import_all_with(
         bytes: Bytes,
         validate_blocks: bool,
         check_checksum: bool,
+        block_cache: SharedBlockCache,
     ) -> LoroResult<Self> {
         // magic number + schema version + meta offset
         if bytes.len() < SIZE_OF_U32 + SIZE_OF_U8 + SIZE_OF_U32 {
@@ -476,12 +623,14 @@ impl SsTable {
                     .unwrap_or(meta.last().map(|m| m.first_key.clone()).unwrap_or_default())
             })
             .unwrap_or_default();
-        let block_cache = new_block_cache(meta.len());
+        let meta_bytes = calc_meta_bytes(&meta);
         let ans = Self {
+            id: next_table_id(),
             data: bytes,
             first_key,
             last_key,
             meta,
+            meta_bytes,
             meta_offset,
             block_cache,
         };
@@ -608,10 +757,9 @@ impl SsTable {
 
     pub(crate) fn read_block_cached(&self, block_idx: usize) -> Arc<Block> {
         self.block_cache
-            .get_or_insert_with(&block_idx, || {
-                Ok::<_, LoroError>(self.read_block(block_idx))
+            .get_or_insert_with(self.id, block_idx, self.meta.len(), || {
+                self.read_block(block_idx)
             })
-            .expect("validated SSTable block cache insert should succeed")
     }
 
     pub fn contains_key(&self, key: &[u8]) -> bool {
@@ -647,11 +795,6 @@ impl SsTable {
 
     pub fn meta_len(&self) -> usize {
         self.meta.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn cached_block_bytes(&self) -> u64 {
-        self.block_cache.weight()
     }
 }
 

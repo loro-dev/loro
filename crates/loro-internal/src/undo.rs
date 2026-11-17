@@ -7,13 +7,14 @@ use loro_common::{
 };
 use parking_lot::lock_api::ReentrantMutex;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tracing::{debug_span, info_span, instrument};
 
 use crate::{
     change::{get_sys_timestamp, Timestamp},
     cursor::{AbsolutePosition, Cursor},
     delta::TreeExternalDiff,
-    event::{Diff, EventTriggerKind, KeptChange},
+    event::{container_id_estimated_bytes, Diff, EventTriggerKind, KeptChange},
     version::Frontiers,
     ContainerDiff, DiffEvent, DocDiff, LoroDoc, Subscription,
 };
@@ -184,6 +185,22 @@ impl DiffBatch {
             (cid, d)
         })
     }
+
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let order_bytes = self.order.capacity() * std::mem::size_of::<ContainerID>();
+        let map_table_bytes = self.cid_to_events.capacity()
+            * (std::mem::size_of::<ContainerID>() + std::mem::size_of::<Diff>() + 8);
+        let entry_bytes: usize = self
+            .cid_to_events
+            .iter()
+            .map(|(cid, diff)| {
+                container_id_estimated_bytes(cid).saturating_add(diff.estimated_bytes())
+            })
+            .sum();
+        order_bytes
+            .saturating_add(map_table_bytes)
+            .saturating_add(entry_bytes)
+    }
 }
 
 fn transform_cursor(
@@ -296,7 +313,7 @@ pub type OnPush = Box<
 >;
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
-struct UndoManagerInner {
+pub(crate) struct UndoManagerInner {
     next_counter: Option<Counter>,
     undo_stack: Stack,
     redo_stack: Stack,
@@ -305,6 +322,7 @@ struct UndoManagerInner {
     last_undo_time: i64,
     merge_interval_in_ms: i64,
     max_stack_size: usize,
+    max_undo_bytes: usize,
     exclude_origin_prefixes: Vec<Box<str>>,
     last_popped_selection: Option<Vec<CursorWithPos>>,
     on_push: Option<OnPush>,
@@ -363,6 +381,34 @@ struct Stack {
 struct StackItem {
     span: CounterSpan,
     meta: UndoItemMeta,
+    affected_cids: FxHashSet<ContainerID>,
+}
+
+impl StackItem {
+    fn estimated_bytes(&self) -> usize {
+        let value_bytes = self
+            .meta
+            .value
+            .estimated_heap_bytes()
+            .saturating_sub(std::mem::size_of::<LoroValue>());
+        let cursors_bytes = self.meta.cursors.capacity() * std::mem::size_of::<CursorWithPos>()
+            + self
+                .meta
+                .cursors
+                .iter()
+                .map(|c| container_id_estimated_bytes(&c.cursor.container))
+                .sum::<usize>();
+        let cids_bytes = self.affected_cids.capacity() * (std::mem::size_of::<ContainerID>() + 8)
+            + self
+                .affected_cids
+                .iter()
+                .map(container_id_estimated_bytes)
+                .sum::<usize>();
+        std::mem::size_of::<Self>()
+            .saturating_add(value_bytes)
+            .saturating_add(cursors_bytes)
+            .saturating_add(cids_bytes)
+    }
 }
 
 /// The metadata of an undo item.
@@ -465,8 +511,18 @@ impl Stack {
         // Cursor position transformation relies on the remote diff in the same row.
     }
 
+    #[allow(unused)]
     pub fn push(&mut self, span: CounterSpan, meta: UndoItemMeta) {
-        self.push_with_merge(span, meta, false, None)
+        self.push_with_cids(span, meta, Default::default())
+    }
+
+    pub fn push_with_cids(
+        &mut self,
+        span: CounterSpan,
+        meta: UndoItemMeta,
+        affected_cids: FxHashSet<ContainerID>,
+    ) {
+        self.push_with_merge_cids(span, meta, affected_cids, false, None)
     }
 
     fn restore_popped(&mut self, item: StackItem, remote_diff: &Arc<Mutex<DiffBatch>>) {
@@ -479,10 +535,22 @@ impl Stack {
         self.size += 1;
     }
 
+    #[allow(unused)]
     pub fn push_with_merge(
         &mut self,
         span: CounterSpan,
         meta: UndoItemMeta,
+        can_merge: bool,
+        group: Option<&UndoGroup>,
+    ) {
+        self.push_with_merge_cids(span, meta, Default::default(), can_merge, group);
+    }
+
+    pub fn push_with_merge_cids(
+        &mut self,
+        span: CounterSpan,
+        meta: UndoItemMeta,
+        affected_cids: FxHashSet<ContainerID>,
         can_merge: bool,
         group: Option<&UndoGroup>,
     ) {
@@ -507,7 +575,11 @@ impl Stack {
             // Create a new entry in the stack
             drop(last_remote_diff);
             let mut v = VecDeque::new();
-            v.push_back(StackItem { span, meta });
+            v.push_back(StackItem {
+                span,
+                meta,
+                affected_cids,
+            });
             self.stack
                 .push_back((v, Arc::new(Mutex::new(DiffBatch::default()))));
             self.size += 1;
@@ -520,6 +592,13 @@ impl Stack {
                 if last_span.span.end == span.start {
                     // Merge spans by extending the end of the last span
                     last_span.span.end = span.end;
+                    // An empty set means the checkpoint's containers are unknown.
+                    // Merging a known span cannot make that older span known.
+                    if last_span.affected_cids.is_empty() || affected_cids.is_empty() {
+                        last_span.affected_cids.clear();
+                    } else {
+                        last_span.affected_cids.extend(affected_cids);
+                    }
                     return;
                 }
             }
@@ -527,7 +606,11 @@ impl Stack {
 
         // Add as a new item to the existing entry
         self.size += 1;
-        last.0.push_back(StackItem { span, meta });
+        last.0.push_back(StackItem {
+            span,
+            meta,
+            affected_cids,
+        });
     }
 
     pub fn compose_remote_event(&mut self, diff: &[&ContainerDiff]) {
@@ -576,18 +659,6 @@ impl Stack {
         self.size
     }
 
-    fn discard_empty_front_rows(&mut self) {
-        // Undo pop can leave an empty front row that only carries remote diffs.
-        // There is no older stack item for that diff to transform during trimming.
-        while self
-            .stack
-            .front()
-            .is_some_and(|(items, _)| items.is_empty())
-        {
-            self.stack.pop_front();
-        }
-    }
-
     fn ensure_trailing_empty_row(&mut self) {
         if self.stack.is_empty() {
             self.stack
@@ -596,20 +667,44 @@ impl Stack {
     }
 
     fn pop_front(&mut self) {
-        if self.is_empty() {
-            return;
-        }
+        self.pop_front_inner(false);
+    }
 
-        self.discard_empty_front_rows();
+    /// Returns the change to this stack's byte estimate without walking retained items.
+    fn pop_front_inner(&mut self, account_bytes: bool) -> usize {
+        if self.is_empty() {
+            return 0;
+        }
+        let mut freed = 0usize;
+        while self
+            .stack
+            .front()
+            .is_some_and(|(items, _)| items.is_empty())
+        {
+            let (items, diff) = self.stack.pop_front().unwrap();
+            if account_bytes {
+                freed = freed
+                    .saturating_add(items.capacity() * std::mem::size_of::<StackItem>())
+                    .saturating_add(diff.lock().estimated_bytes());
+            }
+        }
         self.size -= 1;
         let first = self.stack.front_mut().unwrap();
-        let f = first.0.pop_front();
-        assert!(f.is_some());
-        if first.0.is_empty() {
-            self.stack.pop_front();
+        let item = first.0.pop_front().expect("nonempty undo row");
+        if account_bytes {
+            freed = freed.saturating_add(item.estimated_bytes());
         }
-
+        if first.0.is_empty() {
+            let (items, diff) = self.stack.pop_front().unwrap();
+            if account_bytes {
+                freed = freed
+                    .saturating_add(items.capacity() * std::mem::size_of::<StackItem>())
+                    .saturating_add(diff.lock().estimated_bytes());
+            }
+        }
+        // Empty rows contain no nested allocations; the outer deque keeps its capacity.
         self.ensure_trailing_empty_row();
+        freed
     }
 
     fn set_top_meta(&mut self, meta: UndoItemMeta) {
@@ -621,12 +716,49 @@ impl Stack {
         };
         last.meta = meta;
     }
+
+    fn estimated_bytes(&self) -> usize {
+        let rows_vec_bytes = self.stack.capacity()
+            * std::mem::size_of::<(VecDeque<StackItem>, Arc<Mutex<DiffBatch>>)>();
+        let content_bytes: usize = self
+            .stack
+            .iter()
+            .map(|(items, remote_diff)| {
+                let items_bytes = items.capacity() * std::mem::size_of::<StackItem>()
+                    + items.iter().map(StackItem::estimated_bytes).sum::<usize>();
+                items_bytes.saturating_add(remote_diff.lock().estimated_bytes())
+            })
+            .sum();
+        rows_vec_bytes.saturating_add(content_bytes)
+    }
+
+    fn has_unknown_affected_cids(&self) -> bool {
+        self.stack
+            .iter()
+            .any(|(items, _)| items.iter().any(|item| item.affected_cids.is_empty()))
+    }
+
+    fn collect_relevant_cids(&self, out: &mut FxHashSet<ContainerID>) {
+        for (items, _) in &self.stack {
+            for item in items {
+                out.extend(item.affected_cids.iter().cloned());
+                for c in &item.meta.cursors {
+                    out.insert(c.cursor.container.clone());
+                }
+            }
+        }
+    }
 }
 
 impl Default for Stack {
     fn default() -> Self {
         Stack::new()
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static UNDO_SIZE_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl UndoManagerInner {
@@ -640,6 +772,7 @@ impl UndoManagerInner {
             merge_interval_in_ms: 0,
             last_undo_time: 0,
             max_stack_size: usize::MAX,
+            max_undo_bytes: usize::MAX,
             exclude_origin_prefixes: vec![],
             last_popped_selection: None,
             on_pop: None,
@@ -679,12 +812,13 @@ impl UndoManagerInner {
             return;
         };
 
+        let affected_cids: FxHashSet<ContainerID> = event
+            .iter()
+            .flat_map(|e| e.events.iter().map(|item| item.id.clone()))
+            .collect();
+
         if let Some(group) = &mut this.borrow_mut().group {
-            event.iter().for_each(|e| {
-                e.events.iter().for_each(|e| {
-                    group.affected_cids.insert(e.id.clone());
-                })
-            });
+            group.affected_cids.extend(affected_cids.iter().cloned());
         }
 
         let now = now.unwrap_or_else(|| get_sys_timestamp() as Timestamp);
@@ -717,10 +851,15 @@ impl UndoManagerInner {
 
         let previous_len = this.undo_stack.len();
         if should_merge {
-            this.undo_stack
-                .push_with_merge(span, meta, true, this.group.as_ref());
+            this.undo_stack.push_with_merge_cids(
+                span,
+                meta,
+                affected_cids,
+                true,
+                this.group.as_ref(),
+            );
         } else {
-            this.undo_stack.push(span, meta);
+            this.undo_stack.push_with_cids(span, meta, affected_cids);
         }
         // A requested merge can still create an item (e.g. after an import).
         // Only an actual merge keeps the previous item's window.
@@ -733,10 +872,86 @@ impl UndoManagerInner {
         this.trim_undo_stack();
     }
 
+    pub(crate) fn used_bytes(&self) -> usize {
+        #[cfg(test)]
+        UNDO_SIZE_WALKS.with(|n| n.set(n.get() + 1));
+        self.undo_stack
+            .estimated_bytes()
+            .saturating_add(self.redo_stack.estimated_bytes())
+    }
+
+    pub(crate) fn set_max_undo_bytes_from_doc(&mut self, max_bytes: usize) {
+        self.max_undo_bytes = max_bytes;
+        self.shrink_to_fit();
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        if self.max_undo_bytes == usize::MAX {
+            return;
+        }
+        let mut used_bytes = self.used_bytes();
+        while used_bytes > self.max_undo_bytes {
+            let freed = if !self.undo_stack.is_empty() {
+                self.undo_stack.pop_front_inner(true)
+            } else if !self.redo_stack.is_empty() {
+                self.redo_stack.pop_front_inner(true)
+            } else {
+                break;
+            };
+            used_bytes = used_bytes.saturating_sub(freed);
+        }
+    }
+
+    fn compose_remote_event(
+        &mut self,
+        diff: &[&ContainerDiff],
+        remap: &FxHashMap<ContainerID, ContainerID>,
+    ) {
+        if self.undo_stack.is_empty() && self.redo_stack.is_empty() {
+            return;
+        }
+
+        if self.undo_stack.has_unknown_affected_cids()
+            || self.redo_stack.has_unknown_affected_cids()
+        {
+            self.undo_stack.compose_remote_event(diff);
+            self.redo_stack.compose_remote_event(diff);
+            return;
+        }
+        let mut relevant_cids: FxHashSet<ContainerID> = FxHashSet::default();
+        self.undo_stack.collect_relevant_cids(&mut relevant_cids);
+        self.redo_stack.collect_relevant_cids(&mut relevant_cids);
+        if let Some(last_selection) = &self.last_popped_selection {
+            for c in last_selection {
+                relevant_cids.insert(c.cursor.container.clone());
+            }
+        }
+        if let Some(group) = &self.group {
+            relevant_cids.extend(group.affected_cids.iter().cloned());
+        }
+        for (old, new) in remap {
+            relevant_cids.insert(old.clone());
+            relevant_cids.insert(new.clone());
+        }
+
+        let filtered: SmallVec<[&ContainerDiff; 8]> = diff
+            .iter()
+            .copied()
+            .filter(|e| matches!(e.diff, Diff::Tree(_)) || relevant_cids.contains(&e.id))
+            .collect();
+        if filtered.is_empty() {
+            return;
+        }
+
+        self.undo_stack.compose_remote_event(&filtered);
+        self.redo_stack.compose_remote_event(&filtered);
+    }
+
     fn trim_undo_stack(&mut self) {
         while self.undo_stack.len() > self.max_stack_size {
             self.undo_stack.pop_front();
         }
+        self.shrink_to_fit();
     }
 }
 
@@ -749,12 +964,17 @@ impl UndoManager {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
         let peer_clone2 = peer.clone();
-        let inner = Arc::new(ReentrantMutex::new(RefCell::new(UndoManagerInner::new(
-            get_counter_end(doc, doc.peer_id()),
-        ))));
+        let inner = Arc::new(ReentrantMutex::new(RefCell::new({
+            let mut u = UndoManagerInner::new(get_counter_end(doc, doc.peer_id()));
+            if let Some(max_bytes) = doc.memory_budget().max_undo_bytes {
+                u.max_undo_bytes = max_bytes;
+            }
+            u
+        })));
         let inner_clone = inner.clone();
         let inner_clone2 = inner.clone();
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
+        let remap_containers_local = remap_containers.clone();
         let remap_containers_clone = remap_containers.clone();
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
@@ -783,8 +1003,8 @@ impl UndoManager {
                         // next_counter must advance so the next recorded item
                         // does not fold these edits into its span.
                         let mut inner = lock.borrow_mut();
-                        inner.undo_stack.compose_remote_event(event.events);
-                        inner.redo_stack.compose_remote_event(event.events);
+                        let remap = remap_containers_local.lock();
+                        inner.compose_remote_event(event.events, &remap);
                         inner.next_counter = Some(id.counter + 1);
                     } else {
                         UndoManagerInner::record_checkpoint(&lock, id.counter + 1, Some(event));
@@ -795,30 +1015,30 @@ impl UndoManager {
                 let lock = inner_clone.lock();
                 let mut inner = lock.borrow_mut();
 
-                for e in event.events {
-                    if let Diff::Tree(tree) = &e.diff {
-                        for item in &tree.diff {
-                            let target = item.target;
-                            if let TreeExternalDiff::Create { .. } = &item.action {
-                                // If the concurrent event is a create event, it may bring the deleted tree node back,
-                                // so we need to remove it from the remap of the container.
-                                remap_containers_clone
-                                    .lock()
-                                    .remove(&target.associated_meta_container());
+                {
+                    let mut remap = remap_containers_clone.lock();
+                    for e in event.events {
+                        if let Diff::Tree(tree) = &e.diff {
+                            for item in &tree.diff {
+                                let target = item.target;
+                                if let TreeExternalDiff::Create { .. } = &item.action {
+                                    // If the concurrent event is a create event, it may bring the deleted tree node back,
+                                    // so we need to remove it from the remap of the container.
+                                    remap.remove(&target.associated_meta_container());
+                                }
                             }
                         }
                     }
-                }
 
-                let is_import_disjoint = inner.is_disjoint_with_group(event.events);
+                    let is_import_disjoint = inner.is_disjoint_with_group(event.events);
 
-                inner.undo_stack.compose_remote_event(event.events);
-                inner.redo_stack.compose_remote_event(event.events);
+                    inner.compose_remote_event(event.events, &remap);
 
-                // If the import is not disjoint, we end the active group
-                // all subsequent changes will be new undo items
-                if !is_import_disjoint {
-                    inner.group = None;
+                    // If the import is not disjoint, we end the active group
+                    // all subsequent changes will be new undo items
+                    if !is_import_disjoint {
+                        inner.group = None;
+                    }
                 }
             }
             EventTriggerKind::Checkout => {
@@ -848,6 +1068,12 @@ impl UndoManager {
             true
         }));
 
+        {
+            let mut managers = doc.undo_managers.lock();
+            managers.retain(|w| w.strong_count() > 0);
+            managers.push(Arc::downgrade(&inner));
+        }
+
         UndoManager {
             peer,
             container_remap: remap_containers,
@@ -857,6 +1083,39 @@ impl UndoManager {
             _undo_sub: undo_sub,
             doc: doc.clone(),
         }
+    }
+
+    pub fn set_max_undo_bytes(&self, max_bytes: usize) {
+        let lock = self.inner.lock();
+        if let Ok(mut inner) = lock.try_borrow_mut() {
+            inner.max_undo_bytes = max_bytes;
+            inner.shrink_to_fit();
+        };
+    }
+
+    pub fn max_undo_bytes(&self) -> usize {
+        let lock = self.inner.lock();
+        let ans = lock
+            .try_borrow()
+            .map(|inner| inner.max_undo_bytes)
+            .unwrap_or(usize::MAX);
+        ans
+    }
+
+    pub fn used_bytes(&self) -> usize {
+        let lock = self.inner.lock();
+        let ans = lock
+            .try_borrow()
+            .map(|inner| inner.used_bytes())
+            .unwrap_or(0);
+        ans
+    }
+
+    pub fn shrink_to_fit(&self) {
+        let lock = self.inner.lock();
+        if let Ok(mut inner) = lock.try_borrow_mut() {
+            inner.shrink_to_fit();
+        };
     }
 
     pub fn group_start(&self) -> LoroResult<()> {
@@ -1015,6 +1274,7 @@ impl UndoManager {
         // to undo/redo an unrelated edit in the same call.
         if let Some((mut span, remote_diff)) = top {
             let mut next_push_selection = None;
+            let mut next_affected_cids = std::mem::take(&mut span.affected_cids);
             {
                 let inner = self.inner.clone();
                 // We need to clone this because otherwise <transform_delta> will be applied to the same remote diff
@@ -1028,6 +1288,7 @@ impl UndoManager {
                     &mut self.container_remap.lock(),
                     Some(&remote_change_clone),
                     &mut |diff| {
+                        next_affected_cids.extend(diff.cid_to_events.keys().cloned());
                         info_span!("transform remote diff").in_scope(|| {
                             let inner = inner.lock();
                             // <transform_delta>
@@ -1052,11 +1313,28 @@ impl UndoManager {
                         return Err(e);
                     }
                     Err(e) => {
+                        span.affected_cids = next_affected_cids;
                         get_stack(&mut self.inner.lock().borrow_mut())
                             .restore_popped(span, &remote_diff);
                         return Err(e);
                     }
                 };
+                {
+                    let remap = self.container_remap.lock();
+                    let extra: Vec<ContainerID> = next_affected_cids
+                        .iter()
+                        .filter_map(|cid| {
+                            let mut cur = cid;
+                            let mut mapped = None;
+                            while let Some(next) = remap.get(cur) {
+                                mapped = Some(next.clone());
+                                cur = next;
+                            }
+                            mapped
+                        })
+                        .collect();
+                    next_affected_cids.extend(extra);
+                }
                 drop(commit);
                 let inner = self.inner.lock();
                 let mut is_some = false;
@@ -1109,7 +1387,11 @@ impl UndoManager {
                 }
 
                 let mut inner = inner.borrow_mut();
-                get_opposite(&mut inner).push(CounterSpan::new(end_counter, new_counter), meta);
+                get_opposite(&mut inner).push_with_cids(
+                    CounterSpan::new(end_counter, new_counter),
+                    meta,
+                    next_affected_cids,
+                );
                 inner.trim_undo_stack();
                 inner.next_counter = Some(new_counter);
                 executed = true;
@@ -1435,5 +1717,92 @@ mod merge_timer_tests {
             inner.undo_stack.peek_top_span(),
             Some(CounterSpan::new(2, 4))
         );
+    }
+}
+
+#[cfg(test)]
+mod budget_work_tests {
+    use super::*;
+    #[test]
+    fn finite_byte_trim_walks_history_once_and_accounts_removed_rows() {
+        let mut manager = UndoManagerInner::new(0);
+        for i in 0..1000 {
+            manager.undo_stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta::default(),
+                Default::default(),
+            );
+            if i % 7 == 0 {
+                manager.undo_stack.stack.push_back(Default::default());
+            }
+        }
+        UNDO_SIZE_WALKS.with(|n| n.set(0));
+        manager.set_max_undo_bytes_from_doc(0);
+        UNDO_SIZE_WALKS.with(|n| assert_eq!(n.get(), 1));
+        assert!(manager.undo_stack.is_empty());
+
+        let mut stack = Stack::new();
+        for i in 0..20 {
+            stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta {
+                    value: LoroValue::from("payload".repeat(i as usize + 1)),
+                    cursors: vec![],
+                },
+                Default::default(),
+            );
+            if i % 3 == 0 {
+                let mut diff = crate::event::TextDiff::default();
+                diff.insert_value(0, "remote".into(), Default::default());
+                let cid = ContainerID::new_root("text", loro_common::ContainerType::Text);
+                let batch = &stack.stack.back().unwrap().1;
+                batch.lock().order.push(cid.clone());
+                batch.lock().cid_to_events.insert(cid, Diff::Text(diff));
+                stack.stack.push_back(Default::default());
+            }
+        }
+        while !stack.is_empty() {
+            let before = stack.estimated_bytes();
+            let freed = stack.pop_front_inner(true);
+            assert_eq!(before - freed, stack.estimated_bytes());
+        }
+    }
+
+    #[test]
+    fn merging_known_edits_does_not_narrow_an_unknown_checkpoint() {
+        let mut stack = Stack::new();
+        stack.push_with_cids(
+            CounterSpan::new(0, 1),
+            Default::default(),
+            Default::default(),
+        );
+        let cid = ContainerID::new_root("text", loro_common::ContainerType::Text);
+        stack.push_with_merge_cids(
+            CounterSpan::new(1, 2),
+            Default::default(),
+            [cid].into_iter().collect(),
+            true,
+            None,
+        );
+        assert_eq!(stack.len(), 1);
+        assert!(stack.has_unknown_affected_cids());
+    }
+
+    #[test]
+    fn unlimited_undo_trimming_does_not_walk_history() {
+        let mut manager = UndoManagerInner::new(0);
+        for i in 0..1000 {
+            manager.undo_stack.push_with_cids(
+                CounterSpan::new(i, i + 1),
+                UndoItemMeta::default(),
+                Default::default(),
+            );
+        }
+        UNDO_SIZE_WALKS.with(|n| n.set(0));
+        manager.trim_undo_stack();
+        assert_eq!(manager.undo_stack.len(), 1000);
+        UNDO_SIZE_WALKS.with(|n| assert_eq!(n.get(), 0));
+        manager.set_max_undo_bytes_from_doc(0);
+        assert!(manager.undo_stack.is_empty());
     }
 }

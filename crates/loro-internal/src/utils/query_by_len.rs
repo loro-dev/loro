@@ -9,8 +9,8 @@ use crate::container::richtext::richtext_state::{RichtextStateChunk, RichtextTre
 /// By default this query implementation will
 /// - prefer next element when this element has zero length.
 /// - prefer next element rather than previous element when the left is at the middle of two elements.
-/// With `LEFT_BOUNDARY`, it instead prefers the preceding nonempty element at
-/// an exact boundary, which excludes zero-length elements from a range end.
+///   With `LEFT_BOUNDARY`, it instead prefers the preceding nonempty element at
+///   an exact boundary, which excludes zero-length elements from a range end.
 pub struct IndexQuery<T: QueryByLen<B>, B: BTreeTrait, const LEFT_BOUNDARY: bool = false> {
     pub left: usize,
     _data: PhantomData<(T, B)>,

@@ -477,7 +477,7 @@ pub(crate) fn import_batch_detail_to_js_value(detail: ImportBatchDetail) -> JsRe
             }
             ImportBlobOutcome::Failed(err) => {
                 set(&obj, "type", &JsValue::from_str("failed"))?;
-                set(&obj, "error", &JsValue::from(err))?;
+                set(&obj, "error", &JsValue::from_str(&err.to_string()))?;
             }
             ImportBlobOutcome::RolledBack => {
                 set(&obj, "type", &JsValue::from_str("rolledBack"))?;
@@ -492,7 +492,9 @@ pub(crate) fn import_batch_detail_to_js_value(detail: ImportBatchDetail) -> JsRe
     set(
         &obj,
         "rollbackError",
-        &detail.rollback_error.map_or(JsValue::NULL, JsValue::from),
+        &detail
+            .rollback_error
+            .map_or(JsValue::NULL, |err| JsValue::from_str(&err.to_string())),
     )?;
     Ok(obj.into())
 }

@@ -27,6 +27,7 @@ use crate::encoding::decode_oplog;
 use crate::encoding::{ImportStatus, ParsedHeaderAndBody};
 use crate::history_cache::ContainerHistoryCache;
 use crate::id::{Counter, PeerID, ID};
+use crate::kv_store::SharedBlockCache;
 use crate::op::{FutureInnerContent, InnerContent, ListSlice, RawOpContent, RemoteOp, RichOp};
 use crate::span::{HasCounterSpan, HasLamportSpan};
 use crate::state::DocState;
@@ -67,6 +68,7 @@ pub struct OpLog {
     /// that is being edited in pre-commit callback.
     pub(crate) uncommitted_change: Option<Change>,
     pub(crate) import_rollback: Option<ImportRollback>,
+    pub(crate) max_pending_bytes: Option<usize>,
 }
 
 pub(crate) struct ImportRollback {
@@ -99,6 +101,17 @@ struct MovableListElemRef {
     op_id: ID,
     op_lamport: Lamport,
     elem_id: IdLp,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OpLogMemoryBreakdown {
+    pub dag_bytes: usize,
+    pub arena_bytes: usize,
+    pub change_cache_bytes: usize,
+    pub change_kv_bytes: usize,
+    pub pending_bytes: usize,
+    pub history_cache_bytes: usize,
+    pub spilled_disk_bytes: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -199,9 +212,18 @@ pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
 impl OpLog {
     #[inline]
     pub(crate) fn new(visible_op_count: Arc<AtomicUsize>) -> Self {
+        Self::new_with_cache(visible_op_count, SharedBlockCache::default_per_doc())
+    }
+
+    #[inline]
+    pub(crate) fn new_with_cache(
+        visible_op_count: Arc<AtomicUsize>,
+        block_cache: crate::kv_store::SharedBlockCache,
+    ) -> Self {
         let arena = SharedArena::new();
         let cfg = Configure::default();
-        let change_store = ChangeStore::new_mem(&arena, cfg.merge_interval_in_s.clone());
+        let change_store =
+            ChangeStore::new_mem_with_cache(&arena, cfg.merge_interval_in_s.clone(), block_cache);
         arena.set_creator_resolver(change_store.creator_resolver());
         Self {
             visible_op_count,
@@ -214,6 +236,7 @@ impl OpLog {
             configure: cfg,
             uncommitted_change: None,
             import_rollback: None,
+            max_pending_bytes: None,
         }
     }
 
@@ -613,6 +636,46 @@ impl OpLog {
     pub fn free_history_cache(&self) {
         let mut history_cache = self.history_cache.lock();
         history_cache.free();
+    }
+
+    pub(crate) fn set_block_cache(&self, cache: SharedBlockCache) {
+        self.change_store.set_block_cache(cache);
+    }
+
+    pub(crate) fn flush_kv(&self) {
+        self.change_store.flush_kv();
+    }
+
+    pub(crate) fn compact_history(&self) {
+        if self.import_rollback.is_none() && !self.dag.has_pending_txn() {
+            self.change_store
+                .flush_and_compact(self.dag.vv(), self.dag.frontiers());
+        }
+    }
+
+    pub(crate) fn set_max_pending_bytes(&mut self, max: Option<usize>) {
+        self.max_pending_bytes = max;
+    }
+
+    pub(crate) fn has_max_pending_bytes(&self) -> bool {
+        self.max_pending_bytes.is_some()
+    }
+
+    pub(crate) fn estimated_memory_breakdown(&self) -> OpLogMemoryBreakdown {
+        let (change_kv_bytes, change_cache_bytes) = self.change_store.estimated_memory_bytes();
+        let dag_bytes = self.dag.estimated_memory_bytes();
+        let arena_bytes = self.arena.estimated_memory_bytes();
+        let history_cache_bytes = self.history_cache.lock().estimated_memory_bytes();
+        let spilled_disk_bytes = self.change_store.spilled_disk_bytes();
+        OpLogMemoryBreakdown {
+            dag_bytes,
+            arena_bytes,
+            change_cache_bytes,
+            change_kv_bytes,
+            pending_bytes: self.pending_changes.used_bytes(),
+            history_cache_bytes,
+            spilled_disk_bytes,
+        }
     }
 
     #[cfg(test)]

@@ -247,6 +247,47 @@ impl ListState {
         self.rebuild_tiny_child_index();
     }
 
+    pub(crate) fn estimated_heap_bytes(&self) -> usize {
+        let entries_bytes = match &self.list {
+            ListEntries::Tiny {
+                entries,
+                child_container_to_index,
+            } => {
+                entries.capacity() * std::mem::size_of::<Elem>()
+                    + entries
+                        .iter()
+                        .map(|elem| {
+                            elem.v
+                                .estimated_heap_bytes()
+                                .saturating_sub(std::mem::size_of::<LoroValue>())
+                        })
+                        .sum::<usize>()
+                    + child_container_to_index.capacity()
+                        * (std::mem::size_of::<ContainerID>() + std::mem::size_of::<usize>() + 8)
+            }
+            ListEntries::Tree {
+                tree,
+                child_container_to_index,
+            } => {
+                tree.iter()
+                    .map(|elem| {
+                        std::mem::size_of::<Elem>()
+                            + 16
+                            + elem
+                                .v
+                                .estimated_heap_bytes()
+                                .saturating_sub(std::mem::size_of::<LoroValue>())
+                    })
+                    .sum::<usize>()
+                    + child_container_to_index.capacity()
+                        * (std::mem::size_of::<ContainerID>()
+                            + std::mem::size_of::<LeafIndex>()
+                            + 8)
+            }
+        };
+        std::mem::size_of::<Self>().saturating_add(entries_bytes)
+    }
+
     pub fn contains_child_container(&self, id: &ContainerID) -> bool {
         match &self.list {
             ListEntries::Tiny {
