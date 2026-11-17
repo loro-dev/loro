@@ -531,3 +531,91 @@ fn concurrent_drops_of_the_last_two_handles_commit_once() {
     }
     assert_eq!(lost, 0);
 }
+
+/// The native global estimate sums cached per-document statistics and refreshes
+/// only documents changed since (`DocStatsDirty` in loro-internal). After every
+/// kind of change it must still equal the sum of fresh per-document statistics.
+#[test]
+fn global_estimate_stays_exact_after_reads_edits_undo_drops_and_policy_switches() {
+    let (_lock, _reset) = lock_and_reset();
+    let baseline = global_memory_stats();
+    assert_eq!(baseline.live_doc_count, 0, "other documents are alive");
+    set_global_memory_budget(GlobalMemoryBudget::new().with_max_heap_bytes(1 << 40));
+
+    let mut docs: Vec<LoroDoc> = Vec::new();
+    for seed in 0..6u64 {
+        // Imported from a snapshot: state stays encoded until read.
+        let src = LoroDoc::new();
+        src.set_peer_id(seed + 1).unwrap();
+        for i in 0..32 {
+            src.get_map(format!("m{i}"))
+                .insert("v", "x".repeat(200))
+                .unwrap();
+        }
+        src.commit();
+        let doc = LoroDoc::new();
+        doc.set_peer_id(seed + 100).unwrap();
+        doc.import(&src.export(ExportMode::Snapshot).unwrap())
+            .unwrap();
+        docs.push(doc);
+    }
+    let check = |docs: &[LoroDoc], what: &str| {
+        let global = global_memory_stats();
+        let sum: u64 = docs
+            .iter()
+            .map(|d| d.memory_stats().total_bytes as u64)
+            .sum();
+        assert_eq!(global.live_doc_count, docs.len(), "{what}");
+        assert_eq!(
+            global.docs_estimated_bytes,
+            sum + global.global_block_cache_bytes as u64,
+            "{what}"
+        );
+    };
+    check(&docs, "after import");
+
+    let _ = docs[1].get_deep_value();
+    check(&docs, "after a pure read");
+
+    docs[2]
+        .get_map("m0")
+        .insert("big", "y".repeat(64 * 1024))
+        .unwrap();
+    check(&docs, "with an uncommitted edit");
+    docs[2].commit();
+    docs[3]
+        .get_text("t")
+        .insert(0, &"z".repeat(10_000))
+        .unwrap();
+    docs[3].try_commit().unwrap();
+    check(&docs, "after commits");
+
+    let _handler_only = docs[4].get_map("registered_by_a_handler_only");
+    check(&docs, "after a handler registered a container");
+
+    let undo = loro::UndoManager::new(&docs[5]);
+    docs[5].get_text("u").insert(0, "undoable").unwrap();
+    docs[5].commit();
+    check(&docs, "after an undo step was recorded");
+    drop(undo);
+    check(&docs, "after the undo manager dropped");
+
+    docs.remove(0);
+    check(&docs, "after a drop");
+
+    set_global_memory_budget(GlobalMemoryBudget::default());
+    docs[0].get_text("t").insert(0, &"w".repeat(5_000)).unwrap();
+    docs[0].commit();
+    let _ = docs[1].reclaim_memory();
+    set_global_memory_budget(GlobalMemoryBudget::new().with_max_heap_bytes(1 << 40));
+    check(&docs, "after changes made while no global budget was set");
+
+    // A busy document keeps its cached value and is refreshed once released.
+    let doc = docs[2].clone();
+    let handle = std::thread::spawn(move || {
+        doc.get_text("busy").insert(0, &"b".repeat(20_000)).unwrap();
+        doc.commit();
+    });
+    handle.join().unwrap();
+    check(&docs, "after another thread's edit");
+}

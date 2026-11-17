@@ -171,6 +171,15 @@ fn read_u32_le(r: &mut bytes::buf::Reader<Bytes>) -> LoroResult<u32> {
     Ok(u32::from_le_bytes(buf))
 }
 
+/// Whether a shallow snapshot's state and shallow-root sections are copied out
+/// of the input on import, so that they do not keep its op log section allocated.
+/// The copy is a transient extra allocation of their size; it is skipped when
+/// the op log section, the most that could stay allocated unaccounted, is under
+/// an eighth of them.
+fn copy_shallow_sections(oplog_len: usize, state_len: usize, shallow_len: usize) -> bool {
+    oplog_len.saturating_mul(8) >= state_len.saturating_add(shallow_len)
+}
+
 pub(crate) fn decode_snapshot(
     doc: &LoroDoc,
     bytes: Bytes,
@@ -224,6 +233,7 @@ pub(crate) fn decode_snapshot_inner(
 
     let arena_checkpoint = oplog.arena.checkpoint_for_rollback();
     let decode_result = (|| -> LoroResult<()> {
+        let oplog_len = oplog_bytes.len();
         oplog.decode_change_store(oplog_bytes)?;
         let state_frontiers;
         if shallow_root_state_bytes.is_empty() {
@@ -234,6 +244,22 @@ pub(crate) fn decode_snapshot_inner(
             state_frontiers = oplog.frontiers().clone();
         } else {
             ensure_cov::notify_cov("loro_internal::import::snapshot::gc");
+            // The shallow root keeps its bytes for the document's lifetime, and the
+            // state store keeps slices of the state section, but both are slices of
+            // the whole input: the op log section stayed allocated after the op log
+            // was rewritten (or spilled), uncounted. Copy them out unless the op log
+            // section is small. See context/memory-budget.md, "Shallow root input
+            // buffer".
+            let state_len = state_bytes.as_ref().map_or(0, Bytes::len);
+            let (shallow_root_state_bytes, state_bytes) =
+                if copy_shallow_sections(oplog_len, state_len, shallow_root_state_bytes.len()) {
+                    (
+                        Bytes::copy_from_slice(&shallow_root_state_bytes),
+                        state_bytes.map(|b| Bytes::copy_from_slice(&b)),
+                    )
+                } else {
+                    (shallow_root_state_bytes, state_bytes)
+                };
             let shallow_root_state_frontiers = state.store.decode_gc(
                 shallow_root_state_bytes.clone(),
                 oplog.dag().shallow_since_frontiers().clone(),
@@ -469,6 +495,83 @@ mod tests {
         let encoded = doc.export(ExportMode::Snapshot).unwrap();
         let parsed = crate::encoding::parse_header_and_body(&encoded, true).unwrap();
         _decode_snapshot_bytes(Bytes::copy_from_slice(parsed.body)).unwrap()
+    }
+
+    /// Imports `encoded` from a buffer whose drop is observable, runs `after`,
+    /// and returns whether the buffer was released.
+    fn input_released_after(encoded: &[u8], after: impl FnOnce(&LoroDoc)) -> bool {
+        struct Owner(Vec<u8>, Arc<std::sync::atomic::AtomicBool>);
+        impl AsRef<[u8]> for Owner {
+            fn as_ref(&self) -> &[u8] {
+                &self.0
+            }
+        }
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                self.1.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let parsed = crate::encoding::parse_header_and_body(encoded, true).unwrap();
+        let released = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let body = Bytes::from_owner(Owner(parsed.body.to_vec(), released.clone()));
+        let doc = LoroDoc::new_auto_commit();
+        doc.with_barrier(|| decode_snapshot(&doc, body, Default::default()))
+            .unwrap();
+        after(&doc);
+        let ans = released.load(std::sync::atomic::Ordering::SeqCst);
+        drop(doc);
+        assert!(released.load(std::sync::atomic::Ordering::SeqCst));
+        ans
+    }
+
+    fn doc_with_history() -> (LoroDoc, Frontiers) {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let map = doc.get_map("m");
+        for i in 0..200 {
+            map.insert(&format!("k{i}"), "v".repeat(100)).unwrap();
+        }
+        doc.commit_then_renew();
+        let middle = doc.oplog_frontiers();
+        let text = doc.get_text("t");
+        for _ in 0..50 {
+            text.insert(0, "abc", crate::cursor::PosType::Unicode)
+                .unwrap();
+            doc.commit_then_renew();
+        }
+        (doc, middle)
+    }
+
+    /// A shallow root used to keep a slice of the whole import input, so the op
+    /// log and state sections stayed allocated after their stores were rewritten
+    /// (an edit and `reclaim_memory`), uncounted by the statistics.
+    #[test]
+    fn rewritten_stores_release_the_snapshot_input_buffer() {
+        let (src, middle) = doc_with_history();
+        let full = src.export(ExportMode::Snapshot).unwrap();
+        let shallow = src.export(ExportMode::shallow_snapshot(&middle)).unwrap();
+        let parsed = crate::encoding::parse_header_and_body(&shallow, true).unwrap();
+        let sections = _decode_snapshot_bytes(Bytes::copy_from_slice(parsed.body)).unwrap();
+        assert!(copy_shallow_sections(
+            sections.oplog_bytes.len(),
+            sections.state_bytes.as_ref().map_or(0, Bytes::len),
+            sections.shallow_root_state_bytes.len()
+        ));
+        for (name, bytes) in [("full", &full), ("shallow", &shallow)] {
+            let released = input_released_after(bytes, |doc| {
+                assert_eq!(doc.get_deep_value(), src.get_deep_value());
+                let map = doc.get_map("m");
+                for i in 0..200 {
+                    map.insert(&format!("k{i}"), "changed").unwrap();
+                }
+                doc.get_text("t")
+                    .insert(0, "new", crate::cursor::PosType::Unicode)
+                    .unwrap();
+                doc.commit_then_renew();
+                let _ = doc.reclaim_memory();
+            });
+            assert!(released, "{name}: the input buffer is still allocated");
+        }
     }
 
     #[test]

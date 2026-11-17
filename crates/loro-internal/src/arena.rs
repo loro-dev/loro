@@ -86,6 +86,10 @@ struct InnerSharedArena {
     // inconsistent orders.
     containers: RwLock<ArenaContainers>,
     str: Arc<Mutex<StrArena>>,
+    /// The owning document's statistics flag; see [`crate::loro::DocStatsDirty`].
+    /// The arena changes without the document's locks (handlers register
+    /// containers, the creator resolver parses changes), so its writers mark it.
+    stats_dirty: std::sync::OnceLock<Arc<crate::loro::DocStatsDirty>>,
 }
 
 impl fmt::Debug for InnerSharedArena {
@@ -366,6 +370,7 @@ impl SharedArena {
                     }
                 }),
                 str: self.inner.str.clone(),
+                stats_dirty: std::sync::OnceLock::new(),
             }),
         }
     }
@@ -376,6 +381,32 @@ impl SharedArena {
             containers: self.inner.containers.read().container_idx_to_id.len(),
             str_bytes: self.inner.str.lock().bytes_len(),
         }
+    }
+
+    pub(crate) fn set_stats_dirty(&self, dirty: Arc<crate::loro::DocStatsDirty>) {
+        let _ = self.inner.stats_dirty.set(dirty);
+    }
+
+    /// Marks the owning document's statistics stale. Called while holding the lock
+    /// whose data changed, so a statistics read under that lock either sees the
+    /// change or runs after this mark.
+    #[inline]
+    pub(crate) fn mark_stats_dirty(&self) {
+        if let Some(dirty) = self.inner.stats_dirty.get() {
+            dirty.mark();
+        }
+    }
+
+    fn containers_write(&self) -> crate::sync::RwLockWriteGuard<'_, ArenaContainers> {
+        let guard = self.inner.containers.write();
+        self.mark_stats_dirty();
+        guard
+    }
+
+    fn str_write(&self) -> crate::sync::MutexGuard<'_, StrArena> {
+        let guard = self.inner.str.lock();
+        self.mark_stats_dirty();
+        guard
     }
 
     pub(crate) fn checkpoint_for_rollback(&self) -> SharedArenaRollback {
@@ -399,7 +430,7 @@ impl SharedArena {
     /// links, which their IDs determine. Text is truncated; only parsed changes refer to it. See `context/failed-import-arena-indices.md`.
     pub(crate) fn rollback(&self, checkpoint: SharedArenaRollback) {
         {
-            let mut guard = self.inner.containers.write();
+            let mut guard = self.containers_write();
             let containers = &mut *guard;
             let container_len = checkpoint.container_len;
             if containers.container_idx_to_id.len() > container_len {
@@ -417,7 +448,7 @@ impl SharedArena {
             }
         }
 
-        self.inner.str.lock().rollback(checkpoint.str);
+        self.str_write().rollback(checkpoint.str);
     }
 
     pub(crate) fn str_checkpoint(&self) -> StrArenaCheckpoint {
@@ -425,7 +456,7 @@ impl SharedArena {
     }
 
     pub(crate) fn rollback_str(&self, checkpoint: StrArenaCheckpoint) {
-        self.inner.str.lock().rollback(checkpoint);
+        self.str_write().rollback(checkpoint);
     }
 
     pub(crate) fn with_guards(&self, f: impl FnOnce(&mut ArenaGuards)) {
@@ -435,12 +466,12 @@ impl SharedArena {
 
     fn get_arena_guards(&self) -> ArenaGuards<'_> {
         ArenaGuards {
-            containers: self.inner.containers.write(),
+            containers: self.containers_write(),
         }
     }
 
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        self.inner.containers.write().register_container(id)
+        self.containers_write().register_container(id)
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {
@@ -477,19 +508,19 @@ impl SharedArena {
     }
 
     pub fn alloc_str(&self, str: &str) -> StrAllocResult {
-        let mut text_lock = self.inner.str.lock();
+        let mut text_lock = self.str_write();
         _alloc_str(&mut text_lock, str)
     }
 
     /// return slice and unicode index
     pub fn alloc_str_with_slice(&self, str: &str) -> (BytesSlice, StrAllocResult) {
-        let mut text_lock = self.inner.str.lock();
+        let mut text_lock = self.str_write();
         _alloc_str_with_slice(&mut text_lock, str)
     }
 
     /// alloc str without extra info
     pub fn alloc_str_fast(&self, bytes: &[u8]) {
-        let mut text_lock = self.inner.str.lock();
+        let mut text_lock = self.str_write();
         text_lock.alloc(std::str::from_utf8(bytes).unwrap());
     }
 
@@ -506,7 +537,7 @@ impl SharedArena {
 
     #[inline]
     pub fn set_parent(&self, child: ContainerIdx, parent: Option<ContainerIdx>) {
-        self.inner.containers.write().set_parent(child, parent);
+        self.containers_write().set_parent(child, parent);
     }
 
     /// Forget the parent links of the normal containers whose creating op is `peer`'s op at
@@ -516,7 +547,7 @@ impl SharedArena {
     /// cached as deleted. The registrations stay: other code may hold their indices. The
     /// caller removes their state. See `context/apply-diff-atomicity.md`.
     pub(crate) fn forget_parents_of_discarded_ops(&self, peer: PeerID, start_counter: Counter) {
-        let mut containers = self.inner.containers.write();
+        let mut containers = self.containers_write();
         let discarded: Vec<ContainerIdx> = containers
             .container_idx_to_id
             .iter()
@@ -898,7 +929,7 @@ impl SharedArena {
                 _ => break,
             }
         }
-        self.inner.containers.write().get_depth(container)
+        self.containers_write().get_depth(container)
     }
 }
 
@@ -936,7 +967,7 @@ impl SharedArena {
     where
         F: Fn(ContainerID) -> Option<ContainerID> + Send + Sync + 'static,
     {
-        self.inner.containers.write().parent_resolver =
+        self.containers_write().parent_resolver =
             resolver.map(|f| Arc::new(f) as Arc<ParentResolver>);
     }
 
@@ -945,7 +976,7 @@ impl SharedArena {
     where
         F: Fn(&SharedArena, ID) -> CreatorOp + Send + Sync + 'static,
     {
-        self.inner.containers.write().creator_resolver = Some(Arc::new(resolver));
+        self.containers_write().creator_resolver = Some(Arc::new(resolver));
     }
 
     pub(crate) fn estimated_memory_bytes(&self) -> usize {
@@ -980,7 +1011,7 @@ impl SharedArena {
 
     pub(crate) fn shrink_spare_capacity(&self) {
         {
-            let mut c = self.inner.containers.write();
+            let mut c = self.containers_write();
             c.container_idx_to_id.shrink_to_fit();
             c.depth.shrink_to_fit();
             c.container_id_to_idx.shrink_to_fit();
@@ -988,7 +1019,7 @@ impl SharedArena {
             c.root_c_idx.shrink_to_fit();
             c.top_level_root_c_idx.shrink_to_fit();
         }
-        self.inner.str.lock().shrink_spare_capacity();
+        self.str_write().shrink_spare_capacity();
     }
 }
 

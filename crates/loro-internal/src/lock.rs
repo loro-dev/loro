@@ -54,6 +54,9 @@ pub struct LoroMutex<T> {
     /// and must get an error rather than wait for itself. A plain std atomic like
     /// `TxnGate::active`: only the holder writes its own mark.
     holder: std::sync::atomic::AtomicUsize,
+    /// The owning document's statistics flag, set on every acquisition. See
+    /// [`crate::loro::DocStatsDirty`].
+    stats_dirty: std::sync::OnceLock<Arc<crate::loro::DocStatsDirty>>,
 }
 
 /// Keeps other threads' transaction writers out while one thread runs a
@@ -200,6 +203,7 @@ impl LoroLockGroup {
             kind: kind as u8,
             txn_gate: TxnGate::new(),
             holder: std::sync::atomic::AtomicUsize::new(0),
+            stats_dirty: std::sync::OnceLock::new(),
         }
     }
 }
@@ -211,6 +215,20 @@ impl Default for LoroLockGroup {
 }
 
 impl<T> LoroMutex<T> {
+    /// Ties this lock to a document's statistics flag: every later `lock` or
+    /// `try_lock` marks the document's cached memory statistics stale, because
+    /// what this lock protects may change while it is held.
+    pub(crate) fn set_stats_dirty(&self, dirty: Arc<crate::loro::DocStatsDirty>) {
+        let _ = self.stats_dirty.set(dirty);
+    }
+
+    #[inline]
+    fn mark_stats_dirty(&self) {
+        if let Some(dirty) = self.stats_dirty.get() {
+            dirty.mark();
+        }
+    }
+
     /// Keep other threads' document writers out across a compound operation
     /// that releases and reacquires the transaction lock. The owning thread
     /// (including nested calls) keeps using the normal transaction lock.
@@ -300,6 +318,7 @@ impl<T> LoroMutex<T> {
 
             let guard = self.acquire();
             self.mark_holder();
+            self.mark_stats_dirty();
             *v.lock() = this;
             LoroMutexGuard {
                 guard,
@@ -314,6 +333,7 @@ impl<T> LoroMutex<T> {
         {
             let guard = self.acquire();
             self.mark_holder();
+            self.mark_stats_dirty();
             LoroMutexGuard {
                 guard,
                 _inner: LoroMutexGuardInner { inner: self },
@@ -324,6 +344,15 @@ impl<T> LoroMutex<T> {
     #[track_caller]
     /// Attempts to acquire the lock without blocking or panicking on lock-order conflicts.
     pub(crate) fn try_lock(&self) -> Option<LoroMutexGuard<'_, T>> {
+        let guard = self.try_lock_unmarked()?;
+        self.mark_stats_dirty();
+        Some(guard)
+    }
+
+    #[track_caller]
+    /// [`Self::try_lock`] without marking the document's statistics stale. Only for
+    /// code that reads the statistics themselves (`refresh_cached_doc_bytes_for_inner`).
+    pub(crate) fn try_lock_unmarked(&self) -> Option<LoroMutexGuard<'_, T>> {
         if self.kind == LockKind::Txn as u8
             && (self.is_held_by_current_thread() || self.txn_gate.must_wait())
         {
