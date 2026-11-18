@@ -53,8 +53,11 @@ removed; registration and its lock/dirty-mark behavior remain unchanged.
 
 `BasicHandler::doc` uses `HandlerDoc`, with direct and shared ownership variants.
 Ordinary root and child lookups retain direct ownership. List iteration and
-JSONPath map-value iteration create one shared `Arc<LoroDoc>` for the traversal;
-its descendants and their clones reuse it. Obtaining an independent document
+JSONPath map-value iteration create one shared `Arc<LoroDoc>` on encountering the
+first container value; its descendants and their clones reuse it. Empty and
+scalar-only traversals create no shared owner. The optional owner lives outside
+the state-lock closure so its final drop runs after the lock is released.
+Obtaining an independent document
 handle still clones the underlying `LoroDoc`. The last shared owner drops the
 document through the existing drop gate, so registry references still cannot
 suppress the final commit.
@@ -62,7 +65,7 @@ suppress the final commit.
 The intended benefit is fewer document drop-gate acquisitions when a query
 creates and discards many child handlers. The first prototype allocated a shared
 owner for every root lookup and regressed that workload. The revised prototype
-limits the allocation to bulk iteration. The ownership enum adds a tag to the
+limits the allocation to bulk iteration that produces child handlers. The ownership enum adds a tag to the
 handler, so root and scalar child lookup remain separate benchmark cases.
 
 `BasicHandler::with_doc_state` borrows `self.doc.state` for the lock guard's
@@ -105,6 +108,25 @@ When every commit of a grouped item inserts into the same continuous text run,
 `seal` materializes one deletion. This avoids moving repeated delta composition
 from editing into the first undo. Insertions outside the run, another container,
 or any other operation retain the general path.
+
+The general path also needs bounded delta composition. Previously, a deletion's
+end lookup skipped zero-output deletion leaves at that boundary. Repeated
+backward deletions then scanned the growing deleted suffix on each composition,
+including text groups followed by a map write, groups editing two texts, and list
+push groups (also while recording redo). `DeltaRope::_compose_replace` now finds
+the last output unit consumed and advances its cursor by one; the selected range
+excludes the already-deleted suffix. The existing single-leaf update can also
+merge the new deletion into its immediate neighbour. See
+[text delta composition](text-delta-chunking.md#deletion-composition-boundaries).
+This does not change commit ordering, map/counter handling, or fallback rules.
+It removes this quadratic suffix scan, not every possible quadratic delta
+workload.
+
+Grouped sealing also borrows each existing commit diff instead of cloning a
+temporary `DiffBatch` for every commit. Compact text records delete directly from
+the accumulated text delta after its first entry is materialized. Map writes
+still compose in reverse commit order with the later inverse taking precedence;
+counter recomputation, final pruning and normalization remain unchanged.
 
 Mixed text inverses that both restore text and delete text in the same container
 fall back to checkout, both for a single transaction and after grouped commits

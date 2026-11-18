@@ -129,6 +129,66 @@ fn delete_delta_compose() {
 }
 
 #[test]
+fn replacements_preserve_deletes_at_output_boundaries() {
+    for prefix in [0, 1, 5] {
+        for inserted in ["", "ab"] {
+            for deleted in [1, 2, 3, 7] {
+                let mut original: TextDelta = DeltaRopeBuilder::new()
+                    .retain(prefix + 2, ())
+                    .delete(3)
+                    .retain(2, ())
+                    .delete(4)
+                    .build();
+                let change = DeltaRopeBuilder::new()
+                    .retain(prefix, ())
+                    .replace(TextChunk::try_from_str(inserted).unwrap(), (), deleted)
+                    .build();
+                let mut expected: TextDelta = TextDelta::new();
+                expected.push_str_insert("abcdefghijklmnopqrstuvwxyz");
+                expected.compose(&original);
+                expected.compose(&change);
+                original.compose(&change);
+                let mut actual: TextDelta = TextDelta::new();
+                actual.push_str_insert("abcdefghijklmnopqrstuvwxyz");
+                actual.compose(&original);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn composed_random_replacements_match_sequential_string_edits() {
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    for seed in 0..64 {
+        let mut random = StdRng::seed_from_u64(seed);
+        let initial = "abcdefghijklmnopqrstuvwxyz".repeat(4);
+        let mut expected = initial.clone();
+        let mut combined: TextDelta = TextDelta::new();
+        for step in 0..128 {
+            let position = random.gen_range(0..=expected.len());
+            let deleted = random.gen_range(0..=expected.len() - position);
+            let inserted = ["", "abc", "XYZ"][random.gen_range(0..3)];
+            let change = DeltaRopeBuilder::new()
+                .retain(position, ())
+                .replace(TextChunk::try_from_str(inserted).unwrap(), (), deleted)
+                .build();
+            expected.replace_range(position..position + deleted, inserted);
+            combined.compose(&change);
+            let mut actual: TextDelta = TextDelta::new();
+            actual.push_str_insert(&initial);
+            actual.compose(&combined);
+            assert_eq!(
+                actual.try_to_string().unwrap(),
+                expected,
+                "seed={seed} step={step}"
+            );
+        }
+    }
+}
+
+#[test]
 fn insert_long() {
     let mut a: TextDelta = TextDelta::new();
     a.push_str_insert("1234567890");

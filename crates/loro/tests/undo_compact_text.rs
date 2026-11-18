@@ -149,3 +149,65 @@ fn inverse_registration_survives_replacing_an_undo_manager() {
     assert!(second.redo().unwrap());
     assert_eq!(text.to_string(), "beforebetweensecond");
 }
+
+#[test]
+fn grouped_general_inverses_preserve_remote_edits_across_undo_redo() {
+    for scenario in ["map_tail", "two_texts", "list"] {
+        for remote_position in 0..=4 {
+            let local = LoroDoc::new();
+            local.set_peer_id(1).unwrap();
+            let text = local.get_text("text");
+            let other = local.get_text("other");
+            let list = local.get_list("list");
+            let map = local.get_map("map");
+            text.insert(0, "base").unwrap();
+            other.insert(0, "base").unwrap();
+            for value in 0..4 {
+                list.push(value).unwrap();
+            }
+            map.insert("value", 0).unwrap();
+            local.commit();
+            let remote = local.fork();
+            remote.set_peer_id(2).unwrap();
+            let mut undo = UndoManager::new(&local);
+            undo.group_start().unwrap();
+            for offset in 0..128 {
+                match scenario {
+                    "map_tail" => text.insert(2 + offset, "汉").unwrap(),
+                    "two_texts" => {
+                        text.insert(2 + offset, "汉").unwrap();
+                        other.insert(2 + offset, "😀").unwrap();
+                    }
+                    "list" => list.insert(2 + offset, offset as i32).unwrap(),
+                    _ => unreachable!(),
+                }
+                local.commit();
+            }
+            if scenario == "map_tail" {
+                map.insert("value", 1).unwrap();
+                local.commit();
+            }
+            undo.group_end();
+            remote
+                .get_text("text")
+                .insert(remote_position, "R")
+                .unwrap();
+            remote
+                .get_text("other")
+                .insert(remote_position, "S")
+                .unwrap();
+            remote.get_list("list").insert(remote_position, -1).unwrap();
+            remote.commit();
+            local
+                .import(&remote.export(ExportMode::all_updates()).unwrap())
+                .unwrap();
+            let merged = local.get_deep_value();
+            for _ in 0..2 {
+                assert!(undo.undo().unwrap(), "{scenario} at {remote_position}");
+                assert_eq!(local.get_deep_value(), remote.get_deep_value());
+                assert!(undo.redo().unwrap());
+                assert_eq!(local.get_deep_value(), merged);
+            }
+        }
+    }
+}

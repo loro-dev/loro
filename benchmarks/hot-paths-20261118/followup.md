@@ -149,10 +149,12 @@ source archived from Tonbo. With `LORO_VERIFY_UNDO_LOG=1` for debug tests:
   `LOOM_MAX_PREEMPTIONS=2`: 11 passed.
 - Local formatting and whitespace checks passed.
 
-The PR remains a draft. GitHub's draft-gated build and loro.js jobs were skipped;
-this is remote native validation, not a green full CI matrix. WASM, browser
-runtime, broad fuzzing, and memory measurements were not repeated for this
-follow-up.
+These results describe `f8654ac1`. Its initial draft-gated GitHub jobs were
+skipped; after the PR became ready, the build and loro.js jobs passed on
+2026-11-18. Subsequent review found broader grouped-undo and scalar-traversal
+regressions; their fixes and measurements are in [review-fixes.md](review-fixes.md).
+WASM, browser runtime, broad fuzzing, and memory measurements were not repeated
+in this native follow-up.
 
 The remaining measured targets are scalar root lookup (+23.86%), undo-enabled
 editing (+15.49%), and grouped editing plus undo (+23.48%). Root lookup still

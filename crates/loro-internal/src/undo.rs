@@ -159,6 +159,36 @@ impl DiffBatch {
         }
     }
 
+    fn compose_inverse_ref(&mut self, other: &Self) {
+        if other.cid_to_events.is_empty() {
+            return;
+        }
+        if self.cid_to_events.is_empty() {
+            self.full_state = other.full_state;
+        }
+        assert_eq!(
+            self.full_state, other.full_state,
+            "cannot compose a full-state DiffBatch with an incremental one"
+        );
+        for (id, diff) in other.iter() {
+            if let Some(this_diff) = self.cid_to_events.get_mut(id) {
+                match (this_diff, diff) {
+                    (Diff::Map(current), Diff::Map(next)) => {
+                        current.updated.extend(
+                            next.updated
+                                .iter()
+                                .map(|(key, value)| (key.clone(), value.clone())),
+                        );
+                    }
+                    (current, next) => current.compose_ref(next),
+                }
+            } else {
+                self.cid_to_events.insert(id.clone(), diff.clone());
+                self.order.push(id.clone());
+            }
+        }
+    }
+
     pub fn transform(&mut self, other: &Self, left_priority: bool) {
         if other.cid_to_events.is_empty() || self.cid_to_events.is_empty() {
             return;
@@ -442,6 +472,24 @@ fn counter_inverses<'a>(
 }
 
 impl CommitInverse {
+    fn compose_into(&self, target: &mut DiffBatch) {
+        if let Some((cid, pos, len)) = &self.text_insert {
+            match target.cid_to_events.get_mut(cid) {
+                Some(Diff::Text(text)) => {
+                    assert!(
+                        !target.full_state,
+                        "cannot compose a full-state DiffBatch with an incremental one"
+                    );
+                    text.delete(*pos as usize, *len as usize);
+                }
+                Some(_) => unreachable!("a text inverse must compose with a text diff"),
+                None => target.compose_inverse(self.materialize_diff()),
+            }
+        } else {
+            target.compose_inverse_ref(&self.diff);
+        }
+    }
+
     fn materialize_diff(&self) -> DiffBatch {
         if let Some((cid, pos, len)) = &self.text_insert {
             let mut diff = DiffBatch::default();
@@ -616,7 +664,7 @@ impl LocalInverse {
         }
         // Newest first: undoing the run undoes its last commit first.
         for commit in self.commits.iter().rev() {
-            sealed.diff.compose_inverse(commit.materialize_diff());
+            commit.compose_into(&mut sealed.diff);
         }
         sealed.finish(true);
         if sealed.diff.has_mixed_text_edits() {

@@ -6,6 +6,79 @@ struct DeltaReplace<'a, V, Attr> {
     delete: usize,
 }
 
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
+
+    use super::*;
+
+    thread_local! {
+        static LENGTH_READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct MeasuredLength(usize);
+
+    impl HasLength for MeasuredLength {
+        fn rle_len(&self) -> usize {
+            LENGTH_READS.with(|reads| reads.set(reads.get() + 1));
+            self.0
+        }
+    }
+
+    impl Sliceable for MeasuredLength {
+        fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+            Self(range.len())
+        }
+    }
+
+    impl Mergeable for MeasuredLength {
+        fn can_merge(&self, _: &Self) -> bool {
+            true
+        }
+
+        fn merge_right(&mut self, other: &Self) {
+            self.0 += other.0;
+        }
+
+        fn merge_left(&mut self, other: &Self) {
+            self.0 += other.0;
+        }
+    }
+
+    impl TryInsert for MeasuredLength {
+        fn try_insert(&mut self, _: usize, other: Self) -> Result<(), Self> {
+            self.0 += other.0;
+            Ok(())
+        }
+    }
+
+    impl DeltaValue for MeasuredLength {}
+
+    #[test]
+    fn repeated_backward_deletes_do_not_rescan_deleted_suffixes() {
+        let count = 4096;
+        let mut delta = DeltaRope::<MeasuredLength, ()>::new();
+        LENGTH_READS.with(|reads| reads.set(0));
+        for position in (0..count).rev() {
+            let next = DeltaRopeBuilder::new()
+                .retain(position, ())
+                .delete(1)
+                .build();
+            delta.compose(&next);
+        }
+        let reads = LENGTH_READS.with(Cell::get);
+        assert!(
+            reads < count * 256,
+            "{reads} length reads for {count} deletes"
+        );
+        assert_eq!(delta.len(), 0);
+        assert_eq!(delta.old_len(), count);
+    }
+}
+
 impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     pub fn compose(&mut self, other: &Self) {
         // TODO: Need to implement a slow mode that is guaranteed to be correct, then we can fuzz on it
@@ -88,7 +161,8 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         if delete > 0 && *index != self.len() {
             let range = *index..(*index + left_del_len).min(self.len());
             let from = self.tree.query::<LengthFinder>(&range.start).unwrap();
-            let to = self.tree.query::<LengthFinder>(&range.end).unwrap();
+            let mut to = self.tree.query::<LengthFinder>(&(range.end - 1)).unwrap();
+            to.cursor.offset += 1;
             if from.cursor.leaf == to.cursor.leaf {
                 self._replace_on_single_leaf(from, to, left_del_len, delta_replace_item);
                 should_insert = false;

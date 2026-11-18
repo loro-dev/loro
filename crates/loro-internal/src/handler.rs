@@ -176,6 +176,20 @@ fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrH
     }
 }
 
+fn value_to_shared_handler(
+    inner: &BasicHandler,
+    shared: &mut Option<BasicHandler>,
+    value: LoroValue,
+) -> ValueOrHandler {
+    match value {
+        LoroValue::Container(container_id) => {
+            let shared = shared.get_or_insert_with(|| inner.shared_for_children());
+            ValueOrHandler::Handler(create_handler(shared, container_id))
+        }
+        value => ValueOrHandler::Value(value),
+    }
+}
+
 /// Reject inserting a container that is attached to another doc, either directly
 /// or nested inside a detached container, or a copy that would need to create an
 /// unknown container.
@@ -3588,12 +3602,12 @@ impl ListHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
-                let shared = inner.shared_for_children();
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_list_values(inner.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(&shared, value))
+                        .map(|value| value_to_shared_handler(inner, &mut shared, value))
                         .collect::<Vec<_>>()
                 });
                 for v in temp.into_iter() {
@@ -4305,12 +4319,12 @@ impl MovableListHandler {
                 }
             }
             MaybeDetached::Attached(m) => {
-                let shared = m.shared_for_children();
+                let mut shared = None;
                 let temp = m.with_doc_state(|state| {
                     state
                         .get_list_values(m.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(&shared, value))
+                        .map(|value| value_to_shared_handler(m, &mut shared, value))
                         .collect::<Vec<_>>()
                 });
 
@@ -4727,7 +4741,7 @@ impl MapHandler {
             // Detached callbacks retain the public iterator's original lock behavior.
             MaybeDetached::Detached(_) => self.for_each(|_, value| f(value)),
             MaybeDetached::Attached(inner) => {
-                let shared = inner.shared_for_children();
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_map_entries(inner.container_idx)
@@ -4738,7 +4752,7 @@ impl MapHandler {
                                 key.as_ref(),
                                 value,
                             );
-                            value_to_value_or_handler(&shared, translated)
+                            value_to_shared_handler(inner, &mut shared, translated)
                         })
                         .collect::<Vec<_>>()
                 });
@@ -5296,6 +5310,35 @@ mod test {
     use crate::{fx_map, ToJson};
     use loro_common::{ContainerID, ContainerType, LoroError, LoroValue, ID};
     use serde_json::json;
+
+    #[test]
+    fn scalar_iteration_does_not_add_document_owners() {
+        let doc = LoroDoc::new_auto_commit();
+        let list = doc.get_list("list");
+        let movable = doc.get_movable_list("movable");
+        for value in 0..8 {
+            list.push(value).unwrap();
+            movable.push(value.into()).unwrap();
+        }
+        doc.commit_then_renew();
+        let count_owners = || {
+            let registry_refs = doc.drop_gate.registry_refs.lock_ignoring_poison();
+            std::sync::Arc::strong_count(&doc.inner) - *registry_refs
+        };
+        let owners = count_owners();
+        let mut visited = 0;
+        list.for_each(|value| {
+            assert!(matches!(value, ValueOrHandler::Value(_)));
+            assert_eq!(count_owners(), owners);
+            visited += 1;
+        });
+        movable.for_each(|value| {
+            assert!(matches!(value, ValueOrHandler::Value(_)));
+            assert_eq!(count_owners(), owners);
+            visited += 1;
+        });
+        assert_eq!(visited, 16);
+    }
 
     fn recheck_fast_blob(mut bytes: Vec<u8>) -> Vec<u8> {
         let checksum = xxhash_rust::xxh32::xxh32(&bytes[20..], u32::from_le_bytes(*b"LORO"));

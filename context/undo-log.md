@@ -7,6 +7,10 @@ event position and length, and materializes the delta during `LocalInverse::seal
 Continuous runs are coalesced within a transaction and across grouped commits.
 Mixed text inverses containing both insertions and deletions fall back to checkout;
 other operations retain the composition described below.
+The general delta composer excludes zero-output deletion fragments beyond the
+end of a deletion, preventing repeated scans of an already-deleted suffix in
+mixed-container groups and list undo/redo. This applies below undo recording;
+it does not broaden the set of recorded inverse shapes.
 See [hot-path prototypes](hot-path-prototypes.md) for its representation and
 validation boundaries.
 
@@ -57,6 +61,11 @@ snapshot (`crates/loro/examples/undo_cold_bench.rs`, before this change):
    elements' history (`movable_list::scopes`). The rest (the transform
    against the stack's composed remote diff, applying it as new ops) is
    unchanged. No checkout happens, so none is undone afterwards.
+
+Sealing borrows stored commit diffs. Only a container's first diff is cloned into
+the result; later diffs compose by reference. Compact text insertion inverses
+apply their deletion to the accumulated delta directly after the first entry,
+avoiding a temporary tree and batch for every grouped commit.
 
 The inverse must equal what the checkout reports. Rules found by that check:
 
