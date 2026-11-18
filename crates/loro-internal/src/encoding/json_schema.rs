@@ -1073,6 +1073,8 @@ impl TryFrom<String> for JsonSchema {
     }
 }
 
+mod binary_paths;
+
 pub mod json {
     use crate::{
         encoding::OwnedValue,
@@ -1317,7 +1319,12 @@ pub mod json {
             where
                 S: Serializer,
             {
-                let mut s = serializer.serialize_struct("Op", 3)?;
+                let paths = super::super::binary_paths::collect(&self.content);
+                let mut s =
+                    serializer.serialize_struct("Op", if paths.is_empty() { 3 } else { 4 })?;
+                if !paths.is_empty() {
+                    s.serialize_field("binary_paths", &paths)?;
+                }
                 s.serialize_field("container", &self.container.to_string())?;
                 s.serialize_field("content", &self.content)?;
                 s.serialize_field("counter", &self.counter)?;
@@ -1345,6 +1352,7 @@ pub mod json {
                         let mut container = None;
                         let mut content = None;
                         let mut counter = None;
+                        let mut binary_paths = None;
 
                         while let Some(key) = map.next_key::<String>()? {
                             match key.as_str() {
@@ -1357,6 +1365,12 @@ pub mod json {
                                         Some(ContainerID::try_from(value.as_str()).map_err(
                                             |_| A::Error::custom("invalid container id"),
                                         )?);
+                                }
+                                "binary_paths" => {
+                                    if binary_paths.is_some() {
+                                        return Err(A::Error::duplicate_field("binary_paths"));
+                                    }
+                                    binary_paths = Some(map.next_value()?);
                                 }
                                 "content" => {
                                     if content.is_some() {
@@ -1379,7 +1393,11 @@ pub mod json {
                         let container =
                             container.ok_or_else(|| A::Error::missing_field("container"))?;
                         let content = content.ok_or_else(|| A::Error::missing_field("content"))?;
-                        let op = json_op_content_from_value(&container, content)?;
+                        let mut op = json_op_content_from_value(&container, content)?;
+                        if let Some(paths) = binary_paths {
+                            super::super::binary_paths::restore(&mut op, paths)
+                                .map_err(A::Error::custom)?;
+                        }
                         let counter = counter.ok_or_else(|| A::Error::missing_field("counter"))?;
                         Ok(super::JsonOp {
                             container,
@@ -1388,7 +1406,7 @@ pub mod json {
                         })
                     }
                 }
-                const FIELDS: &[&str] = &["container", "content", "counter"];
+                const FIELDS: &[&str] = &["container", "content", "counter", "binary_paths"];
                 deserializer.deserialize_struct("JsonOp", FIELDS, __Visitor)
             }
         }

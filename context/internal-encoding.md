@@ -630,6 +630,13 @@ with tests in `crates/loro/tests/shallow_snapshot_concurrency.rs`.
 - optional peer compression table,
 - JSON changes and ops.
 
+Verified against code 2026-11-18. Operations with binary leaves in map, list,
+movable-list, or text-style values include optional `binary_paths`. A path starts
+with the index in an insert's values (zero for a scalar value). Subsequent
+numbers select list elements and strings select map keys. At that location the
+ordinary JSON array contains the bytes. Older readers ignore this annotation.
+Unannotated arrays still import as lists.
+
 Malformed JSON schema should return `Err` without partial import. Look at
 [crates/loro-internal/src/tests/import_atomicity.rs](../crates/loro-internal/src/tests/import_atomicity.rs)
 when changing JSON import validation or rollback behavior.

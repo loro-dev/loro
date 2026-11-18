@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-18.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -270,12 +270,11 @@ is per atom range, not per change:
   op container ids, positions, keys, element ids, style metadata and deps still
   must match on every import path.
   The known prefix is then trimmed, so the receiver keeps its own values.
-  This fixes the 1.16.4 rejection of JSON-relayed history without changing the JSON
-  format: a JSON importer still gets a list instead of `Binary` (including mergeable
-  container markers), `Null` instead of a non-finite double, an I64 instead of an
-  integral Double, a rounded large integer, or a Container instead of a
-  marker-looking string. It does not repair that importer's lost values or make
-  its state identical to the binary receiver's.
+  Legacy JSON without binary type annotations yields a list instead of `Binary`
+  (including mergeable container markers). New exporters preserve these types via
+  `binary_paths` on the operation. Other JSON conversions still include non-finite doubles to
+  `Null`, integral Doubles to I64, rounded large integers, and marker-looking
+  strings to Container. A receiver keeps any previously degraded prefix values.
 - History below the shallow root, or any local change `get_change` cannot find,
   is not compared. The import then behaves as it did before this check.
 
