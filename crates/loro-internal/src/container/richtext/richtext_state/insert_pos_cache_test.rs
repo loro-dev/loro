@@ -170,3 +170,90 @@ fn cached_insert_position_matches_cold_lookup_near_style_anchors() {
         }
     }
 }
+
+#[test]
+fn delete_insert_matches_cold_cursor_and_full_replay() {
+    use crate::encoding::ExportMode;
+
+    for (seed, (_, expand)) in STYLES.into_iter().enumerate() {
+        let mut rng = StdRng::seed_from_u64(seed as u64);
+        let warm = LoroDoc::new_auto_commit();
+        let cold = LoroDoc::new_auto_commit();
+        for doc in [&warm, &cold] {
+            doc.set_peer_id(1).unwrap();
+            let mut styles = StyleConfigMap::new();
+            styles.insert("bold".into(), StyleConfig::new().expand(expand));
+            styles.insert("link".into(), StyleConfig::new().expand(expand));
+            doc.config_text_style(styles);
+            let text = doc.get_text("text");
+            text.insert_utf16(0, "ab😀cd🚀ef").unwrap();
+            text.mark(2, 6, "bold", true.into(), PosType::Utf16)
+                .unwrap();
+            text.mark(
+                0,
+                4,
+                "link",
+                "https://example.test/initial".into(),
+                PosType::Utf16,
+            )
+            .unwrap();
+        }
+
+        let warm_text = warm.get_text("text");
+        let cold_text = cold.get_text("text");
+        for step in 0..100 {
+            let value = warm_text.to_string();
+            let positions = boundaries(&value, PosType::Utf16, 0);
+            let start = rng.gen_range(0..positions.len() - 1);
+            let end = rng.gen_range(start + 1..=usize::min(start + 3, positions.len() - 1));
+            let (pos, len) = (positions[start], positions[end] - positions[start]);
+            let replacement = *SNIPPETS.choose(&mut rng).unwrap();
+
+            warm_text.delete(pos, len, PosType::Utf16).unwrap();
+            cold_text.delete(pos, len, PosType::Utf16).unwrap();
+            cold.app_state()
+                .lock()
+                .with_state_mut(cold_text.idx(), |state| {
+                    state
+                        .as_richtext_state_mut()
+                        .unwrap()
+                        .inner_state_mut()
+                        .clear_cache();
+                });
+            warm_text.insert_utf16(pos, replacement).unwrap();
+            cold_text.insert_utf16(pos, replacement).unwrap();
+
+            if step % 5 == 0 {
+                // Reintroduce style boundaries as random replacements consume
+                // the original styled text.
+                let end = replacement.encode_utf16().count() + pos;
+                for text in [&warm_text, &cold_text] {
+                    if step % 10 == 0 {
+                        text.mark(pos, end, "bold", true.into(), PosType::Utf16)
+                            .unwrap();
+                    } else {
+                        text.mark(
+                            pos,
+                            end,
+                            "link",
+                            "https://example.test/new".into(),
+                            PosType::Utf16,
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            assert_eq!(warm_text.to_string(), cold_text.to_string());
+            assert_eq!(warm_text.get_delta(), cold_text.get_delta());
+
+            if step % 10 == 0 {
+                let replay = LoroDoc::new_auto_commit();
+                replay
+                    .import(&warm.export(ExportMode::all_updates()).unwrap())
+                    .unwrap();
+                assert_eq!(warm_text.get_delta(), replay.get_text("text").get_delta());
+                cold.commit_then_renew();
+            }
+        }
+    }
+}

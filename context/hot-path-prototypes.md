@@ -162,3 +162,18 @@ The debug inverse comparator expands `Replace` in the iterator's execution
 order: insertion before deletion. Its tests compare a replacement with a split
 deletion, including transformations against remote insertions at each boundary,
 and reject an insertion moved across deleted input.
+
+
+## CRDT benchmark workload follow-up
+
+The subscription workloads exercise local update encoding, JS event delivery
+and short string conversion together. `PendingEvent::check_scheduled` caps
+checks per JS turn, even if each of many synchronous commits drains the queue.
+Small local updates encode from the change-store insertion path and use the
+stored slice when commits merge. Rich text caches five position indexes inline
+and keeps an eligible text leaf across replacement edits. See
+[internal encoding](internal-encoding.md#local-updates-and-small-blocks),
+[rich-text insert positions](richtext-insert-positions.md#the-insert-cursor-cache),
+and the [WASM event invariant](../crates/loro-wasm/AGENTS.md#pending-events-invariant).
+The [CRDT benchmark report](../benchmarks/crdt-hotpaths-20261118/README.md)
+records the release WASM A/B measurements.

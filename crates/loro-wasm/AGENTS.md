@@ -25,8 +25,10 @@ builds the release artifacts. Use it for final validation when changing
 
 Subscription callbacks (`subscribe*`, container `subscribe`, and related APIs)
 do not call user JS immediately. Rust queues JS calls into a global pending queue
-and schedules a microtask check. If the microtask runs before
-`callPendingEvents()` flushes the queue, the package logs:
+and schedules one outstanding microtask check per WASM instance. Synchronous
+`callPendingEvents()` drains the queue without rearming the check. The microtask
+clears its scheduled flag and looks at the current queue. If events remain, the
+package logs:
 
 ```text
 [LORO_INTERNAL_ERROR] Event not called
@@ -34,7 +36,9 @@ and schedules a microtask check. If the microtask runs before
 
 Any WASM-exposed API that can enqueue subscription events must flush pending
 events before returning control to JS. This is intentionally implemented as a
-small JS-side allowlist in `index.ts` rather than wrapping every method.
+small JS-side allowlist in `index.ts`. The empty drain uses an atomic
+nonempty flag before taking the queue lock. A callback can enqueue more calls
+during a drain, and the outer drain delivers them in queue order.
 
 When adding or changing a `#[wasm_bindgen]` API in `src/lib.rs`, check whether it
 can:

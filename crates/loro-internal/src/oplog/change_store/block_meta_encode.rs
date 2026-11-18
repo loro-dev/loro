@@ -26,10 +26,8 @@ pub(crate) fn encode_changes(
     };
     // First Counter + Change Len
     let mut lengths_bytes = Vec::new();
-    let mut counter = vec![];
 
     for (i, c) in block.iter().enumerate() {
-        counter.push(c.id.counter);
         let is_last = i == block.len() - 1;
         if !is_last {
             leb128::write::unsigned(&mut lengths_bytes, c.atom_len() as u64).unwrap();

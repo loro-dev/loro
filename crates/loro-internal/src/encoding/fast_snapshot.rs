@@ -19,6 +19,7 @@ use std::{
 };
 
 use crate::{
+    arena::SharedArena,
     change::Change,
     configure::{DefaultRandom, SecureRandomGenerator},
     encoding::shallow_snapshot,
@@ -453,34 +454,49 @@ pub(crate) fn encode_updates_in_range<W: std::io::Write>(
 }
 
 pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Change>, LoroError> {
+    let mut changes = decode_update_blocks(body, |block| {
+        oplog.change_store().decode_update_block(block, oplog.vv())
+    })?;
+    if changes.len() > 1 {
+        changes.sort_unstable_by_key(|x| x.lamport);
+    }
+    Ok(changes)
+}
+
+pub(crate) fn count_updates_for_batch(body: Bytes) -> LoroResult<u32> {
+    // A batch needs only the sort key, but invalid operations still have to
+    // fail metadata validation before any blob is applied. Decode in isolation
+    // and preserve the peer-ID draw made by ordinary metadata decoding.
+    let _ = DefaultRandom.next_u64();
+    let arena = SharedArena::new();
+    let changes =
+        decode_update_blocks(body, |block| ChangeStore::decode_block_bytes(block, &arena))?;
+    Ok(changes.len() as u32)
+}
+
+fn decode_update_blocks(
+    body: Bytes,
+    mut decode_block: impl FnMut(Bytes) -> LoroResult<Vec<Change>>,
+) -> LoroResult<Vec<Change>> {
     let mut reader: &[u8] = body.as_ref();
-    let mut index = 0;
     let mut changes = Vec::new();
     while !reader.is_empty() {
-        let old_reader_len = reader.len();
         let len = leb128::read::unsigned(&mut reader)
-            .map_err(|_| LoroError::DecodeError("decode_updates: invalid block length".into()))?
-            as usize;
-        index += old_reader_len - reader.len();
-        let end = index.checked_add(len).ok_or_else(|| {
-            LoroError::DecodeError("decode_updates: block length overflow".into())
+            .map_err(|_| LoroError::DecodeError("decode_updates: invalid block length".into()))?;
+        let len = usize::try_from(len)
+            .map_err(|_| LoroError::DecodeError("decode_updates: block length overflow".into()))?;
+        let bytes = reader.get(..len).ok_or_else(|| {
+            LoroError::DecodeError("decode_updates: truncated block payload".into())
         })?;
-        if end > body.len() {
-            return Err(LoroError::DecodeError(
-                "decode_updates: truncated block payload".into(),
-            ));
+        let block_changes = decode_block(body.slice_ref(bytes))?;
+        if changes.is_empty() {
+            changes = block_changes;
+        } else {
+            changes.extend(block_changes);
         }
-        let block_bytes = body.slice(index..end);
-        changes.extend(
-            oplog
-                .change_store()
-                .decode_update_block(block_bytes, oplog.vv())?,
-        );
-        index = end;
         reader = &reader[len..];
     }
 
-    changes.sort_unstable_by_key(|x| x.lamport);
     Ok(changes)
 }
 

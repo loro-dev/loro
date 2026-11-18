@@ -7,6 +7,7 @@ use crate::sync::Mutex;
 use crate::{
     arena::{ArenaExtent, CreatorOp, SharedArena, SharedArenaRollback},
     change::Change,
+    encoding::encode_single_change_fast_update,
     estimated_size::EstimatedSize,
     kv_store::{KvStore, SharedBlockCache},
     op::Op,
@@ -2026,7 +2027,14 @@ mod mut_inner_kv {
         /// The new change either merges with the previous block or is put into a new block.
         /// This method only updates the internal kv store.
         pub fn insert_change(&self, change: Change, split_when_exceeds: bool, is_local: bool) {
-            self.insert_change_inner(change, split_when_exceeds, is_local, None);
+            self.insert_change_inner(change, split_when_exceeds, is_local, None, false);
+        }
+
+        pub(crate) fn insert_change_with_local_update(&self, change: Change) -> Option<Vec<u8>> {
+            // Larger changes may be split into several wire blocks. A known-corrupt
+            // store must also use the normal range export behavior.
+            let encode_update = change.ops.len() <= 8 && self.corrupt_block_error().is_ok();
+            self.insert_change_inner(change, true, true, None, encode_update)
         }
 
         pub(crate) fn insert_change_with_rollback(
@@ -2036,7 +2044,7 @@ mod mut_inner_kv {
             is_local: bool,
             rollback: &mut ChangeStoreRollback,
         ) {
-            self.insert_change_inner(change, split_when_exceeds, is_local, Some(rollback));
+            self.insert_change_inner(change, split_when_exceeds, is_local, Some(rollback), false);
         }
 
         fn insert_change_inner(
@@ -2045,7 +2053,8 @@ mod mut_inner_kv {
             split_when_exceeds: bool,
             is_local: bool,
             mut rollback: Option<&mut ChangeStoreRollback>,
-        ) {
+            encode_update: bool,
+        ) -> Option<Vec<u8>> {
             self.record_change_in_root_history_names(&change);
 
             #[cfg(debug_assertions)]
@@ -2059,7 +2068,7 @@ mod mut_inner_kv {
             let estimated_size = change.estimate_storage_size();
             if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
                 self.split_change_then_insert(change, rollback.as_deref_mut());
-                return;
+                return None;
             }
 
             let id = change.id;
@@ -2088,22 +2097,26 @@ mod mut_inner_kv {
                             0
                         },
                         &self.arena,
+                        encode_update,
                     ) {
-                        Ok(_) => {
+                        Ok(update) => {
                             drop(inner);
                             debug_assert!(self.get_change(id).is_some());
-                            return;
+                            return update;
                         }
                         Err(c) => change = c,
                     }
                 }
             }
 
+            let update =
+                encode_update.then(|| encode_single_change_fast_update(&change, &self.arena));
             inner
                 .mem_parsed_kv
                 .insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
             drop(inner);
             debug_assert!(self.get_change(id).is_some());
+            update
         }
 
         pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
@@ -2393,7 +2406,7 @@ mod mut_inner_kv {
 
             if !new_change.ops.is_empty() {
                 total_len += new_change.atom_len();
-                self.insert_change_inner(new_change, false, false, rollback);
+                self.insert_change_inner(new_change, false, false, rollback, false);
             }
 
             assert_eq!(total_len, original_len);
@@ -2422,7 +2435,7 @@ mod mut_inner_kv {
                 commit_msg: new_change.commit_msg.clone(),
             };
 
-            self.insert_change_inner(new_change, false, false, rollback);
+            self.insert_change_inner(new_change, false, false, rollback, false);
             *estimated_size = ans.estimate_storage_size();
             ans
         }
@@ -2521,16 +2534,28 @@ mod mut_inner_kv {
                 return block.map(Some);
             }
 
-            let Some((b_id, b_bytes)) = store
-                .scan(Bound::Unbounded, Bound::Included(&id.to_bytes()))
-                .rfind(|(id, _)| id.len() == 12)
-            else {
-                return Ok(None);
+            let key = id.to_bytes();
+            let (block_id, b_bytes) = if id.counter == 0 {
+                // The only nonnegative counter of this peer at or before zero
+                // is the exact key. Large concurrent snapshots often have one
+                // such block per peer.
+                let Some(bytes) = store.get(&key) else {
+                    return Ok(None);
+                };
+                (id, bytes)
+            } else {
+                let Some((b_id, bytes)) = store
+                    .scan(Bound::Unbounded, Bound::Included(&key))
+                    .rfind(|(id, _)| id.len() == 12)
+                else {
+                    return Ok(None);
+                };
+                let block_id = ID::from_bytes(&b_id);
+                if block_id.peer != id.peer {
+                    return Ok(None);
+                }
+                (block_id, bytes)
             };
-            let block_id: ID = ID::from_bytes(&b_id[..]);
-            if block_id.peer != id.peer {
-                return Ok(None);
-            }
             let block = ChangesBlock::from_bytes(b_bytes).map_err(|err| (block_id, err))?;
             if block.counter_range.1 <= id.counter {
                 return Ok(None);
@@ -2858,7 +2883,8 @@ impl ChangesBlock {
         new_change_size: usize,
         merge_interval: i64,
         a: &SharedArena,
-    ) -> Result<(), Change> {
+        encode_update: bool,
+    ) -> Result<Option<Vec<u8>>, Change> {
         if self.counter_range.1 != change.id.counter {
             return Err(change);
         }
@@ -2872,34 +2898,43 @@ impl ChangesBlock {
         this.parsed_bytes.invalidate();
         let changes = this.content.changes_mut(a).unwrap();
         let changes = Arc::make_mut(changes);
-        match changes.last_mut() {
+        let update = match changes.last_mut() {
             Some(last)
                 if last.can_merge_right(&change, merge_interval)
                     && (!is_full
                         || (change.ops.len() == 1
                             && last.ops.last().unwrap().is_mergable(&change.ops[0], &()))) =>
             {
+                let start = (change.id.counter - last.id.counter) as usize;
                 for op in change.ops.into_iter() {
                     let size = op.estimate_storage_size();
                     if !last.ops.push(op) {
                         this.estimated_size += size;
                     }
                 }
+                // A merged range inherits the stored timestamp and may have
+                // coalesced operations. Use the same slice as a range export.
+                encode_update.then(|| {
+                    encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
+                })
             }
             _ => {
                 if is_full {
                     return Err(change);
                 } else {
                     this.estimated_size += new_change_size;
+                    let update =
+                        encode_update.then(|| encode_single_change_fast_update(&change, a));
                     changes.push(change);
+                    update
                 }
             }
-        }
+        };
 
         this.flushed = false;
         this.counter_range.1 = next_counter;
         this.lamport_range.1 = next_lamport;
-        Ok(())
+        Ok(update)
     }
 
     fn to_bytes(self: &mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {

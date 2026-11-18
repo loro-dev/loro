@@ -537,7 +537,7 @@ impl EncodedTreeMove {
         Ok(op)
     }
 
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
+    pub fn from_tree_op(op: &TreeOp, registers: &mut EncodedRegisters<'_>) -> Self {
         match op {
             TreeOp::Create {
                 target,
@@ -553,7 +553,7 @@ impl EncodedTreeMove {
                 let either::Right(position_register) = &mut registers.position else {
                     unreachable!()
                 };
-                let position = position_register.get(&bytes).unwrap();
+                let position = position_register.get(bytes).unwrap();
                 let target_idx = registers.tree_id.register(&EncodedTreeID {
                     peer_idx: registers.peer.register(&target.peer),
                     counter: target.counter,

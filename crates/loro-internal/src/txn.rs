@@ -42,6 +42,12 @@ use super::{
     state::DocState,
 };
 
+#[derive(Default)]
+pub(crate) struct PostCommit {
+    pub events: Vec<DocDiff>,
+    local_update: Option<Vec<u8>>,
+}
+
 impl crate::LoroDoc {
     /// Create a new transaction.
     /// Every ops created inside one transaction will be packed into a single
@@ -102,16 +108,18 @@ impl crate::LoroDoc {
             || (id_span.atom_len() != 0 && !self.local_update_subs.inner().is_empty_fast())
     }
 
-    pub(crate) fn emit_post_commit(&self, events: Vec<DocDiff>, id_span: IdSpan) {
+    pub(crate) fn emit_post_commit(&self, post_commit: PostCommit, id_span: IdSpan) {
         // A panicking subscriber must not drop the other events, nor the
         // local update of this commit, which apps send to their peers.
         let mut panic = DeferredPanic::default();
-        for event in events {
+        for event in post_commit.events {
             panic.run(|| self.observer.emit(event));
         }
 
         if id_span.atom_len() != 0 && !self.local_update_subs.inner().is_empty_fast() {
-            let bytes = { export_fast_updates_in_range(&self.oplog.lock(), &[id_span]) };
+            let bytes = post_commit
+                .local_update
+                .unwrap_or_else(|| export_fast_updates_in_range(&self.oplog.lock(), &[id_span]));
             panic.run(|| self.local_update_subs.emit(&(), bytes));
         }
         panic.resume();
@@ -752,7 +760,7 @@ impl Transaction {
         mut self,
         panic: &mut DeferredPanic,
         take_events_for_caller: bool,
-    ) -> Result<(Option<CommitOptions>, Vec<DocDiff>), LoroError> {
+    ) -> Result<(Option<CommitOptions>, PostCommit), LoroError> {
         self._commit(panic, take_events_for_caller)
     }
 
@@ -766,13 +774,13 @@ impl Transaction {
         &mut self,
         panic: &mut DeferredPanic,
         take_events_for_caller: bool,
-    ) -> Result<(Option<CommitOptions>, Vec<DocDiff>), LoroError> {
+    ) -> Result<(Option<CommitOptions>, PostCommit), LoroError> {
         if self.finished {
-            return Ok((None, Vec::new()));
+            return Ok((None, PostCommit::default()));
         }
 
         let Some(doc) = self.doc.upgrade() else {
-            return Ok((None, Vec::new()));
+            return Ok((None, PostCommit::default()));
         };
         self.finished = true;
         self.rollback_scopes.clear();
@@ -792,11 +800,23 @@ impl Transaction {
                 let doc_ref = LoroDoc::borrow_from_inner(&doc);
                 if doc_ref.has_post_commit_work(&events, self.id_span()) {
                     debug_assert!(doc.txn.can_lock_in_this_thread());
-                    doc_ref.emit_post_commit(events, self.id_span());
+                    doc_ref.emit_post_commit(
+                        PostCommit {
+                            events,
+                            local_update: None,
+                        },
+                        self.id_span(),
+                    );
                 }
-                return Ok((Some(self.take_options()), Vec::new()));
+                return Ok((Some(self.take_options()), PostCommit::default()));
             }
-            return Ok((Some(self.take_options()), events));
+            return Ok((
+                Some(self.take_options()),
+                PostCommit {
+                    events,
+                    local_update: None,
+                },
+            ));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
@@ -878,13 +898,18 @@ impl Transaction {
 
         let last_id = change.id_last();
         let change_deps = self.local_inverse.is_active().then(|| change.deps.clone());
-        if let Err(err) = oplog.import_local_change(change) {
-            state.abort_txn();
-            state.clear_local_rollback_stack();
-            drop(state);
-            drop(oplog);
-            return Err(err);
-        }
+        let encode_update =
+            (emit_here || take_events_for_caller) && !doc.local_update_subs.inner().is_empty_fast();
+        let local_update = match oplog.import_local_change(change, encode_update) {
+            Ok(update) => update,
+            Err(err) => {
+                state.abort_txn();
+                state.clear_local_rollback_stack();
+                drop(state);
+                drop(oplog);
+                return Err(err);
+            }
+        };
 
         let local_inverse = match std::mem::take(&mut self.local_inverse) {
             LocalInverseRecorder::SingleCompact {
@@ -939,13 +964,25 @@ impl Transaction {
                 // Not under this thread's transaction lock. Another thread may hold it: a
                 // manual transaction commits without it.
                 debug_assert!(doc.txn.can_lock_in_this_thread());
-                doc_ref.emit_post_commit(events, self.id_span());
+                doc_ref.emit_post_commit(
+                    PostCommit {
+                        events,
+                        local_update,
+                    },
+                    self.id_span(),
+                );
             }
             doc_ref.on_commit_completed();
-            return Ok((None, Vec::new()));
+            return Ok((None, PostCommit::default()));
         }
         doc_ref.on_commit_completed();
-        Ok((None, events))
+        Ok((
+            None,
+            PostCommit {
+                events,
+                local_update,
+            },
+        ))
     }
 
     pub(crate) fn estimated_uncommitted_bytes(&self) -> usize {

@@ -12,10 +12,10 @@ pub(crate) use outdated_encode_reordered::{
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
-use crate::change::Change;
 use crate::oplog::ImportedValues;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
+use crate::{arena::SharedArena, change::Change};
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use bytes::Bytes;
 use loro_common::{IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
@@ -539,6 +539,21 @@ pub(crate) fn export_pending_updates(oplog: &OpLog) -> Result<Option<Vec<u8>>, L
         Ok(())
     })
     .map(Some)
+}
+
+pub(crate) fn encode_single_change_fast_update(change: &Change, arena: &SharedArena) -> Vec<u8> {
+    let block = crate::oplog::encode_change_block(std::slice::from_ref(change), arena);
+    let prefix_len = (u64::BITS - (block.len() as u64).leading_zeros()).div_ceil(7) as usize;
+    encode_with_capacity(
+        EncodeMode::FastUpdates,
+        MIN_HEADER_SIZE + prefix_len + block.len(),
+        &mut |output| {
+            leb128::write::unsigned(output, block.len() as u64).unwrap();
+            output.extend_from_slice(&block);
+            Ok(())
+        },
+    )
+    .unwrap()
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {

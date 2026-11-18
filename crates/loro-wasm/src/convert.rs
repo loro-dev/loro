@@ -12,7 +12,7 @@ use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
 use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
 use serde::Serialize;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 
 use crate::{
     frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsJsonSchema,
@@ -444,7 +444,26 @@ pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsResult<
     })
 }
 
+#[wasm_bindgen(inline_js = "
+export function singlePeerImportStatus(peer, start, end) {
+    const success = new Map();
+    success.set(peer, { start, end });
+    return { success, pending: null };
+}
+")]
+extern "C" {
+    #[wasm_bindgen(catch, js_name = singlePeerImportStatus)]
+    fn single_peer_import_status(peer: &str, start: Counter, end: Counter) -> JsResult<JsValue>;
+}
+
 pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsResult<JsValue> {
+    if status.pending.is_none() {
+        let mut successes = status.success.iter();
+        if let (Some((peer, &(start, end))), None) = (successes.next(), successes.next()) {
+            return single_peer_import_status(&peer.to_string(), start, end);
+        }
+    }
+
     let obj = Object::new();
     js_sys::Reflect::set(
         &obj,

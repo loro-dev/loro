@@ -1,6 +1,6 @@
 # Rich-Text Insert Positions and Delete IDs
 
-Verified against code 2026-09-30.
+Verified against code 2026-11-18.
 
 ## Where local text goes next to style anchors
 
@@ -24,7 +24,7 @@ the same rule from loro-dev/loro#1137 on (`LoroText.#insertPosition`).
 ## The insert cursor cache
 
 `get_entity_index_for_text_insert` first tries the cursor left by the previous
-lookup or insert (`try_get_cache_or_clean`), so consecutive typing skips the
+lookup or insert (`try_get_cached_cursor`), so consecutive typing skips the
 tree query. The cache is only used where the anchor rules cannot move the
 insert (`anchor_rules_may_move_insert`):
 
@@ -43,10 +43,18 @@ Before loro-dev/loro#1135 the cache was trusted at
 every chunk boundary, so the side of an anchor that text landed on depended on
 the previous lookup (a no-op `unmark` could move the next insert into a style).
 
+The cache stores one surviving leaf and five inline prefix indexes. A read
+miss preserves the cache. A partial single-leaf text deletion reuses the
+leaf and records its event-coordinate and entity prefixes. A removed leaf,
+a style anchor deletion, or a multi-leaf delete clears the cache. A later
+insert still checks the anchor rules before using the cached cursor.
+
 - Test: `richtext_state/insert_pos_cache_test.rs` compares every cached answer
   with a cold lookup for all five `PosType`s on random documents (all expand
   types, overlapping styles, null/false values, adjacent and empty anchor
-  pairs, astral/ZWJ/flag text). `LORO_INSERT_CACHE_SEEDS=<n>` runs more seeds.
+  pairs, astral/ZWJ/flag text). It also compares randomized UTF-16 replacements
+  with a cold cursor and a new document replayed from full updates.
+  `LORO_INSERT_CACHE_SEEDS=<n>` runs more seeds for the position lookup test.
 - Benchmark: `crates/loro/examples/richtext_typing_bench.rs` (typing next to
   and away from anchors; see its header for how to run it).
 

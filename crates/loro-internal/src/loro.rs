@@ -489,7 +489,8 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let (mut options, events) = txn.commit_deferring_panic(panic, emit_on_commit).unwrap();
+            let (mut options, post_commit) =
+                txn.commit_deferring_panic(panic, emit_on_commit).unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit
@@ -505,9 +506,9 @@ impl LoroDoc {
                 *txn_guard = self.auto_commit_txn(options.clone());
             }
 
-            if emit_on_commit && self.has_post_commit_work(&events, id_span) {
+            if emit_on_commit && self.has_post_commit_work(&post_commit.events, id_span) {
                 drop(txn_guard);
-                self.emit_post_commit(events, id_span);
+                self.emit_post_commit(post_commit, id_span);
                 if !config.immediate_renew {
                     txn_guard = self.txn.lock();
                     if txn_guard.is_some() {
@@ -3432,7 +3433,7 @@ impl LoroDoc {
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = LoroDoc::decode_import_blob_meta(blob, false)?;
+                let meta = BatchBlobSortKey::decode(&ImportInput::Slice(blob))?;
                 Ok((index, meta, BatchBlobSource::Slice(blob.as_slice())))
             })
             .collect::<LoroResult<Vec<_>>>()?;
@@ -3461,7 +3462,7 @@ impl LoroDoc {
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false)?;
+                let meta = BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()))?;
                 Ok((index, meta, BatchBlobSource::Bytes(blob)))
             })
             .collect::<LoroResult<Vec<_>>>()?;
@@ -3492,14 +3493,16 @@ impl LoroDoc {
         let sources = blobs
             .into_iter()
             .enumerate()
-            .map(|(index, (meta, load))| (index, meta, BatchBlobSource::Loader(Box::new(load))))
+            .map(|(index, (meta, load))| {
+                (index, meta.into(), BatchBlobSource::Loader(Box::new(load)))
+            })
             .collect();
         self.finish_batch_status(sources, values)
     }
 
     fn finish_batch_status(
         &self,
-        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         values: ImportedValues,
     ) -> LoroResult<ImportStatus> {
         let run = self.import_blobs_as_batch(blobs, values)?;
@@ -3580,7 +3583,7 @@ impl LoroDoc {
         for (index, blob) in bytes.iter().enumerate() {
             match self
                 .check_import_blob_limit(blob.len())
-                .and_then(|()| LoroDoc::decode_import_blob_meta(blob, false))
+                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Slice(blob)))
             {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Slice(blob.as_slice())));
@@ -3638,7 +3641,7 @@ impl LoroDoc {
             };
             match self
                 .check_import_blob_limit(blob.len())
-                .and_then(|()| LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false))
+                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone())))
             {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Bytes(blob)));
@@ -3674,7 +3677,7 @@ impl LoroDoc {
         for (index, (meta, load)) in blobs.into_iter().enumerate() {
             match meta {
                 Ok(meta) => {
-                    valid.push((index, meta, BatchBlobSource::Loader(Box::new(load))));
+                    valid.push((index, meta.into(), BatchBlobSource::Loader(Box::new(load))));
                     outcomes.push(None);
                 }
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
@@ -3728,7 +3731,7 @@ impl LoroDoc {
 
     fn finish_batch_detailed(
         &self,
-        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         mut outcomes: Vec<Option<ImportBlobOutcome>>,
         values: ImportedValues,
     ) -> LoroResult<ImportBatchDetail> {
@@ -3781,7 +3784,7 @@ impl LoroDoc {
     /// that fails, and a failed closing checkout, are in the [`BatchRun`].
     fn import_blobs_as_batch(
         &self,
-        mut blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        mut blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         values: ImportedValues,
     ) -> LoroResult<BatchRun> {
         let mut success = VersionRange::default();
@@ -5253,6 +5256,50 @@ struct BatchRun {
 enum ImportInput<'a> {
     Slice(&'a [u8]),
     Bytes(bytes::Bytes),
+}
+
+struct BatchBlobSortKey {
+    mode: encoding::EncodedBlobMode,
+    change_num: u32,
+}
+
+impl From<ImportBlobMetadata> for BatchBlobSortKey {
+    fn from(meta: ImportBlobMetadata) -> Self {
+        Self {
+            mode: meta.mode,
+            change_num: meta.change_num,
+        }
+    }
+}
+
+impl BatchBlobSortKey {
+    fn decode(input: &ImportInput<'_>) -> LoroResult<Self> {
+        let bytes: &[u8] = match input {
+            ImportInput::Slice(bytes) => bytes,
+            ImportInput::Bytes(bytes) => bytes,
+        };
+        let parsed = parse_header_and_body(bytes, false)?;
+        match parsed.mode {
+            EncodeMode::FastUpdates => {
+                let body = match input {
+                    ImportInput::Slice(_) => bytes::Bytes::copy_from_slice(parsed.body),
+                    ImportInput::Bytes(bytes) => bytes.slice_ref(parsed.body),
+                };
+                Ok(Self {
+                    mode: encoding::EncodedBlobMode::Updates,
+                    change_num: encoding::fast_snapshot::count_updates_for_batch(body)?,
+                })
+            }
+            EncodeMode::FastSnapshot => match input {
+                ImportInput::Slice(_) => encoding::fast_snapshot::decode_snapshot_blob_meta(parsed),
+                ImportInput::Bytes(bytes) => {
+                    LoroDoc::decode_import_blob_meta_bytes(bytes.clone(), false)
+                }
+            }
+            .map(Into::into),
+            _ => Err(LoroError::ImportUnsupportedEncodingMode),
+        }
+    }
 }
 
 enum BatchBlobSource<'a> {

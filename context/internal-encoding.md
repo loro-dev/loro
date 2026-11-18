@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-18.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -274,6 +274,37 @@ overflow, and truncated block payloads, then sorts decoded changes by lamport.
 `encoding.rs:apply_decoded_changes_to_oplog` imports changes, separates pending
 changes, applies newly-unlocked pending changes, and rejects dependencies before
 a shallow root.
+
+### Local updates and small blocks
+
+`Transaction::_commit` asks `ChangeStore::insert_change_with_local_update`
+for the update bytes when there is a local-update subscriber. The store
+encodes a small unsplit change at insertion time. If it merges into the
+previous change, it encodes the appended slice of the stored change to
+preserve the inherited timestamp, dependencies and normalized operation
+slices of a range export. Split changes and rollback-managed history use
+normal range export. `emit_post_commit` still tests for subscribers after
+observer callbacks and can export the range if an observer registered a new
+subscriber. Callbacks run after the commit locks are released.
+
+Both paths use the same block columns, envelope and checksum. Registers for
+blocks of one change with up to eight ops begin inline and switch to indexed
+lookup if they grow. Byte-only exports skip the cached `ChangesBlockHeader`.
+`local_update_encoding.rs` checks the wire bytes against the exact range
+and imports updates into a replica.
+
+A FastUpdates decoder reuses the first nonempty block's change vector and
+sorts only if two or more changes are present. For in-memory batches, the
+sort-key pass validates all update bodies in a temporary arena and keeps
+only the change count and mode. Checksum verification and history application
+still occur at each blob's turn. See
+[import-batch-atomicity.md](import-batch-atomicity.md).
+
+For many-peer snapshots, a cached-block miss at counter zero can use an
+exact KV lookup. A peer's earlier blocks cannot precede that key. Canonical
+ordered frontiers reserve their map from the decoded peer count. Duplicate
+or unordered input uses the existing deduplication. Postcard already
+provides the decoded entry count to the version-vector map decoder.
 
 ### Change-header allocation and malformed columns (#1262)
 

@@ -102,7 +102,7 @@ impl ContainerArena {
     }
 
     pub fn from_containers(
-        cids: Vec<ContainerID>,
+        cids: &[ContainerID],
         peer_register: &mut ValueRegister<PeerID>,
         key_reg: &mut ValueRegister<InternalString>,
     ) -> Self {
@@ -118,7 +118,7 @@ impl ContainerArena {
 
     pub fn push(
         &mut self,
-        id: ContainerID,
+        id: &ContainerID,
         peer_register: &mut ValueRegister<PeerID>,
         register_key: &mut ValueRegister<InternalString>,
     ) {
@@ -126,7 +126,7 @@ impl ContainerArena {
             ContainerID::Root {
                 container_type,
                 name,
-            } => (true, container_type, 0, register_key.register(&name) as i32),
+            } => (true, container_type, 0, register_key.register(name) as i32),
             ContainerID::Normal {
                 container_type,
                 peer,
@@ -134,8 +134,8 @@ impl ContainerArena {
             } => (
                 false,
                 container_type,
-                peer_register.register(&peer),
-                counter,
+                peer_register.register(peer),
+                *counter,
             ),
         };
         self.containers.push(EncodedContainer {

@@ -78,7 +78,6 @@ use once_cell::sync::OnceCell;
 use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, AnyRleDecoder, Itertools};
-use tracing::info;
 
 use super::block_meta_encode::{decode_changes_header, decode_delta_of_delta};
 use crate::arena::SharedArena;
@@ -120,45 +119,39 @@ struct EncodedBlock<'a> {
     values: Cow<'a, [u8]>,
 }
 
-fn diagnose_block(block: &EncodedBlock) {
-    info!("Diagnosing EncodedBlock:");
-    info!("  header {} bytes", block.header.len());
-    info!("  change_meta {} bytes", block.change_meta.len());
-    info!("  cids: {} bytes", block.cids.len());
-    info!("  keys: {} bytes", block.keys.len());
-    info!("  positions: {} bytes", block.positions.len());
-    info!("  ops: {} bytes", block.ops.len());
-    info!("  delete_id_starts: {} bytes", block.delete_start_ids.len());
-    info!("  values: {} bytes", block.values.len());
-}
-
 // MARK: encode_block
-/// It's assume that every change in the block share the same peer.
+/// Every change in a block shares the same peer.
 pub fn encode_block(block: &[Change], arena: &SharedArena) -> Vec<u8> {
-    encode_block_with_header(block, arena).0
+    encode_block_inner(block, arena, false).0
 }
 
 pub(crate) fn encode_block_with_header(
     block: &[Change],
     arena: &SharedArena,
 ) -> (Vec<u8>, ChangesBlockHeader) {
+    let (bytes, header) = encode_block_inner(block, arena, true);
+    (bytes, header.unwrap())
+}
+
+fn encode_block_inner(
+    block: &[Change],
+    arena: &SharedArena,
+    collect_header: bool,
+) -> (Vec<u8>, Option<ChangesBlockHeader>) {
     if block.is_empty() {
         panic!("Empty block")
     }
 
-    let mut peer_register: ValueRegister<PeerID> = ValueRegister::new();
+    let inline = block.len() == 1 && block[0].ops().len() <= 8;
     let peer = block[0].peer();
-    peer_register.register(&peer);
-
-    let cid_register: ValueRegister<ContainerID> = ValueRegister::new();
-
-    let mut encoded_ops = Vec::new();
+    let mut encoded_ops = Vec::with_capacity(if inline { block[0].ops().len() } else { 0 });
     let mut registers = Registers {
-        peer_register,
-        key_register: ValueRegister::new(),
-        cid_register,
-        position_register: ValueRegister::new(),
+        peer_register: ValueRegister::for_block(inline),
+        key_register: ValueRegister::for_block(inline),
+        cid_register: ValueRegister::for_block(inline),
+        position_register: ValueRegister::for_block(inline),
     };
+    registers.peer_register.register(&peer);
 
     {
         // Init position register, making it ordered by fractional index
@@ -201,28 +194,20 @@ pub(crate) fn encode_block_with_header(
         }
     }
 
-    let cids = registers.cid_register.unwrap_vec();
-    let cids_for_header = cids.clone();
+    let cids = registers.cid_register.vec();
     let container_arena = ContainerArena::from_containers(
         cids,
         &mut registers.peer_register,
         &mut registers.key_register,
     );
-
-    // Write to output
-
-    //      ┌────────────────────┬─────────────────────────────────────────┐
-    //      │  Key Strings Size  │               Key Strings               │
-    //      └────────────────────┴─────────────────────────────────────────┘
-    let keys = registers.key_register.unwrap_vec();
-    let keys_bytes = encode_keys(&keys);
-
-    //      ┌────────────────────┬─────────────────────────────────────────┐
-    //      │  Position Size     │               Position                  │
-    //      └────────────────────┴─────────────────────────────────────────┘
-    let position_vec = registers.position_register.unwrap_vec();
-    let positions = PositionArena::from_positions(position_vec.iter().map(|p| p.as_bytes()));
-    let position_bytes = positions.encode_v2();
+    let keys = registers.key_register.vec();
+    let keys_bytes = encode_keys(keys);
+    let position_vec = registers.position_register.vec();
+    let position_bytes = if position_vec.is_empty() {
+        Vec::new()
+    } else {
+        PositionArena::from_positions(position_vec.iter().map(|p| p.as_bytes())).encode_v2()
+    };
 
     //      ┌──────────┬──────────┬───────┬────────────────────────────────┐
     //      │          │          │       │                                │
@@ -252,32 +237,32 @@ pub(crate) fn encode_block_with_header(
 
     // PeerIDs
     let mut peer_register = registers.peer_register;
-    // .unwrap_vec();
-    // let peer_bytes: Vec<u8> = peers.iter().flat_map(|p| p.to_le_bytes()).collect();
 
     // Change meta
     let (header, change_meta) = encode_changes(block, &mut peer_register);
 
-    let mut counters = Vec::with_capacity(block.len() + 1);
-    let mut lamports = Vec::with_capacity(block.len());
-    let mut deps_groups = Vec::with_capacity(block.len());
-    for c in block {
-        counters.push(c.id.counter);
-        lamports.push(c.lamport());
-        deps_groups.push(c.deps().clone());
-    }
-    counters.push(block.last().unwrap().ctr_end());
-    let block_header = ChangesBlockHeader {
-        peer,
-        counter: block[0].id.counter,
-        n_changes: block.len(),
-        peers: peer_register.unwrap_vec(),
-        counters,
-        lamports,
-        deps_groups,
-        keys: OnceCell::with_value(keys),
-        cids: OnceCell::with_value(cids_for_header),
-    };
+    let block_header = collect_header.then(|| {
+        let mut counters = Vec::with_capacity(block.len() + 1);
+        let mut lamports = Vec::with_capacity(block.len());
+        let mut deps_groups = Vec::with_capacity(block.len());
+        for c in block {
+            counters.push(c.id.counter);
+            lamports.push(c.lamport());
+            deps_groups.push(c.deps().clone());
+        }
+        counters.push(block.last().unwrap().ctr_end());
+        ChangesBlockHeader {
+            peer,
+            counter: block[0].id.counter,
+            n_changes: block.len(),
+            peers: peer_register.unwrap_vec(),
+            counters,
+            lamports,
+            deps_groups,
+            keys: OnceCell::with_value(keys.to_vec()),
+            cids: OnceCell::with_value(cids.to_vec()),
+        }
+    });
 
     let value_bytes = value_writer.finish();
     let out = EncodedBlock {
@@ -296,7 +281,6 @@ pub(crate) fn encode_block_with_header(
         values: value_bytes.into(),
     };
 
-    diagnose_block(&out);
     (postcard::to_allocvec(&out).unwrap(), block_header)
 }
 

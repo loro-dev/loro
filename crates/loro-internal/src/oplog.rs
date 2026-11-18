@@ -344,6 +344,15 @@ impl OpLog {
 
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
+        self.insert_new_change_inner(change, from_local, false);
+    }
+
+    fn insert_new_change_inner(
+        &mut self,
+        change: Change,
+        from_local: bool,
+        encode_local_update: bool,
+    ) -> Option<Vec<u8>> {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
@@ -366,7 +375,7 @@ impl OpLog {
             crate::parent::assert_local_parent_links_registered(&self.arena, &change);
         }
         self.register_container_and_parent_link(&change);
-        if let Some(rollback) = self.import_rollback.as_mut() {
+        let update = if let Some(rollback) = self.import_rollback.as_mut() {
             let mut prev_op: Option<&crate::op::Op> = None;
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
@@ -419,10 +428,15 @@ impl OpLog {
                 from_local,
                 &mut rollback.change_store,
             );
+            None
+        } else if encode_local_update {
+            self.change_store.insert_change_with_local_update(change)
         } else {
             self.change_store.insert_change(change, true, from_local);
-        }
+            None
+        };
         self.refresh_visible_op_count();
+        update
     }
 
     pub(crate) fn begin_import_rollback(&mut self) {
@@ -712,7 +726,11 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub(crate) fn import_local_change(
+        &mut self,
+        change: Change,
+        encode_update: bool,
+    ) -> Result<Option<Vec<u8>>, LoroError> {
         // Checked when the transaction starts, and imports are rejected until it ends.
         debug_assert_eq!(
             self.pending_changes
@@ -721,8 +739,7 @@ impl OpLog {
             "local change {} under parked history",
             change.id,
         );
-        self.insert_new_change(change, true);
-        Ok(())
+        Ok(self.insert_new_change_inner(change, true, encode_update))
     }
 
     /// Trim the known part of change

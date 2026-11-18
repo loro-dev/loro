@@ -408,8 +408,10 @@ The state undo log and recorded UndoManager inverses are documented above and in
 
 - File-backed KV flush still rewrites the full table; sweep backoff limits how
   often it happens. Incremental levels and streaming merges remain future work.
-- WASM short-string conversion and large `importBatchDetailed` metadata can
-  still allocate; no allocation-preflight bypass is allowed to optimize them.
+- WASM `insert`, `insertUtf8` and `splice` encode strings up to 42 UTF-16 code
+  units in a 128-byte Rust stack buffer. Larger strings and environments
+  without `TextEncoder.encodeInto` go through the original checked conversion.
+  Large `importBatchDetailed` calls retain their streaming preflights.
 - The small-oplog shallow-snapshot threshold intentionally retains its input;
   `pruned_root` retention has not been measured independently.
 - Full interleaved A/B coverage against main for JSON, checkout and unbudgeted
