@@ -177,6 +177,66 @@ fn decode_lamport_from_delta(
     u32::try_from(lamport).map_err(|_| state_decode_error(format!("{context}: negative lamport")))
 }
 
+#[derive(Debug, Default)]
+struct ChangedIdxSet {
+    first: Option<ContainerIdx>,
+    rest: FxHashSet<ContainerIdx>,
+}
+
+impl ChangedIdxSet {
+    #[inline]
+    fn insert(&mut self, idx: ContainerIdx) {
+        match self.first {
+            None => self.first = Some(idx),
+            Some(first) if first == idx => {}
+            Some(_) => {
+                self.rest.insert(idx);
+            }
+        }
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.first.is_none()
+    }
+
+    #[inline]
+    fn clear(&mut self) {
+        self.first = None;
+        if !self.rest.is_empty() {
+            self.rest.clear();
+        }
+    }
+
+    #[inline]
+    fn clear_shrinking(&mut self) {
+        self.first = None;
+        let cap = self.rest.capacity();
+        if cap == 0 {
+            return;
+        }
+        if cap > self.rest.len().saturating_mul(4).max(64) {
+            self.rest = FxHashSet::default();
+        } else if !self.rest.is_empty() {
+            self.rest.clear();
+        }
+    }
+
+    fn to_pinned_set(&self, extra_pinned: &FxHashSet<ContainerIdx>) -> FxHashSet<ContainerIdx> {
+        let mut pinned = self.rest.clone();
+        if let Some(first) = self.first {
+            pinned.insert(first);
+        }
+        pinned.extend(extra_pinned.iter().copied());
+        pinned
+    }
+
+    #[cfg(test)]
+    fn capacity(&self) -> usize {
+        self.rest.capacity()
+    }
+}
+
 pub struct DocState {
     pub(super) peer: Arc<AtomicU64>,
 
@@ -189,7 +249,7 @@ pub struct DocState {
     doc: Weak<LoroDocInner>,
     // txn related stuff
     in_txn: bool,
-    changed_idx_in_txn: FxHashSet<ContainerIdx>,
+    changed_idx_in_txn: ChangedIdxSet,
 
     // diff related stuff
     event_recorder: EventRecorder,
@@ -611,7 +671,7 @@ impl DocState {
                 doc,
                 config,
                 in_txn: false,
-                changed_idx_in_txn: FxHashSet::default(),
+                changed_idx_in_txn: ChangedIdxSet::default(),
                 event_recorder: Default::default(),
                 dead_containers_cache: Default::default(),
                 alive_containers_cache: None,
@@ -639,7 +699,7 @@ impl DocState {
             config,
             doc,
             in_txn: false,
-            changed_idx_in_txn: FxHashSet::default(),
+            changed_idx_in_txn: ChangedIdxSet::default(),
             event_recorder: Default::default(),
             dead_containers_cache: Default::default(),
             alive_containers_cache: None,
@@ -1248,13 +1308,7 @@ impl DocState {
     }
 
     pub(crate) fn clear_changed_idx_in_txn(&mut self) {
-        if self.changed_idx_in_txn.capacity()
-            > self.changed_idx_in_txn.len().saturating_mul(4).max(64)
-        {
-            self.changed_idx_in_txn = FxHashSet::default();
-        } else {
-            self.changed_idx_in_txn.clear();
-        }
+        self.changed_idx_in_txn.clear_shrinking();
     }
 
     /// Takes the event recorder out, so that a state change the caller discards
@@ -1384,8 +1438,8 @@ impl DocState {
 
     /// Ensure the container is created and will be encoded in the next `encode` call
     #[inline]
-    pub(crate) fn ensure_container(&mut self, id: &ContainerID) {
-        self.store.ensure_container(id);
+    pub(crate) fn ensure_container(&mut self, id: &ContainerID) -> ContainerIdx {
+        self.store.ensure_container(id)
     }
 
     /// Ensure all alive containers are created in DocState and will be encoded in the next
@@ -2971,8 +3025,7 @@ impl DocState {
                 .store
                 .demote_cold_states(target_state_bytes, extra_pinned);
         }
-        let mut pinned = self.changed_idx_in_txn.clone();
-        pinned.extend(extra_pinned.iter().copied());
+        let pinned = self.changed_idx_in_txn.to_pinned_set(extra_pinned);
         self.store.demote_cold_states(target_state_bytes, &pinned)
     }
 }

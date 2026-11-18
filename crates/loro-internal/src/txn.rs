@@ -23,10 +23,10 @@ use crate::{
     },
     delta::{ResolvedMapDelta, ResolvedMapValue, StyleMeta, StyleMetaItem, TreeDiff, TreeDiffItem},
     encoding::export_fast_updates_in_range,
-    event::{Diff, ListDeltaMeta, TextDiff},
+    event::{Diff, DocDiff, ListDeltaMeta, TextDiff},
     handler::{Handler, ValueOrHandler},
     id::{Counter, PeerID, ID},
-    lock::{LoroMutex, LoroMutexGuard},
+    lock::LoroMutexGuard,
     loro::CommitOptions,
     op::{InnerContent, Op, RawOp, RawOpContent},
     pre_commit::{ChangeModifier, PreCommitCallbackPayload},
@@ -39,7 +39,6 @@ use super::{
     arena::SharedArena,
     event::{InternalContainerDiff, InternalDocDiff},
     handler::{ListHandler, MapHandler, TextHandler, TreeHandler},
-    oplog::OpLog,
     state::DocState,
 };
 
@@ -88,36 +87,34 @@ impl crate::LoroDoc {
         }
 
         let mut txn = Transaction::new_with_origin(Arc::clone(&self.inner), origin.into())?;
-
-        let obs = self.observer.clone();
-        let local_update_subs_weak = self.local_update_subs.downgrade();
-        txn.set_on_commit(Box::new(move |state, oplog, id_span| {
-            let mut state = state.lock();
-            let events = state.take_events();
-            drop(state);
-            // A panicking subscriber must not drop the other events, nor the
-            // local update of this commit, which apps send to their peers.
-            let mut panic = DeferredPanic::default();
-            for event in events {
-                panic.run(|| obs.emit(event));
-            }
-
-            if id_span.atom_len() != 0 {
-                if let Some(local_update_subs) = local_update_subs_weak.upgrade() {
-                    if !local_update_subs.inner().is_empty() {
-                        let bytes = { export_fast_updates_in_range(&oplog.lock(), &[id_span]) };
-                        panic.run(|| local_update_subs.emit(&(), bytes));
-                    }
-                }
-            }
-            panic.resume();
-        }));
+        txn.emit_on_commit = true;
 
         if self.has_max_doc_bytes() {
             self.arm_budget_scope_on_txn(&mut txn);
         }
 
         Ok(txn)
+    }
+
+    #[inline]
+    pub(crate) fn has_post_commit_work(&self, events: &[DocDiff], id_span: IdSpan) -> bool {
+        !events.is_empty()
+            || (id_span.atom_len() != 0 && !self.local_update_subs.inner().is_empty_fast())
+    }
+
+    pub(crate) fn emit_post_commit(&self, events: Vec<DocDiff>, id_span: IdSpan) {
+        // A panicking subscriber must not drop the other events, nor the
+        // local update of this commit, which apps send to their peers.
+        let mut panic = DeferredPanic::default();
+        for event in events {
+            panic.run(|| self.observer.emit(event));
+        }
+
+        if id_span.atom_len() != 0 && !self.local_update_subs.inner().is_empty_fast() {
+            let bytes = { export_fast_updates_in_range(&self.oplog.lock(), &[id_span]) };
+            panic.run(|| self.local_update_subs.emit(&(), bytes));
+        }
+        panic.resume();
     }
 
     pub fn start_auto_commit(&self) {
@@ -198,9 +195,6 @@ impl crate::LoroDoc {
     }
 }
 
-pub(crate) type OnCommitFn =
-    Box<dyn FnOnce(&Arc<LoroMutex<DocState>>, &Arc<LoroMutex<OpLog>>, IdSpan) + Sync + Send>;
-
 pub struct Transaction {
     peer: PeerID,
     origin: InternalString,
@@ -217,7 +211,7 @@ pub struct Transaction {
     event_hints: FxHashMap<ContainerIdx, Vec<EventHint>>,
     pub(super) arena: SharedArena,
     finished: bool,
-    on_commit: Option<OnCommitFn>,
+    emit_on_commit: bool,
     timestamp: Option<Timestamp>,
     msg: Option<Arc<str>>,
     latest_timestamp: Timestamp,
@@ -239,7 +233,7 @@ pub struct Transaction {
 
 #[derive(Debug)]
 enum RecordedOp {
-    TextInsert {
+    CompactInsert {
         container: ContainerIdx,
         pos: u32,
         len: u32,
@@ -266,12 +260,12 @@ enum RecordedOp {
 impl RecordedOp {
     fn try_merge(&mut self, next: &Self) -> bool {
         let (
-            Self::TextInsert {
+            Self::CompactInsert {
                 container,
                 pos,
                 len,
             },
-            Self::TextInsert {
+            Self::CompactInsert {
                 container: next_container,
                 pos: next_pos,
                 len: next_len,
@@ -294,7 +288,7 @@ impl RecordedOp {
     fn estimated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + match self {
-                RecordedOp::TextInsert { .. } => 0,
+                RecordedOp::CompactInsert { .. } => 0,
                 RecordedOp::Diff {
                     diff, map_written, ..
                 } => {
@@ -326,9 +320,92 @@ enum LocalInverseRecorder {
     /// No undo manager; or an op whose inverse is not recorded (or a rolled
     /// back batch), so undo checks the document out for this commit.
     Off,
+    /// Undo manager active; waiting for the first recorded op.
+    Empty,
+    /// Fast inline state for a single (or coalesced) compact Text/List insertion
+    /// without allocating a `Vec<RecordedOp>`.
+    SingleCompact {
+        container: ContainerIdx,
+        pos: u32,
+        len: u32,
+    },
     /// Each op's inverse; see [`RecordedOp`]. `bytes`: their estimated size,
     /// counted in the transaction's uncommitted bytes.
     Recording { ops: Vec<RecordedOp>, bytes: usize },
+}
+
+impl LocalInverseRecorder {
+    #[inline]
+    fn is_active(&self) -> bool {
+        matches!(
+            self,
+            Self::Empty | Self::SingleCompact { .. } | Self::Recording { .. }
+        )
+    }
+
+    fn push(&mut self, op: RecordedOp) {
+        match self {
+            Self::Empty => {
+                if let RecordedOp::CompactInsert {
+                    container,
+                    pos,
+                    len,
+                } = op
+                {
+                    *self = Self::SingleCompact {
+                        container,
+                        pos,
+                        len,
+                    };
+                } else {
+                    let bytes = op.estimated_bytes();
+                    *self = Self::Recording {
+                        ops: vec![op],
+                        bytes,
+                    };
+                }
+            }
+            Self::SingleCompact {
+                container,
+                pos,
+                len,
+            } => {
+                if let RecordedOp::CompactInsert {
+                    container: next_container,
+                    pos: next_pos,
+                    len: next_len,
+                } = &op
+                {
+                    if *container == *next_container
+                        && *next_pos >= *pos
+                        && *next_pos <= pos.saturating_add(*len)
+                    {
+                        if let Some(merged_len) = len.checked_add(*next_len) {
+                            *len = merged_len;
+                            return;
+                        }
+                    }
+                }
+                let first = RecordedOp::CompactInsert {
+                    container: *container,
+                    pos: *pos,
+                    len: *len,
+                };
+                let bytes = first.estimated_bytes() + op.estimated_bytes();
+                *self = Self::Recording {
+                    ops: vec![first, op],
+                    bytes,
+                };
+            }
+            Self::Recording { ops, bytes } => {
+                if !ops.last_mut().is_some_and(|last| last.try_merge(&op)) {
+                    *bytes += op.estimated_bytes();
+                    ops.push(op);
+                }
+            }
+            Self::Unknown | Self::Off => {}
+        }
+    }
 }
 
 /// See [`Transaction::begin_rollback_scope`].
@@ -387,7 +464,7 @@ impl std::fmt::Debug for Transaction {
             .field("event_hints", &self.event_hints)
             .field("arena", &self.arena)
             .field("finished", &self.finished)
-            .field("on_commit", &self.on_commit.is_some())
+            .field("emit_on_commit", &self.emit_on_commit)
             .field("timestamp", &self.timestamp)
             .finish()
     }
@@ -580,7 +657,7 @@ impl Transaction {
             local_ops: RleVec::new(),
             local_ops_payload_bytes: 0,
             finished: false,
-            on_commit: None,
+            emit_on_commit: false,
             msg: None,
             latest_timestamp,
             is_peer_first_appearance: false,
@@ -628,12 +705,8 @@ impl Transaction {
         &self.start_lamport
     }
 
-    pub(crate) fn set_on_commit(&mut self, f: OnCommitFn) {
-        self.on_commit = Some(f);
-    }
-
-    pub(crate) fn take_on_commit(&mut self) -> Option<OnCommitFn> {
-        self.on_commit.take()
+    pub(crate) fn take_emit_on_commit(&mut self) -> bool {
+        std::mem::replace(&mut self.emit_on_commit, false)
     }
 
     pub fn commit(mut self) -> Result<Option<CommitOptions>, LoroError> {
@@ -642,7 +715,7 @@ impl Transaction {
             && (self.doc_budget_limit.is_some() || self.budget_base_scope.is_some())
         {
             if let Some(doc_inner) = self.doc.upgrade() {
-                let doc = LoroDoc::from_inner(doc_inner);
+                let doc = LoroDoc::borrow_from_inner(&doc_inner);
                 if self.doc_budget_limit.is_some()
                     || (doc.has_max_doc_bytes() && self.budget_base_scope.is_some())
                 {
@@ -667,7 +740,7 @@ impl Transaction {
             }
         }
         let mut panic = DeferredPanic::default();
-        let ans = self._commit(&mut panic);
+        let ans = self._commit(&mut panic, false).map(|(opts, _)| opts);
         panic.resume();
         ans
     }
@@ -678,8 +751,9 @@ impl Transaction {
     pub(crate) fn commit_deferring_panic(
         mut self,
         panic: &mut DeferredPanic,
-    ) -> Result<Option<CommitOptions>, LoroError> {
-        self._commit(panic)
+        take_events_for_caller: bool,
+    ) -> Result<(Option<CommitOptions>, Vec<DocDiff>), LoroError> {
+        self._commit(panic, take_events_for_caller)
     }
 
     /// A pre-commit callback that panics is user code panicking in the middle
@@ -688,70 +762,110 @@ impl Transaction {
     /// returned, and its panic is put in `panic` to be raised once no doc lock
     /// is held.
     #[tracing::instrument(level = "debug", skip(self, panic))]
-    fn _commit(&mut self, panic: &mut DeferredPanic) -> Result<Option<CommitOptions>, LoroError> {
+    fn _commit(
+        &mut self,
+        panic: &mut DeferredPanic,
+        take_events_for_caller: bool,
+    ) -> Result<(Option<CommitOptions>, Vec<DocDiff>), LoroError> {
         if self.finished {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
 
         let Some(doc) = self.doc.upgrade() else {
-            return Ok(None);
+            return Ok((None, Vec::new()));
         };
         self.finished = true;
         self.rollback_scopes.clear();
         self.budget_base_scope = None;
+        let emit_here = std::mem::replace(&mut self.emit_on_commit, false);
         if self.local_ops.is_empty() {
             let mut state = doc.state.lock();
             state.abort_txn();
             state.clear_local_rollback_stack();
-            return Ok(Some(self.take_options()));
+            let events = if take_events_for_caller || emit_here {
+                state.take_events()
+            } else {
+                Vec::new()
+            };
+            drop(state);
+            if emit_here {
+                let doc_ref = LoroDoc::borrow_from_inner(&doc);
+                if doc_ref.has_post_commit_work(&events, self.id_span()) {
+                    debug_assert!(doc.txn.can_lock_in_this_thread());
+                    doc_ref.emit_post_commit(events, self.id_span());
+                }
+                return Ok((Some(self.take_options()), Vec::new()));
+            }
+            return Ok((Some(self.take_options()), events));
         }
 
         let ops = std::mem::take(&mut self.local_ops);
         self.local_ops_payload_bytes = 0;
         let deps = take(&mut self.frontiers);
-        let change = Change {
-            lamport: self.start_lamport,
-            ops,
-            deps,
-            id: ID::new(self.peer, self.start_counter),
-            timestamp: self.latest_timestamp.max(
-                self.timestamp
-                    .unwrap_or_else(|| doc.oplog.lock().get_timestamp_for_next_txn()),
-            ),
-            commit_msg: take(&mut self.msg),
-        };
+        let has_pre_commit = !doc.pre_commit_subs.inner().is_empty_fast();
 
-        let change_meta = ChangeMeta::from_change(&change);
-        {
-            // add change to uncommit field of oplog
+        let (mut oplog, mut state, change) = if has_pre_commit {
+            let change = Change {
+                lamport: self.start_lamport,
+                ops,
+                deps,
+                id: ID::new(self.peer, self.start_counter),
+                timestamp: self.latest_timestamp.max(
+                    self.timestamp
+                        .unwrap_or_else(|| doc.oplog.lock().get_timestamp_for_next_txn()),
+                ),
+                commit_msg: take(&mut self.msg),
+            };
+            let change_meta = ChangeMeta::from_change(&change);
+            {
+                // add change to uncommit field of oplog
+                let mut oplog = doc.oplog.lock();
+                oplog.set_uncommitted_change(change);
+            }
+
+            let modifier = ChangeModifier::default();
+            panic.run(|| {
+                doc.pre_commit_subs.emit(
+                    &(),
+                    PreCommitCallbackPayload {
+                        change_meta,
+                        origin: self.origin.to_string(),
+                        modifier: modifier.clone(),
+                    },
+                )
+            });
+
             let mut oplog = doc.oplog.lock();
-            oplog.set_uncommitted_change(change);
-        }
+            let mut state = doc.state.lock();
 
-        let modifier = ChangeModifier::default();
-        panic.run(|| {
-            doc.pre_commit_subs.emit(
-                &(),
-                PreCommitCallbackPayload {
-                    change_meta,
-                    origin: self.origin.to_string(),
-                    modifier: modifier.clone(),
-                },
-            )
-        });
-
-        let mut oplog = doc.oplog.lock();
-        let mut state = doc.state.lock();
-
-        let Some(mut change) = oplog.uncommitted_change.take() else {
-            state.abort_txn();
-            drop(state);
-            drop(oplog);
-            return Err(LoroError::internal(
-                "missing uncommitted change while committing transaction",
-            ));
+            let Some(mut change) = oplog.uncommitted_change.take() else {
+                state.abort_txn();
+                drop(state);
+                drop(oplog);
+                return Err(LoroError::internal(
+                    "missing uncommitted change while committing transaction",
+                ));
+            };
+            modifier.modify_change(&mut change);
+            (oplog, state, change)
+        } else {
+            let oplog = doc.oplog.lock();
+            let state = doc.state.lock();
+            let timestamp = self.latest_timestamp.max(
+                self.timestamp
+                    .unwrap_or_else(|| oplog.get_timestamp_for_next_txn()),
+            );
+            let change = Change {
+                lamport: self.start_lamport,
+                ops,
+                deps,
+                id: ID::new(self.peer, self.start_counter),
+                timestamp,
+                commit_msg: take(&mut self.msg),
+            };
+            (oplog, state, change)
         };
-        modifier.modify_change(&mut change);
+
         let diff = if state.is_recording() {
             Some(change_to_diff(
                 &change,
@@ -763,8 +877,7 @@ impl Transaction {
         };
 
         let last_id = change.id_last();
-        let change_deps = matches!(self.local_inverse, LocalInverseRecorder::Recording { .. })
-            .then(|| change.deps.clone());
+        let change_deps = self.local_inverse.is_active().then(|| change.deps.clone());
         if let Err(err) = oplog.import_local_change(change) {
             state.abort_txn();
             state.clear_local_rollback_stack();
@@ -774,6 +887,19 @@ impl Transaction {
         }
 
         let local_inverse = match std::mem::take(&mut self.local_inverse) {
+            LocalInverseRecorder::SingleCompact {
+                container,
+                pos,
+                len,
+            } if diff.is_some() => build_compact_local_inverse(
+                container,
+                pos,
+                len,
+                self.id_span(),
+                change_deps.unwrap(),
+                &state.arena,
+            )
+            .map(Arc::new),
             LocalInverseRecorder::Recording { ops, .. } if diff.is_some() => {
                 build_local_inverse(ops, self.id_span(), change_deps.unwrap(), &mut state)
                     .map(Arc::new)
@@ -800,16 +926,26 @@ impl Transaction {
                 new_version: Cow::Borrowed(oplog.frontiers()),
             }),
         );
+        let events = if take_events_for_caller || emit_here {
+            state.take_events()
+        } else {
+            Vec::new()
+        };
         drop(state);
         drop(oplog);
-        if let Some(on_commit) = self.on_commit.take() {
-            // Not under this thread's transaction lock. Another thread may hold it: a
-            // manual transaction commits without it.
-            debug_assert!(doc.txn.can_lock_in_this_thread());
-            on_commit(&doc.state.clone(), &doc.oplog.clone(), self.id_span());
+        let doc_ref = LoroDoc::borrow_from_inner(&doc);
+        if emit_here {
+            if doc_ref.has_post_commit_work(&events, self.id_span()) {
+                // Not under this thread's transaction lock. Another thread may hold it: a
+                // manual transaction commits without it.
+                debug_assert!(doc.txn.can_lock_in_this_thread());
+                doc_ref.emit_post_commit(events, self.id_span());
+            }
+            doc_ref.on_commit_completed();
+            return Ok((None, Vec::new()));
         }
-        LoroDoc::from_inner(doc).on_commit_completed();
-        Ok(None)
+        doc_ref.on_commit_completed();
+        Ok((None, events))
     }
 
     pub(crate) fn estimated_uncommitted_bytes(&self) -> usize {
@@ -823,11 +959,11 @@ impl Transaction {
                 .map(|v| v.capacity() * std::mem::size_of::<EventHint>())
                 .sum::<usize>();
         let inverse_bytes = match &self.local_inverse {
-            LocalInverseRecorder::Recording { ops, bytes } => bytes.saturating_add(
-                ops.capacity()
-                    .saturating_sub(ops.len())
-                    .saturating_mul(std::mem::size_of::<RecordedOp>()),
-            ),
+            LocalInverseRecorder::SingleCompact { .. } => std::mem::size_of::<RecordedOp>(),
+            LocalInverseRecorder::Recording { ops, bytes } => {
+                let spare = ops.capacity().saturating_sub(ops.len());
+                bytes.saturating_add(spare.saturating_mul(std::mem::size_of::<RecordedOp>()))
+            }
             _ => 0,
         };
         ops_bytes
@@ -898,7 +1034,7 @@ impl Transaction {
     /// version; the caller undoes them.
     pub(crate) fn roll_back_scope(&mut self, id: u64) -> RolledBackBatch {
         assert!(self.rollback_scope_is_intact(id));
-        if matches!(self.local_inverse, LocalInverseRecorder::Recording { .. }) {
+        if self.local_inverse.is_active() {
             self.local_inverse = LocalInverseRecorder::Off;
         }
         let scope = self.rollback_scopes.pop().unwrap();
@@ -1023,18 +1159,11 @@ impl Transaction {
 
         if matches!(self.local_inverse, LocalInverseRecorder::Unknown) {
             let has_undo = doc
-                .undo_manager_registered
+                .active_undo_managers
                 .load(std::sync::atomic::Ordering::Acquire)
-                && doc
-                    .undo_managers
-                    .lock()
-                    .iter()
-                    .any(|manager| manager.strong_count() > 0);
+                > 0;
             self.local_inverse = if has_undo {
-                LocalInverseRecorder::Recording {
-                    ops: Vec::new(),
-                    bytes: 0,
-                }
+                LocalInverseRecorder::Empty
             } else {
                 LocalInverseRecorder::Off
             };
@@ -1048,7 +1177,9 @@ impl Transaction {
         }
 
         let op = self.arena.convert_raw_op(&raw_op);
-        let inverse = matches!(self.local_inverse, LocalInverseRecorder::Recording { .. })
+        let inverse = self
+            .local_inverse
+            .is_active()
             .then(|| local_op_inverse(&mut state, container, &raw_op, &event, &doc.inner));
         state.apply_local_op(&raw_op, &op)?;
         if let Some(inverse) = inverse {
@@ -1062,12 +1193,9 @@ impl Transaction {
                     .map(|()| RecordedOp::Movable(record)),
                 other => other,
             };
-            match (inverse, &mut self.local_inverse) {
-                (Some(op), LocalInverseRecorder::Recording { ops, bytes }) => {
-                    if !ops.last_mut().is_some_and(|last| last.try_merge(&op)) {
-                        *bytes += op.estimated_bytes();
-                        ops.push(op);
-                    }
+            match inverse {
+                Some(op) if self.local_inverse.is_active() => {
+                    self.local_inverse.push(op);
                 }
                 _ => self.local_inverse = LocalInverseRecorder::Off,
             }
@@ -1219,7 +1347,7 @@ impl Drop for Transaction {
             // TODO: should we abort here or commit here?
             // what if commit fails?
             let mut panic = DeferredPanic::default();
-            let ans = self._commit(&mut panic);
+            let ans = self._commit(&mut panic, false);
             // Raising it while already unwinding would abort the process.
             if !std::thread::panicking() {
                 panic.resume();
@@ -1539,6 +1667,32 @@ mod tests {
     }
 }
 
+fn build_compact_local_inverse(
+    container: ContainerIdx,
+    pos: u32,
+    len: u32,
+    span: IdSpan,
+    deps: Frontiers,
+    arena: &SharedArena,
+) -> Option<crate::undo::LocalInverse> {
+    let cid = arena.idx_to_id(container)?;
+    if cid.is_mergeable() {
+        return None;
+    }
+    let compact_insert = (!crate::undo::created_in(&cid, span)).then_some((cid, pos, len));
+    Some(crate::undo::LocalInverse::new(
+        crate::undo::CommitInverse {
+            span,
+            diff: crate::undo::DiffBatch::default(),
+            compact_insert,
+            map_values_after: FxHashMap::default(),
+            movable: Vec::new(),
+            counter_ops: Vec::new(),
+        },
+        deps,
+    ))
+}
+
 /// The [`crate::undo::LocalInverse`] of a committed transaction: the inverse of
 /// its last op first, then of each earlier one.
 fn build_local_inverse(
@@ -1548,28 +1702,13 @@ fn build_local_inverse(
     state: &mut DocState,
 ) -> Option<crate::undo::LocalInverse> {
     let arena = state.arena.clone();
-    if let [RecordedOp::TextInsert {
+    if let [RecordedOp::CompactInsert {
         container,
         pos,
         len,
     }] = ops.as_slice()
     {
-        let cid = arena.idx_to_id(*container)?;
-        if cid.is_mergeable() {
-            return None;
-        }
-        let text_insert = (!crate::undo::created_in(&cid, span)).then_some((cid, *pos, *len));
-        return Some(crate::undo::LocalInverse::new(
-            crate::undo::CommitInverse {
-                span,
-                diff: crate::undo::DiffBatch::default(),
-                text_insert,
-                map_values_after: FxHashMap::default(),
-                movable: Vec::new(),
-                counter_ops: Vec::new(),
-            },
-            deps,
-        ));
+        return build_compact_local_inverse(*container, *pos, *len, span, deps, &arena);
     }
     let single_op = ops.len() == 1;
     let mut cids: FxHashMap<ContainerIdx, loro_common::ContainerID> = FxHashMap::default();
@@ -1595,20 +1734,28 @@ fn build_local_inverse(
         smallvec::SmallVec::<[(loro_common::ContainerID, Diff); 1]>::with_capacity(ops.len());
     for op in ops {
         match op {
-            RecordedOp::TextInsert {
+            RecordedOp::CompactInsert {
                 container,
                 pos,
                 len,
             } => {
-                inverses.push((
-                    cid_of(container),
-                    Diff::Text(
+                let cid = cid_of(container);
+                let op_diff = match cid.container_type() {
+                    ContainerType::Text => Diff::Text(
                         DeltaRopeBuilder::new()
                             .retain(pos as usize, Default::default())
                             .delete(len as usize)
                             .build(),
                     ),
-                ));
+                    ContainerType::List => Diff::List(
+                        DeltaRopeBuilder::new()
+                            .retain(pos as usize, Default::default())
+                            .delete(len as usize)
+                            .build(),
+                    ),
+                    _ => unreachable!("CompactInsert only records Text and List insertions"),
+                };
+                inverses.push((cid, op_diff));
             }
             RecordedOp::Diff {
                 container,
@@ -1661,7 +1808,7 @@ fn build_local_inverse(
     let mut commit = crate::undo::CommitInverse {
         span,
         diff,
-        text_insert: None,
+        compact_insert: None,
         map_values_after,
         movable,
         counter_ops,
@@ -1688,11 +1835,20 @@ fn local_op_inverse(
 ) -> Option<RecordedOp> {
     match (container.get_type(), hint) {
         (ContainerType::Text, EventHint::InsertText { pos, event_len, .. }) => {
-            return Some(RecordedOp::TextInsert {
+            return Some(RecordedOp::CompactInsert {
                 container,
                 pos: *pos,
                 len: *event_len,
             });
+        }
+        (ContainerType::List, EventHint::InsertList { pos, len }) => {
+            if let Ok(pos) = u32::try_from(*pos) {
+                return Some(RecordedOp::CompactInsert {
+                    container,
+                    pos,
+                    len: *len,
+                });
+            }
         }
         (ContainerType::MovableList, _) => {
             return movable_list_op_inverse(state, container, hint).map(RecordedOp::Movable)

@@ -1318,10 +1318,25 @@ impl Handler {
         Self::new_attached_with_doc(id, HandlerDoc::Direct(doc))
     }
 
+    #[inline]
+    pub(crate) fn new_attached_with_idx(
+        id: ContainerID,
+        container_idx: ContainerIdx,
+        doc: LoroDoc,
+    ) -> Self {
+        Self::new_attached_inner(id, container_idx, HandlerDoc::Direct(doc))
+    }
+
     fn new_attached_with_doc(id: ContainerID, doc: HandlerDoc) -> Self {
+        let container_idx = doc.arena.register_container(&id);
+        Self::new_attached_inner(id, container_idx, doc)
+    }
+
+    #[inline]
+    fn new_attached_inner(id: ContainerID, container_idx: ContainerIdx, doc: HandlerDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
-            container_idx: doc.arena.register_container(&id),
+            container_idx,
             id,
             doc,
         };
@@ -4705,6 +4720,7 @@ impl MapHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_map_entries(inner.container_idx)
@@ -4717,14 +4733,14 @@ impl MapHandler {
                             );
                             (
                                 key.to_string(),
-                                value_to_value_or_handler(inner, translated),
+                                value_to_shared_handler(inner, &mut shared, translated),
                             )
                         })
                         .collect::<Vec<_>>()
                 });
 
                 for (k, v) in temp.into_iter() {
-                    f(&k, v.clone());
+                    f(&k, v);
                 }
             }
         }
@@ -4757,9 +4773,8 @@ impl MapHandler {
                         .collect::<Vec<_>>()
                 });
 
-                // Preserve the original value clone/drop sequence around each callback.
                 for value in temp.into_iter() {
-                    f(value.clone());
+                    f(value);
                 }
             }
         }
@@ -5321,10 +5336,7 @@ mod test {
             movable.push(value.into()).unwrap();
         }
         doc.commit_then_renew();
-        let count_owners = || {
-            let registry_refs = doc.drop_gate.registry_refs.lock_ignoring_poison();
-            std::sync::Arc::strong_count(&doc.inner) - *registry_refs
-        };
+        let count_owners = || doc.user_handles.load(std::sync::atomic::Ordering::Relaxed);
         let owners = count_owners();
         let mut visited = 0;
         list.for_each(|value| {

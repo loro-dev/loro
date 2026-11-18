@@ -152,7 +152,7 @@ fn inverse_registration_survives_replacing_an_undo_manager() {
 
 #[test]
 fn grouped_general_inverses_preserve_remote_edits_across_undo_redo() {
-    for scenario in ["map_tail", "two_texts", "list"] {
+    for scenario in ["map_tail", "two_texts", "list", "list_mixed"] {
         for remote_position in 0..=4 {
             let local = LoroDoc::new();
             local.set_peer_id(1).unwrap();
@@ -179,6 +179,12 @@ fn grouped_general_inverses_preserve_remote_edits_across_undo_redo() {
                         other.insert(2 + offset, "😀").unwrap();
                     }
                     "list" => list.insert(2 + offset, offset as i32).unwrap(),
+                    "list_mixed" => {
+                        list.insert(2, offset as i32).unwrap();
+                        if offset % 2 == 1 {
+                            list.delete(2, 1).unwrap();
+                        }
+                    }
                     _ => unreachable!(),
                 }
                 local.commit();
@@ -210,4 +216,35 @@ fn grouped_general_inverses_preserve_remote_edits_across_undo_redo() {
             }
         }
     }
+}
+
+#[test]
+fn grouped_list_insertions_coalesce_compact_inverses_in_place() {
+    let doc = LoroDoc::new();
+    let list = doc.get_list("list");
+    list.push("prefix").unwrap();
+    list.push("suffix").unwrap();
+    doc.commit();
+    let before = doc.get_deep_value();
+
+    let mut undo = UndoManager::new(&doc);
+    undo.group_start().unwrap();
+    for i in 0..2000 {
+        list.insert(1 + i, i as i64).unwrap();
+        doc.commit();
+    }
+    undo.group_end();
+
+    let stats = doc.memory_stats();
+    assert!(
+        stats.undo_bytes < 4096,
+        "2000 grouped contiguous list inserts should coalesce into a single compact inverse, got {} bytes",
+        stats.undo_bytes
+    );
+
+    let after = doc.get_deep_value();
+    assert!(undo.undo().unwrap());
+    assert_eq!(doc.get_deep_value(), before);
+    assert!(undo.redo().unwrap());
+    assert_eq!(doc.get_deep_value(), after);
 }

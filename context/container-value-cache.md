@@ -16,7 +16,11 @@ deliberately leave no residue.
 
 Materialized reads skip decoded-value cache bookkeeping only when the wrapper
 has neither an evictable cached value nor previously accounted cache bytes.
-After lazy-to-state conversion the old byte accounting must still be removed.
+Warm hits on an already-queued evictable value update `value_cache_referenced`
+in place (`ContainerWrapper::try_mark_value_cache_hit`) using the cached byte
+estimate (`LazyDecodedValue::cached_bytes`) without re-walking decoded maps/lists
+or invalidating `StorePage::cached_state_bytes`. After lazy-to-state conversion
+the old byte accounting is still removed via `track_value_cache`.
 See [hot-path changes](hot-path-prototypes.md).
 
 ## The bounded cache (loro-dev/loro#1092)

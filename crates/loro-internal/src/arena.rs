@@ -471,7 +471,13 @@ impl SharedArena {
     }
 
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        self.containers_write().register_container(id)
+        let mut guard = self.inner.containers.write();
+        let before = guard.container_idx_to_id.len();
+        let idx = guard.register_container(id);
+        if guard.container_idx_to_id.len() != before {
+            self.mark_stats_dirty();
+        }
+        idx
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {

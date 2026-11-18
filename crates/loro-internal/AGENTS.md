@@ -7,7 +7,8 @@ over graceful degradation.
 
 ## Internal Map
 
-- Transaction capacity, shared handler ownership and compact text inverse prototypes:
+- Transaction capacity, lock-free user handle counting, shared handler ownership,
+  and compact text/list inverse optimizations:
   [../../context/hot-path-prototypes.md](../../context/hot-path-prototypes.md).
 
 - `src/undo.rs`: one recorded item per undo/redo call, including no-ops:

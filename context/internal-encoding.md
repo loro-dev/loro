@@ -363,8 +363,9 @@ predecessors can remain pending and later unlock normally.
 `encoding.rs::export_pending_updates` uses the existing `FastUpdates = 4`
 envelope with singleton change blocks, not a temporary `ChangeStore`: pending
 history can have holes and cannot satisfy the store's continuity contract.
-`PendingChange::Unknown` retains the Lamport supplied by the input even though
-the local DAG cannot yet resolve it. Export preserves that value (adjusted by a
+`PendingChange` (`oplog/pending_changes.rs`) retains the Lamport supplied by the
+input alongside its cached byte estimate even though the local DAG cannot yet
+resolve it. Export preserves that value (adjusted by a
 slice offset); it does not invent a Lamport or fill missing history. Import
 resolves Lamport values through the existing import path. When the deps of a
 pending change arrive, its Lamport comes from the deps only. The supplied value

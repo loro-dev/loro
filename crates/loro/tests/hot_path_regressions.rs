@@ -93,3 +93,44 @@ fn inserted_runs_preserve_middle_insertions_and_intervening_deletions() {
     assert!(undo.redo().unwrap());
     assert_eq!(text.to_string(), after_mixed);
 }
+
+#[test]
+fn cloning_handle_concurrently_during_another_handle_drop_preserves_final_commit() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Barrier,
+    };
+
+    for _ in 0..100 {
+        let doc = LoroDoc::new();
+        let updates = Arc::new(AtomicUsize::new(0));
+        let observed = updates.clone();
+        doc.subscribe_local_update(Box::new(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            true
+        }))
+        .detach();
+
+        let map1 = doc.get_map("m");
+        let map2 = map1.clone();
+        drop(doc);
+        map1.insert("k1", 1).unwrap();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let b2 = barrier.clone();
+        let worker = std::thread::spawn(move || {
+            b2.wait();
+            let map3 = map2.clone();
+            drop(map2);
+            map3
+        });
+        barrier.wait();
+        drop(map1);
+        let surviving = worker.join().unwrap();
+        assert_eq!(updates.load(Ordering::SeqCst), 0);
+
+        surviving.insert("k2", 2).unwrap();
+        drop(surviving);
+        assert_eq!(updates.load(Ordering::SeqCst), 1);
+    }
+}

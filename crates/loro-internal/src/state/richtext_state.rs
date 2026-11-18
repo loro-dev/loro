@@ -77,6 +77,11 @@ impl RichtextState {
         self.version_id
     }
 
+    #[inline(always)]
+    pub(crate) fn is_loaded(&self) -> bool {
+        matches!(self.state, LazyLoad::Dst(_))
+    }
+
     /// Get the text content of the richtext
     ///
     /// This uses `mut` because we may need to build the state from snapshot

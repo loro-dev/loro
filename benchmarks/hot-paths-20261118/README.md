@@ -3,7 +3,8 @@
 Tonbo `loro`, Linux aarch64, Rust 1.100.0, measured 2026-11-18.
 
 These are the initial PR measurements. Subsequent investigation and validation
-are recorded in [the follow-up](followup.md).
+are recorded in [the follow-up](followup.md), [review fixes](review-fixes.md),
+and [round 2 hot-path and complexity optimizations](round2-optimizations.md).
 
 - `prestack`: `b005024cbd896e394cc875699a0c7f6cfa272a9e`.
 - `candidate`: `2370ab89f8306bfd5cc13c884641d18fef21a5bc` plus the earlier

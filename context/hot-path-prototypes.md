@@ -12,16 +12,35 @@ The reproducible native workload and retained measurements are in
 
 ## Default transaction and read overhead
 
-`LoroDocInner::undo_manager_registered` is a monotonic hint published while
-registering the first undo manager. Before registration, local operations avoid
-the manager registry lock. Once set, the hint stays set and transactions check
-the live weak references, including after a manager is dropped or replaced.
+`LoroDocInner::active_undo_managers` (`lib.rs`, `undo.rs`) is an `AtomicUsize`
+incremented when an `UndoManager` registers and decremented in `StatsMarkOnDrop`
+when it is dropped. When zero, local transactions avoid allocating or locking
+undo-inverse recording state, including after all managers are dropped.
+
+`Transaction` (`txn.rs`) avoids heap-allocating a per-transaction `on_commit`
+closure (`emit_on_commit: bool` calls `LoroDoc::emit_post_commit` directly, using
+`LoroDoc::borrow_from_inner` so commits never construct/drop a counted `LoroDoc`
+handle). `SubscriberSet::is_empty_fast` (`utils/subscription.rs`) exposes a
+lock-free `non_empty` atomic flag; when `pre_commit_subs` is empty, `_commit`
+skips allocating `ChangeModifier` and collapses three `OpLog` lock acquisitions
+into one. When only root subscribers exist (`!has_container_subs`), `Observer`
+skips `arena.with_ancestors` per container diff.
 
 `Transaction::commit` skips a document upgrade for budget admission only when
 both its captured document quota and its budget rollback scope are absent.
-The decoded-value read path skips cache bookkeeping only if there is neither
-an evictable value nor previously accounted cache bytes. Dirty marking and
-stale-byte subtraction remain active.
+`InnerStore::with_container_for_read` (`inner_store.rs`) preserves
+`StorePage::cached_state_bytes` on read hits unless a wrapper transitions into a
+materialized `State` (including `RichtextState` `LazyLoad::Src -> Dst`), and
+`ContainerWrapper::try_mark_value_cache_hit` (`container_wrapper.rs`) updates the
+second-chance bit in place using `LazyDecodedValue::cached_bytes` without
+re-walking decoded maps/lists or invalidating page state statistics.
+
+`LoroDoc::resolve_and_ensure_container` (`loro.rs`) registers a container in
+`SharedArena` once and constructs the attached handler with `ContainerIdx`
+(`Handler::new_attached_with_idx`), avoiding duplicate arena lock acquisitions on
+`get_map`/`get_text`/`get_list`/`get_movable_list`/`get_tree`/`get_counter`.
+`SharedArena::register_container` marks `stats_dirty` only when a new container
+is inserted.
 
 `allocation/dfs.rs` is the independent DAG reference algorithm used in tests.
 Explicit work lists avoid recursive stack growth; per-traversal visited sets
@@ -30,16 +49,13 @@ query retains its own visited set.
 
 ## Transaction mark capacity
 
-`DocState::changed_idx_in_txn` pins locally changed containers during reclamation.
-`clear_local_rollback_stack` clears it at each commit. A large initial transaction
-can leave a large hash table whose control bytes are reset again for every later
-small commit.
-
-`clear_changed_idx_in_txn` discards the allocation if capacity is greater than
-four times the current entry count, with a floor of 64. Otherwise it reuses the
-allocation. This keeps similarly sized consecutive batches from reallocating,
-while a transition from a large batch to a small one releases old capacity.
-Membership and the point at which it is cleared remain unchanged.
+`DocState::changed_idx_in_txn` (`state.rs`, `ChangedIdxSet`) stores the first
+locally changed `ContainerIdx` inline (`first: Option<ContainerIdx>`) and spills
+to `FxHashSet<ContainerIdx>` only when a transaction mutates two or more distinct
+containers. Single-container transactions do zero hashing, heap allocation, or
+table clearing at commit. When the spillover table grows past four times the
+current entry count (floor 64), `clear_changed_idx_in_txn` shrinks it back while
+reusing capacity across similarly sized multi-container batches.
 
 ## Rejected arena read fast path
 
@@ -49,24 +65,19 @@ Although this skipped unnecessary dirty marking, root-handler lookup slowed
 from 16.143 ms to 16.797 ms per 100,000 lookups (about 4%). The experiment was
 removed; registration and its lock/dirty-mark behavior remain unchanged.
 
-## Shared handler ownership
+## Shared handler ownership and lock-free user handle counting
 
+`LoroDocInner::user_handles` (`lib.rs`) tracks live user-facing `LoroDoc` and
+attached handler owners with a lock-free `AtomicUsize`, replacing `DocDropGate`.
 `BasicHandler::doc` uses `HandlerDoc`, with direct and shared ownership variants.
-Ordinary root and child lookups retain direct ownership. List iteration and
-JSONPath map-value iteration create one shared `Arc<LoroDoc>` on encountering the
-first container value; its descendants and their clones reuse it. Empty and
-scalar-only traversals create no shared owner. The optional owner lives outside
-the state-lock closure so its final drop runs after the lock is released.
-Obtaining an independent document
-handle still clones the underlying `LoroDoc`. The last shared owner drops the
-document through the existing drop gate, so registry references still cannot
-suppress the final commit.
-
-The intended benefit is fewer document drop-gate acquisitions when a query
-creates and discards many child handlers. The first prototype allocated a shared
-owner for every root lookup and regressed that workload. The revised prototype
-limits the allocation to bulk iteration that produces child handlers. The ownership enum adds a tag to the
-handler, so root and scalar child lookup remain separate benchmark cases.
+Ordinary root and child lookups retain direct ownership. List iteration,
+`MapHandler::for_each`, and JSONPath map-value iteration create one shared
+`Arc<LoroDoc>` on encountering the first container value; its descendants and
+their clones reuse it. Empty and scalar-only traversals create no shared owner.
+The optional owner lives outside the state-lock closure so its final drop runs
+after the lock is released. Obtaining an independent document handle still clones
+the underlying `LoroDoc`. The last user handle commits lock-free while registry
+references (`RegistryRef`) never touch `user_handles`.
 
 `BasicHandler::with_doc_state` borrows `self.doc.state` for the lock guard's
 lifetime instead of cloning its `Arc` on every read. `&self` keeps the owner
@@ -74,18 +85,28 @@ alive; access-tick updates and the scope of the state lock are unchanged.
 The matched native experiment and remaining scalar lookup costs are recorded
 in `benchmarks/hot-paths-20261118/followup.md`.
 
-## Compact text inverses
+## Compact text and list inverses, and O(1) undo stack byte accounting
 
-`RecordedOp::TextInsert` keeps the event-coordinate position and length without
-building a delta. A one-operation commit stores them with its container ID in
-`CommitInverse::text_insert`. Its full diff is materialized by
-`CommitInverse::materialize_diff` when `LocalInverse::seal` needs it.
+`RecordedOp::CompactInsert` (`txn.rs`) keeps the event-coordinate position and
+length without building a `DeltaRope` B-tree for both `Text` and `List`
+insertions. A one-operation commit stores them with its container ID in
+`CommitInverse::compact_insert` (`undo.rs`). Its full diff is materialized by
+`CommitInverse::materialize_diff` only when `LocalInverse::seal` needs it.
 
-Adjacent insertion records for the same container coalesce when the next insert
-falls within the previously inserted run, including either boundary. This makes
-a long run of typing within one transaction retain one inverse, rather than
-composing thousands of deletion deltas at commit. Deletions, other containers,
-and insertions outside the run break that coalescing.
+Adjacent insertion records for the same text or list container coalesce when the
+next insert falls within the previously inserted run, including either boundary:
+both within a single transaction (`LocalInverseRecorder::push`) and in place
+across grouped commits (`LocalInverse::chain` via `CommitInverse::try_coalesce_next`).
+This makes a long run of typing or list pushes retain one `CommitInverse` rather
+than thousands of `Arc<CommitInverse>` entries or `DeltaRope` trees. Deletions,
+other containers, and insertions outside the run break that coalescing.
+
+`LocalInverse` caches `commits_bytes` incrementally as commits are chained, and
+`undo::Stack` maintains `cached_bytes: Option<usize>` incrementally across push,
+merge (`try_merge_top_from_events` / `push_with_merge_cids`), `pop_front_inner`,
+and `clear` (which is a zero-allocation no-op when already empty). Enforcing
+`max_undo_bytes` on every commit is therefore $O(1)$ amortized rather than
+re-walking the retained stack in $O(N^2)$.
 
 Other multi-operation transactions materialize the per-operation delta during
 commit and use the existing reverse composition. Mergeable containers
@@ -103,20 +124,21 @@ Tests include concurrent final child-handle drops, grouped Unicode inserts into
 a newly created text container, and the large-to-small transaction capacity
 transition. Debug tests should run with `LORO_VERIFY_UNDO_LOG=1`.
 
-When every commit of a grouped item inserts into the same continuous text run,
-`LocalInverse::coalesced_text_insert` combines the positions and lengths before
-`seal` materializes one deletion. This avoids moving repeated delta composition
-from editing into the first undo. Insertions outside the run, another container,
-or any other operation retain the general path.
+When every commit of a grouped item inserts into the same continuous text or list
+run, `LocalInverse::chain` coalesces them in place (and
+`LocalInverse::coalesced_compact_insert` fast-paths `seal` into a single deletion).
+This avoids moving repeated delta composition from editing into the first undo.
+Insertions outside the run, another container, or any other operation retain the
+general path.
 
 The general path also needs bounded delta composition. Previously, a deletion's
-end lookup skipped zero-output deletion leaves at that boundary. Repeated
-backward deletions then scanned the growing deleted suffix on each composition,
-including text groups followed by a map write, groups editing two texts, and list
-push groups (also while recording redo). `DeltaRope::_compose_replace` now finds
-the last output unit consumed and advances its cursor by one; the selected range
-excludes the already-deleted suffix. The existing single-leaf update can also
-merge the new deletion into its immediate neighbour. See
+end lookup skipped zero-output deletion leaves at that boundary, and forward
+fixed-offset deletions left adjacent pure-deletion leaves unmerged across leaf
+boundaries. `DeltaRope::_compose_replace` now stops at the last consumed output
+unit (`range.end - 1` + 1), merges multi-leaf pure deletions into a single
+`Delete` leaf (or into an immediately preceding `Replace` leaf) via
+`_delete_batch_leaves`, and merges single-leaf boundary deletions into their left
+neighbour. See
 [text delta composition](text-delta-chunking.md#deletion-composition-boundaries).
 This does not change commit ordering, map/counter handling, or fallback rules.
 It removes this quadratic suffix scan, not every possible quadratic delta

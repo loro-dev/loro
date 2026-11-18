@@ -246,9 +246,22 @@ impl std::fmt::Display for Subscription {
     }
 }
 
-pub struct SubscriberSet<EmitterKey, Callback>(
-    Arc<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
-);
+pub struct SubscriberSet<EmitterKey, Callback>(Arc<SubscriberSetInner<EmitterKey, Callback>>);
+
+struct SubscriberSetInner<EmitterKey, Callback> {
+    state: Mutex<SubscriberSetState<EmitterKey, Callback>>,
+    non_empty: std::sync::atomic::AtomicBool,
+}
+
+impl<EmitterKey, Callback> SubscriberSetInner<EmitterKey, Callback> {
+    #[inline]
+    fn update_non_empty(&self, lock: &SubscriberSetState<EmitterKey, Callback>) {
+        self.non_empty.store(
+            !lock.subscribers.is_empty() || !lock.pending_subscribers.is_empty(),
+            std::sync::atomic::Ordering::Release,
+        );
+    }
+}
 
 impl<EmitterKey, Callback> Clone for SubscriberSet<EmitterKey, Callback> {
     fn clone(&self) -> Self {
@@ -286,12 +299,15 @@ where
     Callback: 'static + Send + Sync,
 {
     pub fn new() -> Self {
-        Self(Arc::new(Mutex::new(SubscriberSetState {
-            subscribers: Default::default(),
-            pending_subscribers: Default::default(),
-            dropped_subscribers: Default::default(),
-            next_subscriber_id: 0,
-        })))
+        Self(Arc::new(SubscriberSetInner {
+            state: Mutex::new(SubscriberSetState {
+                subscribers: Default::default(),
+                pending_subscribers: Default::default(),
+                dropped_subscribers: Default::default(),
+                next_subscriber_id: 0,
+            }),
+            non_empty: std::sync::atomic::AtomicBool::new(false),
+        }))
     }
 
     /// Inserts a new [`Subscription`] for the given `emitter_key`.
@@ -306,7 +322,7 @@ where
         callback: Callback,
     ) -> (Subscription, impl FnOnce()) {
         let active = Arc::new(AtomicBool::new(false));
-        let mut lock = self.0.lock();
+        let mut lock = self.0.state.lock();
         let subscriber_id = post_inc(&mut lock.next_subscriber_id);
         let this = Arc::downgrade(&self.0);
         let emitter_key_1 = emitter_key.clone();
@@ -316,7 +332,7 @@ where
                     return;
                 };
 
-                let mut lock = this.lock();
+                let mut lock = this.state.lock();
                 let Some(subscribers) = lock.subscribers.get_mut(&emitter_key) else {
                     // remove was called with this emitter_key
                     return;
@@ -327,6 +343,7 @@ where
                     if subscribers.is_empty() {
                         lock.subscribers.remove(&emitter_key);
                     }
+                    this.update_non_empty(&lock);
                     // Drop the subscriber only after releasing the lock: its callback
                     // may own another `Subscription` (or an `UndoManager`) on this set,
                     // whose drop takes this lock again (loro-dev/loro#1162).
@@ -370,16 +387,20 @@ where
                 .unwrap_left()
                 .insert(subscriber_id, subscriber);
         }
+        self.0
+            .non_empty
+            .store(true, std::sync::atomic::Ordering::Release);
         (subscription, move || active.store(true, Ordering::Relaxed))
     }
 
     #[allow(unused)]
     pub fn remove(&self, emitter: &EmitterKey) -> impl IntoIterator<Item = Callback> {
-        let mut lock = self.0.lock();
+        let mut lock = self.0.state.lock();
         let subscribers = lock.subscribers.remove(emitter);
         // A subscriber parked mid-emit belongs to the emitter being
         // removed; it never became visible, so it goes with it.
         let parked = lock.pending_subscribers.remove(emitter);
+        self.0.update_non_empty(&lock);
         // Drop callbacks outside the lock; see the unsubscribe closure in `insert`.
         drop(lock);
         drop(parked);
@@ -397,7 +418,10 @@ where
     }
 
     pub fn is_recursive_calling(&self, emitter: &EmitterKey) -> bool {
-        if let Some(Either::Right(thread_id)) = self.0.lock().subscribers.get(emitter) {
+        if self.is_empty_fast() {
+            return false;
+        }
+        if let Some(Either::Right(thread_id)) = self.0.state.lock().subscribers.get(emitter) {
             *thread_id == thread::current().id()
         } else {
             false
@@ -411,9 +435,12 @@ where
         emitter: &EmitterKey,
         f: &mut dyn FnMut(&mut Callback) -> bool,
     ) -> Result<(), SubscriptionError> {
+        if self.is_empty_fast() {
+            return Ok(());
+        }
         let mut subscribers = {
             let inner = loop {
-                let mut subscriber_set_state = self.0.lock();
+                let mut subscriber_set_state = self.0.state.lock();
                 let Some(set) = subscriber_set_state.subscribers.get_mut(emitter) else {
                     return Ok(());
                 };
@@ -452,7 +479,7 @@ where
             panic.run(|| f(&mut subscriber.callback)).unwrap_or(true)
         });
 
-        let mut lock = self.0.lock();
+        let mut lock = self.0.state.lock();
 
         // Add any new subscribers that were added while invoking the callback.
         if let Some(Either::Left(new_subscribers)) = lock.subscribers.remove(emitter) {
@@ -476,8 +503,13 @@ where
             }
         }
 
-        lock.subscribers
-            .insert(emitter.clone(), Either::Left(subscribers));
+        if subscribers.is_empty() {
+            lock.subscribers.remove(emitter);
+        } else {
+            lock.subscribers
+                .insert(emitter.clone(), Either::Left(subscribers));
+        }
+        self.0.update_non_empty(&lock);
         // Drop callbacks outside the lock; see the unsubscribe closure in `insert`.
         drop(lock);
         drop(removed);
@@ -485,12 +517,17 @@ where
         Ok(())
     }
 
+    #[inline]
+    pub fn is_empty_fast(&self) -> bool {
+        !self.0.non_empty.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.0.lock().subscribers.is_empty()
+        self.is_empty_fast() || self.0.state.lock().subscribers.is_empty()
     }
 
     pub fn may_include(&self, emitter: &EmitterKey) -> bool {
-        self.0.lock().subscribers.contains_key(emitter)
+        !self.is_empty_fast() && self.0.state.lock().subscribers.contains_key(emitter)
     }
 }
 
@@ -510,7 +547,7 @@ where
     Callback: 'static + Send + Sync,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let lock = self.0.lock();
+        let lock = self.0.state.lock();
         f.debug_struct("SubscriberSet")
             .field("subscriber_count", &lock.subscribers.len())
             .field("dropped_subscribers_count", &lock.dropped_subscribers.len())
@@ -613,7 +650,7 @@ where
 }
 
 pub struct WeakSubscriberSetWithQueue<EmitterKey, Callback, Payload> {
-    subscriber_set: Weak<Mutex<SubscriberSetState<EmitterKey, Callback>>>,
+    subscriber_set: Weak<SubscriberSetInner<EmitterKey, Callback>>,
     queue: Weak<Mutex<BTreeMap<EmitterKey, Vec<Payload>>>>,
 }
 

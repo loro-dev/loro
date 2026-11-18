@@ -230,7 +230,7 @@ impl LoroDoc {
                 pre_commit_subs: SubscriberSetWithQueue::new(),
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
                 undo_managers: crate::sync::Mutex::new(Vec::new()),
-                undo_manager_registered: AtomicBool::new(false),
+                active_undo_managers: std::sync::atomic::AtomicUsize::new(0),
                 memory_budget: crate::sync::Mutex::new(MemoryBudget::default()),
                 budget_flags: std::sync::atomic::AtomicU8::new(0),
                 kv_block_cache,
@@ -240,11 +240,11 @@ impl LoroDoc {
                 stats_dirty: Arc::new(DocStatsDirty::new(pool_doc_id)),
                 soft_backoff: SoftBackoff::new(),
                 last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
-                drop_gate: Default::default(),
+                user_handles: crate::sync::AtomicUsize::new(1),
             }
         });
         if pool_doc_id != 0 {
-            global_pool().register(pool_doc_id, Arc::downgrade(&inner), inner.drop_gate.clone());
+            global_pool().register(pool_doc_id, Arc::downgrade(&inner));
             // After registering: a mark pushes the id, and the refresh of a pushed id
             // must find the document in the registry.
             let dirty = &inner.stats_dirty;
@@ -255,7 +255,7 @@ impl LoroDoc {
             inner.arena.set_stats_dirty(dirty.clone());
             // `register` queued it (it starts dirty); the next estimate computes it.
         }
-        LoroDoc::from_inner(inner)
+        LoroDoc::from_new_inner(inner)
     }
 
     pub fn fork(&self) -> Self {
@@ -475,7 +475,7 @@ impl LoroDoc {
             let Some(mut txn) = txn else {
                 return Ok((None, Some(txn_guard)));
             };
-            let on_commit = txn.take_on_commit();
+            let emit_on_commit = txn.take_emit_on_commit();
             if let Some(origin) = config.origin.clone() {
                 txn.set_origin(origin);
             }
@@ -489,7 +489,7 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let mut options = txn.commit_deferring_panic(panic).unwrap();
+            let (mut options, events) = txn.commit_deferring_panic(panic, emit_on_commit).unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit
@@ -505,14 +505,18 @@ impl LoroDoc {
                 *txn_guard = self.auto_commit_txn(options.clone());
             }
 
-            if let Some(on_commit) = on_commit {
+            if emit_on_commit && self.has_post_commit_work(&events, id_span) {
                 drop(txn_guard);
-                on_commit(&self.state, &self.oplog, id_span);
-                txn_guard = self.txn.lock();
-                if !config.immediate_renew && txn_guard.is_some() {
-                    // make sure that txn_guard is None when config.immediate_renew is false
-                    continue;
+                self.emit_post_commit(events, id_span);
+                if !config.immediate_renew {
+                    txn_guard = self.txn.lock();
+                    if txn_guard.is_some() {
+                        // make sure that txn_guard is None when config.immediate_renew is false
+                        continue;
+                    }
+                    return Ok((options, Some(txn_guard)));
                 }
+                return Ok((options, None));
             }
 
             return Ok((
@@ -1744,22 +1748,22 @@ impl LoroDoc {
 
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
-        if self.has_container(&id) {
-            self.ensure_root_container(&id);
-            Some(Handler::new_attached(id, self.clone()))
-        } else {
-            None
-        }
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Some(Handler::new_attached_with_idx(id, idx, self.clone()))
     }
 
     #[inline]
-    fn ensure_root_container(&self, id: &ContainerID) {
+    fn resolve_and_ensure_container(&self, id: &ContainerID) -> Option<ContainerIdx> {
         // Mergeable roots stay lazily materialized: their existence is derived from the
         // parent map's child ref, and a store entry only appears once the child gets its
         // own ops (or via the shallow-export alive walk).
         if id.is_root() && !id.is_mergeable() {
-            self.state.lock().ensure_container(id);
+            return Some(self.state.lock().ensure_container(id));
         }
+        if !self.state.lock().does_container_exist(id) {
+            return None;
+        }
+        Some(self.arena.register_container(id))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1768,11 +1772,10 @@ impl LoroDoc {
     pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<TextHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_text().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_text()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1789,11 +1792,10 @@ impl LoroDoc {
     pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<ListHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_list().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_list()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1810,11 +1812,8 @@ impl LoroDoc {
     pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<MovableListHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone())
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
             .into_movable_list()
             .ok()
     }
@@ -1833,11 +1832,10 @@ impl LoroDoc {
     pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<MapHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_map().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_map()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1854,11 +1852,10 @@ impl LoroDoc {
     pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<TreeHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_tree().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_tree()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1876,11 +1873,10 @@ impl LoroDoc {
     ) -> Option<crate::handler::counter::CounterHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_counter().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_counter()
+            .ok()
     }
 
     #[cfg(feature = "counter")]
@@ -6414,8 +6410,8 @@ fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
     LoroError::memory_limit_exceeded(MemoryLimitKind::GlobalBudget, used_usize, limit_usize)
 }
 
-/// Registered documents and the drop gate each shares with its handles.
-type RegistryEntries = FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>;
+/// Registered documents in the global memory pool.
+type RegistryEntries = FxHashMap<u64, std::sync::Weak<LoroDocInner>>;
 
 struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
@@ -6514,13 +6510,8 @@ impl GlobalMemoryPool {
         self.soft_backoff.record(reached_target, used);
     }
 
-    fn register(
-        &self,
-        id: u64,
-        weak: std::sync::Weak<LoroDocInner>,
-        gate: Arc<crate::DocDropGate>,
-    ) {
-        self.docs.lock().insert(id, (weak, gate));
+    fn register(&self, id: u64, weak: std::sync::Weak<LoroDocInner>) {
+        self.docs.lock().insert(id, weak);
         self.push_dirty(id);
     }
 
@@ -6535,7 +6526,7 @@ impl GlobalMemoryPool {
         self.docs
             .lock()
             .values()
-            .filter(|(weak, _)| weak.strong_count() > 0)
+            .filter(|weak| weak.strong_count() > 0)
             .count()
     }
 
@@ -6561,16 +6552,15 @@ impl GlobalMemoryPool {
                         requeue.push(id);
                         return None;
                     }
-                    docs.get(&id)
-                        .map(|(weak, gate)| (id, weak.clone(), gate.clone()))
+                    docs.get(&id).map(|weak| (id, weak.clone()))
                 })
                 .collect()
         };
-        for (id, weak, gate) in targets {
+        for (id, weak) in targets {
             #[cfg(test)]
             DIRTY_REFRESHES.with(|n| n.set(n.get() + 1));
             // A document that cannot be upgraded is being dropped and unregisters.
-            if let Some(doc) = RegistryRef::upgrade(&weak, gate) {
+            if let Some(doc) = RegistryRef::upgrade(&weak) {
                 if !refresh_cached_doc_bytes_for_inner(&doc) {
                     requeue.push(id);
                 }
@@ -6611,22 +6601,18 @@ impl GlobalMemoryPool {
         }
     }
 
-    /// Upgrades every registered document under its drop gate. The returned
-    /// references release under the same gate, so they never make a document's
-    /// last handle skip its final commit (see `crate::DocDropGate`). The registry
-    /// lock is not held while a gate is taken: the final drop of a document may
-    /// run under its gate and then takes the registry lock to unregister.
+    /// Upgrades every registered document without touching `LoroDocInner::user_handles`,
+    /// so temporary registry references never make a document's last user handle skip
+    /// its final commit.
     fn snapshot_live_docs(&self) -> Vec<RegistryRef> {
         let entries: Vec<_> = {
             let mut docs = self.docs.lock();
-            docs.retain(|_, (weak, _)| weak.strong_count() > 0);
-            docs.values()
-                .map(|(weak, gate)| (weak.clone(), gate.clone()))
-                .collect()
+            docs.retain(|_, weak| weak.strong_count() > 0);
+            docs.values().cloned().collect()
         };
         entries
             .into_iter()
-            .filter_map(|(weak, gate)| RegistryRef::upgrade(&weak, gate))
+            .filter_map(|weak| RegistryRef::upgrade(&weak))
             .collect()
     }
 
@@ -6894,35 +6880,22 @@ impl LoroDocInner {
     }
 }
 
-/// A temporary strong reference taken by the global registry. See
-/// [`GlobalMemoryPool::snapshot_live_docs`].
+/// A temporary strong reference taken by the global registry without touching
+/// `LoroDocInner::user_handles`. See [`GlobalMemoryPool::snapshot_live_docs`].
 pub(crate) struct RegistryRef {
-    doc: Option<Arc<LoroDocInner>>,
-    gate: Arc<crate::DocDropGate>,
+    doc: Arc<LoroDocInner>,
 }
 
 impl RegistryRef {
     #[cfg(test)]
     fn from_doc(doc: &LoroDoc) -> Self {
-        let gate = doc.drop_gate.clone();
-        let weak = Arc::downgrade(&doc.inner);
-        Self::upgrade(&weak, gate).unwrap()
+        Self {
+            doc: Arc::clone(&doc.inner),
+        }
     }
 
-    fn upgrade(
-        weak: &std::sync::Weak<LoroDocInner>,
-        gate: Arc<crate::DocDropGate>,
-    ) -> Option<Self> {
-        let doc = {
-            let mut refs = gate.registry_refs.lock_ignoring_poison();
-            let doc = weak.upgrade()?;
-            *refs += 1;
-            doc
-        };
-        Some(Self {
-            doc: Some(doc),
-            gate,
-        })
+    fn upgrade(weak: &std::sync::Weak<LoroDocInner>) -> Option<Self> {
+        weak.upgrade().map(|doc| Self { doc })
     }
 }
 
@@ -6930,20 +6903,7 @@ impl std::ops::Deref for RegistryRef {
     type Target = Arc<LoroDocInner>;
 
     fn deref(&self) -> &Self::Target {
-        self.doc
-            .as_ref()
-            .expect("registry reference is alive until drop")
-    }
-}
-
-impl Drop for RegistryRef {
-    fn drop(&mut self) {
-        let mut refs = self.gate.registry_refs.lock_ignoring_poison();
-        // Drop before decrementing: the gate must never see this reference in
-        // `strong_count` without also seeing it in `registry_refs`. If this was
-        // the last reference, the last handle has already committed.
-        drop(self.doc.take());
-        *refs -= 1;
+        &self.doc
     }
 }
 
@@ -8314,11 +8274,7 @@ mod reclamation_work_tests {
                 let doc = LoroDoc::new_auto_commit();
                 doc.get_map("m").insert("v", i).unwrap();
                 doc.commit_then_renew();
-                pool.register(
-                    doc.pool_doc_id,
-                    Arc::downgrade(&doc.inner),
-                    doc.drop_gate.clone(),
-                );
+                pool.register(doc.pool_doc_id, Arc::downgrade(&doc.inner));
                 doc
             })
             .collect();
@@ -8449,11 +8405,7 @@ mod reclamation_work_tests {
             ..Default::default()
         };
         let doc = LoroDoc::new_auto_commit();
-        pool.register(
-            doc.pool_doc_id,
-            Arc::downgrade(&doc.inner),
-            doc.drop_gate.clone(),
-        );
+        pool.register(doc.pool_doc_id, Arc::downgrade(&doc.inner));
         let text = doc.get_text("t");
         let edit_and_check = |s: &str| {
             text.insert(0, s, crate::cursor::PosType::Unicode).unwrap();

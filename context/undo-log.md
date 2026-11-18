@@ -2,13 +2,15 @@
 
 Verified against code 2026-11-18.
 
-The hot-path optimization stores a text insertion run's inverse as container ID,
-event position and length, and materializes the delta during `LocalInverse::seal`.
-Continuous runs are coalesced within a transaction and across grouped commits.
+The hot-path optimization stores a text or list insertion run's inverse as
+container ID, event position and length (`CommitInverse::compact_insert`), and
+materializes the delta during `LocalInverse::seal`. Continuous runs are coalesced
+within a transaction and in place across grouped commits (`LocalInverse::chain`).
 Mixed text inverses containing both insertions and deletions fall back to checkout;
 other operations retain the composition described below.
 The general delta composer excludes zero-output deletion fragments beyond the
-end of a deletion, preventing repeated scans of an already-deleted suffix in
+end of a deletion and coalesces adjacent deletion leaves across leaf boundaries,
+preventing repeated scans of an already-deleted prefix or suffix in
 mixed-container groups and list undo/redo. This applies below undo recording;
 it does not broaden the set of recorded inverse shapes.
 See [hot-path prototypes](hot-path-prototypes.md) for its representation and
