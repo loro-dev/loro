@@ -16,9 +16,5 @@ fn jsonschema_bytes_hex_upper(bytes : Bytes) -> String {
 
 ///|
 fn jsonschema_binary_json(bytes : Bytes) -> Json {
-  let out : Array[Json] = []
-  for b in bytes {
-    out.push(Json::number(b.to_uint().to_double()))
-  }
-  Json::array(out)
+  Json::string(LORO_BINARY_PREFIX + jsonschema_bytes_to_base64(bytes))
 }

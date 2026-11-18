@@ -13,6 +13,7 @@ export type ContainerID =
   | `cid:root-${string}:${ContainerType}`
   | `cid:${number}@${PeerID}:${ContainerType}`;
 export type JsonContainerID = `🦜:${ContainerID}`;
+export type JsonBinary = `🦜:binary:${string}`;
 export type TreeID = `${number}@${PeerID}`;
 
 export interface OpId {

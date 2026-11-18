@@ -1387,6 +1387,66 @@ fn moon_encode_jsonschema_text_insert() -> anyhow::Result<()> {
 }
 
 #[test]
+fn moon_jsonschema_binary_values_roundtrip_and_invalid_rejected() -> anyhow::Result<()> {
+    let Some(ctx) = moon_ctx() else {
+        return Ok(());
+    };
+
+    let doc = LoroDoc::new();
+    let map = doc.get_map("m");
+    map.insert("empty", Vec::<u8>::new())?;
+    map.insert("two", vec![1u8, 2])?;
+    map.insert("three", vec![0u8, 255, 128])?;
+    map.insert(
+        "nested",
+        LoroValue::List(
+            vec![
+                LoroValue::Binary(vec![9u8].into()),
+                LoroValue::Map(
+                    [(
+                        "inner".to_string(),
+                        LoroValue::Binary(vec![3u8, 4, 5, 6].into()),
+                    )]
+                    .into_iter()
+                    .collect::<std::collections::HashMap<_, _>>()
+                    .into(),
+                ),
+            ]
+            .into(),
+        ),
+    )?;
+    doc.commit();
+
+    assert_updates_jsonschema_matches_rust(&doc, ctx)?;
+
+    let schema = doc.export_json_updates(&VersionVector::default(), &doc.oplog_vv())?;
+    let json = serde_json::to_string(&schema)?;
+    assert!(json.contains("🦜:binary:AQI="));
+
+    let encoded_blob = run_encode_jsonschema(&ctx.node_bin, &ctx.cli_js, &json)?;
+    let receiver = LoroDoc::new();
+    receiver.import(&encoded_blob)?;
+
+    doc.get_map("m").insert("after", true)?;
+    doc.commit();
+    receiver.import(&doc.export(ExportMode::all_updates())?)?;
+    assert_eq!(receiver.get_deep_value(), doc.get_deep_value());
+
+    for bad_marker in ["🦜:binary:abc", "🦜:binary:AB==", "🦜:binary:@@@@"] {
+        let bad_json = json.replace("🦜:binary:AQI=", bad_marker);
+        let out = run_encode_jsonschema_output(&ctx.node_bin, &ctx.cli_js, &bad_json)?;
+        anyhow::ensure!(
+            !out.status.success(),
+            "expected encode-jsonschema to reject {bad_marker}; stdout={} stderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn moon_encode_jsonschema_cross_peer_container_refs() -> anyhow::Result<()> {
     let Some(ctx) = moon_ctx() else {
         return Ok(());

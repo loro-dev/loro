@@ -385,13 +385,13 @@ These are data types supported by Loro and its json format:
 - `Bool`: `true` or `false`
 - `F64`: `number`(float)
 - `I64`: `number` or `bigint` (signed)
-- `Binary`: `UInt8Array`
+- `Binary`: `"🦜:binary:{Base64}"` (standard RFC 4648 Base64 with `=` padding; e.g. `Uint8Array([1, 2])` is `"🦜:binary:AQI="`, and `Uint8Array([])` is `"🦜:binary:"`; raw `Uint8Array` values passed directly in JavaScript objects are also accepted on import)
 - `String`: `string`
 - `List`: `Array<LoroValue>`
 - `Map`: `Map<string, LoroValue>`
 - `Container`: the id of container. `🦜:cid:{Counter}@{PeerID}:{ContainerType}` or `🦜:cid:root-{Name}:{ContainerType}`
 
-Note: Compared with the string format, we add a prefix `🦜:` when encoding the json format of `ContainerID` to prevent users from saving the string format of `ContainerID` and misinterpreting it as `ContainerID` when decoding.
+Note: We use the `🦜:` prefix namespace when encoding non-JSON `LoroValue` kinds (`🦜:cid:` for `ContainerID` and `🦜:binary:` for `Binary`) so `JSON.stringify` / `JSON.parse` round-trips preserve exact Loro value types without colliding with ordinary strings or lists.
 
 ### EncodedValue
 

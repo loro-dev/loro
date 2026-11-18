@@ -90,6 +90,8 @@ MoonBit 侧目前只在二进制 `ValueEncoding` 里拿到 `ContainerType`（对
   - 第 `i` 个元素使用 `ID(change_peer, op.counter + i)`
 - 对 `MapInsertOp.value`（map value）使用同一个 `op_id`（不递增）
 
+`LoroValue::Binary` 在 JsonSchema 中编码为标准 RFC 4648 Base64 字符串 `"🦜:binary:{Base64}"`（与 Rust / `loro.js` 对齐；而快照 deep JSON 导出仍为字节数字数组）。
+
 ---
 
 ## 6.5 当前限制

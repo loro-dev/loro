@@ -20,6 +20,26 @@ fn js_json(doc: &LoroDoc) -> String {
     js_json_numbers(doc, false)
 }
 
+fn legacy_binary_as_array_json(doc: &LoroDoc) -> String {
+    let mut json: serde_json::Value = serde_json::from_str(&js_json(doc)).unwrap();
+    fn downgrade_binary(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::String(s) => {
+                if let Some(bytes) = loro_common::try_decode_loro_binary_string(s) {
+                    *value = serde_json::Value::Array(
+                        bytes.into_iter().map(serde_json::Value::from).collect(),
+                    );
+                }
+            }
+            serde_json::Value::Array(values) => values.iter_mut().for_each(downgrade_binary),
+            serde_json::Value::Object(values) => values.values_mut().for_each(downgrade_binary),
+            _ => {}
+        }
+    }
+    downgrade_binary(&mut json);
+    serde_json::to_string(&json).unwrap()
+}
+
 fn js_json_numbers(doc: &LoroDoc, large_as_double: bool) -> String {
     let json = doc
         .export_json_updates(&Default::default(), &doc.oplog_vv())
@@ -227,34 +247,143 @@ fn assert_relay_keeps_prefix_with_json(
 }
 
 #[test]
-fn binary_map_value_survives_json_then_binary_relay() {
+fn binary_and_mergeable_values_survive_json_then_exact_binary_import() {
+    // Reproduces the exact no-setPeerId relay scenario:
+    // a writes Binary -> b imports JSON updates -> a writes more -> b imports binary update.
+    let a = LoroDoc::new();
+    let b = LoroDoc::new();
+    a.get_map("m").insert("payload", vec![1u8, 2]).unwrap();
+    a.get_map("m").insert("empty", Vec::<u8>::new()).unwrap();
+    a.get_map("m")
+        .ensure_mergeable_text("mt")
+        .unwrap()
+        .insert(0, "hi")
+        .unwrap();
+    a.get_map("m")
+        .ensure_mergeable_counter("mc")
+        .unwrap()
+        .increment(2.0)
+        .unwrap();
+    let nested = LoroValue::Map(
+        vec![(
+            "nested".into(),
+            LoroValue::List(vec![LoroValue::from(vec![0u8, 255])].into()),
+        )]
+        .into(),
+    );
+    a.get_map("m").insert("nested", nested.clone()).unwrap();
+    a.get_list("list").push(nested.clone()).unwrap();
+    let movable = a.get_movable_list("movable");
+    movable.push(nested.clone()).unwrap();
+    movable.push(0).unwrap();
+    movable.set(1, nested.clone()).unwrap();
+    a.config_default_text_style(Some(StyleConfig {
+        expand: ExpandType::After,
+    }));
+    a.get_text("text").insert(0, "styled").unwrap();
+    a.get_text("text")
+        .mark(0..6, "custom", vec![0u8, 255])
+        .unwrap();
+    a.commit();
+
+    let exported = a
+        .export_json_updates_without_peer_compression(&Default::default(), &a.oplog_vv())
+        .unwrap();
+    let roundtripped: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&exported).unwrap()).unwrap();
+    b.import_json_updates(serde_json::to_string(&roundtripped).unwrap())
+        .unwrap();
+    assert_eq!(b.get_deep_value(), a.get_deep_value());
+    assert_eq!(map_value(&b, "payload"), LoroValue::from(vec![1u8, 2]));
+    assert_eq!(map_value(&b, "empty"), LoroValue::from(Vec::<u8>::new()));
+    assert_eq!(b.get_text("text").to_delta(), a.get_text("text").to_delta());
+
+    a.get_map("m").insert("next", true).unwrap();
+    a.commit();
+    // Default exact binary import must succeed in both directions.
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(b.get_deep_value(), a.get_deep_value());
+    assert_eq!(b.oplog_vv(), a.oplog_vv());
+
+    b.get_map("m").insert("from_b", 7).unwrap();
+    b.commit();
+    for mode in [ExportMode::all_updates(), ExportMode::Snapshot] {
+        let c = a.fork();
+        c.import(&b.export(mode).unwrap()).unwrap();
+        assert_eq!(c.get_deep_value(), b.get_deep_value());
+        assert_eq!(c.oplog_vv(), b.oplog_vv());
+    }
+}
+
+#[test]
+fn binary_map_value_survives_legacy_json_then_binary_relay() {
     let a = source();
     a.get_map("m").insert("bin", vec![0u8, 1, 255]).unwrap();
-    assert_relay_keeps_prefix(&a, |b| {
+    assert_relay_keeps_prefix_with_json(&a, legacy_binary_as_array_json, |b| {
         assert_eq!(map_value(b, "bin"), LoroValue::from(vec![0, 1, 255]));
     });
 }
 
 #[test]
-fn mergeable_text_survives_json_then_binary_relay() {
+fn mergeable_text_survives_legacy_json_then_binary_relay() {
     let a = source();
     a.get_map("m")
         .ensure_mergeable_text("mt")
         .unwrap()
         .insert(0, "hi")
         .unwrap();
-    assert_relay_keeps_prefix(&a, |b| assert!(map_value(b, "mt").is_list()));
+    assert_relay_keeps_prefix_with_json(&a, legacy_binary_as_array_json, |b| {
+        assert!(map_value(b, "mt").is_list())
+    });
 }
 
 #[test]
-fn mergeable_counter_survives_json_then_binary_relay() {
+fn mergeable_counter_survives_legacy_json_then_binary_relay() {
     let a = source();
     a.get_map("m")
         .ensure_mergeable_counter("mc")
         .unwrap()
         .increment(2.0)
         .unwrap();
-    assert_relay_keeps_prefix(&a, |b| assert!(map_value(b, "mc").is_list()));
+    assert_relay_keeps_prefix_with_json(&a, legacy_binary_as_array_json, |b| {
+        assert!(map_value(b, "mc").is_list())
+    });
+}
+
+#[test]
+fn binary_marker_string_survives_json_and_binary_relays() {
+    let a = source();
+    a.get_map("m").insert("bin", "🦜:binary:AQI=").unwrap();
+    assert_relay_keeps_prefix(&a, |b| {
+        assert_eq!(map_value(b, "bin"), LoroValue::from(vec![1u8, 2]));
+    });
+}
+
+#[test]
+fn invalid_binary_marker_json_is_rejected_before_mutation() {
+    for bad in [
+        "🦜:binary:abc",
+        "🦜:binary:AQ!=",
+        "🦜:binary:AB==",
+        "🦜:binary:AAB=",
+        "🦜:binary:AA=A",
+    ] {
+        let json = format!(
+            r#"{{"schema_version":1,"start_version":{{}},"peers":["1"],"changes":[{{"id":"0@0","timestamp":0,"deps":[],"lamport":0,"msg":null,"ops":[{{"container":"cid:root-m:Map","counter":0,"content":{{"type":"insert","key":"k","value":"{bad}"}}}}]}}]}}"#
+        );
+        let b = source();
+        b.get_map("m").insert("existing", 1).unwrap();
+        b.commit();
+        let before = b.get_deep_value();
+        let vv = b.oplog_vv();
+        assert!(matches!(
+            b.import_json_updates(json.as_str()),
+            Err(LoroError::InvalidJsonSchema)
+        ));
+        assert_eq!(b.get_deep_value(), before);
+        assert_eq!(b.oplog_vv(), vv);
+    }
 }
 
 #[test]
@@ -444,14 +573,29 @@ fn unknown_op_payload_survives_json_and_binary_relays() {
 
 #[test]
 fn style_values_survive_json_then_binary_relay() {
-    for value in [LoroValue::from(vec![0u8, 255]), LoroValue::Double(f64::NAN)] {
-        let a = source();
-        let text = a.get_text("text");
-        text.insert(0, "styled").unwrap();
-        text.mark(0..6, "custom", value).unwrap();
-        let expected = text.to_delta();
-        assert_relay_keeps_prefix(&a, |b| assert_ne!(b.get_text("text").to_delta(), expected));
-    }
+    let a = source();
+    let text = a.get_text("text");
+    text.insert(0, "styled").unwrap();
+    text.mark(0..6, "custom", vec![0u8, 255]).unwrap();
+    let expected = text.to_delta();
+    assert_relay_keeps_prefix(&a, |b| assert_eq!(b.get_text("text").to_delta(), expected));
+
+    let a = source();
+    let text = a.get_text("text");
+    text.insert(0, "styled").unwrap();
+    text.mark(0..6, "custom", vec![0u8, 255]).unwrap();
+    let expected = text.to_delta();
+    assert_relay_keeps_prefix_with_json(&a, legacy_binary_as_array_json, |b| {
+        assert_ne!(b.get_text("text").to_delta(), expected)
+    });
+
+    let a = source();
+    let text = a.get_text("text");
+    text.insert(0, "styled").unwrap();
+    text.mark(0..6, "custom", LoroValue::Double(f64::NAN))
+        .unwrap();
+    let expected = text.to_delta();
+    assert_relay_keeps_prefix(&a, |b| assert_ne!(b.get_text("text").to_delta(), expected));
 }
 
 #[test]

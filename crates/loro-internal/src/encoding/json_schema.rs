@@ -1170,6 +1170,7 @@ pub mod json {
     pub enum ListOp {
         Insert {
             pos: u32,
+            #[serde(serialize_with = "loro_common::serialize_json_schema_values")]
             value: Vec<LoroValue>,
         },
         Delete {
@@ -1194,6 +1195,7 @@ pub mod json {
     pub enum MovableListOp {
         Insert {
             pos: u32,
+            #[serde(serialize_with = "loro_common::serialize_json_schema_values")]
             value: Vec<LoroValue>,
         },
         Delete {
@@ -1211,6 +1213,7 @@ pub mod json {
         Set {
             #[serde(with = "self::serde_impl::idlp")]
             elem_id: IdLp,
+            #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
             value: LoroValue,
         },
     }
@@ -1229,8 +1232,14 @@ pub mod json {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum MapOp {
-        Insert { key: String, value: LoroValue },
-        Delete { key: String },
+        Insert {
+            key: String,
+            #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
+            value: LoroValue,
+        },
+        Delete {
+            key: String,
+        },
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1250,6 +1259,7 @@ pub mod json {
             start: u32,
             end: u32,
             style_key: String,
+            #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
             style_value: LoroValue,
             info: u8,
         },
@@ -1302,15 +1312,149 @@ pub mod json {
 
     mod serde_impl {
 
-        use loro_common::{ContainerID, ContainerType};
+        use loro_common::{encode_loro_binary_string, ContainerID, ContainerType};
         use serde::{
-            de::{Error, IgnoredAny, MapAccess, Visitor},
+            de::{DeserializeSeed, Error, IgnoredAny, MapAccess, SeqAccess, Visitor},
             ser::SerializeStruct,
             Deserialize, Deserializer, Serialize, Serializer,
         };
 
         #[allow(unused_imports)]
         use crate::encoding::OwnedValue;
+
+        const MAX_JSON_OP_CONTENT_DEPTH: usize = 136;
+
+        struct BufferedJsonValue(serde_json::Value);
+
+        #[derive(Clone, Copy)]
+        struct BufferedJsonSeed {
+            remaining_depth: usize,
+        }
+
+        impl BufferedJsonSeed {
+            fn nested<E: Error>(self) -> Result<Self, E> {
+                Ok(Self {
+                    remaining_depth: self
+                        .remaining_depth
+                        .checked_sub(1)
+                        .ok_or_else(|| E::custom("LoroValue nesting depth exceeds 128"))?,
+                })
+            }
+        }
+
+        impl<'de> Deserialize<'de> for BufferedJsonValue {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                BufferedJsonSeed {
+                    remaining_depth: MAX_JSON_OP_CONTENT_DEPTH,
+                }
+                .deserialize(deserializer)
+                .map(BufferedJsonValue)
+            }
+        }
+
+        impl<'de> DeserializeSeed<'de> for BufferedJsonSeed {
+            type Value = serde_json::Value;
+
+            fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                deserializer.deserialize_any(self)
+            }
+        }
+
+        impl<'de> Visitor<'de> for BufferedJsonSeed {
+            type Value = serde_json::Value;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("any valid JSON value")
+            }
+
+            fn visit_bool<E: Error>(self, value: bool) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Bool(value))
+            }
+
+            fn visit_i64<E: Error>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Number(value.into()))
+            }
+
+            fn visit_i128<E: Error>(self, value: i128) -> Result<Self::Value, E> {
+                let de = serde::de::value::I128Deserializer::new(value);
+                serde_json::Number::deserialize(de).map(serde_json::Value::Number)
+            }
+
+            fn visit_u64<E: Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Number(value.into()))
+            }
+
+            fn visit_u128<E: Error>(self, value: u128) -> Result<Self::Value, E> {
+                let de = serde::de::value::U128Deserializer::new(value);
+                serde_json::Number::deserialize(de).map(serde_json::Value::Number)
+            }
+
+            fn visit_f64<E: Error>(self, value: f64) -> Result<Self::Value, E> {
+                Ok(serde_json::Number::from_f64(value)
+                    .map_or(serde_json::Value::Null, serde_json::Value::Number))
+            }
+
+            fn visit_str<E: Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::String(String::from(value)))
+            }
+
+            fn visit_string<E: Error>(self, value: String) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::String(value))
+            }
+
+            fn visit_bytes<E: Error>(self, value: &[u8]) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::String(encode_loro_binary_string(value)))
+            }
+
+            fn visit_byte_buf<E: Error>(self, value: Vec<u8>) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::String(encode_loro_binary_string(&value)))
+            }
+
+            fn visit_none<E: Error>(self) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Null)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                self.deserialize(deserializer)
+            }
+
+            fn visit_unit<E: Error>(self) -> Result<Self::Value, E> {
+                Ok(serde_json::Value::Null)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let seed = self.nested()?;
+                let mut vec = Vec::new();
+                while let Some(elem) = seq.next_element_seed(seed)? {
+                    vec.push(elem);
+                }
+                Ok(serde_json::Value::Array(vec))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let seed = self.nested()?;
+                let mut values = serde_json::Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    values.insert(key, map.next_value_seed(seed)?);
+                }
+                Ok(serde_json::Value::Object(values))
+            }
+        }
 
         impl Serialize for super::JsonOp {
             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -1362,7 +1506,7 @@ pub mod json {
                                     if content.is_some() {
                                         return Err(A::Error::duplicate_field("content"));
                                     }
-                                    content = Some(map.next_value::<serde_json::Value>()?);
+                                    content = Some(map.next_value::<BufferedJsonValue>()?.0);
                                 }
                                 "counter" => {
                                     if counter.is_some() {
