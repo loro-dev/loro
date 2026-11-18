@@ -436,9 +436,9 @@ function decorateMethod(prototype: object, method: PropertyKey) {
 
   const wrapped = function (
     this: unknown,
-    a: unknown = undefined,
-    b: unknown = undefined,
-    c: unknown = undefined,
+    a?: unknown,
+    b?: unknown,
+    c?: unknown,
   ) {
     let result;
     try {

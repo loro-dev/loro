@@ -195,3 +195,83 @@ fn manual_commit_and_late_local_update_subscription_match_range_export() {
         check_update(&doc, &replica, before, &updates);
     }
 }
+
+#[test]
+fn backward_deletes_keep_the_stored_direction_when_commits_merge() {
+    let doc = LoroDoc::new_auto_commit();
+    let replica = LoroDoc::new_auto_commit();
+    let text = doc.get_text("text");
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let inbox = updates.clone();
+    let _subscription = doc.subscribe_local_update(Box::new(move |bytes| {
+        inbox.lock().unwrap().push(bytes.clone());
+        true
+    }));
+
+    let before = doc.oplog_vv();
+    text.insert_utf16(0, "abc😀").unwrap();
+    doc.commit_then_renew();
+    check_update(&doc, &replica, before, &updates);
+    for pos in [2, 1, 0] {
+        let before = doc.oplog_vv();
+        text.delete(pos, 1, PosType::Utf16).unwrap();
+        doc.commit_then_renew();
+        check_update(&doc, &replica, before, &updates);
+    }
+}
+
+#[test]
+fn singleton_columns_match_range_export_across_container_ops() {
+    let doc = LoroDoc::new_auto_commit();
+    let replica = LoroDoc::new_auto_commit();
+    doc.set_peer_id(u64::MAX - 1).unwrap();
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    let inbox = updates.clone();
+    let _subscription = doc.subscribe_local_update(Box::new(move |bytes| {
+        inbox.lock().unwrap().push(bytes.clone());
+        true
+    }));
+    let text = doc.get_text("text");
+    let list = doc.get_list("list");
+    let movable = doc.get_movable_list("movable");
+    let map = doc.get_map("map");
+    let tree = doc.get_tree("tree");
+    replica.get_text("text");
+    replica.get_list("list");
+    replica.get_movable_list("movable");
+    replica.get_map("map");
+    replica.get_tree("tree");
+    #[cfg(feature = "counter")]
+    for doc in [&doc, &replica] {
+        doc.get_counter("counter");
+    }
+
+    let checkpoint = |edit: &mut dyn FnMut(), timestamp| {
+        let before = doc.oplog_vv();
+        edit();
+        doc.commit_with(CommitOptions::new().timestamp(timestamp).commit_msg("备注"));
+        check_update(&doc, &replica, before, &updates);
+    };
+    checkpoint(&mut || text.insert_utf16(0, "中😀a").unwrap(), 1);
+    checkpoint(&mut || text.delete(0, 1, PosType::Utf16).unwrap(), 2);
+    checkpoint(&mut || list.insert(0, "单").unwrap(), 3);
+    checkpoint(&mut || list.delete(0, 1).unwrap(), 4);
+    checkpoint(&mut || movable.insert(0, "a").unwrap(), 5);
+    checkpoint(&mut || movable.insert(1, "b").unwrap(), 6);
+    checkpoint(&mut || movable.set(1, "c").unwrap(), 7);
+    checkpoint(&mut || movable.mov(0, 1).unwrap(), 8);
+    checkpoint(&mut || movable.delete(0, 1).unwrap(), 9);
+    checkpoint(&mut || map.insert("k", "v".repeat(150)).unwrap(), 10);
+    checkpoint(&mut || map.delete("k").unwrap(), 11);
+    checkpoint(
+        &mut || {
+            tree.create(TreeParentId::Root).unwrap();
+        },
+        12,
+    );
+    #[cfg(feature = "counter")]
+    checkpoint(
+        &mut || doc.get_counter("counter").increment(-3.5).unwrap(),
+        13,
+    );
+}

@@ -4,7 +4,7 @@ import { LoroDoc, LoroText } from "../bundler/index";
 it("keeps UTF-8 and UTF-16 text semantics on both sides of the short-string limit", () => {
   const doc = new LoroDoc();
   const text = doc.getText("text");
-  const sample = ["", "ASCII", "中文", "😀", "\ud800A\udc00", "中".repeat(42), "中".repeat(43)];
+  const sample = ["", "A", "中", "\u0000", "\ud800", "\udfff", "\uffff", "ASCII", "中文", "😀", "\ud800A\udc00", "中".repeat(42), "中".repeat(43)];
   const decoded = (input: string) => new TextDecoder().decode(new TextEncoder().encode(input));
 
   try {

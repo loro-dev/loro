@@ -593,7 +593,7 @@ impl EncodedTreeMove {
 }
 
 pub struct ValueWriter {
-    buffer: Vec<u8>,
+    buffer: smallvec::SmallVec<[u8; 128]>,
 }
 
 pub struct ValueReader<'a> {
@@ -1000,7 +1000,9 @@ impl<'a> ValueReader<'a> {
 
 impl ValueWriter {
     pub fn new() -> Self {
-        ValueWriter { buffer: Vec::new() }
+        ValueWriter {
+            buffer: smallvec::SmallVec::new(),
+        }
     }
 
     pub fn write_value_type_and_content(
@@ -1023,7 +1025,8 @@ impl ValueWriter {
             Key(&'a str),
         }
         let start = self.buffer.len();
-        let mut pending = vec![Task::Value(value, false)];
+        let mut pending: smallvec::SmallVec<[Task<'_>; 8]> =
+            smallvec::smallvec![Task::Value(value, false)];
         while let Some(task) = pending.pop() {
             let (value, with_kind) = match task {
                 Task::Value(value, with_kind) => (value, with_kind),
@@ -1144,8 +1147,12 @@ impl ValueWriter {
         self.buffer.len() - len
     }
 
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.buffer
+    }
+
     pub(crate) fn finish(self) -> Vec<u8> {
-        self.buffer
+        self.buffer.into_vec()
     }
 
     fn write_raw_tree_move(&mut self, op: RawTreeMove) -> usize {

@@ -177,3 +177,12 @@ and keeps an eligible text leaf across replacement edits. See
 and the [WASM event invariant](../crates/loro-wasm/AGENTS.md#pending-events-invariant).
 The [CRDT benchmark report](../benchmarks/crdt-hotpaths-20261118/README.md)
 records the release WASM A/B measurements.
+
+
+The follow-up's `CrdtRope::first_non_future_at_or_after` counts non-future
+atoms in each B-tree subtree. Deleted atoms still count toward the right
+origin, and splitting a run keeps the sum unchanged. The first search uses
+that count to skip future spans. The second scan follows the same origin
+and peer ordering rules with a streaming iterator. It records visited spans
+only when a different left origin needs a membership check. Debug builds
+compare the first search with a linear scan.

@@ -36,7 +36,7 @@ use std::{
 };
 use tracing::{info_span, warn};
 mod block_encode;
-pub(crate) use block_encode::encode_block as encode_change_block;
+pub(crate) use block_encode::{encode_block as encode_change_block, encode_single_op_update};
 mod block_meta_encode;
 pub(super) mod iter;
 
@@ -2879,7 +2879,7 @@ impl ChangesBlock {
     #[allow(clippy::result_large_err)]
     fn push_change(
         self: &mut Arc<Self>,
-        change: Change,
+        mut change: Change,
         new_change_size: usize,
         merge_interval: i64,
         a: &SharedArena,
@@ -2906,17 +2906,37 @@ impl ChangesBlock {
                             && last.ops.last().unwrap().is_mergable(&change.ops[0], &()))) =>
             {
                 let start = (change.id.counter - last.id.counter) as usize;
+                // A delete run can change direction when it coalesces across
+                // the boundary. Encode its stored slice to retain the op bytes.
+                let coalescing_delete =
+                    matches!(
+                        change.ops[0].content,
+                        crate::op::InnerContent::List(
+                            crate::container::list::list_op::InnerListOp::Delete(_)
+                        )
+                    ) && last.ops.last().unwrap().is_mergable(&change.ops[0], &());
+                let before_merge = (encode_update && !coalescing_delete).then(|| {
+                    change.timestamp = last.timestamp;
+                    change.deps = Frontiers::from_id(change.id.inc(-1));
+                    encode_single_change_fast_update(&change, a)
+                });
                 for op in change.ops.into_iter() {
                     let size = op.estimate_storage_size();
                     if !last.ops.push(op) {
                         this.estimated_size += size;
                     }
                 }
-                // A merged range inherits the stored timestamp and may have
-                // coalesced operations. Use the same slice as a range export.
-                encode_update.then(|| {
-                    encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
-                })
+                if let Some(bytes) = before_merge {
+                    debug_assert_eq!(
+                        bytes,
+                        encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
+                    );
+                    Some(bytes)
+                } else {
+                    encode_update.then(|| {
+                        encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
+                    })
+                }
             }
             _ => {
                 if is_full {

@@ -128,7 +128,7 @@ mod encode {
     #[inline]
     pub(crate) fn encode_op<'p, 'a: 'p>(
         op: &'a Op,
-        delete_start: &mut Vec<EncodedDeleteStartId>,
+        delete_start: &mut smallvec::SmallVec<[EncodedDeleteStartId; 1]>,
         value_writer: &mut ValueWriter,
         registers: &mut dyn ValueEncodeRegister,
     ) -> ValueKind {
@@ -559,11 +559,11 @@ pub type PeerIdx = usize;
 #[derive(Debug, Clone)]
 pub(crate) struct EncodedDeleteStartId {
     #[columnar(strategy = "DeltaRle")]
-    peer_idx: usize,
+    pub(crate) peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
-    counter: i32,
+    pub(crate) counter: i32,
     #[columnar(strategy = "DeltaRle")]
-    len: isize,
+    pub(crate) len: isize,
 }
 
 #[cfg(test)]

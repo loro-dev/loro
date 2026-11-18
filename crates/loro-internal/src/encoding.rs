@@ -542,6 +542,9 @@ pub(crate) fn export_pending_updates(oplog: &OpLog) -> Result<Option<Vec<u8>>, L
 }
 
 pub(crate) fn encode_single_change_fast_update(change: &Change, arena: &SharedArena) -> Vec<u8> {
+    if let Some(update) = crate::oplog::encode_single_op_update(change, arena) {
+        return update;
+    }
     let block = crate::oplog::encode_change_block(std::slice::from_ref(change), arena);
     let prefix_len = (u64::BITS - (block.len() as u64).leading_zeros()).div_ceil(7) as usize;
     encode_with_capacity(
@@ -550,6 +553,21 @@ pub(crate) fn encode_single_change_fast_update(change: &Change, arena: &SharedAr
         &mut |output| {
             leb128::write::unsigned(output, block.len() as u64).unwrap();
             output.extend_from_slice(&block);
+            Ok(())
+        },
+    )
+    .unwrap()
+}
+
+pub(crate) fn encode_update_block(block: &impl serde::Serialize) -> Vec<u8> {
+    let len = postcard::experimental::serialized_size(block).unwrap();
+    let prefix_len = (u64::BITS - (len as u64).leading_zeros()).div_ceil(7) as usize;
+    encode_with_capacity(
+        EncodeMode::FastUpdates,
+        MIN_HEADER_SIZE + prefix_len + len,
+        &mut |out| {
+            leb128::write::unsigned(out, len as u64).unwrap();
+            postcard::to_io(block, out).unwrap();
             Ok(())
         },
     )

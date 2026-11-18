@@ -567,30 +567,53 @@ fn js_str_to_string_checked(arg: JsStrArg) -> JsResult<String> {
 }
 
 #[wasm_bindgen(inline_js = "
+const charCodeAt = Function.call.bind(String.prototype.charCodeAt);
+export function shortTextCodeUnit(text) {
+    if (typeof text !== 'string') return -1;
+    if (text.length === 0) return -2;
+    if (text.length === 1) return charCodeAt(text, 0);
+    return text.length <= 42 ? -3 : -1;
+}
 let shortTextEncoder;
 export function encodeShortText(text, target) {
     // All UTF-16 sequences up to 42 units fit in 128 UTF-8 bytes.
-    if (typeof text !== 'string' || text.length > 42) return -1;
-    if (typeof TextEncoder !== 'function') return -1;
-    shortTextEncoder ??= new TextEncoder();
-    if (typeof shortTextEncoder.encodeInto !== 'function') return -1;
-    return shortTextEncoder.encodeInto(text, target).written;
+    try {
+        if (typeof TextEncoder !== 'function') return -1;
+        shortTextEncoder ??= new TextEncoder();
+        if (typeof shortTextEncoder.encodeInto !== 'function') return -1;
+        return shortTextEncoder.encodeInto(text, target).written;
+    } catch {
+        return -1;
+    }
 }
 ")]
 extern "C" {
-    #[wasm_bindgen(catch, js_name = encodeShortText)]
-    fn encode_short_text(value: &JsValue, target: &mut [u8]) -> JsResult<i32>;
+    #[wasm_bindgen(js_name = shortTextCodeUnit)]
+    fn short_text_code_unit(value: &JsValue) -> i32;
+    #[wasm_bindgen(js_name = encodeShortText)]
+    fn encode_short_text(value: &JsValue, target: &mut [u8]) -> i32;
 }
 
 fn with_js_str_checked<R>(arg: JsStrArg, f: impl FnOnce(&str) -> R) -> JsResult<R> {
-    let mut buffer = [0; 128];
-    let text = encode_short_text(arg.as_ref(), &mut buffer)
-        .ok()
-        .and_then(|written| usize::try_from(written).ok())
-        .and_then(|written| buffer.get(..written))
-        .and_then(|bytes| std::str::from_utf8(bytes).ok());
-    if let Some(text) = text {
-        return Ok(f(text));
+    match short_text_code_unit(arg.as_ref()) {
+        -2 => return Ok(f("")),
+        code @ 0..=0xffff => {
+            let mut buffer = [0; 4];
+            let ch = char::from_u32(code as u32).unwrap_or('\u{fffd}');
+            return Ok(f(ch.encode_utf8(&mut buffer)));
+        }
+        -3 => {
+            let mut buffer = [0; 128];
+            let written = encode_short_text(arg.as_ref(), &mut buffer);
+            let text = usize::try_from(written)
+                .ok()
+                .and_then(|written| buffer.get(..written))
+                .and_then(|bytes| std::str::from_utf8(bytes).ok());
+            if let Some(text) = text {
+                return Ok(f(text));
+            }
+        }
+        _ => {}
     }
     let text = js_str_to_string_checked(arg)?;
     Ok(f(&text))

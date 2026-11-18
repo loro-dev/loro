@@ -3428,15 +3428,17 @@ impl LoroDoc {
 
         let values = imported_values_for_mode(json_lossy);
         // Metadata that does not decode fails the batch before anything is imported.
+        let mut scratch = BatchUpdateScratch::default();
         let blobs = bytes
             .iter()
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = BatchBlobSortKey::decode(&ImportInput::Slice(blob))?;
+                let meta = BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Slice(blob.as_slice())))
             })
             .collect::<LoroResult<Vec<_>>>()?;
+        drop(scratch);
         self.finish_batch_status(blobs, values)
     }
 
@@ -3457,15 +3459,18 @@ impl LoroDoc {
         }
 
         let values = imported_values_for_mode(json_lossy);
+        let mut scratch = BatchUpdateScratch::default();
         let blobs = bytes
             .into_iter()
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()))?;
+                let meta =
+                    BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Bytes(blob)))
             })
             .collect::<LoroResult<Vec<_>>>()?;
+        drop(scratch);
         self.finish_batch_status(blobs, values)
     }
 
@@ -3578,12 +3583,13 @@ impl LoroDoc {
             return self.import_single_detailed(|| Ok(ImportInput::Slice(&bytes[0])), values);
         }
 
+        let mut scratch = BatchUpdateScratch::default();
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
         let mut blobs = Vec::with_capacity(bytes.len());
         for (index, blob) in bytes.iter().enumerate() {
             match self
                 .check_import_blob_limit(blob.len())
-                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Slice(blob)))
+                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch))
             {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Slice(blob.as_slice())));
@@ -3593,6 +3599,7 @@ impl LoroDoc {
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
         }
+        drop(scratch);
         self.finish_batch_detailed(blobs, outcomes, values)
     }
 
@@ -3629,6 +3636,7 @@ impl LoroDoc {
             return self.import_single_detailed(|| blob.map(ImportInput::Bytes), values);
         }
 
+        let mut scratch = BatchUpdateScratch::default();
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(len);
         let mut blobs = Vec::with_capacity(len);
         for (index, result) in bytes.enumerate() {
@@ -3639,10 +3647,9 @@ impl LoroDoc {
                     continue;
                 }
             };
-            match self
-                .check_import_blob_limit(blob.len())
-                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone())))
-            {
+            match self.check_import_blob_limit(blob.len()).and_then(|()| {
+                BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)
+            }) {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Bytes(blob)));
                     outcomes.push(None);
@@ -3650,6 +3657,7 @@ impl LoroDoc {
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
         }
+        drop(scratch);
         self.finish_batch_detailed(blobs, outcomes, values)
     }
 
@@ -5273,7 +5281,7 @@ impl From<ImportBlobMetadata> for BatchBlobSortKey {
 }
 
 impl BatchBlobSortKey {
-    fn decode(input: &ImportInput<'_>) -> LoroResult<Self> {
+    fn decode(input: &ImportInput<'_>, scratch: &mut BatchUpdateScratch) -> LoroResult<Self> {
         let bytes: &[u8] = match input {
             ImportInput::Slice(bytes) => bytes,
             ImportInput::Bytes(bytes) => bytes,
@@ -5287,7 +5295,7 @@ impl BatchBlobSortKey {
                 };
                 Ok(Self {
                     mode: encoding::EncodedBlobMode::Updates,
-                    change_num: encoding::fast_snapshot::count_updates_for_batch(body)?,
+                    change_num: scratch.count_changes(body)?,
                 })
             }
             EncodeMode::FastSnapshot => match input {
@@ -5299,6 +5307,29 @@ impl BatchBlobSortKey {
             .map(Into::into),
             _ => Err(LoroError::ImportUnsupportedEncodingMode),
         }
+    }
+}
+
+#[derive(Default)]
+struct BatchUpdateScratch {
+    arena: Option<SharedArena>,
+    used_bytes: usize,
+}
+
+impl BatchUpdateScratch {
+    fn count_changes(&mut self, body: bytes::Bytes) -> LoroResult<u32> {
+        // Limit retained temporary container IDs between blobs. A large blob
+        // gets a separate arena and cannot increase the lifetime of its data.
+        const REUSE_BYTES: usize = 64 * 1024;
+        if body.len() > REUSE_BYTES {
+            return encoding::fast_snapshot::count_updates_for_batch(body, &SharedArena::new());
+        }
+        if self.used_bytes + body.len() > REUSE_BYTES {
+            *self = Self::default();
+        }
+        self.used_bytes += body.len();
+        let arena = self.arena.get_or_insert_with(SharedArena::new);
+        encoding::fast_snapshot::count_updates_for_batch(body, arena)
     }
 }
 

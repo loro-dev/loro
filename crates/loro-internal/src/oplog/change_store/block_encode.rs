@@ -84,7 +84,7 @@ use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::container::list::list_op::InnerListOp;
 use crate::container::tree::tree_op;
-use crate::encoding::arena::{ContainerArena, PositionArena};
+use crate::encoding::arena::{ContainerArena, EncodedContainer, PositionArena};
 use crate::encoding::value_register::ValueRegister;
 use crate::encoding::{
     self, decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
@@ -177,7 +177,7 @@ fn encode_block_inner(
         }
     }
 
-    let mut del_starts: Vec<_> = Vec::new();
+    let mut del_starts = smallvec::SmallVec::new();
     let mut value_writer = ValueWriter::new();
     for c in block {
         for op in c.ops().iter() {
@@ -227,7 +227,7 @@ fn encode_block_inner(
         Vec::new()
     } else {
         serde_columnar::to_vec(&EncodedDeleteStartIds {
-            delete_start_ids: del_starts,
+            delete_start_ids: del_starts.into_vec(),
         })
         .unwrap()
     };
@@ -284,14 +284,154 @@ fn encode_block_inner(
     (postcard::to_allocvec(&out).unwrap(), block_header)
 }
 
+/// Encode the common single-row columns directly. Their wire layout is the
+/// same as serde_columnar's singleton literal runs. External dependencies,
+/// multiple ops, and Tree positions use the general encoder.
+pub(crate) fn encode_single_op_update(change: &Change, arena: &SharedArena) -> Option<Vec<u8>> {
+    let [op] = &change.ops().vec()[..] else {
+        return None;
+    };
+    if matches!(op.content, InnerContent::Tree(_)) {
+        return None;
+    }
+    let self_dep = match (change.deps().len(), change.deps().as_single()) {
+        (0, _) => false,
+        (1, Some(id)) if id.peer == change.id.peer => true,
+        _ => return None,
+    };
+
+    let mut registers = Registers {
+        peer_register: ValueRegister::for_block(true),
+        key_register: ValueRegister::for_block(true),
+        cid_register: ValueRegister::for_block(true),
+        position_register: ValueRegister::for_block(true),
+    };
+    registers.peer_register.register(&change.id.peer);
+    let mut deletes = smallvec::SmallVec::new();
+    let mut values = ValueWriter::new();
+    let prop = get_op_prop(op, &mut registers);
+    let kind = encode_op(op, &mut deletes, &mut values, &mut registers).to_u8();
+    let cid = arena.get_container_id(op.container).unwrap();
+    let cid = EncodedContainer::register(
+        &cid,
+        &mut registers.peer_register,
+        &mut registers.key_register,
+    );
+
+    let mut header = smallvec::SmallVec::<[u8; 64]>::new();
+    postcard::to_io(&registers.peer_register.len(), &mut header).unwrap();
+    for peer in registers.peer_register.vec() {
+        header.extend_from_slice(&peer.to_le_bytes());
+    }
+    header.extend_from_slice(bool_column(self_dep));
+    // Zero foreign deps, empty peer-index RLE, empty counter and Lamport
+    // delta-of-delta columns (None, zero used tail bits).
+    header.extend_from_slice(&[1, 0, 0, 0, 0, 0]);
+
+    let msg = change.commit_msg.as_deref().unwrap_or("");
+    let mut meta = smallvec::SmallVec::<[u8; 64]>::new();
+    postcard::to_io(
+        &(Some(change.timestamp()), 0u8, -1isize, msg.len() as u32),
+        &mut meta,
+    )
+    .unwrap();
+    meta.extend_from_slice(msg.as_bytes());
+
+    let mut keys = smallvec::SmallVec::<[u8; 64]>::new();
+    write_keys(registers.key_register.vec(), &mut keys);
+
+    let mut cols = [[0; 20]; 4];
+    let [a, b, c, d] = &mut cols;
+    // ContainerArena writes ordinary serialized rows (one row, four fields).
+    let mut cid_bytes = [0; 32];
+    let cid_bytes = postcard::to_slice(
+        &(
+            1u8,
+            4u8,
+            cid.is_root,
+            cid.kind,
+            cid.peer_idx,
+            cid.key_idx_or_counter,
+        ),
+        &mut cid_bytes,
+    )
+    .unwrap();
+
+    let ops = [
+        literal_column(0i128, a),
+        literal_column(prop as i128, b),
+        literal_column(kind, c),
+        literal_column(op.atom_len() as u32, d),
+    ];
+    let mut op_bytes = [0; 96];
+    let op_bytes = postcard::to_slice(&(1u8, ops.as_slice()), &mut op_bytes).unwrap();
+
+    let mut delete_bytes = [0; 64];
+    let delete_bytes: &[u8] = if let Some(delete) = deletes.first() {
+        let columns = [
+            literal_column(delete.peer_idx as i128, a),
+            literal_column(delete.counter as i128, b),
+            literal_column(delete.len as i128, c),
+        ];
+        postcard::to_slice(&(1u8, columns.as_slice()), &mut delete_bytes).unwrap()
+    } else {
+        &[]
+    };
+
+    let block = EncodedBlock {
+        counter_start: change.id.counter as u32,
+        counter_len: op.atom_len() as u32,
+        lamport_start: change.lamport(),
+        lamport_len: op.atom_len() as u32,
+        n_changes: 1,
+        header: Cow::Borrowed(&header),
+        change_meta: Cow::Borrowed(&meta),
+        cids: Cow::Borrowed(cid_bytes),
+        keys: Cow::Borrowed(&keys),
+        positions: Cow::Borrowed(&[]),
+        ops: Cow::Borrowed(op_bytes),
+        delete_start_ids: Cow::Borrowed(delete_bytes),
+        values: Cow::Borrowed(values.as_bytes()),
+    };
+    let update = encoding::encode_update_block(&block);
+    #[cfg(debug_assertions)]
+    {
+        let general = encode_block(std::slice::from_ref(change), arena);
+        let mut body = Vec::new();
+        leb128::write::unsigned(&mut body, general.len() as u64).unwrap();
+        body.extend_from_slice(&general);
+        assert_eq!(
+            encoding::parse_header_and_body(&update, true).unwrap().body,
+            body
+        );
+    }
+    Some(update)
+}
+
+fn bool_column(value: bool) -> &'static [u8] {
+    if value {
+        &[0, 1]
+    } else {
+        &[1]
+    }
+}
+
+fn literal_column<T: Serialize>(value: T, buffer: &mut [u8]) -> &[u8] {
+    postcard::to_slice(&(-1isize, value), buffer).unwrap()
+}
+
 fn encode_keys(keys: &[loro_common::InternalString]) -> Vec<u8> {
     let mut keys_bytes = Vec::new();
+    write_keys(keys, &mut keys_bytes);
+    keys_bytes
+}
+
+fn write_keys(keys: &[InternalString], mut output: impl Write) {
     for key in keys {
         let bytes = key.as_bytes();
-        leb128::write::unsigned(&mut keys_bytes, bytes.len() as u64).unwrap();
-        keys_bytes.write_all(bytes).unwrap();
+        leb128::write::unsigned(&mut output, bytes.len() as u64).unwrap();
+        output.write_all(bytes).unwrap();
     }
-    keys_bytes
 }
 
 fn decode_keys(mut bytes: &[u8]) -> LoroResult<Vec<InternalString>> {

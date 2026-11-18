@@ -463,14 +463,11 @@ pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Chang
     Ok(changes)
 }
 
-pub(crate) fn count_updates_for_batch(body: Bytes) -> LoroResult<u32> {
-    // A batch needs only the sort key, but invalid operations still have to
-    // fail metadata validation before any blob is applied. Decode in isolation
-    // and preserve the peer-ID draw made by ordinary metadata decoding.
-    let _ = DefaultRandom.next_u64();
-    let arena = SharedArena::new();
+pub(crate) fn count_updates_for_batch(body: Bytes, arena: &SharedArena) -> LoroResult<u32> {
+    // Validate in isolation before any blob is applied. The sort key only
+    // needs the count and does not create a peer.
     let changes =
-        decode_update_blocks(body, |block| ChangeStore::decode_block_bytes(block, &arena))?;
+        decode_update_blocks(body, |block| ChangeStore::decode_block_bytes(block, arena))?;
     Ok(changes.len() as u32)
 }
 

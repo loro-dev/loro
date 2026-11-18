@@ -81,7 +81,7 @@ impl CrdtRope {
         let pos = pos as i32;
         let start = self.tree.query::<ActiveLenQueryPreferLeft>(&pos).unwrap();
 
-        let (parent_right_leaf, in_between) = {
+        let parent_right_leaf = {
             // calculate origin_left and origin_right
             // origin_left is the alive op at `pos-1`, origin_right is the first non-future op between `pos-1` and `pos`.
 
@@ -107,132 +107,123 @@ impl CrdtRope {
                 Some(left_node.elem().id.inc(start.offset() as Counter - 1).id())
             };
 
-            let (origin_right, parent_right_leaf, in_between) = {
-                let mut in_between = Vec::new();
-                let mut origin_right = None;
-                let mut parent_right_idx = None;
-                for iter in self.tree.iter_range(start.cursor..) {
-                    if let Some(offset) = iter.start {
-                        if offset >= iter.elem.rle_len() {
-                            continue;
-                        }
-                    }
-
-                    if !iter.elem.status.future {
-                        origin_right =
-                            Some(iter.elem.id.inc(iter.start.unwrap_or(0) as Counter).id());
-                        let parent_right = match iter.start {
-                            Some(offset) if offset > 0 => {
-                                // It's guaranteed that origin_right's origin_left == this.origin_left.
-                                // Because the first non-future node is just the leaf node in `start.cursor` node (iter.start.is_some())
-                                // Thus parent_right = origin_right
-                                Some(origin_right)
-                            }
-                            _ => {
-                                // Otherwise, we need to test whether origin_right's origin_left == this.origin_left
-                                if iter.elem.origin_left.map(|x| x.to_id()) == origin_left {
-                                    Some(origin_right)
-                                } else {
-                                    None
-                                }
-                            }
-                        };
-                        parent_right_idx = parent_right.map(|_| iter.cursor().leaf);
-                        break;
-                    }
-
-                    // elem must be from future
-                    in_between.push((iter.cursor().leaf, *iter.elem));
-                }
-
-                (origin_right, parent_right_idx, in_between)
-            };
-
-            content.origin_left = origin_left.map(|x| x.try_into().unwrap());
-            content.origin_right = origin_right.map(|x| x.try_into().unwrap());
-            (parent_right_leaf, in_between)
+            let right = self.first_non_future_at_or_after(start.cursor);
+            let origin_right = right.map(|cursor| {
+                self.tree
+                    .get_elem(cursor.leaf)
+                    .unwrap()
+                    .id
+                    .inc(cursor.offset as Counter)
+                    .id()
+            });
+            content.origin_left = origin_left.map(|id| id.try_into().unwrap());
+            content.origin_right = origin_right.map(|id| id.try_into().unwrap());
+            right
+                .filter(|cursor| {
+                    cursor.offset > 0
+                        || self.tree.get_elem(cursor.leaf).unwrap().origin_left
+                            == content.origin_left
+                })
+                .map(|cursor| cursor.leaf)
         };
 
         let mut insert_pos = start.cursor;
-
-        if !in_between.is_empty() {
-            // find insert pos
-            let mut scanning = false;
-            let mut visited: SmallVec<[IdSpan; 4]> = Default::default();
-            for (other_leaf, other_elem) in in_between.iter() {
-                // tracing::info!("Visiting {}", &other_elem.id);
-                let other_origin_left = other_elem.origin_left;
-                if other_origin_left != content.origin_left
-                    && other_origin_left
-                        .map(|left| visited.iter().all(|x| !x.contains_id(left.to_id())))
-                        .unwrap_or(true)
-                {
-                    // The other_elem's origin_left must be at the left side of content's origin_left.
-                    // So the content must be at the left side of other_elem.
-
-                    // tracing::info!("Break because the node's origin_left is at the left side of new_elem's origin left");
+        let mut scanning = false;
+        let mut visited: Option<SmallVec<[IdSpan; 4]>> = None;
+        let future = || {
+            self.tree
+                .iter_range(start.cursor..)
+                .filter(|entry| {
+                    entry
+                        .start
+                        .is_none_or(|offset| offset < entry.elem.rle_len())
+                })
+                .take_while(|entry| entry.elem.status.future)
+        };
+        let span = |elem: &FugueSpan| {
+            IdSpan::new(
+                elem.id.peer,
+                elem.id.counter,
+                elem.id.counter + elem.rle_len() as Counter,
+            )
+        };
+        for entry in future() {
+            let other_leaf = entry.cursor().leaf;
+            let other_elem = entry.elem;
+            // tracing::info!("Visiting {}", &other_elem.id);
+            let other_origin_left = other_elem.origin_left;
+            if other_origin_left != content.origin_left {
+                let Some(left) = other_origin_left else {
+                    break;
+                };
+                // Track visited IDs only once a different left origin
+                // makes membership relevant. Same-origin runs need no list.
+                let preceding = visited.get_or_insert_with(|| {
+                    future()
+                        .take_while(|entry| entry.cursor().leaf != other_leaf)
+                        .map(|entry| span(entry.elem))
+                        .collect()
+                });
+                if preceding.iter().all(|past| !past.contains_id(left.to_id())) {
                     break;
                 }
+            }
+            if let Some(visited) = &mut visited {
+                visited.push(span(other_elem));
+            }
 
-                visited.push(IdSpan::new(
-                    other_elem.id.peer,
-                    other_elem.id.counter,
-                    other_elem.id.counter + other_elem.rle_len() as Counter,
-                ));
-
-                if content.origin_left == other_origin_left {
-                    if other_elem.origin_right == content.origin_right {
-                        // tracing::info!("Same right parent");
-                        // Same right parent
-                        if other_elem.id.peer > content.id.peer {
-                            // tracing::info!("Break on larger peer");
-                            break;
-                        } else {
-                            scanning = false;
-                        }
+            if content.origin_left == other_origin_left {
+                if other_elem.origin_right == content.origin_right {
+                    // tracing::info!("Same right parent");
+                    // Same right parent
+                    if other_elem.id.peer > content.id.peer {
+                        // tracing::info!("Break on larger peer");
+                        break;
                     } else {
-                        // tracing::info!("Different right parent");
-                        // Different right parent, we need to compare the right parents' position
+                        scanning = false;
+                    }
+                } else {
+                    // tracing::info!("Different right parent");
+                    // Different right parent, we need to compare the right parents' position
 
-                        let other_parent_right_idx =
-                            if let Some(other_origin_right) = other_elem.origin_right {
-                                let elem_idx = find_elem(other_origin_right.to_id());
-                                let elem = self.tree.get_elem(elem_idx).unwrap();
-                                // It must be the start of the elem
-                                assert_eq!(elem.id.id(), other_origin_right.to_id());
-                                if elem.origin_left == content.origin_left {
-                                    Some(elem_idx)
-                                } else {
-                                    None
-                                }
+                    let other_parent_right_idx =
+                        if let Some(other_origin_right) = other_elem.origin_right {
+                            let elem_idx = find_elem(other_origin_right.to_id());
+                            let elem = self.tree.get_elem(elem_idx).unwrap();
+                            // It must be the start of the elem
+                            assert_eq!(elem.id.id(), other_origin_right.to_id());
+                            if elem.origin_left == content.origin_left {
+                                Some(elem_idx)
                             } else {
                                 None
-                            };
+                            }
+                        } else {
+                            None
+                        };
 
-                        match self.cmp_pos(other_parent_right_idx, parent_right_leaf) {
-                            Ordering::Less => {
-                                // tracing::info!("Less");
-                                scanning = true;
-                            }
-                            Ordering::Equal if other_elem.id.peer > content.id.peer => {
-                                // tracing::info!("Break on eq");
-                                break;
-                            }
-                            _ => {
-                                // tracing::info!("Scanning");
-                                scanning = false;
-                            }
+                    match self.cmp_pos(other_parent_right_idx, parent_right_leaf) {
+                        Ordering::Less => {
+                            // tracing::info!("Less");
+                            scanning = true;
+                        }
+                        Ordering::Equal if other_elem.id.peer > content.id.peer => {
+                            // tracing::info!("Break on eq");
+                            break;
+                        }
+                        _ => {
+                            // tracing::info!("Scanning");
+                            scanning = false;
                         }
                     }
                 }
+            }
 
-                if !scanning {
-                    insert_pos = Cursor {
-                        leaf: *other_leaf,
-                        offset: other_elem.rle_len(),
-                    };
-                    // tracing::info!("updating insert pos {:?}", &insert_pos);
-                }
+            if !scanning {
+                insert_pos = Cursor {
+                    leaf: other_leaf,
+                    offset: other_elem.rle_len(),
+                };
+                // tracing::info!("updating insert pos {:?}", &insert_pos);
             }
         }
 
@@ -253,6 +244,52 @@ impl CrdtRope {
     /// - If reversed is true, the deletion will be done in reversed order.
     ///   But the start_id always refers to the first delete op's id.
     /// - If reversed is true, the returned `SplittedLeaves` will be in reversed order.
+    fn first_non_future_at_or_after(&self, start: Cursor) -> Option<Cursor> {
+        let total = self.tree.root_cache().non_future;
+        let mut rank = 0;
+        let mut within = None;
+        if total > 0 {
+            self.tree
+                .visit_previous_caches(start, |previous| match previous {
+                    generic_btree::PreviousCache::NodeCache(cache) => rank += cache.non_future,
+                    generic_btree::PreviousCache::PrevSiblingElem(elem) => {
+                        if !elem.status.future {
+                            rank += elem.rle_len() as i64;
+                        }
+                    }
+                    generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
+                        if !elem.status.future {
+                            if offset < elem.rle_len() {
+                                within = Some(start);
+                            } else {
+                                rank += elem.rle_len() as i64;
+                            }
+                        }
+                    }
+                });
+        }
+        let next = within.or_else(|| {
+            (rank < total).then(|| self.tree.query::<NonFutureQuery>(&rank).unwrap().cursor)
+        });
+        debug_assert_eq!(
+            next,
+            self.tree
+                .iter_range(start..)
+                .find(|entry| {
+                    !entry.elem.status.future
+                        && entry
+                            .start
+                            .is_none_or(|offset| offset < entry.elem.rle_len())
+                })
+                .map(|entry| {
+                    let mut cursor = *entry.cursor();
+                    cursor.offset = entry.start.unwrap_or(0);
+                    cursor
+                })
+        );
+        next
+    }
+
     pub(super) fn delete(
         &mut self,
         mut start_id: ID,
@@ -327,6 +364,7 @@ impl CrdtRope {
                 Some(Cache {
                     len: -(elem.rle_len() as i32),
                     changed_num: 0,
+                    non_future: 0,
                 })
             } else {
                 None
@@ -515,11 +553,13 @@ pub(super) struct CrdtRopeTrait;
 pub(super) struct Cache {
     pub(super) len: i32,
     pub(super) changed_num: i32,
+    // Count atoms so merging or splitting a span leaves the sum unchanged.
+    non_future: i64,
 }
 
 impl CanRemove for Cache {
     fn can_remove(&self) -> bool {
-        self.len == 0 && self.changed_num == 0
+        self.len == 0 && self.changed_num == 0 && self.non_future == 0
     }
 }
 
@@ -534,28 +574,25 @@ impl BTreeTrait for CrdtRopeTrait {
         cache: &mut Self::Cache,
         caches: &[generic_btree::Child<Self>],
     ) -> Self::CacheDiff {
-        let new_len = caches.iter().map(|x| x.cache.len).sum();
-        let new_changed_num = caches.iter().map(|x| x.cache.changed_num).sum();
-        let len_diff = new_len - cache.len;
-        let changed_num_diff = new_changed_num - cache.changed_num;
-        cache.len = new_len;
-        cache.changed_num = new_changed_num;
-        Cache {
-            len: len_diff,
-            changed_num: changed_num_diff,
-        }
+        let next = caches.iter().fold(Cache::default(), |mut sum, child| {
+            Self::apply_cache_diff(&mut sum, &child.cache);
+            sum
+        });
+        let diff = Self::sub_cache(&next, cache);
+        *cache = next;
+        diff
     }
 
     #[inline(always)]
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         cache.len += diff.len;
         cache.changed_num += diff.changed_num;
+        cache.non_future += diff.non_future;
     }
 
     #[inline(always)]
     fn merge_cache_diff(diff1: &mut Self::CacheDiff, diff2: &Self::CacheDiff) {
-        diff1.len += diff2.len;
-        diff1.changed_num += diff2.changed_num;
+        Self::apply_cache_diff(diff1, diff2);
     }
 
     #[inline(always)]
@@ -563,6 +600,11 @@ impl BTreeTrait for CrdtRopeTrait {
         Cache {
             len: elem.activated_len() as i32,
             changed_num: if elem.diff_status.is_some() { 1 } else { 0 },
+            non_future: if elem.status.future {
+                0
+            } else {
+                elem.rle_len() as i64
+            },
         }
     }
 
@@ -575,7 +617,36 @@ impl BTreeTrait for CrdtRopeTrait {
         Cache {
             len: cache_lhs.len - cache_rhs.len,
             changed_num: cache_lhs.changed_num - cache_rhs.changed_num,
+            non_future: cache_lhs.non_future - cache_rhs.non_future,
         }
+    }
+}
+
+struct NonFutureQuery(i64);
+
+impl Query<CrdtRopeTrait> for NonFutureQuery {
+    type QueryArg = i64;
+
+    fn init(rank: &i64) -> Self {
+        Self(*rank)
+    }
+
+    fn find_node(
+        &mut self,
+        _: &i64,
+        children: &[generic_btree::Child<CrdtRopeTrait>],
+    ) -> FindResult {
+        for (index, child) in children.iter().enumerate() {
+            if self.0 < child.cache.non_future {
+                return FindResult::new_found(index, 0);
+            }
+            self.0 -= child.cache.non_future;
+        }
+        unreachable!("non-future rank must exist")
+    }
+
+    fn confirm_elem(&mut self, _: &i64, elem: &FugueSpan) -> (usize, bool) {
+        (self.0 as usize, !elem.status.future)
     }
 }
 

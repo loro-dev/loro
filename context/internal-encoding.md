@@ -279,10 +279,11 @@ a shallow root.
 
 `Transaction::_commit` asks `ChangeStore::insert_change_with_local_update`
 for the update bytes when there is a local-update subscriber. The store
-encodes a small unsplit change at insertion time. If it merges into the
-previous change, it encodes the appended slice of the stored change to
-preserve the inherited timestamp, dependencies and normalized operation
-slices of a range export. Split changes and rollback-managed history use
+encodes a small unsplit change at insertion time. For merged commits it
+encodes the incoming ops with the inherited timestamp and previous self ID.
+A deletion that coalesces across the boundary uses the stored slice because
+merging can change its direction. Debug assertions compare the bytes to an
+export of the stored slice. Split changes and rollback-managed history use
 normal range export. `emit_post_commit` still tests for subscribers after
 observer callbacks and can export the range if an observer registered a new
 subscriber. Callbacks run after the commit locks are released.
@@ -292,6 +293,12 @@ blocks of one change with up to eight ops begin inline and switch to indexed
 lookup if they grow. Byte-only exports skip the cached `ChangesBlockHeader`.
 `local_update_encoding.rs` checks the wire bytes against the exact range
 and imports updates into a replica.
+
+A one-op change with no foreign dependencies or Tree positions can encode
+its singleton column runs into stack buffers. It writes the block into the
+final update buffer using the ordinary postcard wire layout and envelope.
+The debug path compares against the general block encoder, including the
+length prefix. Both encoders share op/value registration and serialization.
 
 A FastUpdates decoder reuses the first nonempty block's change vector and
 sorts only if two or more changes are present. For in-memory batches, the

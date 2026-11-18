@@ -40,7 +40,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
-pub(crate) use change_store::encode_change_block;
+pub(crate) use change_store::{encode_change_block, encode_single_op_update};
 pub use change_store::{BlockChangeRef, ChangeStore};
 
 /// [OpLog] store all the ops i.e. the history.
