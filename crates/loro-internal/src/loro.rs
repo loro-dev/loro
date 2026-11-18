@@ -275,10 +275,31 @@ impl LoroDoc {
         })
         .unwrap();
         doc.set_config(&self.config);
+        self.copy_tree_fractional_index_settings_to(&doc);
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
         doc
+    }
+
+    /// Copies the trees' fractional-index settings, which are local configuration
+    /// kept in their states, to a doc forked from this one. The fork has its own
+    /// peer, so its jitter RNG is seeded afresh rather than copied.
+    pub(crate) fn copy_tree_fractional_index_settings_to(&self, fork: &LoroDoc) {
+        let settings = self.state.lock().tree_fractional_index_settings();
+        if settings.is_empty() {
+            return;
+        }
+        let settings: Vec<_> = settings
+            .into_iter()
+            .filter_map(|(idx, setting)| {
+                let id = self.arena.get_container_id(idx)?;
+                Some((fork.arena.register_container(&id), setting))
+            })
+            .collect();
+        fork.state
+            .lock()
+            .set_tree_fractional_index_settings(&settings);
     }
     /// Enables editing of the document in detached mode.
     ///

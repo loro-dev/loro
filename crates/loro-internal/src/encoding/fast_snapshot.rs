@@ -195,6 +195,23 @@ pub(crate) fn decode_snapshot_inner(
     doc: &LoroDoc,
     origin: InternalString,
 ) -> Result<(), LoroError> {
+    // A tree's fractional-index setting is kept in its state, which decoding
+    // replaces, so carry it over, also when the import fails (loro-dev/loro#1288).
+    let tree_settings = doc.app_state().lock().tree_fractional_index_settings();
+    let result = decode_snapshot_into_empty_doc(snapshot, doc, origin);
+    if !tree_settings.is_empty() {
+        doc.app_state()
+            .lock()
+            .set_tree_fractional_index_settings(&tree_settings);
+    }
+    result
+}
+
+fn decode_snapshot_into_empty_doc(
+    snapshot: Snapshot,
+    doc: &LoroDoc,
+    origin: InternalString,
+) -> Result<(), LoroError> {
     let Snapshot {
         oplog_bytes,
         state_bytes,

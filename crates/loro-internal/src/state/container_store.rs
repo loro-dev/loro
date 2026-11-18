@@ -314,6 +314,12 @@ impl ContainerStore {
         Ok(())
     }
 
+    pub(crate) fn tree_fractional_index_settings(
+        &self,
+    ) -> Vec<(ContainerIdx, super::FractionalIndexSetting)> {
+        self.store.tree_fractional_index_settings()
+    }
+
     pub fn iter_and_decode_all(&mut self) -> impl Iterator<Item = &mut State> {
         self.store.iter_all_containers_mut().map(|(idx, v)| {
             v.get_state_mut(
