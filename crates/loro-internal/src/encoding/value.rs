@@ -211,7 +211,7 @@ pub enum OwnedValue {
     DeleteOnce,
     DeleteSeq,
     DeltaInt(i32),
-    LoroValue(LoroValue),
+    LoroValue(#[serde(serialize_with = "loro_common::serialize_json_schema_value")] LoroValue),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
     RawTreeMove(RawTreeMove),
@@ -223,6 +223,7 @@ pub enum OwnedValue {
     ListSet {
         peer_idx: usize,
         lamport: Lamport,
+        #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
         value: LoroValue,
     },
     #[serde(untagged)]
@@ -462,6 +463,7 @@ impl<'a> Value<'a> {
 pub struct MarkStart {
     pub len: u32,
     pub key: InternalString,
+    #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
     pub value: LoroValue,
     pub info: u8,
 }

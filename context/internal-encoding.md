@@ -628,7 +628,11 @@ with tests in `crates/loro/tests/shallow_snapshot_concurrency.rs`.
 - `schema_version = 1`,
 - `start_version`,
 - optional peer compression table,
-- JSON changes and ops.
+- JSON changes and ops, with `LoroValue::Container` encoded as `🦜:cid:...` and
+  `LoroValue::Binary` (including mergeable container markers and nested binary
+  values) encoded as canonical RFC 4648 Base64 `🦜:binary:<base64>` so JSON
+  update round-trips preserve `Binary` for subsequent exact binary imports.
+  `ToJson` / `LoroValue::Serialize` outside `JsonSchema` still writes byte lists.
 
 Malformed JSON schema should return `Err` without partial import. Look at
 [crates/loro-internal/src/tests/import_atomicity.rs](../crates/loro-internal/src/tests/import_atomicity.rs)

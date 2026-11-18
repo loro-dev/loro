@@ -147,6 +147,125 @@ it("json decoding", () => {
   // console.log(doc.exportJsonUpdates());
 });
 
+it("preserves binary values across JSON update relay and subsequent binary update import", () => {
+  const a = new LoroDoc();
+  const b = new LoroDoc();
+  a.getMap("m").set("payload", new Uint8Array([1, 2]));
+  a.commit();
+  const exported = a.exportJsonUpdates(undefined, undefined, false);
+  expect(exported.changes[0].ops[0].content).toStrictEqual({
+    type: "insert",
+    key: "payload",
+    value: "🦜:binary:AQI=",
+  });
+  b.importJsonUpdates(JSON.parse(JSON.stringify(exported)));
+  expect(b.getMap("m").get("payload")).toStrictEqual(new Uint8Array([1, 2]));
+
+  a.getMap("m").set("next", true);
+  a.commit();
+  b.import(a.export({ mode: "update" }));
+  expect(b.toJSON()).toStrictEqual({
+    m: {
+      payload: new Uint8Array([1, 2]),
+      next: true,
+    },
+  });
+});
+
+it("roundtrips empty, nested, style, mergeable, and direct Uint8Array JSON updates", () => {
+  const a = new LoroDoc();
+  a.configTextStyle({ binStyle: { expand: "after" } });
+  a.getMap("m").set("empty", new Uint8Array([]));
+  a.getMap("m").set("nested", { inner: [new Uint8Array([0, 255])] });
+  a.getList("list").push(new Uint8Array([3, 4, 5]));
+  const ml = a.getMovableList("ml");
+  ml.push(new Uint8Array([6]));
+  ml.set(0, new Uint8Array([7, 8]));
+  const mt = a.getMap("m").ensureMergeableText("mt");
+  mt.insert(0, "mergeable");
+  const text = a.getText("text");
+  text.insert(0, "styled");
+  text.mark({ start: 0, end: 6 }, "binStyle", new Uint8Array([9, 10]));
+  a.commit();
+
+  for (const input of [
+    a.exportJsonUpdates(),
+    JSON.stringify(a.exportJsonUpdates()),
+    JSON.parse(JSON.stringify(a.exportJsonUpdates(undefined, undefined, false))),
+  ]) {
+    const b = new LoroDoc();
+    b.configTextStyle({ binStyle: { expand: "after" } });
+    b.importJsonUpdates(input);
+    expect(b.toJSON()).toStrictEqual(a.toJSON());
+    expect(b.getText("text").toDelta()).toStrictEqual(text.toDelta());
+    b.getMap("m").set("tail", 1);
+    b.commit();
+
+    const c = a.fork();
+    c.import(b.export({ mode: "update" }));
+    expect(c.toJSON()).toStrictEqual(b.toJSON());
+  }
+
+  // Also accept raw Uint8Array in a hand-constructed JS JsonSchema object.
+  const direct = new LoroDoc();
+  direct.importJsonUpdates({
+    schema_version: 1,
+    start_version: new Map(),
+    peers: ["1"],
+    changes: [
+      {
+        id: "0@0",
+        timestamp: 0,
+        deps: [],
+        lamport: 0,
+        msg: null,
+        ops: [
+          {
+            container: "cid:root-m:Map",
+            counter: 0,
+            content: {
+              type: "insert",
+              key: "raw",
+              value: new Uint8Array([42, 99]),
+            },
+          },
+        ],
+      },
+    ],
+  });
+  expect(direct.getMap("m").get("raw")).toStrictEqual(new Uint8Array([42, 99]));
+
+  // Reject malformed `🦜:binary:` payloads without poisoning the document.
+  for (const bad of ["🦜:binary:abc", "🦜:binary:AB==", "🦜:binary:AQ!="]) {
+    expect(() =>
+      direct.importJsonUpdates(
+        JSON.stringify({
+          schema_version: 1,
+          start_version: {},
+          peers: ["2"],
+          changes: [
+            {
+              id: "0@0",
+              timestamp: 0,
+              deps: [],
+              lamport: 0,
+              msg: null,
+              ops: [
+                {
+                  container: "cid:root-m:Map",
+                  counter: 0,
+                  content: { type: "insert", key: "bad", value: bad },
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toThrow();
+  }
+  expect(direct.getMap("m").get("raw")).toStrictEqual(new Uint8Array([42, 99]));
+});
+
 it("export json update with undefined value should be null", () => {
   const doc = new LoroDoc();
   doc.getMap("map").set("key", undefined);

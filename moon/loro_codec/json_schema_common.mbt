@@ -2,6 +2,9 @@
 const LORO_CONTAINER_ID_PREFIX : String = "🦜:"
 
 ///|
+const LORO_BINARY_PREFIX : String = "🦜:binary:"
+
+///|
 fn id_inc(id : ID, delta : Int) -> ID raise DecodeError {
   let mut counter64 = id.counter().to_int64()
   counter64 = counter64 + delta.to_int64()

@@ -7784,8 +7784,10 @@ interface LoroMovableList {
 export type Side = -1 | 0 | 1;
 export type JsonOpID = `${number}@${PeerID}`;
 export type JsonContainerID =  `🦜:${ContainerID}` ;
+export type JsonBinary = `🦜:binary:${string}`;
 export type JsonValue  =
   | JsonContainerID
+  | JsonBinary
   | string
   | number
   | boolean

@@ -49,7 +49,7 @@ function redactOperation(operation: JsonOp, range: readonly [number, number]): v
 }
 
 function redactValue(value: unknown): JsonValue {
-  return typeof value === "string" && value.startsWith("🦜:")
+  return typeof value === "string" && value.startsWith("🦜:cid:")
     ? (value as JsonValue)
     : null;
 }
