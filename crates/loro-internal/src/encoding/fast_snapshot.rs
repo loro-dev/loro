@@ -454,9 +454,35 @@ pub(crate) fn encode_updates_in_range<W: std::io::Write>(
 }
 
 pub(crate) fn decode_updates(oplog: &mut OpLog, body: Bytes) -> Result<Vec<Change>, LoroError> {
-    let mut changes = decode_update_blocks(body, |block| {
-        oplog.change_store().decode_update_block(block, oplog.vv())
-    })?;
+    decode_updates_slice(oplog, body.as_ref())
+}
+
+/// Decode FastUpdates from a borrowed body. Each block is parsed once. The
+/// change store does not keep the block bytes, so this path does not copy them.
+pub(crate) fn decode_updates_slice(
+    oplog: &mut OpLog,
+    body: &[u8],
+) -> Result<Vec<Change>, LoroError> {
+    let mut reader = body;
+    let mut changes = Vec::new();
+    while !reader.is_empty() {
+        let len = leb128::read::unsigned(&mut reader)
+            .map_err(|_| LoroError::DecodeError("decode_updates: invalid block length".into()))?;
+        let len = usize::try_from(len)
+            .map_err(|_| LoroError::DecodeError("decode_updates: block length overflow".into()))?;
+        let bytes = reader.get(..len).ok_or_else(|| {
+            LoroError::DecodeError("decode_updates: truncated block payload".into())
+        })?;
+        let block_changes = oplog
+            .change_store()
+            .decode_update_block_slice(bytes, oplog.vv())?;
+        if changes.is_empty() {
+            changes = block_changes;
+        } else {
+            changes.extend(block_changes);
+        }
+        reader = &reader[len..];
+    }
     if changes.len() > 1 {
         changes.sort_unstable_by_key(|x| x.lamport);
     }

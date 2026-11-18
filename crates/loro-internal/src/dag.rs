@@ -823,6 +823,13 @@ where
         }
     }
 
+    // Cross-peer (and multi-span) causal appends miss the same-peer fast path
+    // above. A single unbranched chain whose entry parents are exactly `left`
+    // is still Linear: every new op applies at its stored position.
+    if is_strict_linear_extension(get, left, right)? {
+        return Ok((MeetAsBase::Valid(left.clone()), DiffMode::Linear));
+    }
+
     let mut is_linear = left.len() <= 1 && right.len() == 1;
     let mut is_right_greater = true;
     let mut unmatched_branches = FxHashSet::default();
@@ -855,6 +862,76 @@ where
         }
 
         Ok(frontiers.into_iter().collect())
+    }
+
+    /// `right` is one id, and `Events(right) \ Events(left)` is a single
+    /// unbranched chain whose entry parents (explicit deps plus the implicit
+    /// same-peer predecessor, shrunk to an antichain) equal `left`.
+    ///
+    /// A span that already contains `left` and extends past it is linear
+    /// without looking at deps: `OrdIdSpan::from_dag_node` truncates at the
+    /// queried id, so the span's deps belong to its start, not to `left`.
+    /// Partial entry into one head of a multi-head `left` is not linear.
+    /// Trimmed or missing nodes are not linear. The walk stops once it is
+    /// older than every left head, so a non-extension does not scan history.
+    fn is_strict_linear_extension<'b, D2, F2>(
+        get: &'b F2,
+        left: &Frontiers,
+        right: &Frontiers,
+    ) -> LoroResult<bool>
+    where
+        D2: DagNode + 'b,
+        F2: Fn(ID) -> LoroResult<Option<D2>>,
+    {
+        const MAX_LINEAR_EXTENSION_SPANS: usize = 2048;
+        if left.is_empty() || right.len() != 1 {
+            return Ok(false);
+        }
+
+        let mut max_left_lamport: Lamport = 0;
+        for id in left.iter() {
+            let Some(node) = OrdIdSpan::from_dag_node(id, get)? else {
+                return Ok(false);
+            };
+            let lamp = node.lamport + (id.counter - node.id.counter) as Lamport;
+            max_left_lamport = max_left_lamport.max(lamp);
+        }
+        let mut cursor = right.as_single().unwrap();
+        for _ in 0..MAX_LINEAR_EXTENSION_SPANS {
+            let Some(node) = OrdIdSpan::from_dag_node(cursor, get)? else {
+                return Ok(false);
+            };
+            if left.len() == 1 {
+                let left_id = left.as_single().unwrap();
+                if node.contains_id(left_id) && left_id.counter < node.id_last().counter {
+                    return Ok(true);
+                }
+            }
+            if node.lamport <= max_left_lamport {
+                return Ok(false);
+            }
+
+            let Some(parents) = deps_to_ord_id_spans(&node, get)? else {
+                return Ok(false);
+            };
+            let parent_ids: Frontiers = parents.iter().map(|span| span.id_last()).collect();
+            if &parent_ids == left {
+                return Ok(true);
+            }
+            let minimal = shrink_ancestor_frontiers(&parent_ids, get)?;
+            if &minimal == left {
+                return Ok(true);
+            }
+            if minimal.len() != 1 {
+                return Ok(false);
+            }
+            let parent = minimal.as_single().unwrap();
+            if parent == cursor || left.iter().any(|id| id == parent) {
+                return Ok(false);
+            }
+            cursor = parent;
+        }
+        Ok(false)
     }
 
     fn has_trimmed_history_deps<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
@@ -1672,14 +1749,14 @@ mod tests {
     }
 
     #[test]
-    fn replay_base_marks_cross_peer_direct_dependency_as_greater_update() {
+    fn replay_base_marks_cross_peer_direct_dependency_as_linear() {
         let left = node(1, 0, 1, 0, Frontiers::default());
         let right = node(2, 0, 1, 1, left.id.into());
         let dag = TestDag::new(vec![left.clone(), right.clone()], right.id.into());
 
         let (ancestor, mode) = dag.find_replay_base(&left.id.into(), &right.id.into());
         assert_eq!(ancestor, left.id.into());
-        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        assert_eq!(mode, DiffMode::Linear);
     }
 
     #[test]
@@ -1697,7 +1774,7 @@ mod tests {
 
         let (ancestor, mode) = dag.find_replay_base(&relay.id.into(), &peer_one_next.id.into());
         assert_eq!(ancestor, relay.id.into());
-        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        assert_eq!(mode, DiffMode::Linear);
     }
 
     #[test]
@@ -1719,7 +1796,7 @@ mod tests {
         let (ancestor, mode) =
             dag.find_replay_base(&current_frontier.id.into(), &peer_one_next.id.into());
         assert_eq!(ancestor, current_frontier.id.into());
-        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        assert_eq!(mode, DiffMode::Linear);
     }
 
     #[test]
@@ -1843,7 +1920,9 @@ mod tests {
         let left = Frontiers::from([ID::new(2, 0), ID::new(3, 0)]);
         let (ancestor, mode) = dag.find_replay_base(&left, &ID::new(4, 0).into());
         assert_eq!(ancestor, left);
-        assert_eq!(mode, DiffMode::ImportGreaterUpdates);
+        // The new change's parents are exactly every left head, so the new
+        // region is one unbranched chain and applies as local ops.
+        assert_eq!(mode, DiffMode::Linear);
     }
 
     #[test]

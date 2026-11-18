@@ -38,6 +38,7 @@ pub(crate) mod container_store;
 mod counter_state;
 mod dead_containers_cache;
 mod deep_value;
+pub(crate) mod direct_import;
 mod list_state;
 mod map_state;
 mod mergeable;
@@ -74,6 +75,30 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn fail_next_import_state_apply_for_test() {
     FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| fail.set(true));
+}
+
+/// Whether this import must fail before any container write.
+///
+/// The origin match does not clear the thread-local, matching `apply_diff`.
+/// The thread-local is consumed only when it is set. Call this only when the
+/// direct path is about to mutate; a skip must leave the flag for `apply_diff`.
+#[cfg(test)]
+pub(crate) fn take_import_apply_failpoint(origin: &str) -> bool {
+    if origin == "__loro_fail_import_state_apply" {
+        return true;
+    }
+    FAIL_NEXT_IMPORT_STATE_APPLY.with(|fail| {
+        let should_fail = fail.get();
+        if should_fail {
+            fail.set(false);
+        }
+        should_fail
+    })
+}
+
+#[cfg(not(test))]
+pub(crate) fn take_import_apply_failpoint(_origin: &str) -> bool {
+    false
 }
 
 fn visible_container_value_is_empty(kind: ContainerType, value: &LoroValue) -> bool {
@@ -2419,6 +2444,33 @@ impl DocState {
             panic!("diffs is empty");
         }
 
+        // One container: skip the dedup map. A missing path falls through so a
+        // hidden container matches the slow path.
+        if diffs.len() == 1 && diffs[0].diff.len() == 1 {
+            let idx = diffs[0].diff[0].idx;
+            if let Some(path) = self.get_path(idx) {
+                let diff0 = diffs.into_iter().next().unwrap();
+                let id = self.arena.get_container_id(idx).unwrap();
+                let is_unknown = id.is_unknown();
+                let container_diff = diff0.diff.into_owned().into_iter().next().unwrap();
+                return DocDiff {
+                    from,
+                    to: diff0.new_version.into_owned(),
+                    origin: diff0.origin,
+                    by: diff0.by,
+                    diff: vec![ContainerDiff {
+                        id,
+                        idx,
+                        diff: container_diff.diff.into_external().unwrap(),
+                        is_unknown,
+                        path,
+                        kept: container_diff.kept,
+                    }],
+                    local_inverse: diff0.local_inverse,
+                };
+            }
+        }
+
         let triggered_by = diffs[0].by;
         debug_assert!(diffs.iter().all(|x| x.by == triggered_by));
         let mut containers = FxHashMap::default();
@@ -2588,6 +2640,14 @@ impl DocState {
 
     // The container may be overwritten, so it may return None.
     pub(super) fn get_path(&mut self, idx: ContainerIdx) -> Option<Vec<(ContainerID, Index)>> {
+        let first_id = self.arena.idx_to_id(idx)?;
+        if !first_id.is_mergeable() {
+            if let ContainerID::Root { ref name, .. } = first_id {
+                let name = name.clone();
+                return Some(vec![(first_id, Index::Key(name))]);
+            }
+        }
+
         let mut ans = Vec::new();
         let mut idx = idx;
         loop {

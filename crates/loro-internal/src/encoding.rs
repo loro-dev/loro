@@ -6,7 +6,7 @@ mod shallow_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
-    decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
+    decode_op, encode_op, get_op_prop, str_unicode_len, DecodedBlockBuffers, EncodedDeleteStartId,
     IterableEncodedDeleteStartId,
 };
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
@@ -300,7 +300,7 @@ pub(crate) fn decode_oplog_changes(
             Err(LoroError::ImportUnsupportedEncodingMode)
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body, values),
-        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates_slice(oplog, body),
         EncodeMode::Auto => unreachable!(),
     }
 }
