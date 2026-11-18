@@ -1668,6 +1668,9 @@ fn build_local_inverse(
     };
     // One op's delta is built normalized; only composing splits items.
     commit.finish(!single_op);
+    if commit.diff.has_mixed_text_edits() {
+        return None;
+    }
     Some(crate::undo::LocalInverse::new(commit, deps))
 }
 

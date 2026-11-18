@@ -398,8 +398,7 @@ impl BasicHandler {
     #[inline]
     fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
         self.doc.touch_access_tick();
-        let state = self.doc.state.clone();
-        let mut guard = state.lock();
+        let mut guard = self.doc.state.lock();
         f(&mut guard)
     }
 

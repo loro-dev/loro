@@ -177,6 +177,23 @@ impl DiffBatch {
         self.full_state = false;
     }
 
+    pub(crate) fn has_mixed_text_edits(&self) -> bool {
+        self.cid_to_events.values().any(|diff| {
+            let Diff::Text(text) = diff else {
+                return false;
+            };
+            let mut inserts = false;
+            let mut deletes = false;
+            for item in text.iter() {
+                if let loro_delta::DeltaItem::Replace { value, delete, .. } = item {
+                    inserts |= !value.as_str().is_empty();
+                    deletes |= *delete > 0;
+                }
+            }
+            inserts && deletes
+        })
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&ContainerID, &Diff)> + '_ {
         self.order
             .iter()
@@ -542,6 +559,27 @@ impl LocalInverse {
     /// The inverse of the whole span. `None` if it cannot be composed (a
     /// movable list edited by two commits; undo checks out instead).
     pub(crate) fn seal(&self) -> Option<SealedInverse> {
+        if self.commits.len() > 1 {
+            if let Some((cid, pos, len)) = self.coalesced_text_insert() {
+                let mut diff = DiffBatch::default();
+                diff.compose_inverse_one(
+                    cid,
+                    Diff::Text(
+                        loro_delta::DeltaRopeBuilder::new()
+                            .retain(pos as usize, Default::default())
+                            .delete(len as usize)
+                            .build(),
+                    ),
+                );
+                drop_containers_created_in(&mut diff, self.span);
+                return Some(SealedInverse {
+                    span: self.span,
+                    deps: self.deps.clone(),
+                    diff,
+                    movable: Vec::new(),
+                });
+            }
+        }
         if let [only] = self.commits.as_slice() {
             let mut diff = only.materialize_diff();
             counter_inverses(self.commits.iter().map(|c| &**c), self.span, &mut diff);
@@ -581,6 +619,9 @@ impl LocalInverse {
             sealed.diff.compose_inverse(commit.materialize_diff());
         }
         sealed.finish(true);
+        if sealed.diff.has_mixed_text_edits() {
+            return None;
+        }
         counter_inverses(
             self.commits.iter().map(|c| &**c),
             self.span,
@@ -592,6 +633,19 @@ impl LocalInverse {
             diff: sealed.diff,
             movable: sealed.movable,
         })
+    }
+
+    fn coalesced_text_insert(&self) -> Option<(ContainerID, u32, u32)> {
+        let (cid, pos, first_len) = self.commits.first()?.text_insert.as_ref()?;
+        let mut len = *first_len;
+        for commit in &self.commits[1..] {
+            let (next_cid, next_pos, next_len) = commit.text_insert.as_ref()?;
+            if next_cid != cid || *next_pos < *pos || *next_pos > pos.checked_add(len)? {
+                return None;
+            }
+            len = len.checked_add(*next_len)?;
+        }
+        Some((cid.clone(), *pos, len))
     }
 
     fn estimated_bytes(&self) -> usize {
@@ -2330,8 +2384,8 @@ pub(crate) fn assert_same_undo_diff(from_checkout: &DiffBatch, recorded: &DiffBa
                 push(&mut ops, Op::Retain(n, attr));
                 continue;
             }
-            push(&mut ops, Op::Delete(delete));
             push(&mut ops, Op::Insert(insert, attr));
+            push(&mut ops, Op::Delete(delete));
         }
         while matches!(ops.last(), Some(Op::Retain(_, a)) if a.is_empty()) {
             ops.pop();
@@ -2408,6 +2462,57 @@ thread_local! {
 mod recorded_inverse_tests {
     use super::*;
     use crate::{cursor::PosType, loro::ExportMode, LoroDoc};
+
+    fn text_batch(diff: crate::event::TextDiff) -> DiffBatch {
+        let mut batch = DiffBatch::default();
+        batch.compose_inverse_one(
+            ContainerID::new_root("text", loro_common::ContainerType::Text),
+            Diff::Text(diff),
+        );
+        batch
+    }
+
+    fn styled_replacement(delete: usize) -> crate::event::TextDiff {
+        let mut attributes = crate::event::TextMeta::default();
+        attributes.0.insert("bold".into(), true.into());
+        let mut diff = crate::event::TextDiff::new();
+        diff.push_retain(2, Default::default());
+        diff.push_replace("e".into(), attributes, delete);
+        diff
+    }
+
+    #[test]
+    fn inverse_checker_preserves_replace_execution_order() {
+        let combined = styled_replacement(56);
+        let mut split = styled_replacement(34);
+        split.push(loro_delta::DeltaItem::new_delete(22));
+        assert_same_undo_diff(&text_batch(combined.clone()), &text_batch(split.clone()));
+        for position in 0..=60 {
+            let remote = loro_delta::DeltaRopeBuilder::new()
+                .retain(position, crate::event::TextMeta::default())
+                .insert("remote".into(), Default::default())
+                .build();
+            for priority in [false, true] {
+                assert_same_undo_diff(
+                    &text_batch(combined.transform(&remote, priority)),
+                    &text_batch(split.transform(&remote, priority)),
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "the recorded inverse differs")]
+    fn inverse_checker_distinguishes_insertions_across_deleted_input() {
+        let combined = styled_replacement(56);
+        let mut different = crate::event::TextDiff::new();
+        different.push_retain(2, Default::default());
+        different.push(loro_delta::DeltaItem::new_delete(34));
+        for item in styled_replacement(22).iter().skip(1) {
+            different.push(item.clone());
+        }
+        assert_same_undo_diff(&text_batch(combined), &text_batch(different));
+    }
 
     /// Tree creations and moves between live parents (with a remote peer's
     /// concurrent tree edits in between) undo and redo from recorded inverses:

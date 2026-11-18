@@ -2,9 +2,11 @@
 
 Verified against code 2026-11-18.
 
-The isolated hot-path prototype stores a single text insertion's inverse as
-container ID, event position and length, and materializes the delta during
-`LocalInverse::seal`. Other operations retain the composition described below.
+The hot-path optimization stores a text insertion run's inverse as container ID,
+event position and length, and materializes the delta during `LocalInverse::seal`.
+Continuous runs are coalesced within a transaction and across grouped commits.
+Mixed text inverses containing both insertions and deletions fall back to checkout;
+other operations retain the composition described below.
 See [hot-path prototypes](hot-path-prototypes.md) for its representation and
 validation boundaries.
 
@@ -126,7 +128,9 @@ map values it compares against included, is part of `undo_bytes` (so
 
 ## Not recorded yet (undo checks out, as before)
 
-Text marks, movable-list steps outside the shapes above, tree deletions of a subtree or of a node with
+Mixed text inverses containing both inserted and deleted text in one container
+(including those composed across a group), text marks, movable-list steps outside
+the shapes above, tree deletions of a subtree or of a node with
 metadata, moves out of a deleted parent, writes that would revive a child
 container (restoring a deleted container value), map binary values (mergeable markers),
 anything touching a mergeable container,

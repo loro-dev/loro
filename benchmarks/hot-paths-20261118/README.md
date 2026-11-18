@@ -2,6 +2,9 @@
 
 Tonbo `loro`, Linux aarch64, Rust 1.100.0, measured 2026-11-18.
 
+These are the initial PR measurements. Subsequent investigation and validation
+are recorded in [the follow-up](followup.md).
+
 - `prestack`: `b005024cbd896e394cc875699a0c7f6cfa272a9e`.
 - `candidate`: `2370ab89f8306bfd5cc13c884641d18fef21a5bc` plus the earlier
   transaction admission, undo-registration and decoded-read fast paths.
@@ -46,5 +49,6 @@ independently attributed. Neither memory use nor first-undo latency is measured.
 The combined production source passed the internal all-features library tests
 (642 passed, 4 ignored), public tests with `test_utils,jsonpath` (1,051 passed,
 29 ignored), and two Loom suites (11 passed, preemption bound 2). Debug tests
-enabled `LORO_VERIFY_UNDO_LOG=1`. Further targeted rich-text and concurrent
-undo validation is required before treating the prototype as merge-ready.
+enabled `LORO_VERIFY_UNDO_LOG=1`. At this stage targeted rich-text, concurrent
+undo and first-undo timing remained to be checked; see the follow-up for those
+results.

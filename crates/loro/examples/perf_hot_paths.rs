@@ -28,7 +28,9 @@ fn main() {
             undo = Some(manager);
         }
         "root_lookup" | "child_lookup" => {
-            doc.get_map("root").insert_container("child", LoroMap::new()).unwrap();
+            doc.get_map("root")
+                .insert_container("child", LoroMap::new())
+                .unwrap();
             doc.commit();
         }
         "jsonpath" => {
@@ -119,7 +121,10 @@ fn main() {
         _ => unreachable!(),
     }
     let elapsed_ns = started.elapsed().as_nanos();
-    if matches!(scenario.as_str(), "text" | "undo" | "undo_batched" | "undo_grouped") {
+    if matches!(
+        scenario.as_str(),
+        "text" | "undo" | "undo_batched" | "undo_grouped"
+    ) {
         assert_eq!(doc.get_text("text").len_unicode(), 20_000);
     }
     if let Some(mut manager) = undo {

@@ -41,6 +41,14 @@ allocation. This keeps similarly sized consecutive batches from reallocating,
 while a transition from a large batch to a small one releases old capacity.
 Membership and the point at which it is cleared remain unchanged.
 
+## Rejected arena read fast path
+
+An experiment made `SharedArena::register_container` look up existing indices
+under a read lock before using the original write-locked path on a miss.
+Although this skipped unnecessary dirty marking, root-handler lookup slowed
+from 16.143 ms to 16.797 ms per 100,000 lookups (about 4%). The experiment was
+removed; registration and its lock/dirty-mark behavior remain unchanged.
+
 ## Shared handler ownership
 
 `BasicHandler::doc` uses `HandlerDoc`, with direct and shared ownership variants.
@@ -56,6 +64,12 @@ creates and discards many child handlers. The first prototype allocated a shared
 owner for every root lookup and regressed that workload. The revised prototype
 limits the allocation to bulk iteration. The ownership enum adds a tag to the
 handler, so root and scalar child lookup remain separate benchmark cases.
+
+`BasicHandler::with_doc_state` borrows `self.doc.state` for the lock guard's
+lifetime instead of cloning its `Arc` on every read. `&self` keeps the owner
+alive; access-tick updates and the scope of the state lock are unchanged.
+The matched native experiment and remaining scalar lookup costs are recorded
+in `benchmarks/hot-paths-20261118/followup.md`.
 
 ## Compact text inverses
 
@@ -85,3 +99,22 @@ shared commit references.
 Tests include concurrent final child-handle drops, grouped Unicode inserts into
 a newly created text container, and the large-to-small transaction capacity
 transition. Debug tests should run with `LORO_VERIFY_UNDO_LOG=1`.
+
+When every commit of a grouped item inserts into the same continuous text run,
+`LocalInverse::coalesced_text_insert` combines the positions and lengths before
+`seal` materializes one deletion. This avoids moving repeated delta composition
+from editing into the first undo. Insertions outside the run, another container,
+or any other operation retain the general path.
+
+Mixed text inverses that both restore text and delete text in the same container
+fall back to checkout, both for a single transaction and after grouped commits
+are composed. Seed 3 of `undo_compact_text` exposed different insertion positions
+within a deleted range; matching final text alone is insufficient to establish
+equivalent transformation against later remote edits. Pure insertion and pure
+deletion inverses remain recorded. This fallback can allocate history caches
+for mixed replacements.
+
+The debug inverse comparator expands `Replace` in the iterator's execution
+order: insertion before deletion. Its tests compare a replacement with a split
+deletion, including transformations against remote insertions at each boundary,
+and reject an insertion moved across deleted input.
