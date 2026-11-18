@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.19.0
+
+### Minor Changes
+
+- b6d455a: Add per-document memory budgets, memory statistics, explicit reclamation and `tryCommit()`, plus UndoManager byte limits. Bound caches and demote cold state while preserving exact hard-quota checks and atomic rollback of rejected imports. Reduce retained memory with compact internal layouts and page-cached state statistics. Native Rust supports file-backed history and state spilling, shared immutable spill files, checked reads and reportable storage errors; forks inherit independent memory policies.
+- 2c2d0f7: Add process-wide and WASM-instance-wide memory budgets, statistics and cross-document reclamation through `setGlobalMemoryBudget`, `getGlobalMemoryBudget`, `globalMemoryStats`, `reclaimGlobalMemory` and `tryReclaimGlobalToBudget`. Track WASM live heap and linear memory, report retained pages through `wasmLinearMemoryExceeded`, and check admission before large WASM input allocations. Incremental native accounting and reclamation backoff keep routine commits inexpensive.
+- 3e3eb6f: Improve snapshot and export speed, reduce peak import/export memory, and stream WASM `toJSON()` and large batch imports. Add `freeHistoryCache()`, `freeDiffCalculator()`, and `compactChangeStore()` for explicit cache reclamation.
+
+### Patch Changes
+
+- 4184569: Preserve `Uint8Array` / `Binary` values (including mergeable container markers and nested binary payloads) across `exportJsonUpdates` and `importJsonUpdates` by encoding binary values in JSON updates as `"🦜:binary:<base64>"` (canonical RFC 4648 Base64), while also accepting raw `Uint8Array` instances in JavaScript `JsonSchema` objects and keeping legacy number-array JSON imports compatible. Documents synced via JSON updates no longer fail with `UsedOpID` when subsequently importing binary updates that overlap the same operation IDs.
+- 25ff7a4: Speed up local map/text edits, block encode/decode, linear list diffs, and quiet causal update imports: skip unchanged map writes under the transaction state lock, batch block container registration with single-pass update block decoding, defer `RichtextTracker` allocation on linear diffs, and apply quiet linear causal imports directly to `DocState`.
+- 519780f: Reduce repeated transaction bookkeeping allocation costs, share document ownership
+  between related container handlers, and defer materialization of single text
+  insertion inverses until undo needs them.
+
+  Coalesce continuous text insertion runs within transactions and undo groups.
+  Mixed text replacement inverses fall back to checkout to preserve their ordering
+  relative to later remote edits.
+
+  Avoid rescanning already-deleted delta fragments and cloning temporary diff
+  batches during grouped undo/redo, including groups editing multiple containers
+  and lists. Create shared document
+  ownership lazily during traversal so empty and scalar-only lists do not allocate
+  an unnecessary shared owner.
+
+- 519780f: Reduce work per local update and bound event checks during synchronous edits. Speed up short text edits and imports while preserving the existing update and snapshot formats.
+
+  Reduce single-operation encoding allocations and speed up concurrent text and list imports.
+
+  Avoid parsing cold frontier change blocks during snapshot import and transaction creation, and cut peak WASM heap usage during concurrent text/list merges.
+
+- 0c627ec: Undo and redo text, list, map, counter, tree and movable-list edits from inverses recorded at commit, avoiding history-cache construction for supported steps. Preserve remote edits, checkpoint transforms and existing undo/redo behavior, and trim finite undo byte limits in one pass. Count recorded inverses, including the values they keep, toward `max_undo_bytes`, `undo_bytes` and the open transaction's `uncommitted_txn_bytes`.
+
 ## 1.18.0
 
 ### Minor Changes
