@@ -4245,7 +4245,9 @@ impl LoroDoc {
         );
 
         if &from_frontiers == frontiers {
-            self.set_detached(frontiers != &self.oplog_frontiers());
+            // Already there: keep the attached/detached mode. A detached doc at
+            // the latest version stays detached, as it does when it gets there
+            // from another version; `checkout_to_latest` attaches (loro-dev/loro#1048).
             return Ok(());
         }
 
