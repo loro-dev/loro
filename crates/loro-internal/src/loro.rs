@@ -1442,120 +1442,153 @@ impl LoroDoc {
                     return Err(e);
                 }
             }
-            let mut calc = DiffCalculator::new(false);
-            // Applying may have unlocked pending changes; the isolated fast path is only valid
-            // when exactly the candidate batch was appended on top of the old version.
-            let isolated_batch = isolated_batch.filter(|(component_vv, _)| {
-                component_vv
-                    .iter()
-                    .all(|(peer, end)| oplog.vv().get(peer) == Some(end))
-                    && oplog.vv().iter().all(|(peer, end)| {
-                        let old_end = old_vv.get(peer).copied().unwrap_or(0);
-                        let component_end = component_vv.get(peer).copied().unwrap_or(0);
-                        *end == old_end.max(component_end)
-                    })
-            });
-            let computed = (|| -> LoroResult<_> {
-                let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
-                    #[cfg(test)]
-                    ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
-                    let component_frontiers = oplog.dag.try_vv_to_frontiers(&component_vv)?;
-                    let (diff, _) = calc.try_calc_diff_internal(
+            let mut applied_direct = false;
+            // Recording and a byte budget need the diff (events, import undo).
+            // A quiet linear append can write the container state directly.
+            if !oplog.batch_importing && !self.has_max_doc_bytes() {
+                let mut state = self.state.lock();
+                if state.frontiers == old_frontiers && !state.is_recording() {
+                    match crate::state::direct_import::try_apply(
                         &oplog,
-                        &VersionVector::default(),
-                        &Frontiers::default(),
-                        &component_vv,
-                        &component_frontiers,
-                        None,
-                    )?;
-                    (diff, DiffMode::Import)
-                } else {
-                    calc.try_calc_diff_internal(
-                        &oplog,
-                        &old_vv,
+                        &mut state,
                         &old_frontiers,
-                        oplog.vv(),
-                        oplog.dag.get_frontiers(),
-                        None,
-                    )?
-                };
-                oplog.check_history_parsable()?;
-                Ok((diff, diff_mode))
-            })();
-            let (diff, diff_mode) = match computed {
-                Ok(diff) => diff,
-                Err(err) => {
-                    oplog.rollback_owned_import(rollback_enabled, &mut self.state.lock());
-                    return Err(err);
-                }
-            };
-            let mut state = self.state.lock();
-            let diff = match recalc_in_checkout_mode_if_needed(
-                &mut state,
-                &oplog,
-                &old_vv,
-                &old_frontiers,
-                diff,
-            ) {
-                Ok(diff) => diff,
-                Err(err) => {
-                    oplog.rollback_owned_import(rollback_enabled, &mut state);
-                    return Err(err);
-                }
-            };
-            if rollback_enabled {
-                state.store.begin_created_journal();
-            }
-            // See the other import path: record how to undo it under a quota.
-            if rollback_enabled && !oplog.batch_importing && self.has_max_doc_bytes() {
-                state.begin_import_undo();
-            }
-            let applied = state.apply_diff(
-                InternalDocDiff {
-                    origin,
-                    diff: (diff).into(),
-                    by: EventTriggerKind::Import,
-                    new_version: Cow::Owned(oplog.frontiers().clone()),
-                    local_inverse: None,
-                },
-                diff_mode,
-            );
-            let undo = state.take_import_undo();
-            if let Err(e) = applied {
-                if rollback_enabled {
-                    let created = state.store.take_created_journal();
-                    state.store.remove_created(&created);
-                    oplog.rollback_import(&mut state);
-                    return Err(e);
-                }
-
-                panic!("state apply returned Err for import without rollback guard: {e}");
-            }
-            materialize_touched_roots(&mut state, &calc, &oplog.arena);
-            drop(calc);
-            if rollback_enabled {
-                if let Some(undo) = undo {
-                    self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
-                    if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
-                        &oplog,
-                        &state,
-                        0,
-                        Some(linear_before),
+                        &old_vv,
+                        rollback_enabled,
+                        origin.as_str(),
                     ) {
-                        state.undo_import(undo, old_frontiers.clone());
+                        Ok(true) => {
+                            if rollback_enabled {
+                                let _ = state.store.take_created_journal();
+                            }
+                            if global_budget_flags() != 0 {
+                                let _ = self.memory_stats_locked(&oplog, &state, 0);
+                            }
+                            applied_direct = true;
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            oplog.rollback_owned_import(rollback_enabled, &mut state);
+                            return Err(err);
+                        }
+                    }
+                }
+            }
+            if !applied_direct {
+                let mut calc = DiffCalculator::new(false);
+                // Applying may have unlocked pending changes; the isolated fast path is only valid
+                // when exactly the candidate batch was appended on top of the old version.
+                let isolated_batch = isolated_batch.filter(|(component_vv, _)| {
+                    component_vv
+                        .iter()
+                        .all(|(peer, end)| oplog.vv().get(peer) == Some(end))
+                        && oplog.vv().iter().all(|(peer, end)| {
+                            let old_end = old_vv.get(peer).copied().unwrap_or(0);
+                            let component_end = component_vv.get(peer).copied().unwrap_or(0);
+                            *end == old_end.max(component_end)
+                        })
+                });
+                let computed = (|| -> LoroResult<_> {
+                    let (diff, diff_mode) = if let Some((component_vv, _)) = isolated_batch {
+                        #[cfg(test)]
+                        ISOLATED_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
+                        let component_frontiers = oplog.dag.try_vv_to_frontiers(&component_vv)?;
+                        let (diff, _) = calc.try_calc_diff_internal(
+                            &oplog,
+                            &VersionVector::default(),
+                            &Frontiers::default(),
+                            &component_vv,
+                            &component_frontiers,
+                            None,
+                        )?;
+                        (diff, DiffMode::Import)
+                    } else {
+                        calc.try_calc_diff_internal(
+                            &oplog,
+                            &old_vv,
+                            &old_frontiers,
+                            oplog.vv(),
+                            oplog.dag.get_frontiers(),
+                            None,
+                        )?
+                    };
+                    oplog.check_history_parsable()?;
+                    Ok((diff, diff_mode))
+                })();
+                let (diff, diff_mode) = match computed {
+                    Ok(diff) => diff,
+                    Err(err) => {
+                        oplog.rollback_owned_import(rollback_enabled, &mut self.state.lock());
+                        return Err(err);
+                    }
+                };
+                let mut state = self.state.lock();
+                let diff = match recalc_in_checkout_mode_if_needed(
+                    &mut state,
+                    &oplog,
+                    &old_vv,
+                    &old_frontiers,
+                    diff,
+                ) {
+                    Ok(diff) => diff,
+                    Err(err) => {
+                        oplog.rollback_owned_import(rollback_enabled, &mut state);
+                        return Err(err);
+                    }
+                };
+                if rollback_enabled {
+                    state.store.begin_created_journal();
+                }
+                // See the other import path: record how to undo it under a quota.
+                if rollback_enabled && !oplog.batch_importing && self.has_max_doc_bytes() {
+                    state.begin_import_undo();
+                }
+                let applied = state.apply_diff(
+                    InternalDocDiff {
+                        origin,
+                        diff: (diff).into(),
+                        by: EventTriggerKind::Import,
+                        new_version: Cow::Owned(oplog.frontiers().clone()),
+                        local_inverse: None,
+                    },
+                    diff_mode,
+                );
+                let undo = state.take_import_undo();
+                if let Err(e) = applied {
+                    if rollback_enabled {
                         let created = state.store.take_created_journal();
                         state.store.remove_created(&created);
                         oplog.rollback_import(&mut state);
-                        *self.diff_calculator.lock() = DiffCalculator::new(true);
-                        let _ = self.memory_stats_locked(&oplog, &state, 0);
-                        return Err(budget_err);
+                        return Err(e);
                     }
+
+                    panic!("state apply returned Err for import without rollback guard: {e}");
+                }
+                materialize_touched_roots(&mut state, &calc, &oplog.arena);
+                drop(calc);
+                if rollback_enabled {
+                    if let Some(undo) = undo {
+                        self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
+                        if let Err(budget_err) = self.check_doc_budget_locked_with_linear(
+                            &oplog,
+                            &state,
+                            0,
+                            Some(linear_before),
+                        ) {
+                            state.undo_import(undo, old_frontiers.clone());
+                            let created = state.store.take_created_journal();
+                            state.store.remove_created(&created);
+                            oplog.rollback_import(&mut state);
+                            *self.diff_calculator.lock() = DiffCalculator::new(true);
+                            let _ = self.memory_stats_locked(&oplog, &state, 0);
+                            return Err(budget_err);
+                        }
+                    } else if !oplog.batch_importing && global_budget_flags() != 0 {
+                        let _ = self.memory_stats_locked(&oplog, &state, 0);
+                    }
+                    let _ = state.store.take_created_journal();
                 } else if !oplog.batch_importing && global_budget_flags() != 0 {
                     let _ = self.memory_stats_locked(&oplog, &state, 0);
                 }
-                let _ = state.store.take_created_journal();
-            } else if !oplog.batch_importing && global_budget_flags() != 0 {
-                let _ = self.memory_stats_locked(&oplog, &state, 0);
             }
         }
 
@@ -5866,6 +5899,86 @@ mod test {
 
         dst.import(&second_update).unwrap();
         assert_eq!(dst.get_deep_value(), src.get_deep_value());
+    }
+
+    #[test]
+    fn cross_peer_failpoint_rolls_back_before_any_write() {
+        let a = LoroDoc::new_auto_commit();
+        a.set_peer_id(1).unwrap();
+        a.get_text("text")
+            .insert(0, "hello", PosType::Unicode)
+            .unwrap();
+        a.commit_then_renew();
+        let base = a.export(ExportMode::all_updates()).unwrap();
+
+        let b = LoroDoc::new_auto_commit();
+        b.set_peer_id(2).unwrap();
+        b.import(&base).unwrap();
+        let vv = b.oplog_vv();
+        b.get_text("text")
+            .insert(5, " world", PosType::Unicode)
+            .unwrap();
+        b.commit_then_renew();
+        let extra = b.export(ExportMode::updates(&vv)).unwrap();
+
+        let attached = LoroDoc::new();
+        attached.import(&base).unwrap();
+        let before = attached.get_deep_value();
+        let vv_before = attached.oplog_vv();
+        let frontiers = attached.oplog_frontiers();
+        let err = attached
+            .import_with(&extra, "__loro_fail_import_state_apply".into())
+            .unwrap_err();
+        assert!(err.to_string().contains("state apply failpoint"), "{err:?}");
+        assert_eq!(attached.get_deep_value(), before);
+        assert_eq!(attached.oplog_vv(), vv_before);
+        assert_eq!(attached.oplog_frontiers(), frontiers);
+        assert_eq!(attached.state_frontiers(), frontiers);
+
+        attached.import(&extra).unwrap();
+        assert_eq!(attached.get_text("text").to_string(), "hello world");
+    }
+
+    #[test]
+    fn checkout_then_merged_local_text_insert_then_concurrent_import_matches_oracle() {
+        let p1 = LoroDoc::new_auto_commit();
+        p1.set_peer_id(1).unwrap();
+        p1.get_text("t")
+            .insert(0, "abcdef", PosType::Unicode)
+            .unwrap();
+        p1.commit_then_renew();
+        let base = p1.export(ExportMode::all_updates()).unwrap();
+        let p1_vv = p1.oplog_vv();
+
+        let p3 = LoroDoc::new_auto_commit();
+        p3.set_peer_id(3).unwrap();
+        p3.import(&base).unwrap();
+        p3.get_text("t").insert(0, "é", PosType::Unicode).unwrap();
+        p3.commit_then_renew();
+
+        // Warm the persistent diff calculator and then leave an RLE-merged
+        // local edit right after the tracker's version before importing.
+        p3.checkout(&Frontiers::from_id(ID::new(1, 2))).unwrap();
+        p3.checkout_to_latest();
+        p3.get_text("t").insert(1, "xyz", PosType::Unicode).unwrap();
+        p3.commit_then_renew();
+
+        p1.get_text("t").delete(1, 3, PosType::Unicode).unwrap();
+        p1.get_text("t").insert(2, "😀", PosType::Unicode).unwrap();
+        p1.commit_then_renew();
+        let concurrent = p1.export(ExportMode::updates(&p1_vv)).unwrap();
+
+        p3.import(&concurrent).unwrap();
+
+        let oracle = LoroDoc::new();
+        oracle
+            .import(&p3.export(ExportMode::all_updates()).unwrap())
+            .unwrap();
+        assert_eq!(
+            p3.get_text("t").to_string(),
+            oracle.get_text("t").to_string()
+        );
+        assert_eq!(p3.get_deep_value(), oracle.get_deep_value());
     }
 
     #[test]

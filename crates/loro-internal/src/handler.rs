@@ -35,6 +35,19 @@ mod movable_list_apply_delta;
 pub(crate) use full_state::align_full_state;
 mod tree;
 
+fn text_units(s: &str) -> (usize, usize) {
+    if s.is_ascii() {
+        return (s.len(), s.len());
+    }
+    let mut unicode = 0;
+    let mut utf16 = 0;
+    for c in s.chars() {
+        unicode += 1;
+        utf16 += c.len_utf16();
+    }
+    (unicode, utf16)
+}
+
 const REGULAR_CONTAINER_VALUE_ARG_ERROR: &str =
     "Cannot use a LoroValue::Container as a regular value. To create a child container, use insert_container/set_container, or ensure_mergeable_* on maps for mergeable children";
 
@@ -2175,6 +2188,14 @@ impl TextHandler {
             return Ok(());
         }
 
+        if let MaybeDetached::Attached(a) = &self.inner {
+            if pos_type == PosType::Unicode {
+                // Unicode boundaries need no extra check. The length check is
+                // inside `delete_with_txn_inline`, under the state lock.
+                return a.with_txn(|txn| self.delete_with_txn_inline(txn, pos, len, pos_type));
+            }
+        }
+
         let text_len = self.len(pos_type);
         let end = checked_range_end(pos, len, text_len, || {
             format!("Position: {}:{}", file!(), line!()).into_boxed_str()
@@ -2376,9 +2397,9 @@ impl TextHandler {
             }
         }
 
-        let unicode_len = s.chars().count();
+        let (unicode_len, utf16_len) = text_units(s);
         let event_len = if cfg!(feature = "wasm") {
-            count_utf16_len(s.as_bytes())
+            utf16_len
         } else {
             unicode_len
         };
@@ -4620,13 +4641,8 @@ impl MapHandler {
     ) -> LoroResult<()> {
         ensure_no_regular_container_value(&value)?;
 
-        if self.get(key).map(|x| x == value).unwrap_or(false) {
-            // skip if the value is already set
-            return Ok(());
-        }
-
         let inner = self.inner.try_attached_state()?;
-        txn.apply_local_op(
+        txn.apply_local_map_insert(
             inner.container_idx,
             crate::op::RawOpContent::Map(crate::container::map::MapSet {
                 key: key.into(),

@@ -1,5 +1,5 @@
 use self::block_encode::{
-    decode_block, decode_cids, decode_cids_in_header, decode_header,
+    decode_block, decode_block_bytes_once, decode_cids, decode_cids_in_header, decode_header,
     decode_lamport_and_timestamp_at, encode_block, encode_block_with_header, ChangesBlockHeader,
 };
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
@@ -697,23 +697,36 @@ impl ChangeStore {
     }
 
     /// Reuse the header on fallback so a new block is decoded only once.
+    #[cfg(test)]
     pub(crate) fn decode_update_block(
         &self,
         bytes: Bytes,
         vv: &VersionVector,
     ) -> LoroResult<Vec<Change>> {
-        let block = ChangesBlockBytes::new(bytes);
-        block.ensure_header()?;
-        let header = block.header.get().unwrap();
-        let id = ID::new(header.peer, header.counter);
-        if header.counters.last().copied().unwrap_or(0)
-            <= vv.get(&header.peer).copied().unwrap_or(0)
-            && self.contains_encoded_block(id, &block.bytes)
-        {
-            Ok(Vec::new())
-        } else {
-            block.parse(&self.arena)
+        self.decode_update_block_slice(&bytes, vv)
+    }
+
+    /// Parse an update block from borrowed bytes. The store does not retain
+    /// those bytes: imported changes can merge, so the wire image would not
+    /// match the in-memory block.
+    pub(crate) fn decode_update_block_slice(
+        &self,
+        bytes: &[u8],
+        vv: &VersionVector,
+    ) -> LoroResult<Vec<Change>> {
+        let parsed = decode_block_bytes_once(bytes, &self.arena, |header| {
+            let id = ID::new(header.peer, header.counter);
+            header.counters.last().copied().unwrap_or(0)
+                <= vv.get(&header.peer).copied().unwrap_or(0)
+                && self.contains_encoded_block(id, bytes)
+        })?;
+        let Some(changes) = parsed else {
+            return Ok(Vec::new());
+        };
+        for change in &changes {
+            register_container_and_parent_link(&self.arena, change);
         }
+        Ok(changes)
     }
 
     /// Rolls back the store and the arena (to `arena`, the checkpoint taken when the import

@@ -1144,8 +1144,29 @@ impl Transaction {
         container: ContainerIdx,
         content: RawOpContent,
         event: EventHint,
+        doc: &LoroDoc,
+    ) -> LoroResult<()> {
+        self.apply_local_op_inner(container, content, event, doc, false)
+    }
+
+    pub(super) fn apply_local_map_insert(
+        &mut self,
+        container: ContainerIdx,
+        content: RawOpContent,
+        event: EventHint,
+        doc: &LoroDoc,
+    ) -> LoroResult<()> {
+        self.apply_local_op_inner(container, content, event, doc, true)
+    }
+
+    fn apply_local_op_inner(
+        &mut self,
+        container: ContainerIdx,
+        content: RawOpContent,
+        event: EventHint,
         // check whether context and txn are referring to the same state context
         doc: &LoroDoc,
+        skip_unchanged_map: bool,
     ) -> LoroResult<()> {
         // A transaction must be applied to the document it was created for.
         // `insert_with_txn`/`delete_with_txn` are public API, so this guards
@@ -1184,15 +1205,6 @@ impl Transaction {
 
         let len = content.content_len();
         assert!(len > 0);
-        let raw_op = RawOp {
-            id: ID {
-                peer: self.peer,
-                counter: self.next_counter,
-            },
-            lamport: self.next_lamport,
-            container,
-            content,
-        };
 
         if matches!(self.local_inverse, LocalInverseRecorder::Unknown) {
             let has_undo = doc
@@ -1212,6 +1224,36 @@ impl Transaction {
                 container: Box::new(state.arena.idx_to_id(container).unwrap()),
             });
         }
+        if skip_unchanged_map {
+            if let EventHint::Map {
+                key,
+                value: Some(new_value),
+            } = &event
+            {
+                if let Some(current) = state.get_map_value_by_key(container, key.as_ref()) {
+                    let translated = match state.arena.idx_to_id(container) {
+                        Some(id) => loro_common::translate_mergeable_marker_value(
+                            &id,
+                            key.as_ref(),
+                            current,
+                        ),
+                        None => current,
+                    };
+                    if &translated == new_value {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        let raw_op = RawOp {
+            id: ID {
+                peer: self.peer,
+                counter: self.next_counter,
+            },
+            lamport: self.next_lamport,
+            container,
+            content,
+        };
 
         let op = self.arena.convert_raw_op(&raw_op);
         let inverse = self
