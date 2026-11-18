@@ -1,6 +1,6 @@
 # Tree Events
 
-Verified against code 2026-09-30.
+Verified against code 2026-11-18.
 
 Tree events (`TreeExternalDiff::{Create, Move, Delete}`) describe only the
 alive tree, the nodes reachable from the root. Applied in order, the events of
@@ -53,6 +53,21 @@ The raw path only runs when the op log has no concurrency with the current
 state (`Linear`), or when the new ops all follow the state's version
 (`ImportGreaterUpdates`), for example a peer that only receives updates. Two-
 or three-peer repros that sync both ways usually take the `Checkout` path.
+
+## Re-sent metadata is not a change
+
+A concurrent import's `Checkout` diff retreats every op from the window's
+lowest lamport, so a local node created concurrently with the import is
+deleted and created again in the same event, and its metadata map and the
+containers in it are re-sent with their full state. The node kept its id
+and that state, so for an import `DocState::apply_diff` marks the metadata
+map of every tree `Create` as kept (`KeptChange`, see
+[mergeable-containers.md](mergeable-containers.md)). Subscribers still get
+the full state. The undo manager transforms its steps against the actual
+change (`ContainerDiff::change`), so the re-sent text no longer shifts a
+local step's positions (loro-dev/loro#1310). Checkout diffs that are
+applied as new ops (`revert_to`, undo) keep the full state, because
+applying a tree `Create` makes a node with a new id that needs it.
 
 ## Local events are different
 
