@@ -1730,6 +1730,37 @@ impl DocState {
         self.store.get_or_create_mut(idx).is_state_empty()
     }
 
+    /// The full state of each container in `roots`, and of the containers they hold,
+    /// parents first, skipping empty ones. For the local event of a tree node moved
+    /// back from the deleted tree (`TreeHandler::revive_for_apply_diff`).
+    pub(crate) fn full_states_below(
+        &mut self,
+        roots: impl IntoIterator<Item = ContainerID>,
+    ) -> Vec<(ContainerIdx, Diff)> {
+        let mut stack: Vec<ContainerIdx> = roots
+            .into_iter()
+            .map(|id| self.arena.register_container(&id))
+            .collect();
+        stack.reverse();
+        let mut seen = FxHashSet::default();
+        let mut ans = Vec::new();
+        while let Some(idx) = stack.pop() {
+            if !seen.insert(idx) {
+                continue;
+            }
+            let state = self.store.get_or_create_mut(idx);
+            if state.is_state_empty() {
+                continue;
+            }
+            let diff = state.to_diff(&self.doc);
+            let mut children = Vec::new();
+            trigger_on_new_container(&diff, |c| children.push(c), &self.arena);
+            stack.extend(children.into_iter().rev());
+            ans.push((idx, diff));
+        }
+        ans
+    }
+
     /// Revives a container that has no diff of its own in this batch: its event is its full
     /// state. Children it holds are queued into `to_revive`; if it kept its state, they did too.
     fn revive_without_diff(

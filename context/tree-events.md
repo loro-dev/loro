@@ -1,6 +1,6 @@
 # Tree Events
 
-Verified against code 2026-09-30.
+Verified against code 2026-11-18.
 
 Tree events (`TreeExternalDiff::{Create, Move, Delete}`) describe only the
 alive tree, the nodes reachable from the root. Applied in order, the events of
@@ -62,6 +62,9 @@ Local tree ops build their events from `EventHint::Tree` in
 moving out of deleted nodes, and those hints still use the shapes of alive
 nodes (`Create` under a deleted parent, `Move` with a deleted `old_parent`).
 The undo manager inverts those events, so changing them is a separate change.
+The one exception is `TreeHandler::revive_for_apply_diff` (below): its hint,
+`EventHint::TreeRevive`, has a `Create` for each node that comes back and the
+full state of their metadata, read with `DocState::full_states_below`.
 
 ## Tests
 
@@ -78,3 +81,31 @@ The undo manager inverts those events, so changing them is a separate change.
 - The fuzz `Actor` tracker (`crates/fuzz/src/actor.rs`) does not catch wrong
   events on its own: `assert_value_eq` only logs a mismatch, so only a panic
   inside the tracker fails a run.
+
+## Undo brings deleted nodes back
+
+`Handler::apply_diff` (undo, redo, `revert_to`, `apply_diff`) gets a `Create`
+or `Move` for a node that this doc has but that is deleted, directly or under
+a deleted ancestor. It moves that node back
+(`TreeHandler::revive_for_apply_diff`): one `TreeOp::Move` whose event is a
+`Create` for the node and for every node below it
+(`TreeState::push_subtree_creation`), as the invariants above require. The
+node keeps its id, its metadata map and its children. When the destination
+parent is deleted it does nothing, since the node would stay deleted.
+
+The batch's entries for those metadata maps are full states (a checkout sends
+the whole metadata of each node it creates), but the maps still hold their old
+state. `LoroDoc::apply_diff_with_movable_undo` collects them in
+`revived_full_state` and aligns each entry with the current state
+(`align_full_state`, as for revived mergeable children) instead of appending
+it; a map or kept child with no entry is cleared. The local event carries the
+metadata (`EventHint::TreeRevive`), so a doc that applies the events, which may
+hold the same deleted node, gets the same state
+(`undo_event_of_revived_node_carries_its_data` in
+`crates/loro/tests/undo_tree_node_identity.rs`).
+
+Before 2026-11-18 it created a new node with a new id and remapped the old
+metadata container to it. Apps that key data by `TreeID` then lost it on
+undo or redo (loro-dev/loro#938), undo of a move into or out of a deleted
+parent left a copy (#1212), and a node deleted by a remote undo came back as
+an empty copy (#1311). A node this doc has never seen still gets a new id.

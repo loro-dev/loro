@@ -524,6 +524,14 @@ pub(super) enum EventHint {
     },
     // use vec because we could bring back some node that has children
     Tree(SmallVec<[TreeDiffItem; 1]>),
+    /// A deleted node moved back by `apply_diff` (undo, redo, `revert_to`): `Create`s for
+    /// the node and its subtree, then the full state of each metadata map and the
+    /// containers it holds, read when the op was made. Remote peers get the same from
+    /// `trigger_on_new_container`; see context/tree-events.md.
+    TreeRevive {
+        items: Vec<TreeDiffItem>,
+        contents: Vec<(ContainerIdx, Diff)>,
+    },
     MarkEnd,
     #[cfg(feature = "counter")]
     Counter(f64),
@@ -541,6 +549,7 @@ impl generic_btree::rle::HasLength for EventHint {
             EventHint::DeleteList(d) => d.len(),
             EventHint::Map { .. } => 1,
             EventHint::Tree(_) => 1,
+            EventHint::TreeRevive { .. } => 1,
             EventHint::MarkEnd => 1,
             EventHint::Move { .. } => 1,
             EventHint::SetList { .. } => 1,
@@ -1627,6 +1636,19 @@ fn change_to_diff(
                         diff: Diff::Tree(diff),
                     });
                 }
+                EventHint::TreeRevive { items, contents } => {
+                    let mut diff = TreeDiff::default();
+                    diff.diff.extend(items);
+                    ans.push(TxnContainerDiff {
+                        idx: container_idx,
+                        diff: Diff::Tree(diff),
+                    });
+                    ans.extend(
+                        contents
+                            .into_iter()
+                            .map(|(idx, diff)| TxnContainerDiff { idx, diff }),
+                    );
+                }
                 EventHint::Move { from, to, value } => {
                     let mut a = DeltaRopeBuilder::new()
                         .retain(from as usize, Default::default())
@@ -1706,7 +1728,9 @@ fn op_matches_hint(op: &Op, hint: &EventHint) -> bool {
                 | (InnerListOp::Set { .. }, EventHint::SetList { .. })
         ),
         InnerContent::Map(_) => matches!(hint, EventHint::Map { .. }),
-        InnerContent::Tree(_) => matches!(hint, EventHint::Tree(_)),
+        InnerContent::Tree(_) => {
+            matches!(hint, EventHint::Tree(_) | EventHint::TreeRevive { .. })
+        }
         #[cfg(feature = "counter")]
         InnerContent::Future(crate::op::FutureInnerContent::Counter(_)) => {
             matches!(hint, EventHint::Counter(_))

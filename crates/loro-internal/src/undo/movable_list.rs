@@ -1148,6 +1148,7 @@ impl Plan {
                     diff,
                     containers,
                     &mut Default::default(),
+                    &mut Default::default(),
                 )?;
                 let current = list.with_state(|s| {
                     Ok(s.as_movable_list_state()

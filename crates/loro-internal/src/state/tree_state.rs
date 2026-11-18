@@ -1180,7 +1180,7 @@ impl TreeState {
     /// Pushes a `Create` for every node below `root`: parents before their
     /// children and siblings in order, so each `index` is valid when the
     /// events are applied in sequence.
-    fn push_subtree_creation(&self, root: TreeID, ans: &mut Vec<TreeDiffItem>) {
+    pub(crate) fn push_subtree_creation(&self, root: TreeID, ans: &mut Vec<TreeDiffItem>) {
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             let parent = TreeParentId::Node(node);
