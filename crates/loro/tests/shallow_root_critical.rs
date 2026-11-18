@@ -279,3 +279,101 @@ fn past_version_with_later_branch_below_it() {
 
     assert_export_contract(&doc, &target, "past single head, later branch below it");
 }
+
+/// Two peers take turns, `doc` first, each syncing to the other before the
+/// other writes, and returns the frontiers after each turn. A peer's next
+/// change explicitly depends on the other peer's last op, which already has
+/// the peer's previous op in its causal past.
+fn alternating_turns(doc: &LoroDoc, other: &LoroDoc, turns: usize) -> Vec<Frontiers> {
+    let mut marks = Vec::new();
+    for turn in 0..turns {
+        let (writer, reader) = if turn % 2 == 0 {
+            (doc, other)
+        } else {
+            (other, doc)
+        };
+        writer
+            .import(
+                &reader
+                    .export(ExportMode::updates(&writer.oplog_vv()))
+                    .unwrap(),
+            )
+            .unwrap();
+        for i in 0..3 {
+            writer.get_text("t").insert(0, &format!("{i}")).unwrap();
+            writer.commit();
+        }
+        reader
+            .import(
+                &writer
+                    .export(ExportMode::updates(&reader.oplog_vv()))
+                    .unwrap(),
+            )
+            .unwrap();
+        marks.push(doc.oplog_frontiers());
+    }
+    marks
+}
+
+fn exported_root(doc: &LoroDoc, target: &Frontiers) -> Frontiers {
+    let blob = doc.export(ExportMode::shallow_snapshot(target)).unwrap();
+    let fresh = LoroDoc::new();
+    fresh.import(&blob).unwrap();
+    fresh.shallow_since_frontiers()
+}
+
+/// In a history where two peers take turns, every version is critical, so a
+/// shallow snapshot at any of them must keep that version as its root. The
+/// scan used to treat each peer's implicit edge to its own previous op as a
+/// second branch, and retreated to the start of the history.
+#[test]
+fn alternating_peers_keep_the_requested_root() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let other = LoroDoc::new();
+    other.set_peer_id(2).unwrap();
+    let marks = alternating_turns(&doc, &other, 8);
+
+    for (turn, target) in marks.iter().enumerate() {
+        let label = format!("alternating, turn {turn}");
+        assert_eq!(&exported_root(&doc, target), target, "{label}");
+        let blob = doc.export(ExportMode::state_only(Some(target))).unwrap();
+        let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+        assert_eq!(&meta.start_frontiers, target, "{label}: state_only");
+        assert_export_contract(&doc, target, &label);
+    }
+}
+
+/// The same history with a third peer that forked at an earlier turn and was
+/// merged later: versions after the fork are no longer critical, so the root
+/// must retreat, but only to the fork point.
+#[test]
+fn alternating_peers_retreat_only_to_the_fork_point() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let other = LoroDoc::new();
+    other.set_peer_id(2).unwrap();
+    let mut marks = alternating_turns(&doc, &other, 3);
+    let fork_point = marks[2].clone();
+    let fork = LoroDoc::new();
+    fork.set_peer_id(3).unwrap();
+    fork.import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    fork.get_text("t").insert(0, "F").unwrap();
+    fork.commit();
+
+    // Peer 2 writes next, so the turns go on where they stopped.
+    marks.extend(alternating_turns(&other, &doc, 4));
+    doc.import(&other.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
+    doc.import(&fork.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(doc.oplog_frontiers().len(), 2);
+
+    for (turn, target) in marks.iter().enumerate() {
+        let label = format!("alternating with a fork, turn {turn}");
+        let expected = if turn <= 2 { target } else { &fork_point };
+        assert_eq!(&exported_root(&doc, target), expected, "{label}");
+        assert_export_contract(&doc, target, &label);
+    }
+}
