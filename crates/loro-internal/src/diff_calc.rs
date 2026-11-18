@@ -277,16 +277,19 @@ impl DiffCalculator {
         //   `InternalContainerDiff::diff_mode`, which is what the state layer's
         //   per-container logic (`need_check` / `need_compare`) consumes.
         let mut calc_mode = origin_diff_mode;
-        match &mut self.retain_mode {
+        let is_once = match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
                     panic!("DiffCalculator with retain_mode Once can only be used once");
                 }
+                *used = true;
+                true
             }
             DiffCalculatorRetainMode::Persist => {
                 calc_mode = DiffMode::Checkout;
+                false
             }
-        }
+        };
 
         let affected_set = {
             loro_common::debug!("replay_base: {:?} mode={:?}", &replay_base, calc_mode);
@@ -460,6 +463,9 @@ impl DiffCalculator {
                         oplog.arena.register_container(c);
                     });
                     calc.finish_this_round();
+                    if is_once {
+                        calc.release_transient_memory(container_idx);
+                    }
                     if !diff.is_empty() || bring_back {
                         ans.insert(
                             container_idx,
@@ -632,6 +638,30 @@ impl ContainerDiffCalculator {
             #[cfg(feature = "counter")]
             Self::Counter(calc) => calc.estimated_bytes(),
             Self::Unknown(_) => std::mem::size_of::<UnknownDiffCalculator>(),
+        }
+    }
+
+    fn release_transient_memory(&mut self, idx: ContainerIdx) {
+        match self {
+            Self::Map(_) => *self = Self::Map(MapDiffCalculator::new(idx)),
+            Self::List(calc) => {
+                *calc.tracker = ListTracker {
+                    tracker: RichtextTracker::new_empty(),
+                    values: TrackerValues::default(),
+                };
+                calc.start_vv = VersionVector::new();
+            }
+            Self::Richtext(calc) => {
+                *calc.mode = RichtextCalcMode::Linear {
+                    diff: DeltaRope::new(),
+                    last_style_start: None,
+                };
+            }
+            Self::Tree(_) => *self = Self::Tree(TreeDiffCalculator::new(idx)),
+            Self::MovableList(_) => *self = Self::MovableList(MovableListDiffCalculator::new(idx)),
+            #[cfg(feature = "counter")]
+            Self::Counter(_) => *self = Self::Counter(CounterDiffCalculator::new(idx)),
+            Self::Unknown(_) => {}
         }
     }
 }
@@ -1068,6 +1098,10 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let diff_items = if should_rebuild {
             #[cfg(test)]
             FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
+            *self.tracker = ListTracker {
+                tracker: RichtextTracker::new_empty(),
+                values: TrackerValues::default(),
+            };
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             let mut full_tracker = Self::build_full_tracker(idx, oplog, &merged);
@@ -2122,6 +2156,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     // shallow-root state and replay only the retained suffix of history.
                     #[cfg(test)]
                     FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
+                    **tracker = RichtextTracker::new_empty();
+                    *styles = Vec::new();
+                    *texts = TrackerTexts::default();
                     let mut merged = info.from_vv.clone();
                     merged.merge(info.to_vv);
                     let (mut full_tracker, full_styles, full_texts) =

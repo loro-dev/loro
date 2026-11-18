@@ -8,13 +8,19 @@ use itertools::Itertools;
 use loro_common::{Counter, HasCounter, HasCounterSpan, HasIdSpan, IdSpan, Lamport, ID};
 use smallvec::{smallvec, SmallVec};
 
-use crate::container::richtext::{fugue_span::DiffStatus, FugueSpan, RichtextChunk, Status};
+use crate::container::richtext::{
+    fugue_span::{DiffStatus, OptionalStatus, UNKNOWN_REAL_ID_UNSET},
+    FugueSpan, RichtextChunk, Status,
+};
 
 use super::UNKNOWN_PEER_ID;
 
 #[derive(Debug, Default, Clone)]
 pub(super) struct CrdtRope {
     pub(super) tree: BTree<CrdtRopeTrait>,
+    /// Out-of-line `(base_real_id, base_unknown_counter)` table for `UNKNOWN_PEER_ID`
+    /// spans whose `real_id` was revealed by a deletion. Indexed by `elem.id.lamport`.
+    unknown_real_ids: Vec<(ID, Counter)>,
 }
 
 pub(super) struct InsertResult {
@@ -26,7 +32,32 @@ pub(super) struct InsertResult {
 
 impl CrdtRope {
     pub fn new() -> Self {
-        Self { tree: BTree::new() }
+        Self {
+            tree: BTree::new(),
+            unknown_real_ids: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub(super) fn real_id_of(&self, elem: &FugueSpan) -> Option<ID> {
+        if elem.id.peer != UNKNOWN_PEER_ID {
+            return Some(elem.id.id());
+        }
+        if elem.id.lamport == UNKNOWN_REAL_ID_UNSET {
+            return None;
+        }
+        let (base_id, base_counter) = self.unknown_real_ids[elem.id.lamport as usize];
+        Some(base_id.inc(elem.id.counter - base_counter))
+    }
+
+    #[inline]
+    pub(super) fn real_id_or_placeholder(&self, elem: &FugueSpan) -> ID {
+        self.real_id_of(elem).unwrap_or_else(|| elem.id.id())
+    }
+
+    #[inline]
+    pub(super) fn unknown_real_ids_bytes(&self) -> usize {
+        self.unknown_real_ids.capacity() * std::mem::size_of::<(ID, Counter)>()
     }
 
     #[inline(always)]
@@ -55,7 +86,8 @@ impl CrdtRope {
         }
 
         Some((
-            elem.real_id().inc(cursor.offset as Counter),
+            self.real_id_or_placeholder(elem)
+                .inc(cursor.offset as Counter),
             elem.rle_len() - cursor.offset,
         ))
     }
@@ -95,8 +127,8 @@ impl CrdtRope {
                         left_node
                             .elem()
                             .id
-                            .inc(left_node.elem().rle_len() as Counter - 1)
-                            .id(),
+                            .id()
+                            .inc(left_node.elem().rle_len() as Counter - 1),
                     )
                 } else {
                     None
@@ -104,7 +136,7 @@ impl CrdtRope {
             } else {
                 let left_node = self.tree.get_leaf(start.leaf().into());
                 assert!(left_node.elem().rle_len() >= start.offset());
-                Some(left_node.elem().id.inc(start.offset() as Counter - 1).id())
+                Some(left_node.elem().id.id().inc(start.offset() as Counter - 1))
             };
 
             let right = self.first_non_future_at_or_after(start.cursor);
@@ -113,8 +145,8 @@ impl CrdtRope {
                     .get_elem(cursor.leaf)
                     .unwrap()
                     .id
-                    .inc(cursor.offset as Counter)
                     .id()
+                    .inc(cursor.offset as Counter)
             });
             content.origin_left = origin_left.map(|id| id.try_into().unwrap());
             content.origin_right = origin_right.map(|id| id.try_into().unwrap());
@@ -237,40 +269,8 @@ impl CrdtRope {
         }
     }
 
-    /// Delete the span at `pos` with `len`.
-    ///
-    /// The `start_id` is used to mark the real_id in the [FugueSpan].
-    ///
-    /// - If reversed is true, the deletion will be done in reversed order.
-    ///   But the start_id always refers to the first delete op's id.
-    /// - If reversed is true, the returned `SplittedLeaves` will be in reversed order.
     fn first_non_future_at_or_after(&self, start: Cursor) -> Option<Cursor> {
-        let total = self.tree.root_cache().non_future;
-        let mut rank = 0;
-        let mut within = None;
-        if total > 0 {
-            self.tree
-                .visit_previous_caches(start, |previous| match previous {
-                    generic_btree::PreviousCache::NodeCache(cache) => rank += cache.non_future,
-                    generic_btree::PreviousCache::PrevSiblingElem(elem) => {
-                        if !elem.status.future {
-                            rank += elem.rle_len() as i64;
-                        }
-                    }
-                    generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
-                        if !elem.status.future {
-                            if offset < elem.rle_len() {
-                                within = Some(start);
-                            } else {
-                                rank += elem.rle_len() as i64;
-                            }
-                        }
-                    }
-                });
-        }
-        let next = within.or_else(|| {
-            (rank < total).then(|| self.tree.query::<NonFutureQuery>(&rank).unwrap().cursor)
-        });
+        let next = self.first_non_future_at_or_after_inner(start);
         debug_assert_eq!(
             next,
             self.tree
@@ -290,6 +290,58 @@ impl CrdtRope {
         next
     }
 
+    #[inline]
+    fn first_non_future_at_or_after_inner(&self, start: Cursor) -> Option<Cursor> {
+        let total = self.tree.root_cache().non_future;
+        if total == 0 {
+            return None;
+        }
+        let elem = self.tree.get_elem(start.leaf)?;
+        if !elem.status.future && start.offset < elem.rle_len() {
+            return Some(start);
+        }
+
+        // Most real-world edits (e.g. C1.1) have 0..3 future leaves immediately after
+        // `start.leaf` or sit at the end of the rope. Probe a few adjacent leaves in O(1)
+        // before paying for a root-to-leaf B-tree rank query, while still jumping in
+        // O(log K) on long concurrent runs (e.g. B3.4 / B3.5).
+        let mut probe = start;
+        for _ in 0..4 {
+            let next = self.tree.next_elem(probe)?;
+            let next_elem = self.tree.get_elem(next.leaf).unwrap();
+            if !next_elem.status.future && next_elem.rle_len() > 0 {
+                return Some(next);
+            }
+            probe = next;
+        }
+
+        let mut rank: u32 = 0;
+        self.tree
+            .visit_previous_caches(probe, |previous| match previous {
+                generic_btree::PreviousCache::NodeCache(cache) => {
+                    rank = rank.wrapping_add(cache.non_future);
+                }
+                generic_btree::PreviousCache::PrevSiblingElem(elem) => {
+                    if !elem.status.future {
+                        rank = rank.wrapping_add(elem.rle_len() as u32);
+                    }
+                }
+                generic_btree::PreviousCache::ThisElemAndOffset { elem, offset } => {
+                    if !elem.status.future && offset >= elem.rle_len() {
+                        rank = rank.wrapping_add(elem.rle_len() as u32);
+                    }
+                }
+            });
+        (rank < total).then(|| self.tree.query::<NonFutureQuery>(&rank).unwrap().cursor)
+    }
+
+    /// Delete the span at `pos` with `len`.
+    ///
+    /// The `start_id` is used to mark the real_id in `unknown_real_ids`.
+    ///
+    /// - If reversed is true, the deletion will be done in reversed order.
+    ///   But the start_id always refers to the first delete op's id.
+    /// - If reversed is true, the returned `SplittedLeaves` will be in reversed order.
     pub(super) fn delete(
         &mut self,
         mut start_id: ID,
@@ -326,17 +378,22 @@ impl CrdtRope {
             .unwrap();
         // avoid pointing to the end of the node
         let start = start.cursor;
-        let elem = self.tree.get_elem_mut(start.leaf).unwrap();
-        if elem.rle_len() >= start.offset + len {
-            // tracing::info!("len={} offset={} l={} ", elem.rle_len(), start.offset, len,);
-            let (_, splitted) = self.tree.update_leaf(start.leaf, |elem| {
+        let elem_len = self.tree.get_elem(start.leaf).unwrap().rle_len();
+        if elem_len >= start.offset + len {
+            let tree = &mut self.tree;
+            let unknown_real_ids = &mut self.unknown_real_ids;
+            let (_, splitted) = tree.update_leaf(start.leaf, |elem| {
                 let (a, b) = elem.update_with_split(start.offset..start.offset + len, |elem| {
                     assert!(elem.is_activated());
                     debug_assert_eq!(len, elem.rle_len());
                     notify_deleted_span(elem);
                     elem.status.delete_times += 1;
-                    if elem.real_id.is_none() {
-                        elem.real_id = Some(start_id.try_into().unwrap());
+                    if elem.id.peer == UNKNOWN_PEER_ID && elem.id.lamport == UNKNOWN_REAL_ID_UNSET {
+                        let idx = u32::try_from(unknown_real_ids.len())
+                            .expect("unknown_real_ids overflow");
+                        assert_ne!(idx, UNKNOWN_REAL_ID_UNSET);
+                        unknown_real_ids.push((start_id, elem.id.counter));
+                        elem.id.lamport = idx;
                     }
 
                     start_id = start_id.inc(elem.rle_len() as i32);
@@ -352,12 +409,18 @@ impl CrdtRope {
             .tree
             .query::<ActiveLenQueryPreferLeft>(&((pos + len) as i32))
             .unwrap();
-        smallvec![self.tree.update(start..end.cursor(), &mut |elem| {
+        let tree = &mut self.tree;
+        let unknown_real_ids = &mut self.unknown_real_ids;
+        smallvec![tree.update(start..end.cursor(), &mut |elem| {
             if elem.is_activated() {
                 notify_deleted_span(elem);
                 elem.status.delete_times += 1;
-                if elem.real_id.is_none() {
-                    elem.real_id = Some(start_id.try_into().unwrap());
+                if elem.id.peer == UNKNOWN_PEER_ID && elem.id.lamport == UNKNOWN_REAL_ID_UNSET {
+                    let idx =
+                        u32::try_from(unknown_real_ids.len()).expect("unknown_real_ids overflow");
+                    assert_ne!(idx, UNKNOWN_REAL_ID_UNSET);
+                    unknown_real_ids.push((start_id, elem.id.counter));
+                    elem.id.lamport = idx;
                 }
 
                 start_id = start_id.inc(elem.rle_len() as i32);
@@ -426,20 +489,18 @@ impl CrdtRope {
 
         self.tree
             .update_leaves_with_arg_in_ranges(tree_update_info, |elem, arg| {
-                let status = if on_diff_status {
-                    if elem.diff_status.is_none() {
-                        elem.diff_status = Some(elem.status);
+                if on_diff_status {
+                    let status = elem.diff_status.get_or_insert(elem.status);
+                    if let Some(f) = arg.set_future {
+                        *status.future = f;
                     }
-                    elem.diff_status.as_mut().unwrap()
+                    *status.delete_times += arg.delete_times_diff;
                 } else {
-                    &mut elem.status
-                };
-
-                if let Some(f) = arg.set_future {
-                    status.future = f;
+                    if let Some(f) = arg.set_future {
+                        elem.status.future = f;
+                    }
+                    elem.status.delete_times += arg.delete_times_diff;
                 }
-
-                status.delete_times += arg.delete_times_diff;
             })
     }
 
@@ -451,7 +512,7 @@ impl CrdtRope {
                 drill
             },
             |elem| {
-                elem.diff_status = None;
+                elem.diff_status = OptionalStatus::NONE;
             },
         );
     }
@@ -476,7 +537,7 @@ impl CrdtRope {
                     DiffStatus::Created => {
                         let rt = Some(CrdtRopeDelta::Insert {
                             chunk: elem.content,
-                            id: elem.real_id.map(|x| x.to_id()).unwrap(),
+                            id: self.real_id_of(elem).unwrap(),
                             lamport: if elem.id.peer == UNKNOWN_PEER_ID {
                                 None
                             } else {
@@ -553,9 +614,11 @@ pub(super) struct CrdtRopeTrait;
 pub(super) struct Cache {
     pub(super) len: i32,
     pub(super) changed_num: i32,
-    // Count atoms so merging or splitting a span leaves the sum unchanged.
-    non_future: i64,
+    // Count atoms (mod 2^32 in diffs) so merging or splitting a span leaves the sum unchanged.
+    non_future: u32,
 }
+
+const _: () = assert!(std::mem::size_of::<Cache>() == 12);
 
 impl CanRemove for Cache {
     fn can_remove(&self) -> bool {
@@ -587,7 +650,7 @@ impl BTreeTrait for CrdtRopeTrait {
     fn apply_cache_diff(cache: &mut Self::Cache, diff: &Self::CacheDiff) {
         cache.len += diff.len;
         cache.changed_num += diff.changed_num;
-        cache.non_future += diff.non_future;
+        cache.non_future = cache.non_future.wrapping_add(diff.non_future);
     }
 
     #[inline(always)]
@@ -603,7 +666,7 @@ impl BTreeTrait for CrdtRopeTrait {
             non_future: if elem.status.future {
                 0
             } else {
-                elem.rle_len() as i64
+                elem.rle_len() as u32
             },
         }
     }
@@ -617,23 +680,23 @@ impl BTreeTrait for CrdtRopeTrait {
         Cache {
             len: cache_lhs.len - cache_rhs.len,
             changed_num: cache_lhs.changed_num - cache_rhs.changed_num,
-            non_future: cache_lhs.non_future - cache_rhs.non_future,
+            non_future: cache_lhs.non_future.wrapping_sub(cache_rhs.non_future),
         }
     }
 }
 
-struct NonFutureQuery(i64);
+struct NonFutureQuery(u32);
 
 impl Query<CrdtRopeTrait> for NonFutureQuery {
-    type QueryArg = i64;
+    type QueryArg = u32;
 
-    fn init(rank: &i64) -> Self {
+    fn init(rank: &u32) -> Self {
         Self(*rank)
     }
 
     fn find_node(
         &mut self,
-        _: &i64,
+        _: &u32,
         children: &[generic_btree::Child<CrdtRopeTrait>],
     ) -> FindResult {
         for (index, child) in children.iter().enumerate() {
@@ -645,7 +708,7 @@ impl Query<CrdtRopeTrait> for NonFutureQuery {
         unreachable!("non-future rank must exist")
     }
 
-    fn confirm_elem(&mut self, _: &i64, elem: &FugueSpan) -> (usize, bool) {
+    fn confirm_elem(&mut self, _: &u32, elem: &FugueSpan) -> (usize, bool) {
         (self.0 as usize, !elem.status.future)
     }
 }

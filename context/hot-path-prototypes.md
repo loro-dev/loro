@@ -180,9 +180,26 @@ records the release WASM A/B measurements.
 
 
 The follow-up's `CrdtRope::first_non_future_at_or_after` counts non-future
-atoms in each B-tree subtree. Deleted atoms still count toward the right
-origin, and splitting a run keeps the sum unchanged. The first search uses
-that count to skip future spans. The second scan follows the same origin
-and peer ordering rules with a streaming iterator. It records visited spans
-only when a different left origin needs a membership check. Debug builds
-compare the first search with a linear scan.
+atoms in each B-tree subtree (`Cache::non_future: u32`, using mod-$2^{32}$
+wrapping diffs so `Cache` stays 12 bytes). Deleted atoms still count toward the
+right origin, and splitting a run keeps the sum unchanged. It probes `start`
+and up to four adjacent leaves via `BTree::next_elem` in $O(1)$ first, falling
+back to the B-tree rank query only on longer future runs. The second scan
+follows the same origin and peer ordering rules with a streaming iterator and
+records visited spans only when a different left origin needs a membership
+check. Debug builds compare the first search with a linear scan.
+
+To bound peak WASM linear memory during large concurrent text/list merges:
+
+- `FugueSpan` (`fugue_span.rs`) is 64 bytes (compile-time asserted): `diff_status`
+  uses a 4-byte `OptionalStatus`, and `UNKNOWN_PEER_ID` spans store their
+  revealed `(base_real_id, base_unknown_counter)` out of line in
+  `CrdtRope::unknown_real_ids`, indexed by `FugueSpan::id.lamport`
+  (`UNKNOWN_REAL_ID_UNSET = u32::MAX` until deleted; `FugueSpan::_slice`
+  preserves `id.lamport` on `UNKNOWN_PEER_ID` spans).
+- One-shot `DiffCalculator::new(false)` (`diff_calc.rs`, `loro.rs`, `state.rs`)
+  releases each container calculator's transient tracker/style/text/value
+  allocations immediately after `calculate_diff` (`release_transient_memory`) while
+  retaining the `ContainerIdx` keys for `materialize_touched_roots`, and drops
+  old trackers before `build_full_tracker` / `build_full_crdt_tracker` on
+  `should_rebuild`.

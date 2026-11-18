@@ -100,6 +100,33 @@ startup and final samples. The failed baseline figure is from its final GC log.
 - Release WASM and separate package tests passed. Vitest passed 589 tests.
   Declaration, CommonJS, Deno, Bun and all 14 bundler smoke checks passed.
 
+## Third round: cold snapshot memory, O(1) head summary, and merge peak memory
+
+Matched 3-sample medians and WASM allocator measurements on the same Apple M5 Pro
+(`Node v24.22.1`) comparing the second-round build (`1da9b498`) against the
+third-round build:
+
+| Metric | Second round (`1da9b498`) | Third round | Improvement |
+| --- | ---: | ---: | ---: |
+| B3.3 `parseTime` (in suite / isolated) | 98 ms / 91 ms | **51 ms / 33 ms** | **1.92x–2.76x faster** |
+| B3.3 loaded doc `changeCacheBytes` | 23.20 MiB | **0 B** | **−100%** |
+| B3.3 loaded doc `totalBytes` | 27.84 MiB | **4.37 MiB** | **6.36x smaller** |
+| C1.2 `parseTime` (in suite / isolated) | 417 ms / 419 ms | **115 ms / 85 ms** | **3.63x–4.93x faster** |
+| 30,000-peer snapshot `doc.import()` only | 164.0 ms | **44.3 ms** | **3.70x faster** |
+| C1.2 loaded doc `changeCacheBytes` | 17.64 MiB | **0 B** | **−100%** |
+| C1.2 loaded doc `dagBytes` | 6.64 MiB | **1.37 MiB** | **4.8x smaller** |
+| C1.2 loaded doc `totalBytes` | 28.60 MiB | **5.70 MiB** | **5.02x smaller** |
+| C1.2 `time` (in suite) | 744 ms | **704 ms** | **−5.4%** |
+| C1.1 `peakAllocatedHeapBytes` | 324.97 MiB | **258.08 MiB** | **−66.89 MiB (−20.6%)** |
+| C1.1 `wasmLinearMemoryBytes` | 358.94 MiB | **305.19 MiB** | **−53.75 MiB (−15.0%)** |
+| C1.1 `time` (in suite) | 1,649 ms | **1,616 ms** | **−2.0%** |
+| B4 `time` (in suite / isolated) | 841 ms / 723 ms | **795 ms / 711 ms** | **−5.5% / −1.7%** |
+
+Subsequent local writes on the loaded `B3.3` and `C1.2` documents execute in
+`1.60 ms` and `9.18 ms` while keeping cold peer blocks unparsed
+(`changeCacheBytes` stays `6.4 KiB` and `117.6 KiB` rather than `23.20 MiB` and
+`17.75 MiB`).
+
 ## Reproduce
 
 Build each checkout with `pnpm release-wasm`. Copy [run.mjs](run.mjs) into the

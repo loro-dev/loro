@@ -188,23 +188,80 @@ impl Sliceable for RichtextChunk {
     }
 }
 
+/// Sentinel stored in `FugueSpan::id.lamport` for `UNKNOWN_PEER_ID` spans whose
+/// `real_id` has not yet been revealed by a deletion. Once deleted, `id.lamport`
+/// holds the index into `CrdtRope::unknown_real_ids`.
+pub(super) const UNKNOWN_REAL_ID_UNSET: Lamport = u32::MAX;
+
+/// Compact 4-byte representation of `Option<Status>`, avoiding the 2-byte tag +
+/// alignment padding of `Option<Status>` inside `FugueSpan`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash, Copy)]
+pub(super) struct OptionalStatus {
+    has_value: bool,
+    future: bool,
+    delete_times: i16,
+}
+
+impl OptionalStatus {
+    pub const NONE: Self = Self {
+        has_value: false,
+        future: false,
+        delete_times: 0,
+    };
+
+    #[inline(always)]
+    pub fn some(status: Status) -> Self {
+        Self {
+            has_value: true,
+            future: status.future,
+            delete_times: status.delete_times,
+        }
+    }
+
+    #[inline(always)]
+    pub fn is_some(self) -> bool {
+        self.has_value
+    }
+
+    #[inline(always)]
+    pub fn get(self) -> Option<Status> {
+        self.has_value.then_some(Status {
+            future: self.future,
+            delete_times: self.delete_times,
+        })
+    }
+
+    #[inline(always)]
+    pub fn get_or_insert(&mut self, default: Status) -> StatusMut<'_> {
+        if !self.has_value {
+            *self = Self::some(default);
+        }
+        StatusMut {
+            future: &mut self.future,
+            delete_times: &mut self.delete_times,
+        }
+    }
+}
+
+pub(super) struct StatusMut<'a> {
+    pub future: &'a mut bool,
+    pub delete_times: &'a mut i16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub(super) struct FugueSpan {
     pub id: IdFull,
-    /// Sometimes, the id of the span is just a placeholder.
-    /// This field is used to track the real id of the span.
-    /// We know the real id when deletion happens because we
-    /// have the start_id info for each deletion.
-    pub real_id: Option<CompactId>,
+    pub origin_left: Option<CompactId>,
+    pub origin_right: Option<CompactId>,
+    pub content: RichtextChunk,
     /// The status at the current version
     pub status: Status,
     /// The status at the `new` version.
     /// It's used when calculating diff.
-    pub diff_status: Option<Status>,
-    pub origin_left: Option<CompactId>,
-    pub origin_right: Option<CompactId>,
-    pub content: RichtextChunk,
+    pub diff_status: OptionalStatus,
 }
+
+const _: () = assert!(std::mem::size_of::<FugueSpan>() == 64);
 
 pub(super) enum DiffStatus {
     NotChanged,
@@ -224,14 +281,11 @@ impl FugueSpan {
 
     #[inline]
     pub fn diff(&self) -> DiffStatus {
-        if self.diff_status.is_none() {
+        let Some(diff_status) = self.diff_status.get() else {
             return DiffStatus::NotChanged;
-        }
+        };
 
-        match (
-            self.status.is_activated(),
-            self.diff_status.unwrap().is_activated(),
-        ) {
+        match (self.status.is_activated(), diff_status.is_activated()) {
             (true, false) => DiffStatus::Deleted,
             (false, true) => DiffStatus::Created,
             _ => DiffStatus::NotChanged,
@@ -239,35 +293,33 @@ impl FugueSpan {
     }
 
     pub fn is_activated_in_diff(&self) -> bool {
-        match self.diff_status {
+        match self.diff_status.get() {
             Some(d) => d.is_activated(),
             None => self.status.is_activated(),
-        }
-    }
-
-    pub(crate) fn real_id(&self) -> ID {
-        if let Some(id) = self.real_id {
-            id.to_id()
-        } else {
-            self.id.id()
         }
     }
 }
 
 impl Sliceable for FugueSpan {
     fn _slice(&self, range: Range<usize>) -> Self {
+        let id = if self.id.peer == UNKNOWN_PEER_ID {
+            IdFull::new(
+                UNKNOWN_PEER_ID,
+                self.id.counter + range.start as Counter,
+                self.id.lamport,
+            )
+        } else {
+            self.id.inc(range.start as Counter)
+        };
         Self {
-            id: self.id.inc(range.start as Counter),
-            real_id: self.real_id.map(|x| x.inc(range.start as Counter)),
+            id,
             status: self.status,
             diff_status: self.diff_status,
             origin_left: if range.start == 0 {
                 self.origin_left
             } else {
                 Some(
-                    self.id
-                        .inc((range.start - 1) as Counter)
-                        .id()
+                    ID::new(self.id.peer, self.id.counter + (range.start - 1) as Counter)
                         .try_into()
                         .unwrap(),
                 )
@@ -291,18 +343,17 @@ impl Mergeable for FugueSpan {
             && self.status == rhs.status
             && self.diff_status == rhs.diff_status
             && self.id.counter + self.content.len() as Counter == rhs.id.counter
-            && self.id.lamport + self.content.len() as Lamport == rhs.id.lamport
+            && if self.id.peer == UNKNOWN_PEER_ID {
+                self.id.lamport == rhs.id.lamport
+            } else {
+                self.id.lamport + self.content.len() as Lamport == rhs.id.lamport
+            }
             && rhs.origin_left.is_some()
             && rhs.origin_left.unwrap().peer == self.id.peer
             && rhs.origin_left.unwrap().counter.get()
                 == self.id.counter + self.content.len() as Counter - 1
             && self.origin_right == rhs.origin_right
             && self.content.can_merge(&rhs.content)
-            && ((self.real_id.is_none() && rhs.real_id.is_none())
-                || (self.real_id.is_some()
-                    && rhs.real_id.is_some()
-                    && self.real_id.unwrap().inc(self.content.len() as i32)
-                        == rhs.real_id.unwrap()))
     }
 
     fn merge_right(&mut self, rhs: &Self) {
@@ -311,7 +362,6 @@ impl Mergeable for FugueSpan {
 
     fn merge_left(&mut self, left: &Self) {
         self.id = left.id;
-        self.real_id = left.real_id;
         self.origin_left = left.origin_left;
         self.content.merge_left(&left.content);
     }
@@ -334,16 +384,14 @@ impl CanRemove for FugueSpan {
 
 impl FugueSpan {
     #[allow(unused)]
-    pub fn new(id: IdFull, content: RichtextChunk) -> Self {
+    pub fn new(mut id: IdFull, content: RichtextChunk) -> Self {
+        if id.peer == UNKNOWN_PEER_ID {
+            id.lamport = UNKNOWN_REAL_ID_UNSET;
+        }
         Self {
             id,
-            real_id: if id.peer == UNKNOWN_PEER_ID {
-                None
-            } else {
-                Some(id.id().try_into().unwrap())
-            },
             status: Status::default(),
-            diff_status: None,
+            diff_status: OptionalStatus::NONE,
             origin_left: None,
             origin_right: None,
             content,

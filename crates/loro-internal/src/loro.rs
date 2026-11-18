@@ -1160,8 +1160,7 @@ impl LoroDoc {
             let old_frontiers = oplog.frontiers().clone();
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
-                let mut diff = DiffCalculator::new(false);
-                let computed = diff.try_calc_diff_internal(
+                let computed = DiffCalculator::new(false).try_calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -1533,6 +1532,7 @@ impl LoroDoc {
                 panic!("state apply returned Err for import without rollback guard: {e}");
             }
             materialize_touched_roots(&mut state, &calc, &oplog.arena);
+            drop(calc);
             if rollback_enabled {
                 if let Some(undo) = undo {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
@@ -4281,6 +4281,7 @@ impl LoroDoc {
         // whatever roots the state already had.
         if after == oplog.vv() {
             materialize_touched_roots(&mut state, &calc, &oplog.arena);
+            drop(calc);
         }
 
         Ok(())

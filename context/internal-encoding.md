@@ -137,6 +137,23 @@ are moved into the document arena. This changes no on-wire format. See
 [import-peer-id-reuse.md](import-peer-id-reuse.md) for the semantic fallback and
 [arena-parent-links.md](arena-parent-links.md) for converted-op parent links.
 
+In release builds, `ChangeStore::import_all` (`change_store.rs`) validates
+`frontiers` via `validate_frontiers_and_head_summary` +
+`decode_lamport_and_timestamp_at` (`block_encode.rs`, `block_meta_encode.rs`)
+instead of calling `get_change` on each frontier ID. Only the `EncodedBlock`
+header and `change_meta` timestamp delta-of-delta column are read (with a
+single sequential SSTable cursor scan when `frontiers.len() >= 64` and all
+counters start at `0`), leaving `mem_parsed_kv` empty and `SharedArena`
+untouched while returning `(next_lamport, max_timestamp)` in `BatchDecodeInfo`.
+`AppDag` (`loro_dag.rs`) caches `(head_next_lamport, head_max_timestamp)` at
+the current frontiers and updates them incrementally across local transactions,
+remote imports, merged commits (`ChangeStore::insert_change*` returns the
+stored timestamp), and import rollbacks so subsequent `Transaction` creation
+stays $O(1)$ without loading cold DAG nodes or change blocks. (Note: `#[cfg(test)]`
+inside `loro-internal` still parses each peer's last block in `import_all`;
+integration tests in `crates/loro/tests/hot_path_regressions.rs` exercise the
+release behavior.)
+
 Default snapshot export does not walk the alive-container graph. It relies on a
 write-time invariant: every container brought alive by an applied op or diff
 gets a store entry when the reference is applied

@@ -325,10 +325,18 @@ impl OpLog {
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
+        if f.is_empty() {
+            return Timestamp::default();
+        }
+        if !self.dag.has_pending_txn() && f == self.dag.frontiers() {
+            if let Some(cached) = self.dag.cached_head_max_timestamp() {
+                return cached;
+            }
+        }
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
-            if let Some(change) = self.lookup_change(id) {
-                timestamp = timestamp.max(change.timestamp);
+            if let Some((_, ts)) = self.change_store.get_lamport_and_timestamp_at(id) {
+                timestamp = timestamp.max(ts);
             }
         }
 
@@ -365,7 +373,10 @@ impl OpLog {
             .as_ref()
             .map(|x| x.change_store.old_vv())
             .filter(|vv| !vv.is_empty());
-        self.dag
+        let change_last_id = change.id_last();
+        let change_end_lamport = change.lamport_end();
+        let pre_head_summary = self
+            .dag
             .handle_new_change(&change, from_local, rollback_old_vv);
         self.history_cache
             .lock()
@@ -375,7 +386,7 @@ impl OpLog {
             crate::parent::assert_local_parent_links_registered(&self.arena, &change);
         }
         self.register_container_and_parent_link(&change);
-        let update = if let Some(rollback) = self.import_rollback.as_mut() {
+        let (update, stored_ts) = if let Some(rollback) = self.import_rollback.as_mut() {
             let mut prev_op: Option<&crate::op::Op> = None;
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
@@ -422,19 +433,25 @@ impl OpLog {
                     });
                 }
             }
-            self.change_store.insert_change_with_rollback(
+            let ts = self.change_store.insert_change_with_rollback(
                 change,
                 true,
                 from_local,
                 &mut rollback.change_store,
             );
-            None
+            (None, ts)
         } else if encode_local_update {
             self.change_store.insert_change_with_local_update(change)
         } else {
-            self.change_store.insert_change(change, true, from_local);
-            None
+            let ts = self.change_store.insert_change(change, true, from_local);
+            (None, ts)
         };
+        self.dag.finish_head_summary_after_change(
+            pre_head_summary,
+            change_last_id,
+            change_end_lamport,
+            stored_ts,
+        );
         self.refresh_visible_op_count();
         update
     }
@@ -852,8 +869,9 @@ impl OpLog {
     }
 
     pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
-        self.get_change_at(id)
-            .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
+        self.change_store
+            .get_lamport_and_timestamp_at(id)
+            .map(|(lp, _)| lp)
     }
 
     pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp<'static>> + '_ {
@@ -941,6 +959,7 @@ impl OpLog {
     /// lookup change by id.
     ///
     /// if id does not included in this oplog, return None
+    #[allow(dead_code)]
     pub(crate) fn lookup_change(&self, id: ID) -> Option<BlockChangeRef> {
         self.change_store.get_change(id)
     }
@@ -1916,12 +1935,29 @@ impl OpLog {
     }
 
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
+        if frontiers.is_empty() {
+            return Timestamp::default();
+        }
+        let is_head = !self.dag.has_pending_txn() && frontiers == self.dag.frontiers();
+        if is_head {
+            if let Some(cached) = self.dag.cached_head_max_timestamp() {
+                return cached;
+            }
+        }
+
         let mut max_timestamp = Timestamp::default();
         for id in frontiers.iter() {
-            let change = self.get_change_at(id).unwrap();
-            if change.timestamp > max_timestamp {
-                max_timestamp = change.timestamp;
+            let ts = self
+                .change_store
+                .get_lamport_and_timestamp_at(id)
+                .map(|(_, ts)| ts)
+                .unwrap_or_else(|| self.get_change_at(id).unwrap().timestamp);
+            if ts > max_timestamp {
+                max_timestamp = ts;
             }
+        }
+        if is_head {
+            self.dag.set_cached_head_max_timestamp(max_timestamp);
         }
 
         max_timestamp

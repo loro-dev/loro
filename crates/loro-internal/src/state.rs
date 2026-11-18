@@ -1608,7 +1608,6 @@ impl DocState {
         }
 
         if !unknown_containers.is_empty() {
-            let mut diff_calc = DiffCalculator::new(false);
             let stack_vv;
             let vv = if oplog.frontiers() == &frontiers {
                 oplog.vv()
@@ -1617,7 +1616,7 @@ impl DocState {
                 stack_vv.as_ref().unwrap()
             };
 
-            let (unknown_diffs, _diff_mode) = diff_calc.calc_diff_internal(
+            let (unknown_diffs, _diff_mode) = DiffCalculator::new(false).calc_diff_internal(
                 oplog,
                 &Default::default(),
                 &Default::default(),

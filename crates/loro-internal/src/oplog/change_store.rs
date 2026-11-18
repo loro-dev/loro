@@ -1,12 +1,12 @@
 use self::block_encode::{
-    decode_block, decode_cids, decode_cids_in_header, decode_header, encode_block,
-    encode_block_with_header, ChangesBlockHeader,
+    decode_block, decode_cids, decode_cids_in_header, decode_header,
+    decode_lamport_and_timestamp_at, encode_block, encode_block_with_header, ChangesBlockHeader,
 };
 use super::{loro_dag::AppDagNodeInner, AppDagNode};
 use crate::sync::Mutex;
 use crate::{
     arena::{ArenaExtent, CreatorOp, SharedArena, SharedArenaRollback},
-    change::Change,
+    change::{Change, Timestamp},
     encoding::encode_single_change_fast_update,
     estimated_size::EstimatedSize,
     kv_store::{KvStore, SharedBlockCache},
@@ -651,8 +651,8 @@ impl ChangeStore {
             if oplog.change_store.contains_encoded_block(id, &bytes) {
                 continue;
             }
-            // import_all parsed the frontier blocks. Take their changes instead
-            // of parsing them again or cloning changes that will be dropped.
+            // Test builds of `import_all` may cache parsed blocks; take them directly
+            // instead of parsing again or cloning changes that will be dropped.
             if let Some(block) = inner.mem_parsed_kv.remove(&id) {
                 let block = Arc::try_unwrap(block).expect("temporary store owns its blocks");
                 match block.content {
@@ -1948,14 +1948,14 @@ mod mut_external_kv {
                     .map_err(|_| LoroError::DecodeDataCorruptionError)?
             };
 
-            for id in frontiers.iter() {
-                self.get_change(id)
-                    .ok_or(LoroError::DecodeDataCorruptionError)?;
-            }
+            let (next_lamport, max_timestamp) =
+                self.validate_frontiers_and_head_summary(&frontiers)?;
 
             Ok(BatchDecodeInfo {
                 vv,
                 frontiers,
+                next_lamport,
+                max_timestamp,
                 start_version: if start_vv.is_empty() {
                     None
                 } else {
@@ -1965,6 +1965,114 @@ mod mut_external_kv {
                     Some((start_vv, start_frontiers))
                 },
             })
+        }
+
+        fn validate_frontiers_and_head_summary(
+            &self,
+            frontiers: &Frontiers,
+        ) -> Result<(Lamport, Timestamp), LoroError> {
+            if frontiers.is_empty() {
+                return Ok((0, Timestamp::default()));
+            }
+            if let Some(id) = frontiers.as_single() {
+                let (lp, ts) = self
+                    .get_lamport_and_timestamp_at(id)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                return Ok((lp + 1, ts.max(Timestamp::default())));
+            }
+
+            let mut ids: Vec<ID> = frontiers.iter().collect();
+            ids.sort_unstable_by_key(|id| (id.peer, id.counter));
+            if ids.iter().any(|id| id.counter < 0) {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
+            let store = self.external_kv.lock();
+            let inner = self.inner.lock();
+            if inner.retired {
+                return Err(LoroError::DecodeDataCorruptionError);
+            }
+
+            let mut max_next_lamport: Lamport = 0;
+            let mut max_timestamp = Timestamp::default();
+
+            // Many-peer snapshots typically have one block per peer starting at counter 0.
+            // Because `ID::to_bytes()` is big-endian `(peer, counter)`, nonnegative IDs sorted
+            // by `(peer, 0)` match the SSTable's byte-lexicographic key order, allowing one
+            // sequential cursor pass instead of N binary searches.
+            if inner.mem_parsed_kv.is_empty()
+                && ids.len() >= 64
+                && ids.iter().all(|id| id.counter == 0)
+            {
+                drop(inner);
+                let first_key = ids.first().unwrap().to_bytes();
+                let last_key = ids.last().unwrap().to_bytes();
+                let mut scan = store
+                    .scan(Bound::Included(&first_key), Bound::Included(&last_key))
+                    .filter(|(k, _)| k.len() == 12);
+                let mut current = scan.next();
+                for &id in &ids {
+                    let target_key = id.to_bytes();
+                    while current
+                        .as_ref()
+                        .is_some_and(|(k, _)| k.as_ref() < target_key.as_slice())
+                    {
+                        current = scan.next();
+                    }
+                    let Some((k, bytes)) = current.take() else {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    };
+                    if k.as_ref() != target_key.as_slice() {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
+                    let (lp, ts) = decode_lamport_and_timestamp_at(&bytes, id, None)
+                        .map_err(|_| LoroError::DecodeDataCorruptionError)?
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
+                    max_next_lamport = max_next_lamport.max(lp + 1);
+                    max_timestamp = max_timestamp.max(ts);
+                    current = scan.next();
+                }
+                return Ok((max_next_lamport, max_timestamp));
+            }
+
+            let has_mem_blocks = !inner.mem_parsed_kv.is_empty();
+            if !has_mem_blocks {
+                drop(inner);
+                for &id in &ids {
+                    let key = id.to_bytes();
+                    let bytes = if id.counter == 0 {
+                        store
+                            .get(&key)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?
+                    } else {
+                        let (b_id, b_bytes) = store
+                            .scan(Bound::Unbounded, Bound::Included(&key))
+                            .rfind(|(k, _)| k.len() == 12)
+                            .ok_or(LoroError::DecodeDataCorruptionError)?;
+                        if ID::from_bytes(&b_id).peer != id.peer {
+                            return Err(LoroError::DecodeDataCorruptionError);
+                        }
+                        b_bytes
+                    };
+                    let (lp, ts) = decode_lamport_and_timestamp_at(&bytes, id, None)
+                        .map_err(|_| LoroError::DecodeDataCorruptionError)?
+                        .ok_or(LoroError::DecodeDataCorruptionError)?;
+                    max_next_lamport = max_next_lamport.max(lp + 1);
+                    max_timestamp = max_timestamp.max(ts);
+                }
+                return Ok((max_next_lamport, max_timestamp));
+            }
+            drop(inner);
+            drop(store);
+
+            for &id in &ids {
+                let (lp, ts) = self
+                    .get_lamport_and_timestamp_at(id)
+                    .ok_or(LoroError::DecodeDataCorruptionError)?;
+                max_next_lamport = max_next_lamport.max(lp + 1);
+                max_timestamp = max_timestamp.max(ts);
+            }
+            Ok((max_next_lamport, max_timestamp))
         }
 
         /// Flush the cached change to kv_store
@@ -2026,11 +2134,20 @@ mod mut_inner_kv {
         ///
         /// The new change either merges with the previous block or is put into a new block.
         /// This method only updates the internal kv store.
-        pub fn insert_change(&self, change: Change, split_when_exceeds: bool, is_local: bool) {
-            self.insert_change_inner(change, split_when_exceeds, is_local, None, false);
+        pub fn insert_change(
+            &self,
+            change: Change,
+            split_when_exceeds: bool,
+            is_local: bool,
+        ) -> Timestamp {
+            self.insert_change_inner(change, split_when_exceeds, is_local, None, false)
+                .1
         }
 
-        pub(crate) fn insert_change_with_local_update(&self, change: Change) -> Option<Vec<u8>> {
+        pub(crate) fn insert_change_with_local_update(
+            &self,
+            change: Change,
+        ) -> (Option<Vec<u8>>, Timestamp) {
             // Larger changes may be split into several wire blocks. A known-corrupt
             // store must also use the normal range export behavior.
             let encode_update = change.ops.len() <= 8 && self.corrupt_block_error().is_ok();
@@ -2043,8 +2160,9 @@ mod mut_inner_kv {
             split_when_exceeds: bool,
             is_local: bool,
             rollback: &mut ChangeStoreRollback,
-        ) {
-            self.insert_change_inner(change, split_when_exceeds, is_local, Some(rollback), false);
+        ) -> Timestamp {
+            self.insert_change_inner(change, split_when_exceeds, is_local, Some(rollback), false)
+                .1
         }
 
         fn insert_change_inner(
@@ -2054,7 +2172,7 @@ mod mut_inner_kv {
             is_local: bool,
             mut rollback: Option<&mut ChangeStoreRollback>,
             encode_update: bool,
-        ) -> Option<Vec<u8>> {
+        ) -> (Option<Vec<u8>>, Timestamp) {
             self.record_change_in_root_history_names(&change);
 
             #[cfg(debug_assertions)]
@@ -2067,8 +2185,8 @@ mod mut_inner_kv {
             let _e = s.enter();
             let estimated_size = change.estimate_storage_size();
             if estimated_size > MAX_BLOCK_SIZE && split_when_exceeds {
-                self.split_change_then_insert(change, rollback.as_deref_mut());
-                return None;
+                let stored_ts = self.split_change_then_insert(change, rollback.as_deref_mut());
+                return (None, stored_ts);
             }
 
             let id = change.id;
@@ -2099,16 +2217,17 @@ mod mut_inner_kv {
                         &self.arena,
                         encode_update,
                     ) {
-                        Ok(update) => {
+                        Ok((update, stored_ts)) => {
                             drop(inner);
                             debug_assert!(self.get_change(id).is_some());
-                            return update;
+                            return (update, stored_ts);
                         }
                         Err(c) => change = c,
                     }
                 }
             }
 
+            let stored_ts = change.timestamp;
             let update =
                 encode_update.then(|| encode_single_change_fast_update(&change, &self.arena));
             inner
@@ -2116,7 +2235,7 @@ mod mut_inner_kv {
                 .insert(id, Arc::new(ChangesBlock::new(change, &self.arena)));
             drop(inner);
             debug_assert!(self.get_change(id).is_some());
-            update
+            (update, stored_ts)
         }
 
         pub fn get_change(&self, id: ID) -> Option<BlockChangeRef> {
@@ -2126,6 +2245,103 @@ mod mut_inner_kv {
                 change_index: block.get_change_index_by_counter(id.counter).ok()?,
                 block: block.clone(),
             })
+        }
+
+        /// Resolve `(lamport, timestamp)` for `id` without decoding block operations/values
+        /// or caching cold blocks in `mem_parsed_kv`.
+        pub(crate) fn get_lamport_and_timestamp_at(&self, id: ID) -> Option<(Lamport, Timestamp)> {
+            if id.counter < 0 {
+                return None;
+            }
+            let lookup_mem = |inner: &ChangeStoreInner| {
+                let (&block_id, block) = inner.mem_parsed_kv.range(..=id).next_back()?;
+                if block.peer != id.peer || block.counter_range.1 <= id.counter {
+                    return None;
+                }
+                Some(match &block.content {
+                    ChangesBlockContent::Changes(changes)
+                    | ChangesBlockContent::Both(changes, _) => {
+                        let idx = block.get_change_index_by_counter(id.counter).ok()?;
+                        let c = changes.get(idx)?;
+                        Ok((
+                            c.lamport + (id.counter - c.id.counter) as Lamport,
+                            c.timestamp,
+                        ))
+                    }
+                    ChangesBlockContent::Bytes(bytes) => {
+                        Err((block_id, bytes.bytes.clone(), bytes.header.get().cloned()))
+                    }
+                })
+            };
+
+            {
+                let inner = self.inner.lock();
+                if inner.retired {
+                    return None;
+                }
+                match lookup_mem(&inner) {
+                    Some(Ok(res)) => return Some(res),
+                    Some(Err((block_id, bytes, header))) => {
+                        drop(inner);
+                        return match decode_lamport_and_timestamp_at(&bytes, id, header.as_deref())
+                        {
+                            Ok(res) => res,
+                            Err(err) => {
+                                self.parse_failures.record(block_id, &err);
+                                None
+                            }
+                        };
+                    }
+                    None => {}
+                }
+            }
+
+            // Lock order: `external_kv` before `inner`.
+            let store = self.external_kv.lock();
+            let inner = self.inner.lock();
+            if inner.retired {
+                return None;
+            }
+            match lookup_mem(&inner) {
+                Some(Ok(res)) => return Some(res),
+                Some(Err((block_id, bytes, header))) => {
+                    drop(inner);
+                    drop(store);
+                    return match decode_lamport_and_timestamp_at(&bytes, id, header.as_deref()) {
+                        Ok(res) => res,
+                        Err(err) => {
+                            self.parse_failures.record(block_id, &err);
+                            None
+                        }
+                    };
+                }
+                None => {}
+            }
+
+            let key = id.to_bytes();
+            let (block_id, b_bytes) = if id.counter == 0 {
+                let bytes = store.get(&key)?;
+                (id, bytes)
+            } else {
+                let (b_id, bytes) = store
+                    .scan(Bound::Unbounded, Bound::Included(&key))
+                    .rfind(|(k, _)| k.len() == 12)?;
+                let block_id = ID::from_bytes(&b_id);
+                if block_id.peer != id.peer {
+                    return None;
+                }
+                (block_id, bytes)
+            };
+            drop(inner);
+            drop(store);
+
+            match decode_lamport_and_timestamp_at(&b_bytes, id, None) {
+                Ok(res) => res,
+                Err(err) => {
+                    self.parse_failures.record(block_id, &err);
+                    None
+                }
+            }
         }
 
         /// Get the change with the given peer and lamport.
@@ -2347,8 +2563,9 @@ mod mut_inner_kv {
             &self,
             change: Change,
             mut rollback: Option<&mut ChangeStoreRollback>,
-        ) {
+        ) -> Timestamp {
             let original_len = change.atom_len();
+            let mut last_stored_ts = change.timestamp;
             let mut new_change = Change {
                 ops: RleVec::new(),
                 deps: change.deps,
@@ -2366,6 +2583,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        &mut last_stored_ts,
                         rollback.as_deref_mut(),
                     );
                 }
@@ -2380,6 +2598,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        &mut last_stored_ts,
                         rollback.as_deref_mut(),
                     );
 
@@ -2396,6 +2615,7 @@ mod mut_inner_kv {
                         new_change,
                         &mut total_len,
                         &mut estimated_size,
+                        &mut last_stored_ts,
                         rollback.as_deref_mut(),
                     );
                     new_change.ops.push(op);
@@ -2406,10 +2626,13 @@ mod mut_inner_kv {
 
             if !new_change.ops.is_empty() {
                 total_len += new_change.atom_len();
-                self.insert_change_inner(new_change, false, false, rollback, false);
+                last_stored_ts = self
+                    .insert_change_inner(new_change, false, false, rollback, false)
+                    .1;
             }
 
             assert_eq!(total_len, original_len);
+            last_stored_ts
         }
 
         fn _insert_splitted_change(
@@ -2417,6 +2640,7 @@ mod mut_inner_kv {
             new_change: Change,
             total_len: &mut usize,
             estimated_size: &mut usize,
+            last_stored_ts: &mut Timestamp,
             rollback: Option<&mut ChangeStoreRollback>,
         ) -> Change {
             if new_change.atom_len() == 0 {
@@ -2435,7 +2659,9 @@ mod mut_inner_kv {
                 commit_msg: new_change.commit_msg.clone(),
             };
 
-            self.insert_change_inner(new_change, false, false, rollback, false);
+            *last_stored_ts = self
+                .insert_change_inner(new_change, false, false, rollback, false)
+                .1;
             *estimated_size = ans.estimate_storage_size();
             ans
         }
@@ -2707,6 +2933,8 @@ mod mut_inner_kv {
 pub(crate) struct BatchDecodeInfo {
     pub vv: VersionVector,
     pub frontiers: Frontiers,
+    pub next_lamport: Lamport,
+    pub max_timestamp: Timestamp,
     pub start_version: Option<(VersionVector, Frontiers)>,
 }
 
@@ -2884,7 +3112,7 @@ impl ChangesBlock {
         merge_interval: i64,
         a: &SharedArena,
         encode_update: bool,
-    ) -> Result<Option<Vec<u8>>, Change> {
+    ) -> Result<(Option<Vec<u8>>, Timestamp), Change> {
         if self.counter_range.1 != change.id.counter {
             return Err(change);
         }
@@ -2898,13 +3126,14 @@ impl ChangesBlock {
         this.parsed_bytes.invalidate();
         let changes = this.content.changes_mut(a).unwrap();
         let changes = Arc::make_mut(changes);
-        let update = match changes.last_mut() {
+        let (update, stored_ts) = match changes.last_mut() {
             Some(last)
                 if last.can_merge_right(&change, merge_interval)
                     && (!is_full
                         || (change.ops.len() == 1
                             && last.ops.last().unwrap().is_mergable(&change.ops[0], &()))) =>
             {
+                let stored_ts = last.timestamp;
                 let start = (change.id.counter - last.id.counter) as usize;
                 // A delete run can change direction when it coalesces across
                 // the boundary. Encode its stored slice to retain the op bytes.
@@ -2926,7 +3155,7 @@ impl ChangesBlock {
                         this.estimated_size += size;
                     }
                 }
-                if let Some(bytes) = before_merge {
+                let update = if let Some(bytes) = before_merge {
                     debug_assert_eq!(
                         bytes,
                         encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
@@ -2936,17 +3165,19 @@ impl ChangesBlock {
                     encode_update.then(|| {
                         encode_single_change_fast_update(&last.slice(start, start + atom_len), a)
                     })
-                }
+                };
+                (update, stored_ts)
             }
             _ => {
                 if is_full {
                     return Err(change);
                 } else {
                     this.estimated_size += new_change_size;
+                    let stored_ts = change.timestamp;
                     let update =
                         encode_update.then(|| encode_single_change_fast_update(&change, a));
                     changes.push(change);
-                    update
+                    (update, stored_ts)
                 }
             }
         };
@@ -2954,7 +3185,7 @@ impl ChangesBlock {
         this.flushed = false;
         this.counter_range.1 = next_counter;
         this.lamport_range.1 = next_lamport;
-        Ok(update)
+        Ok((update, stored_ts))
     }
 
     fn to_bytes(self: &mut Arc<Self>, a: &SharedArena) -> ChangesBlockBytes {
@@ -3343,7 +3574,7 @@ mod test {
             oplog.change_store.encode_all(oplog.vv(), oplog.frontiers())
         };
         let store = ChangeStore::new_for_test();
-        store.import_all(bytes).unwrap();
+        let _ = store.import_all(bytes).unwrap();
         let (id, block_bytes) = store
             .external_kv
             .lock()

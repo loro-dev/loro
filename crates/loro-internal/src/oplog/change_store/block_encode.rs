@@ -79,7 +79,10 @@ use rle::HasLength;
 use serde::{Deserialize, Serialize};
 use serde_columnar::{columnar, AnyRleDecoder, Itertools};
 
-use super::block_meta_encode::{decode_changes_header, decode_delta_of_delta};
+use super::block_meta_encode::{
+    decode_change_index_and_lamport_at, decode_changes_header, decode_delta_of_delta,
+    decode_nth_delta_of_delta_i64,
+};
 use crate::arena::SharedArena;
 use crate::change::{Change, Timestamp};
 use crate::container::list::list_op::InnerListOp;
@@ -656,6 +659,74 @@ pub fn decode_block_range(
                 .ok_or(LoroError::DecodeDataCorruptionError)?,
         ),
     ))
+}
+
+/// Read `(lamport, timestamp)` for `id` from an encoded block without decoding
+/// ops, values, keys, or container IDs, and without registering anything in `SharedArena`.
+pub(super) fn decode_lamport_and_timestamp_at(
+    bytes: &[u8],
+    id: ID,
+    header: Option<&ChangesBlockHeader>,
+) -> LoroResult<Option<(Lamport, Timestamp)>> {
+    let doc: EncodedBlock<'_> = postcard::from_bytes(bytes)
+        .map_err(|e| LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str()))?;
+    let n_changes = doc.n_changes as usize;
+    if n_changes == 0 || n_changes - 1 > doc.header.len() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+
+    let (change_idx, lamport) = if let Some(header) = header {
+        if n_changes != header.n_changes {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        if header.peer != id.peer {
+            return Ok(None);
+        }
+        let start = *header
+            .counters
+            .first()
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        let end = *header
+            .counters
+            .last()
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        if id.counter < start || id.counter >= end {
+            return Ok(None);
+        }
+        let idx = match header.counters[..n_changes].binary_search(&id.counter) {
+            Ok(i) => i,
+            Err(i) => i
+                .checked_sub(1)
+                .ok_or(LoroError::DecodeDataCorruptionError)?,
+        };
+        let change_start = header.counters[idx];
+        let lp = header.lamports[idx]
+            .checked_add((id.counter - change_start) as Lamport)
+            .ok_or(LoroError::DecodeDataCorruptionError)?;
+        (idx, lp)
+    } else {
+        let first_counter = Counter::try_from(doc.counter_start)
+            .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+        let counter_len =
+            Counter::try_from(doc.counter_len).map_err(|_| LoroError::DecodeDataCorruptionError)?;
+        let Some(found) = decode_change_index_and_lamport_at(
+            &doc.header,
+            n_changes,
+            first_counter,
+            counter_len,
+            doc.lamport_start,
+            doc.lamport_len,
+            id,
+        )?
+        else {
+            return Ok(None);
+        };
+        found
+    };
+
+    let (timestamp, _) = decode_nth_delta_of_delta_i64(&doc.change_meta, n_changes, change_idx)?;
+    let timestamp = timestamp.ok_or(LoroError::DecodeDataCorruptionError)?;
+    Ok(Some((lamport, timestamp)))
 }
 
 /// Ensure the cids in header are decoded
