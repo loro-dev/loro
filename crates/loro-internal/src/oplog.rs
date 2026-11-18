@@ -40,7 +40,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub use self::loro_dag::{AppDag, AppDagNode, FrontiersNotIncluded};
-pub(crate) use change_store::encode_change_block;
+pub(crate) use change_store::{encode_change_block, encode_single_op_update};
 pub use change_store::{BlockChangeRef, ChangeStore};
 
 /// [OpLog] store all the ops i.e. the history.
@@ -325,10 +325,18 @@ impl OpLog {
     }
 
     pub fn get_timestamp_of_version(&self, f: &Frontiers) -> Timestamp {
+        if f.is_empty() {
+            return Timestamp::default();
+        }
+        if !self.dag.has_pending_txn() && f == self.dag.frontiers() {
+            if let Some(cached) = self.dag.cached_head_max_timestamp() {
+                return cached;
+            }
+        }
         let mut timestamp = Timestamp::default();
         for id in f.iter() {
-            if let Some(change) = self.lookup_change(id) {
-                timestamp = timestamp.max(change.timestamp);
+            if let Some((_, ts)) = self.change_store.get_lamport_and_timestamp_at(id) {
+                timestamp = timestamp.max(ts);
             }
         }
 
@@ -344,6 +352,15 @@ impl OpLog {
 
     /// This is the **only** place to update the `OpLog.changes`
     pub(crate) fn insert_new_change(&mut self, change: Change, from_local: bool) {
+        self.insert_new_change_inner(change, from_local, false);
+    }
+
+    fn insert_new_change_inner(
+        &mut self,
+        change: Change,
+        from_local: bool,
+        encode_local_update: bool,
+    ) -> Option<Vec<u8>> {
         let s = trace_span!(
             "insert_new_change",
             id = ?change.id,
@@ -356,7 +373,10 @@ impl OpLog {
             .as_ref()
             .map(|x| x.change_store.old_vv())
             .filter(|vv| !vv.is_empty());
-        self.dag
+        let change_last_id = change.id_last();
+        let change_end_lamport = change.lamport_end();
+        let pre_head_summary = self
+            .dag
             .handle_new_change(&change, from_local, rollback_old_vv);
         self.history_cache
             .lock()
@@ -366,7 +386,7 @@ impl OpLog {
             crate::parent::assert_local_parent_links_registered(&self.arena, &change);
         }
         self.register_container_and_parent_link(&change);
-        if let Some(rollback) = self.import_rollback.as_mut() {
+        let (update, stored_ts) = if let Some(rollback) = self.import_rollback.as_mut() {
             let mut prev_op: Option<&crate::op::Op> = None;
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
@@ -413,16 +433,27 @@ impl OpLog {
                     });
                 }
             }
-            self.change_store.insert_change_with_rollback(
+            let ts = self.change_store.insert_change_with_rollback(
                 change,
                 true,
                 from_local,
                 &mut rollback.change_store,
             );
+            (None, ts)
+        } else if encode_local_update {
+            self.change_store.insert_change_with_local_update(change)
         } else {
-            self.change_store.insert_change(change, true, from_local);
-        }
+            let ts = self.change_store.insert_change(change, true, from_local);
+            (None, ts)
+        };
+        self.dag.finish_head_summary_after_change(
+            pre_head_summary,
+            change_last_id,
+            change_end_lamport,
+            stored_ts,
+        );
         self.refresh_visible_op_count();
+        update
     }
 
     pub(crate) fn begin_import_rollback(&mut self) {
@@ -712,7 +743,11 @@ impl OpLog {
     ///
     /// - Return Err(LoroError::UsedOpID) when the change's id is occupied
     /// - Return Err(LoroError::DecodeError) when the change's deps are missing
-    pub(crate) fn import_local_change(&mut self, change: Change) -> Result<(), LoroError> {
+    pub(crate) fn import_local_change(
+        &mut self,
+        change: Change,
+        encode_update: bool,
+    ) -> Result<Option<Vec<u8>>, LoroError> {
         // Checked when the transaction starts, and imports are rejected until it ends.
         debug_assert_eq!(
             self.pending_changes
@@ -721,8 +756,7 @@ impl OpLog {
             "local change {} under parked history",
             change.id,
         );
-        self.insert_new_change(change, true);
-        Ok(())
+        Ok(self.insert_new_change_inner(change, true, encode_update))
     }
 
     /// Trim the known part of change
@@ -835,8 +869,9 @@ impl OpLog {
     }
 
     pub(crate) fn get_lamport_at(&self, id: ID) -> Option<Lamport> {
-        self.get_change_at(id)
-            .map(|c| c.lamport + (id.counter - c.id.counter) as Lamport)
+        self.change_store
+            .get_lamport_and_timestamp_at(id)
+            .map(|(lp, _)| lp)
     }
 
     pub(crate) fn iter_ops(&self, id_span: IdSpan) -> impl Iterator<Item = RichOp<'static>> + '_ {
@@ -924,6 +959,7 @@ impl OpLog {
     /// lookup change by id.
     ///
     /// if id does not included in this oplog, return None
+    #[allow(dead_code)]
     pub(crate) fn lookup_change(&self, id: ID) -> Option<BlockChangeRef> {
         self.change_store.get_change(id)
     }
@@ -1899,12 +1935,29 @@ impl OpLog {
     }
 
     pub fn get_greatest_timestamp(&self, frontiers: &Frontiers) -> Timestamp {
+        if frontiers.is_empty() {
+            return Timestamp::default();
+        }
+        let is_head = !self.dag.has_pending_txn() && frontiers == self.dag.frontiers();
+        if is_head {
+            if let Some(cached) = self.dag.cached_head_max_timestamp() {
+                return cached;
+            }
+        }
+
         let mut max_timestamp = Timestamp::default();
         for id in frontiers.iter() {
-            let change = self.get_change_at(id).unwrap();
-            if change.timestamp > max_timestamp {
-                max_timestamp = change.timestamp;
+            let ts = self
+                .change_store
+                .get_lamport_and_timestamp_at(id)
+                .map(|(_, ts)| ts)
+                .unwrap_or_else(|| self.get_change_at(id).unwrap().timestamp);
+            if ts > max_timestamp {
+                max_timestamp = ts;
             }
+        }
+        if is_head {
+            self.dag.set_cached_head_max_timestamp(max_timestamp);
         }
 
         max_timestamp

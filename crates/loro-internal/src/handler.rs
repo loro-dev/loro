@@ -164,13 +164,27 @@ pub trait HandlerTrait: Clone + Sized {
 }
 
 fn create_handler(inner: &BasicHandler, id: ContainerID) -> Handler {
-    Handler::new_attached(id, inner.doc.clone())
+    Handler::new_attached_with_doc(id, inner.doc.clone())
 }
 
 fn value_to_value_or_handler(inner: &BasicHandler, value: LoroValue) -> ValueOrHandler {
     match value {
         LoroValue::Container(container_id) => {
             ValueOrHandler::Handler(create_handler(inner, container_id))
+        }
+        value => ValueOrHandler::Value(value),
+    }
+}
+
+fn value_to_shared_handler(
+    inner: &BasicHandler,
+    shared: &mut Option<BasicHandler>,
+    value: LoroValue,
+) -> ValueOrHandler {
+    match value {
+        LoroValue::Container(container_id) => {
+            let shared = shared.get_or_insert_with(|| inner.shared_for_children());
+            ValueOrHandler::Handler(create_handler(shared, container_id))
         }
         value => ValueOrHandler::Value(value),
     }
@@ -295,7 +309,24 @@ fn ensure_no_unknown_container_in_attached(handler: &Handler) -> LoroResult<()> 
 pub struct BasicHandler {
     id: ContainerID,
     container_idx: ContainerIdx,
-    doc: LoroDoc,
+    doc: HandlerDoc,
+}
+
+#[derive(Clone, Debug)]
+enum HandlerDoc {
+    Direct(LoroDoc),
+    Shared(Arc<LoroDoc>),
+}
+
+impl std::ops::Deref for HandlerDoc {
+    type Target = LoroDoc;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Direct(doc) => doc,
+            Self::Shared(doc) => doc,
+        }
+    }
 }
 
 struct DetachedInner<T> {
@@ -364,14 +395,24 @@ impl<T> From<BasicHandler> for MaybeDetached<T> {
 
 impl BasicHandler {
     pub(crate) fn doc(&self) -> LoroDoc {
-        self.doc.clone()
+        (*self.doc).clone()
+    }
+
+    fn shared_for_children(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            container_idx: self.container_idx,
+            doc: match &self.doc {
+                HandlerDoc::Direct(doc) => HandlerDoc::Shared(Arc::new(doc.clone())),
+                HandlerDoc::Shared(doc) => HandlerDoc::Shared(doc.clone()),
+            },
+        }
     }
 
     #[inline]
     fn with_doc_state<R>(&self, f: impl FnOnce(&mut DocState) -> R) -> R {
         self.doc.touch_access_tick();
-        let state = self.doc.state.clone();
-        let mut guard = state.lock();
+        let mut guard = self.doc.state.lock();
         f(&mut guard)
     }
 
@@ -1274,9 +1315,28 @@ impl Handler {
     }
 
     pub(crate) fn new_attached(id: ContainerID, doc: LoroDoc) -> Self {
+        Self::new_attached_with_doc(id, HandlerDoc::Direct(doc))
+    }
+
+    #[inline]
+    pub(crate) fn new_attached_with_idx(
+        id: ContainerID,
+        container_idx: ContainerIdx,
+        doc: LoroDoc,
+    ) -> Self {
+        Self::new_attached_inner(id, container_idx, HandlerDoc::Direct(doc))
+    }
+
+    fn new_attached_with_doc(id: ContainerID, doc: HandlerDoc) -> Self {
+        let container_idx = doc.arena.register_container(&id);
+        Self::new_attached_inner(id, container_idx, doc)
+    }
+
+    #[inline]
+    fn new_attached_inner(id: ContainerID, container_idx: ContainerIdx, doc: HandlerDoc) -> Self {
         let kind = id.container_type();
         let handler = BasicHandler {
-            container_idx: doc.arena.register_container(&id),
+            container_idx,
             id,
             doc,
         };
@@ -3557,11 +3617,12 @@ impl ListHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_list_values(inner.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(inner, value))
+                        .map(|value| value_to_shared_handler(inner, &mut shared, value))
                         .collect::<Vec<_>>()
                 });
                 for v in temp.into_iter() {
@@ -4273,11 +4334,12 @@ impl MovableListHandler {
                 }
             }
             MaybeDetached::Attached(m) => {
+                let mut shared = None;
                 let temp = m.with_doc_state(|state| {
                     state
                         .get_list_values(m.container_idx)
                         .into_iter()
-                        .map(|value| value_to_value_or_handler(m, value))
+                        .map(|value| value_to_shared_handler(m, &mut shared, value))
                         .collect::<Vec<_>>()
                 });
 
@@ -4658,6 +4720,7 @@ impl MapHandler {
                 }
             }
             MaybeDetached::Attached(inner) => {
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_map_entries(inner.container_idx)
@@ -4670,14 +4733,14 @@ impl MapHandler {
                             );
                             (
                                 key.to_string(),
-                                value_to_value_or_handler(inner, translated),
+                                value_to_shared_handler(inner, &mut shared, translated),
                             )
                         })
                         .collect::<Vec<_>>()
                 });
 
                 for (k, v) in temp.into_iter() {
-                    f(&k, v.clone());
+                    f(&k, v);
                 }
             }
         }
@@ -4694,6 +4757,7 @@ impl MapHandler {
             // Detached callbacks retain the public iterator's original lock behavior.
             MaybeDetached::Detached(_) => self.for_each(|_, value| f(value)),
             MaybeDetached::Attached(inner) => {
+                let mut shared = None;
                 let temp = inner.with_doc_state(|state| {
                     state
                         .get_map_entries(inner.container_idx)
@@ -4704,14 +4768,13 @@ impl MapHandler {
                                 key.as_ref(),
                                 value,
                             );
-                            value_to_value_or_handler(inner, translated)
+                            value_to_shared_handler(inner, &mut shared, translated)
                         })
                         .collect::<Vec<_>>()
                 });
 
-                // Preserve the original value clone/drop sequence around each callback.
                 for value in temp.into_iter() {
-                    f(value.clone());
+                    f(value);
                 }
             }
         }
@@ -5262,6 +5325,32 @@ mod test {
     use crate::{fx_map, ToJson};
     use loro_common::{ContainerID, ContainerType, LoroError, LoroValue, ID};
     use serde_json::json;
+
+    #[test]
+    fn scalar_iteration_does_not_add_document_owners() {
+        let doc = LoroDoc::new_auto_commit();
+        let list = doc.get_list("list");
+        let movable = doc.get_movable_list("movable");
+        for value in 0..8 {
+            list.push(value).unwrap();
+            movable.push(value.into()).unwrap();
+        }
+        doc.commit_then_renew();
+        let count_owners = || doc.user_handles.load(std::sync::atomic::Ordering::Relaxed);
+        let owners = count_owners();
+        let mut visited = 0;
+        list.for_each(|value| {
+            assert!(matches!(value, ValueOrHandler::Value(_)));
+            assert_eq!(count_owners(), owners);
+            visited += 1;
+        });
+        movable.for_each(|value| {
+            assert!(matches!(value, ValueOrHandler::Value(_)));
+            assert_eq!(count_owners(), owners);
+            visited += 1;
+        });
+        assert_eq!(visited, 16);
+    }
 
     fn recheck_fast_blob(mut bytes: Vec<u8>) -> Vec<u8> {
         let checksum = xxhash_rust::xxh32::xxh32(&bytes[20..], u32::from_le_bytes(*b"LORO"));

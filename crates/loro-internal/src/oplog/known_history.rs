@@ -1433,7 +1433,7 @@ mod two_arena_tests {
         }
         let bytes = forged.encode_all(oplog.vv(), oplog.frontiers());
         let local = crate::OpLog::new(Default::default());
-        local.change_store.import_all(bytes).unwrap();
+        let _ = local.change_store.import_all(bytes).unwrap();
         let arena = SharedArena::new();
         let incoming = text_change(&arena, &"a".repeat(40));
         let err = local

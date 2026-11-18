@@ -160,6 +160,18 @@ impl InnerStore {
     }
 
     #[inline]
+    fn get_entry_mut_preserve_state_bytes(
+        &mut self,
+        idx: ContainerIdx,
+    ) -> Option<&mut ContainerWrapper> {
+        let (page_idx, offset) = Self::page_and_offset(Self::slot(idx));
+        let page = self.pages.get_mut(page_idx)?.as_mut()?;
+        let entry = page.slots.get_mut(offset)?.as_mut()?;
+        debug_assert_eq!(entry.kind(), idx.get_type());
+        Some(entry)
+    }
+
+    #[inline]
     fn contains_idx_in(pages: &[Option<Box<StorePage>>], idx: ContainerIdx) -> bool {
         let (page_idx, offset) = Self::page_and_offset(Self::slot(idx));
         pages
@@ -378,10 +390,20 @@ impl InnerStore {
         idx: ContainerIdx,
         f: impl FnOnce(&mut ContainerWrapper) -> R,
     ) -> Option<R> {
-        if let Some(entry) = self.get_entry_mut(idx) {
-            let ans = f(entry);
-            self.track_value_cache(idx);
-            return Some(ans);
+        let (page_idx, offset) = Self::page_and_offset(Self::slot(idx));
+        if let Some(page) = self.pages.get_mut(page_idx).and_then(Option::as_mut) {
+            if let Some(entry) = page.slots.get_mut(offset).and_then(Option::as_mut) {
+                debug_assert_eq!(entry.kind(), idx.get_type());
+                let was_fully_materialized = entry.is_fully_materialized_state();
+                let ans = f(entry);
+                if !was_fully_materialized && entry.is_materialized_state() {
+                    page.cached_state_bytes.set(None);
+                }
+                if entry.needs_value_cache_tracking() && !entry.try_mark_value_cache_hit() {
+                    self.track_value_cache(idx);
+                }
+                return Some(ans);
+            }
         }
 
         let id = self.arena.get_container_id(idx).unwrap();
@@ -409,7 +431,7 @@ impl InnerStore {
     /// the KV store.
     fn track_value_cache(&mut self, idx: ContainerIdx) {
         let Some((old_bytes, new_bytes, need_enqueue)) = ({
-            let Some(entry) = self.get_entry_mut(idx) else {
+            let Some(entry) = self.get_entry_mut_preserve_state_bytes(idx) else {
                 return;
             };
             if !entry.is_evictable_cached_value() {
@@ -474,7 +496,7 @@ impl InnerStore {
                 Evict,
             }
             let mut dropped_bytes = 0usize;
-            let action = match self.get_entry_mut(victim) {
+            let action = match self.get_entry_mut_preserve_state_bytes(victim) {
                 Some(entry) if entry.is_evictable_cached_value() => {
                     if entry.take_value_cache_referenced() {
                         Action::Requeue
@@ -1183,6 +1205,67 @@ mod tests {
             let _ = doc.memory_stats();
         }
         PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 20));
+    }
+
+    #[test]
+    fn read_only_hits_do_not_recompute_page_statistics() {
+        let doc = crate::LoroDoc::new_auto_commit();
+        let map = doc.get_map("map");
+        map.insert("v", 42).unwrap();
+        let list = doc.get_list("list");
+        list.push("item").unwrap();
+        let text = doc.get_text("text");
+        text.insert(0, "hello", crate::cursor::PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+
+        // Import into a fresh doc so `text` starts as unmaterialized `LazyLoad::Src`.
+        let snapshot = doc.export(crate::encoding::ExportMode::Snapshot).unwrap();
+        let loaded = crate::LoroDoc::new_auto_commit();
+        loaded.import(&snapshot).unwrap();
+        let loaded_map = loaded.get_map("map");
+        let loaded_list = loaded.get_list("list");
+        let loaded_text = loaded.get_text("text");
+        // Materialize map and list first, leaving text as `LazyLoad::Src` in its wrapper.
+        assert_eq!(loaded_map.get("v"), Some(42.into()));
+        assert_eq!(loaded_list.get(0), Some("item".into()));
+        let _ = loaded.memory_stats();
+
+        PAGE_STATS_RECOMPUTES.with(|n| n.set(0));
+        // Repeated read-only hits on materialized map/list do not invalidate page stats.
+        for _ in 0..10 {
+            assert_eq!(loaded_map.get("v"), Some(42.into()));
+            assert_eq!(loaded_list.get(0), Some("item".into()));
+            let _ = loaded.memory_stats();
+        }
+        PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 0));
+
+        // `to_string` decodes `LazyDecodedValue::Text` without materializing `State`,
+        // so page state statistics stay valid across both initial decode and cache hits.
+        for _ in 0..10 {
+            assert_eq!(loaded_text.to_string(), "hello");
+            let _ = loaded.memory_stats();
+        }
+        PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 0));
+
+        // `slice` materializes `State::RichtextState`, invalidating the page once;
+        // subsequent reads on the materialized text state do not recompute page stats.
+        assert_eq!(
+            loaded_text
+                .slice(0, 5, crate::cursor::PosType::Unicode)
+                .unwrap(),
+            "hello"
+        );
+        let _ = loaded.memory_stats();
+        PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 1));
+
+        PAGE_STATS_RECOMPUTES.with(|n| n.set(0));
+        for _ in 0..10 {
+            assert_eq!(loaded_text.to_string(), "hello");
+            assert_eq!(loaded_text.len_unicode(), 5);
+            let _ = loaded.memory_stats();
+        }
+        PAGE_STATS_RECOMPUTES.with(|n| assert_eq!(n.get(), 0));
     }
 
     #[test]

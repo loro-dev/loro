@@ -1,0 +1,2 @@
+29820009babe347bf71a3298b5c7c9f676cf2ddd18c6853940593c31c642e443  /workspace/loro-optimization/20261118/pr1314-final/binaries/fixed
+6e9e01c77fc41c5e4aeaa7c5af19edd08820e1430e21dc5a6b771bc1ffe0b6a9  /workspace/loro-optimization/20261118/pr1314-final/binaries/fixed-scalars

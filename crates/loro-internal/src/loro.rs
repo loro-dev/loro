@@ -230,6 +230,7 @@ impl LoroDoc {
                 pre_commit_subs: SubscriberSetWithQueue::new(),
                 first_commit_from_peer_subs: SubscriberSetWithQueue::new(),
                 undo_managers: crate::sync::Mutex::new(Vec::new()),
+                active_undo_managers: std::sync::atomic::AtomicUsize::new(0),
                 memory_budget: crate::sync::Mutex::new(MemoryBudget::default()),
                 budget_flags: std::sync::atomic::AtomicU8::new(0),
                 kv_block_cache,
@@ -239,11 +240,11 @@ impl LoroDoc {
                 stats_dirty: Arc::new(DocStatsDirty::new(pool_doc_id)),
                 soft_backoff: SoftBackoff::new(),
                 last_access_tick: std::sync::atomic::AtomicU64::new(initial_tick),
-                drop_gate: Default::default(),
+                user_handles: crate::sync::AtomicUsize::new(1),
             }
         });
         if pool_doc_id != 0 {
-            global_pool().register(pool_doc_id, Arc::downgrade(&inner), inner.drop_gate.clone());
+            global_pool().register(pool_doc_id, Arc::downgrade(&inner));
             // After registering: a mark pushes the id, and the refresh of a pushed id
             // must find the document in the registry.
             let dirty = &inner.stats_dirty;
@@ -254,7 +255,7 @@ impl LoroDoc {
             inner.arena.set_stats_dirty(dirty.clone());
             // `register` queued it (it starts dirty); the next estimate computes it.
         }
-        LoroDoc::from_inner(inner)
+        LoroDoc::from_new_inner(inner)
     }
 
     pub fn fork(&self) -> Self {
@@ -474,7 +475,7 @@ impl LoroDoc {
             let Some(mut txn) = txn else {
                 return Ok((None, Some(txn_guard)));
             };
-            let on_commit = txn.take_on_commit();
+            let emit_on_commit = txn.take_emit_on_commit();
             if let Some(origin) = config.origin.clone() {
                 txn.set_origin(origin);
             }
@@ -488,7 +489,8 @@ impl LoroDoc {
             }
 
             let id_span = txn.id_span();
-            let mut options = txn.commit_deferring_panic(panic).unwrap();
+            let (mut options, post_commit) =
+                txn.commit_deferring_panic(panic, emit_on_commit).unwrap();
             // Empty commit returns Some(options). We may preserve parts of it for implicit commits.
             if let Some(opts) = options.as_mut() {
                 // `origin` is an event-only label and never carries across an empty commit
@@ -504,14 +506,18 @@ impl LoroDoc {
                 *txn_guard = self.auto_commit_txn(options.clone());
             }
 
-            if let Some(on_commit) = on_commit {
+            if emit_on_commit && self.has_post_commit_work(&post_commit.events, id_span) {
                 drop(txn_guard);
-                on_commit(&self.state, &self.oplog, id_span);
-                txn_guard = self.txn.lock();
-                if !config.immediate_renew && txn_guard.is_some() {
-                    // make sure that txn_guard is None when config.immediate_renew is false
-                    continue;
+                self.emit_post_commit(post_commit, id_span);
+                if !config.immediate_renew {
+                    txn_guard = self.txn.lock();
+                    if txn_guard.is_some() {
+                        // make sure that txn_guard is None when config.immediate_renew is false
+                        continue;
+                    }
+                    return Ok((options, Some(txn_guard)));
                 }
+                return Ok((options, None));
             }
 
             return Ok((
@@ -1154,8 +1160,7 @@ impl LoroDoc {
             let old_frontiers = oplog.frontiers().clone();
             let result = f(&mut oplog);
             if &old_vv != oplog.vv() {
-                let mut diff = DiffCalculator::new(false);
-                let computed = diff.try_calc_diff_internal(
+                let computed = DiffCalculator::new(false).try_calc_diff_internal(
                     &oplog,
                     &old_vv,
                     &old_frontiers,
@@ -1527,6 +1532,7 @@ impl LoroDoc {
                 panic!("state apply returned Err for import without rollback guard: {e}");
             }
             materialize_touched_roots(&mut state, &calc, &oplog.arena);
+            drop(calc);
             if rollback_enabled {
                 if let Some(undo) = undo {
                     self.enforce_watermarks_locked(&oplog, &mut state, 0, false);
@@ -1743,22 +1749,22 @@ impl LoroDoc {
 
     #[inline]
     pub fn get_handler(&self, id: ContainerID) -> Option<Handler> {
-        if self.has_container(&id) {
-            self.ensure_root_container(&id);
-            Some(Handler::new_attached(id, self.clone()))
-        } else {
-            None
-        }
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Some(Handler::new_attached_with_idx(id, idx, self.clone()))
     }
 
     #[inline]
-    fn ensure_root_container(&self, id: &ContainerID) {
+    fn resolve_and_ensure_container(&self, id: &ContainerID) -> Option<ContainerIdx> {
         // Mergeable roots stay lazily materialized: their existence is derived from the
         // parent map's child ref, and a store entry only appears once the child gets its
         // own ops (or via the shallow-export alive walk).
         if id.is_root() && !id.is_mergeable() {
-            self.state.lock().ensure_container(id);
+            return Some(self.state.lock().ensure_container(id));
         }
+        if !self.state.lock().does_container_exist(id) {
+            return None;
+        }
+        Some(self.arena.register_container(id))
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1767,11 +1773,10 @@ impl LoroDoc {
     pub fn try_get_text<I: IntoContainerId>(&self, id: I) -> Option<TextHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Text);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_text().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_text()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1788,11 +1793,10 @@ impl LoroDoc {
     pub fn try_get_list<I: IntoContainerId>(&self, id: I) -> Option<ListHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::List);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_list().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_list()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1809,11 +1813,8 @@ impl LoroDoc {
     pub fn try_get_movable_list<I: IntoContainerId>(&self, id: I) -> Option<MovableListHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::MovableList);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone())
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
             .into_movable_list()
             .ok()
     }
@@ -1832,11 +1833,10 @@ impl LoroDoc {
     pub fn try_get_map<I: IntoContainerId>(&self, id: I) -> Option<MapHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Map);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_map().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_map()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1853,11 +1853,10 @@ impl LoroDoc {
     pub fn try_get_tree<I: IntoContainerId>(&self, id: I) -> Option<TreeHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Tree);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_tree().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_tree()
+            .ok()
     }
 
     /// id can be a str, ContainerID, or ContainerIdRaw.
@@ -1875,11 +1874,10 @@ impl LoroDoc {
     ) -> Option<crate::handler::counter::CounterHandler> {
         self.touch_access_tick();
         let id = id.into_container_id(&self.arena, ContainerType::Counter);
-        if !self.has_container(&id) {
-            return None;
-        }
-        self.ensure_root_container(&id);
-        Handler::new_attached(id, self.clone()).into_counter().ok()
+        let idx = self.resolve_and_ensure_container(&id)?;
+        Handler::new_attached_with_idx(id, idx, self.clone())
+            .into_counter()
+            .ok()
     }
 
     #[cfg(feature = "counter")]
@@ -3430,15 +3428,17 @@ impl LoroDoc {
 
         let values = imported_values_for_mode(json_lossy);
         // Metadata that does not decode fails the batch before anything is imported.
+        let mut scratch = BatchUpdateScratch::default();
         let blobs = bytes
             .iter()
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = LoroDoc::decode_import_blob_meta(blob, false)?;
+                let meta = BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Slice(blob.as_slice())))
             })
             .collect::<LoroResult<Vec<_>>>()?;
+        drop(scratch);
         self.finish_batch_status(blobs, values)
     }
 
@@ -3459,15 +3459,18 @@ impl LoroDoc {
         }
 
         let values = imported_values_for_mode(json_lossy);
+        let mut scratch = BatchUpdateScratch::default();
         let blobs = bytes
             .into_iter()
             .enumerate()
             .map(|(index, blob)| {
                 self.check_import_blob_limit(blob.len())?;
-                let meta = LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false)?;
+                let meta =
+                    BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Bytes(blob)))
             })
             .collect::<LoroResult<Vec<_>>>()?;
+        drop(scratch);
         self.finish_batch_status(blobs, values)
     }
 
@@ -3495,14 +3498,16 @@ impl LoroDoc {
         let sources = blobs
             .into_iter()
             .enumerate()
-            .map(|(index, (meta, load))| (index, meta, BatchBlobSource::Loader(Box::new(load))))
+            .map(|(index, (meta, load))| {
+                (index, meta.into(), BatchBlobSource::Loader(Box::new(load)))
+            })
             .collect();
         self.finish_batch_status(sources, values)
     }
 
     fn finish_batch_status(
         &self,
-        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         values: ImportedValues,
     ) -> LoroResult<ImportStatus> {
         let run = self.import_blobs_as_batch(blobs, values)?;
@@ -3578,12 +3583,13 @@ impl LoroDoc {
             return self.import_single_detailed(|| Ok(ImportInput::Slice(&bytes[0])), values);
         }
 
+        let mut scratch = BatchUpdateScratch::default();
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(bytes.len());
         let mut blobs = Vec::with_capacity(bytes.len());
         for (index, blob) in bytes.iter().enumerate() {
             match self
                 .check_import_blob_limit(blob.len())
-                .and_then(|()| LoroDoc::decode_import_blob_meta(blob, false))
+                .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch))
             {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Slice(blob.as_slice())));
@@ -3593,6 +3599,7 @@ impl LoroDoc {
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
         }
+        drop(scratch);
         self.finish_batch_detailed(blobs, outcomes, values)
     }
 
@@ -3629,6 +3636,7 @@ impl LoroDoc {
             return self.import_single_detailed(|| blob.map(ImportInput::Bytes), values);
         }
 
+        let mut scratch = BatchUpdateScratch::default();
         let mut outcomes: Vec<Option<ImportBlobOutcome>> = Vec::with_capacity(len);
         let mut blobs = Vec::with_capacity(len);
         for (index, result) in bytes.enumerate() {
@@ -3639,10 +3647,9 @@ impl LoroDoc {
                     continue;
                 }
             };
-            match self
-                .check_import_blob_limit(blob.len())
-                .and_then(|()| LoroDoc::decode_import_blob_meta_bytes(blob.clone(), false))
-            {
+            match self.check_import_blob_limit(blob.len()).and_then(|()| {
+                BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)
+            }) {
                 Ok(meta) => {
                     blobs.push((index, meta, BatchBlobSource::Bytes(blob)));
                     outcomes.push(None);
@@ -3650,6 +3657,7 @@ impl LoroDoc {
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
             }
         }
+        drop(scratch);
         self.finish_batch_detailed(blobs, outcomes, values)
     }
 
@@ -3677,7 +3685,7 @@ impl LoroDoc {
         for (index, (meta, load)) in blobs.into_iter().enumerate() {
             match meta {
                 Ok(meta) => {
-                    valid.push((index, meta, BatchBlobSource::Loader(Box::new(load))));
+                    valid.push((index, meta.into(), BatchBlobSource::Loader(Box::new(load))));
                     outcomes.push(None);
                 }
                 Err(err) => outcomes.push(Some(ImportBlobOutcome::Failed(err))),
@@ -3731,7 +3739,7 @@ impl LoroDoc {
 
     fn finish_batch_detailed(
         &self,
-        blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         mut outcomes: Vec<Option<ImportBlobOutcome>>,
         values: ImportedValues,
     ) -> LoroResult<ImportBatchDetail> {
@@ -3784,7 +3792,7 @@ impl LoroDoc {
     /// that fails, and a failed closing checkout, are in the [`BatchRun`].
     fn import_blobs_as_batch(
         &self,
-        mut blobs: Vec<(usize, ImportBlobMetadata, BatchBlobSource<'_>)>,
+        mut blobs: Vec<(usize, BatchBlobSortKey, BatchBlobSource<'_>)>,
         values: ImportedValues,
     ) -> LoroResult<BatchRun> {
         let mut success = VersionRange::default();
@@ -4273,6 +4281,7 @@ impl LoroDoc {
         // whatever roots the state already had.
         if after == oplog.vv() {
             materialize_touched_roots(&mut state, &calc, &oplog.arena);
+            drop(calc);
         }
 
         Ok(())
@@ -5256,6 +5265,73 @@ struct BatchRun {
 enum ImportInput<'a> {
     Slice(&'a [u8]),
     Bytes(bytes::Bytes),
+}
+
+struct BatchBlobSortKey {
+    mode: encoding::EncodedBlobMode,
+    change_num: u32,
+}
+
+impl From<ImportBlobMetadata> for BatchBlobSortKey {
+    fn from(meta: ImportBlobMetadata) -> Self {
+        Self {
+            mode: meta.mode,
+            change_num: meta.change_num,
+        }
+    }
+}
+
+impl BatchBlobSortKey {
+    fn decode(input: &ImportInput<'_>, scratch: &mut BatchUpdateScratch) -> LoroResult<Self> {
+        let bytes: &[u8] = match input {
+            ImportInput::Slice(bytes) => bytes,
+            ImportInput::Bytes(bytes) => bytes,
+        };
+        let parsed = parse_header_and_body(bytes, false)?;
+        match parsed.mode {
+            EncodeMode::FastUpdates => {
+                let body = match input {
+                    ImportInput::Slice(_) => bytes::Bytes::copy_from_slice(parsed.body),
+                    ImportInput::Bytes(bytes) => bytes.slice_ref(parsed.body),
+                };
+                Ok(Self {
+                    mode: encoding::EncodedBlobMode::Updates,
+                    change_num: scratch.count_changes(body)?,
+                })
+            }
+            EncodeMode::FastSnapshot => match input {
+                ImportInput::Slice(_) => encoding::fast_snapshot::decode_snapshot_blob_meta(parsed),
+                ImportInput::Bytes(bytes) => {
+                    LoroDoc::decode_import_blob_meta_bytes(bytes.clone(), false)
+                }
+            }
+            .map(Into::into),
+            _ => Err(LoroError::ImportUnsupportedEncodingMode),
+        }
+    }
+}
+
+#[derive(Default)]
+struct BatchUpdateScratch {
+    arena: Option<SharedArena>,
+    used_bytes: usize,
+}
+
+impl BatchUpdateScratch {
+    fn count_changes(&mut self, body: bytes::Bytes) -> LoroResult<u32> {
+        // Limit retained temporary container IDs between blobs. A large blob
+        // gets a separate arena and cannot increase the lifetime of its data.
+        const REUSE_BYTES: usize = 64 * 1024;
+        if body.len() > REUSE_BYTES {
+            return encoding::fast_snapshot::count_updates_for_batch(body, &SharedArena::new());
+        }
+        if self.used_bytes + body.len() > REUSE_BYTES {
+            *self = Self::default();
+        }
+        self.used_bytes += body.len();
+        let arena = self.arena.get_or_insert_with(SharedArena::new);
+        encoding::fast_snapshot::count_updates_for_batch(body, arena)
+    }
 }
 
 enum BatchBlobSource<'a> {
@@ -6413,8 +6489,8 @@ fn make_global_budget_err(used: u64, limit: u64) -> LoroError {
     LoroError::memory_limit_exceeded(MemoryLimitKind::GlobalBudget, used_usize, limit_usize)
 }
 
-/// Registered documents and the drop gate each shares with its handles.
-type RegistryEntries = FxHashMap<u64, (std::sync::Weak<LoroDocInner>, Arc<crate::DocDropGate>)>;
+/// Registered documents in the global memory pool.
+type RegistryEntries = FxHashMap<u64, std::sync::Weak<LoroDocInner>>;
 
 struct GlobalMemoryPool {
     budget: parking_lot::Mutex<GlobalMemoryBudget>,
@@ -6513,13 +6589,8 @@ impl GlobalMemoryPool {
         self.soft_backoff.record(reached_target, used);
     }
 
-    fn register(
-        &self,
-        id: u64,
-        weak: std::sync::Weak<LoroDocInner>,
-        gate: Arc<crate::DocDropGate>,
-    ) {
-        self.docs.lock().insert(id, (weak, gate));
+    fn register(&self, id: u64, weak: std::sync::Weak<LoroDocInner>) {
+        self.docs.lock().insert(id, weak);
         self.push_dirty(id);
     }
 
@@ -6534,7 +6605,7 @@ impl GlobalMemoryPool {
         self.docs
             .lock()
             .values()
-            .filter(|(weak, _)| weak.strong_count() > 0)
+            .filter(|weak| weak.strong_count() > 0)
             .count()
     }
 
@@ -6560,16 +6631,15 @@ impl GlobalMemoryPool {
                         requeue.push(id);
                         return None;
                     }
-                    docs.get(&id)
-                        .map(|(weak, gate)| (id, weak.clone(), gate.clone()))
+                    docs.get(&id).map(|weak| (id, weak.clone()))
                 })
                 .collect()
         };
-        for (id, weak, gate) in targets {
+        for (id, weak) in targets {
             #[cfg(test)]
             DIRTY_REFRESHES.with(|n| n.set(n.get() + 1));
             // A document that cannot be upgraded is being dropped and unregisters.
-            if let Some(doc) = RegistryRef::upgrade(&weak, gate) {
+            if let Some(doc) = RegistryRef::upgrade(&weak) {
                 if !refresh_cached_doc_bytes_for_inner(&doc) {
                     requeue.push(id);
                 }
@@ -6610,22 +6680,18 @@ impl GlobalMemoryPool {
         }
     }
 
-    /// Upgrades every registered document under its drop gate. The returned
-    /// references release under the same gate, so they never make a document's
-    /// last handle skip its final commit (see `crate::DocDropGate`). The registry
-    /// lock is not held while a gate is taken: the final drop of a document may
-    /// run under its gate and then takes the registry lock to unregister.
+    /// Upgrades every registered document without touching `LoroDocInner::user_handles`,
+    /// so temporary registry references never make a document's last user handle skip
+    /// its final commit.
     fn snapshot_live_docs(&self) -> Vec<RegistryRef> {
         let entries: Vec<_> = {
             let mut docs = self.docs.lock();
-            docs.retain(|_, (weak, _)| weak.strong_count() > 0);
-            docs.values()
-                .map(|(weak, gate)| (weak.clone(), gate.clone()))
-                .collect()
+            docs.retain(|_, weak| weak.strong_count() > 0);
+            docs.values().cloned().collect()
         };
         entries
             .into_iter()
-            .filter_map(|(weak, gate)| RegistryRef::upgrade(&weak, gate))
+            .filter_map(|weak| RegistryRef::upgrade(&weak))
             .collect()
     }
 
@@ -6893,35 +6959,22 @@ impl LoroDocInner {
     }
 }
 
-/// A temporary strong reference taken by the global registry. See
-/// [`GlobalMemoryPool::snapshot_live_docs`].
+/// A temporary strong reference taken by the global registry without touching
+/// `LoroDocInner::user_handles`. See [`GlobalMemoryPool::snapshot_live_docs`].
 pub(crate) struct RegistryRef {
-    doc: Option<Arc<LoroDocInner>>,
-    gate: Arc<crate::DocDropGate>,
+    doc: Arc<LoroDocInner>,
 }
 
 impl RegistryRef {
     #[cfg(test)]
     fn from_doc(doc: &LoroDoc) -> Self {
-        let gate = doc.drop_gate.clone();
-        let weak = Arc::downgrade(&doc.inner);
-        Self::upgrade(&weak, gate).unwrap()
+        Self {
+            doc: Arc::clone(&doc.inner),
+        }
     }
 
-    fn upgrade(
-        weak: &std::sync::Weak<LoroDocInner>,
-        gate: Arc<crate::DocDropGate>,
-    ) -> Option<Self> {
-        let doc = {
-            let mut refs = gate.registry_refs.lock_ignoring_poison();
-            let doc = weak.upgrade()?;
-            *refs += 1;
-            doc
-        };
-        Some(Self {
-            doc: Some(doc),
-            gate,
-        })
+    fn upgrade(weak: &std::sync::Weak<LoroDocInner>) -> Option<Self> {
+        weak.upgrade().map(|doc| Self { doc })
     }
 }
 
@@ -6929,20 +6982,7 @@ impl std::ops::Deref for RegistryRef {
     type Target = Arc<LoroDocInner>;
 
     fn deref(&self) -> &Self::Target {
-        self.doc
-            .as_ref()
-            .expect("registry reference is alive until drop")
-    }
-}
-
-impl Drop for RegistryRef {
-    fn drop(&mut self) {
-        let mut refs = self.gate.registry_refs.lock_ignoring_poison();
-        // Drop before decrementing: the gate must never see this reference in
-        // `strong_count` without also seeing it in `registry_refs`. If this was
-        // the last reference, the last handle has already committed.
-        drop(self.doc.take());
-        *refs -= 1;
+        &self.doc
     }
 }
 
@@ -8313,11 +8353,7 @@ mod reclamation_work_tests {
                 let doc = LoroDoc::new_auto_commit();
                 doc.get_map("m").insert("v", i).unwrap();
                 doc.commit_then_renew();
-                pool.register(
-                    doc.pool_doc_id,
-                    Arc::downgrade(&doc.inner),
-                    doc.drop_gate.clone(),
-                );
+                pool.register(doc.pool_doc_id, Arc::downgrade(&doc.inner));
                 doc
             })
             .collect();
@@ -8448,11 +8484,7 @@ mod reclamation_work_tests {
             ..Default::default()
         };
         let doc = LoroDoc::new_auto_commit();
-        pool.register(
-            doc.pool_doc_id,
-            Arc::downgrade(&doc.inner),
-            doc.drop_gate.clone(),
-        );
+        pool.register(doc.pool_doc_id, Arc::downgrade(&doc.inner));
         let text = doc.get_text("t");
         let edit_and_check = |s: &str| {
             text.insert(0, s, crate::cursor::PosType::Unicode).unwrap();

@@ -1,8 +1,8 @@
-use crate::change::{Change, Lamport};
+use crate::change::{Change, Lamport, Timestamp};
 use crate::dag::{Dag, DagNode};
 use crate::id::{Counter, ID};
 use crate::span::{HasId, HasLamport};
-use crate::sync::Mutex;
+use crate::sync::{AtomicBool, AtomicI64, AtomicU64, Mutex};
 use crate::version::{shrink_frontiers, Frontiers, ImVersionVector, VersionVector};
 use loro_common::{
     HasCounter, HasCounterSpan, HasIdSpan, HasLamportSpan, LoroError, LoroResult, PeerID,
@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::fmt::Display;
 use std::ops::{ControlFlow, Deref};
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::Ordering as AtomicOrdering;
 use std::sync::Arc;
 use tracing::instrument;
 
@@ -23,6 +23,9 @@ use super::change_store::BatchDecodeInfo;
 #[cfg(debug_assertions)]
 use super::change_store::DebugHeaderNodes;
 use super::ChangeStore;
+
+const HEAD_LAMPORT_UNCACHED: u64 = u64::MAX;
+const HEAD_TIMESTAMP_UNCACHED: i64 = i64::MIN;
 
 /// [AppDag] maintains the causal graph of the app.
 /// It's faster to answer questions like what the meet of two versions is
@@ -55,6 +58,13 @@ pub struct AppDag {
     /// we need to make sure it breaks at the given point.
     unhandled_dep_points: Mutex<BTreeSet<ID>>,
     pending_txn_node: Option<AppDagNode>,
+    /// Cached `frontiers_to_next_lamport(&self.frontiers)` when no pending txn is open,
+    /// or `HEAD_LAMPORT_UNCACHED` when invalidated.
+    head_next_lamport: AtomicU64,
+    /// Cached `get_greatest_timestamp(&self.frontiers)` (clamped `>= 0`) when no pending
+    /// txn is open, or `HEAD_TIMESTAMP_UNCACHED` when invalidated.
+    head_max_timestamp: AtomicI64,
+    pre_txn_head_summary: Option<(u64, i64, usize)>,
     import_rollback_has_journal: AtomicBool,
     import_rollback: Mutex<Option<AppDagRollback>>,
 }
@@ -68,6 +78,9 @@ pub(crate) struct AppDagRollback {
     shallow_root_frontiers_deps: Frontiers,
     shallow_since_vv: ImVersionVector,
     pending_txn_node: Option<AppDagNode>,
+    head_next_lamport: u64,
+    head_max_timestamp: i64,
+    pre_txn_head_summary: Option<(u64, i64, usize)>,
     map_entries_before_mutation: BTreeMap<ID, Option<AppDagNode>>,
     unhandled_dep_point_log: Vec<UnhandledDepPointLog>,
 }
@@ -134,6 +147,9 @@ impl AppDag {
             shallow_root_frontiers_deps: Default::default(),
             shallow_since_vv: Default::default(),
             pending_txn_node: None,
+            head_next_lamport: AtomicU64::new(0),
+            head_max_timestamp: AtomicI64::new(Timestamp::default()),
+            pre_txn_head_summary: None,
             import_rollback_has_journal: AtomicBool::new(false),
             import_rollback: Mutex::new(None),
         }
@@ -191,6 +207,9 @@ impl AppDag {
             shallow_root_frontiers_deps: self.shallow_root_frontiers_deps.clone(),
             shallow_since_vv: self.shallow_since_vv.clone(),
             pending_txn_node: self.pending_txn_node.clone(),
+            head_next_lamport: self.head_next_lamport.load(AtomicOrdering::Relaxed),
+            head_max_timestamp: self.head_max_timestamp.load(AtomicOrdering::Relaxed),
+            pre_txn_head_summary: self.pre_txn_head_summary,
             map_entries_before_mutation: BTreeMap::new(),
             unhandled_dep_point_log: Vec::new(),
         });
@@ -259,6 +278,11 @@ impl AppDag {
         drop(unhandled_dep_points);
 
         self.pending_txn_node = checkpoint.pending_txn_node;
+        self.head_next_lamport
+            .store(checkpoint.head_next_lamport, AtomicOrdering::Relaxed);
+        self.head_max_timestamp
+            .store(checkpoint.head_max_timestamp, AtomicOrdering::Relaxed);
+        self.pre_txn_head_summary = checkpoint.pre_txn_head_summary;
     }
 
     fn record_map_entry_before_mutation(&self, map: &BTreeMap<ID, AppDagNode>, id: ID) {
@@ -336,7 +360,25 @@ impl AppDag {
         change: &Change,
         from_local: bool,
         rollback_old_vv: Option<&VersionVector>,
-    ) {
+    ) -> (u64, i64, usize) {
+        let pre_summary = if from_local {
+            self.pre_txn_head_summary.take().unwrap_or((
+                HEAD_LAMPORT_UNCACHED,
+                HEAD_TIMESTAMP_UNCACHED,
+                0,
+            ))
+        } else {
+            (
+                self.head_next_lamport.load(AtomicOrdering::Relaxed),
+                self.head_max_timestamp.load(AtomicOrdering::Relaxed),
+                self.frontiers.len(),
+            )
+        };
+        self.head_next_lamport
+            .store(HEAD_LAMPORT_UNCACHED, AtomicOrdering::Relaxed);
+        self.head_max_timestamp
+            .store(HEAD_TIMESTAMP_UNCACHED, AtomicOrdering::Relaxed);
+
         let len = change.content_len();
         self.update_version_on_new_change(change, from_local);
         #[cfg(debug_assertions)]
@@ -354,9 +396,14 @@ impl AppDag {
                 .and_then(|vv| vv.get(&change.id.peer).copied())
                 .filter(|old_end| *old_end == change.id.counter);
             // We may not need to push new element to dag because it only depends on itself
-            inserted =
-                self.with_last_mut_of_peer(change.id.peer, record_old_node_before_merge, |last| {
-                    let (_, last) = last.unwrap();
+            inserted = self.with_last_mut_of_peer(
+                change.id.peer,
+                change.id.counter - 1,
+                record_old_node_before_merge,
+                |last| {
+                    let Some((_, last)) = last else {
+                        return false;
+                    };
                     if last.has_succ {
                         // Don't merge the node if there are other nodes depending on it
                         return false;
@@ -377,7 +424,8 @@ impl AppDag {
                     last.len = (change.id.counter - last.cnt) as usize + len;
                     last.has_succ = false;
                     true
-                });
+                },
+            );
         }
 
         if !inserted {
@@ -396,6 +444,66 @@ impl AppDag {
             map.insert(node.id_start(), node);
             self.handle_deps_break_points(change.deps.iter(), change.id.peer, Some(&mut map));
         }
+
+        pre_summary
+    }
+
+    pub(super) fn finish_head_summary_after_change(
+        &self,
+        pre_summary: (u64, i64, usize),
+        change_last_id: ID,
+        change_end_lamport: Lamport,
+        stored_timestamp: Timestamp,
+    ) {
+        let (old_next_lp, old_max_ts, old_frontiers_len) = pre_summary;
+        let new_frontiers_len = self.frontiers.len();
+        let change_end_lp = change_end_lamport as u64;
+        let clamped_ts = stored_timestamp.max(Timestamp::default());
+
+        let new_next_lp = if new_frontiers_len == 0 {
+            0
+        } else if new_frontiers_len == 1 {
+            debug_assert_eq!(self.frontiers.as_single(), Some(change_last_id));
+            change_end_lp
+        } else if old_next_lp == HEAD_LAMPORT_UNCACHED {
+            HEAD_LAMPORT_UNCACHED
+        } else if change_end_lp >= old_next_lp {
+            change_end_lp
+        } else if new_frontiers_len == old_frontiers_len + 1 {
+            old_next_lp
+        } else {
+            HEAD_LAMPORT_UNCACHED
+        };
+
+        let new_max_ts = if new_frontiers_len == 0 {
+            Timestamp::default()
+        } else if new_frontiers_len == 1 {
+            debug_assert_eq!(self.frontiers.as_single(), Some(change_last_id));
+            clamped_ts
+        } else if old_max_ts == HEAD_TIMESTAMP_UNCACHED {
+            HEAD_TIMESTAMP_UNCACHED
+        } else if clamped_ts >= old_max_ts {
+            clamped_ts
+        } else if new_frontiers_len == old_frontiers_len + 1 {
+            old_max_ts
+        } else {
+            HEAD_TIMESTAMP_UNCACHED
+        };
+
+        self.head_next_lamport
+            .store(new_next_lp, AtomicOrdering::Relaxed);
+        self.head_max_timestamp
+            .store(new_max_ts, AtomicOrdering::Relaxed);
+    }
+
+    pub(crate) fn cached_head_max_timestamp(&self) -> Option<Timestamp> {
+        let ts = self.head_max_timestamp.load(AtomicOrdering::Relaxed);
+        (ts != HEAD_TIMESTAMP_UNCACHED).then_some(ts)
+    }
+
+    pub(crate) fn set_cached_head_max_timestamp(&self, ts: Timestamp) {
+        self.head_max_timestamp
+            .store(ts.max(Timestamp::default()), AtomicOrdering::Relaxed);
     }
 
     fn try_with_node_mut<R>(
@@ -432,13 +540,14 @@ impl AppDag {
     pub(crate) fn with_last_mut_of_peer<R>(
         &mut self,
         peer: PeerID,
+        prev_counter: Counter,
         record_if_before: Option<Counter>,
         f: impl FnOnce(Option<(ID, &mut AppDagNode)>) -> R,
     ) -> R {
-        self.lazy_load_last_of_peer(peer);
+        let _ = self.ensure_lazy_load_node(ID::new(peer, prev_counter));
         let mut binding = self.map.lock();
         let last = binding
-            .range_mut(..=ID::new(peer, Counter::MAX))
+            .range_mut(ID::new(peer, 0)..=ID::new(peer, Counter::MAX))
             .next_back()
             .map(|(id, v)| {
                 if record_if_before.is_some_and(|old_end| id.counter < old_end) {
@@ -467,19 +576,6 @@ impl AppDag {
             );
             self.vv.extend_to_include_last_id(id_last);
         }
-    }
-
-    pub(super) fn lazy_load_last_of_peer(&mut self, peer: u64) {
-        let unparsed_vv = self.unparsed_vv.lock();
-        if !unparsed_vv.contains_key(&peer) || self.vv[&peer] >= unparsed_vv[&peer] {
-            return;
-        }
-
-        let Some(nodes) = self.change_store.get_last_dag_nodes_for_peer(peer) else {
-            panic!("unparsed vv don't match with change store. Peer:{peer} is not in change store")
-        };
-
-        self.lazy_load_nodes_internal(nodes, peer, None);
     }
 
     fn lazy_load_nodes_internal(
@@ -660,6 +756,13 @@ impl AppDag {
         *self.unparsed_vv.lock() = v.vv.clone();
         self.vv = v.vv;
         self.frontiers = v.frontiers;
+        self.head_next_lamport
+            .store(v.next_lamport as u64, AtomicOrdering::Relaxed);
+        self.head_max_timestamp.store(
+            v.max_timestamp.max(Timestamp::default()),
+            AtomicOrdering::Relaxed,
+        );
+        self.pre_txn_head_summary = None;
         if let Some((vv, f)) = v.start_version {
             if !f.is_empty() {
                 assert!(f.len() == 1);
@@ -921,6 +1024,17 @@ impl AppDag {
         start_lamport: Lamport,
         len: usize,
     ) {
+        if self.pending_txn_node.is_none() {
+            self.pre_txn_head_summary = Some((
+                self.head_next_lamport.load(AtomicOrdering::Relaxed),
+                self.head_max_timestamp.load(AtomicOrdering::Relaxed),
+                self.frontiers.len(),
+            ));
+            self.head_next_lamport
+                .store(HEAD_LAMPORT_UNCACHED, AtomicOrdering::Relaxed);
+            self.head_max_timestamp
+                .store(HEAD_TIMESTAMP_UNCACHED, AtomicOrdering::Relaxed);
+        }
         let last_id = start_id.inc(len as Counter - 1);
         // PERF: we can cache this last_id - this is a hot path
         self.vv.set_last(last_id);
@@ -967,6 +1081,15 @@ impl AppDag {
         self.frontiers = frontiers;
         // An end of 0 removes the peer.
         self.vv.set_last(ID::new(peer, start_counter - 1));
+        if let Some((lp, ts, _)) = self.pre_txn_head_summary.take() {
+            self.head_next_lamport.store(lp, AtomicOrdering::Relaxed);
+            self.head_max_timestamp.store(ts, AtomicOrdering::Relaxed);
+        } else {
+            self.head_next_lamport
+                .store(HEAD_LAMPORT_UNCACHED, AtomicOrdering::Relaxed);
+            self.head_max_timestamp
+                .store(HEAD_TIMESTAMP_UNCACHED, AtomicOrdering::Relaxed);
+        }
     }
 
     pub(crate) fn latest_vv_contains_peer(&self, peer: PeerID) -> bool {
@@ -1684,27 +1807,53 @@ impl AppDag {
             .collect()
     }
 
+    fn next_lamport_of_id(&self, id: ID) -> Lamport {
+        {
+            let map = self.map.lock();
+            if let Some((_, x)) = map.range(..=id).next_back() {
+                if x.contains_id(id) {
+                    return (id.counter - x.cnt) as Lamport + x.lamport + 1;
+                }
+            }
+        }
+        if let Some(node) = &self.pending_txn_node {
+            if node.peer == id.peer
+                && node.cnt <= id.counter
+                && id.counter < node.cnt + node.len as Counter
+            {
+                return (id.counter - node.cnt) as Lamport + node.lamport + 1;
+            }
+        }
+        if let Some((lp, _)) = self.change_store.get_lamport_and_timestamp_at(id) {
+            return lp + 1;
+        }
+        let Some(x) = self.get(id) else {
+            unreachable!()
+        };
+        assert!(id.counter >= x.cnt);
+        (id.counter - x.cnt) as Lamport + x.lamport + 1
+    }
+
     pub(crate) fn frontiers_to_next_lamport(&self, frontiers: &Frontiers) -> Lamport {
         if frontiers.is_empty() {
             return 0;
         }
 
-        let mut iter = frontiers.iter();
-        let mut lamport = {
-            let id = iter.next().unwrap();
-            let Some(x) = self.get(id) else {
-                unreachable!()
-            };
-            assert!(id.counter >= x.cnt);
-            (id.counter - x.cnt) as Lamport + x.lamport + 1
-        };
+        let is_head = !self.has_pending_txn() && frontiers == &self.frontiers;
+        if is_head {
+            let cached = self.head_next_lamport.load(AtomicOrdering::Relaxed);
+            if cached != HEAD_LAMPORT_UNCACHED {
+                return cached as Lamport;
+            }
+        }
 
-        for id in iter {
-            let Some(x) = self.get(id) else {
-                unreachable!()
-            };
-            assert!(id.counter >= x.cnt);
-            lamport = lamport.max((id.counter - x.cnt) as Lamport + x.lamport + 1);
+        let mut lamport = 0;
+        for id in frontiers.iter() {
+            lamport = lamport.max(self.next_lamport_of_id(id));
+        }
+        if is_head {
+            self.head_next_lamport
+                .store(lamport as u64, AtomicOrdering::Relaxed);
         }
 
         lamport

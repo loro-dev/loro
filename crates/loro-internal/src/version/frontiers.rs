@@ -231,7 +231,16 @@ impl Frontiers {
         let vec: Vec<ID> = postcard::from_bytes(bytes).map_err(|_| {
             LoroError::DecodeError("Decode Frontiers error".to_string().into_boxed_str())
         })?;
-        Ok(Self::from(vec))
+        // The encoder writes one ID per peer in order. Reserve the map once
+        // for canonical data; fall back to the normal deduplication for other
+        // input, including duplicate peers.
+        if vec.len() > 1 && vec.windows(2).all(|ids| ids[0].peer < ids[1].peer) {
+            let mut map = FxHashMap::with_capacity_and_hasher(vec.len(), Default::default());
+            map.extend(vec.into_iter().map(|id| (id.peer, id.counter)));
+            Ok(Self::Map(InternalMap(Arc::new(map))))
+        } else {
+            Ok(Self::from(vec))
+        }
     }
 
     pub fn update_frontiers_on_new_change(&mut self, id: ID, deps: &Frontiers) {

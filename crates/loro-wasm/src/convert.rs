@@ -12,7 +12,7 @@ use loro_internal::version::VersionRange;
 use loro_internal::StringSlice;
 use loro_internal::{Counter, CounterSpan, FxHashMap, IdSpan, ListDiffItem};
 use serde::Serialize;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 
 use crate::{
     frontiers_to_ids, Container, Cursor, JsContainer, JsIdSpan, JsImportBlobMetadata, JsJsonSchema,
@@ -444,7 +444,41 @@ pub(crate) fn handler_to_js_value(handler: Handler, for_json: bool) -> JsResult<
     })
 }
 
+#[wasm_bindgen(inline_js = "
+const ImportStatusMap = Map;
+const setImportStatus = Function.call.bind(Map.prototype.set);
+export function singlePeerImportStatus(peer, start, end) {
+    const success = new ImportStatusMap();
+    setImportStatus(success, peer, { start, end });
+    return { success, pending: null };
+}
+")]
+extern "C" {
+    #[wasm_bindgen(js_name = singlePeerImportStatus)]
+    fn single_peer_import_status(peer: &str, start: Counter, end: Counter) -> JsValue;
+}
+
 pub(crate) fn import_status_to_js_value(status: ImportStatus) -> JsResult<JsValue> {
+    if status.pending.is_none() {
+        let mut successes = status.success.iter();
+        if let (Some((peer, &(start, end))), None) = (successes.next(), successes.next()) {
+            let mut digits = [0; 20];
+            let mut value = *peer;
+            let mut offset = digits.len();
+            loop {
+                offset -= 1;
+                digits[offset] = b'0' + (value % 10) as u8;
+                value /= 10;
+                if value == 0 {
+                    break;
+                }
+            }
+            let peer = std::str::from_utf8(&digits[offset..])
+                .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            return Ok(single_peer_import_status(peer, start, end));
+        }
+    }
+
     let obj = Object::new();
     js_sys::Reflect::set(
         &obj,

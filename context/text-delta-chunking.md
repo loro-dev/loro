@@ -1,6 +1,6 @@
 # Text delta chunking and batch insertion order
 
-Verified against code 2026-11-16.
+Verified against code 2026-11-18.
 
 `crates/delta/src/text_delta.rs` uses `TextChunk::from_long_str` for long
 appends and middle insertion. Chunk capacity is measured in bytes (128 normally,
@@ -39,3 +39,31 @@ extracts it outside the workspace, pins the registry B-tree dependency to 0.10.8
 and runs all package tests. CI runs this independently of workspace tests; pass
 `--offline` to use locally cached dependencies. Do not remove the delta-level
 ordered insertion merely because the in-tree B-tree regression tests pass.
+
+## Deletion composition boundaries
+
+`DeltaRope::_compose_replace` in `crates/delta/src/delta_rope/compose.rs`
+locates a nonempty deletion's end by querying its last consumed output unit
+(`range.end - 1`) and incrementing that cursor's offset. A plain end query uses
+the right-biased `LengthFinder`, which skips zero-output deletion fragments at
+the boundary. Those fragments are outside the output being deleted but would
+be visited by `BTree::update`. Repeated backward deletions accumulated one such
+fragment per call and scanned the suffix again, causing quadratic work.
+
+The new cursor stops at the end of the last consumed retain/insert. Existing
+deletions after it stay intact. Zero-output fragments strictly inside the range
+remain part of the update, as required. Multi-leaf pure deletions collapse
+accumulated deletion fragments into a single `Delete` leaf (or fold into an
+immediately preceding `Replace` leaf) via `_delete_batch_leaves`, and single-leaf
+deletions at offset zero of a `Retain` leaf merge into a left-neighbour
+`Delete`/`Replace` leaf so repeated fixed-offset deletions do not accumulate
+zero-output prefix leaves either.
+
+`repeated_backward_deletes_do_not_rescan_deleted_suffixes` and
+`repeated_fixed_offset_deletes_before_suffix_coalesce_fragments` count
+value-length reads rather than elapsed time, bounding work across 4,096
+compositions.
+Integration tests compare boundary replacements and 8,192 seeded replacements
+against sequential string edits. The public undo regression includes text plus
+a final map write, two texts per commit, and list pushes, with concurrent remote
+insertion positions and repeated undo/redo.

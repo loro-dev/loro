@@ -1,0 +1,4666 @@
+{
+  "node": "v24.22.1",
+  "benchmarks": "e699425e5fd71300183c4cc4b21b210534211733",
+  "lib0": "0.2.117",
+  "builds": {
+    "base": {
+      "revision": "d0afd2b06a1b827bac11b06bde6f717b3bd9b151",
+      "node_wasm_sha256": "86ee2b727a784f0d36a4aa785e4118feff3aa588898f886a95bbeed482454442",
+      "full": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 11746.712666000001,
+          "maxRssKiB": 1071296,
+          "peakHeapUsedBytes": 140094208,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "106 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "22.5 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12325 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "81 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15381 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "45.7 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "83 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39038 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "80 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135711 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "872 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6383 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "94 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81702 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "92 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71556 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "944 B"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "87 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76759 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "85 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24733 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "584 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "27 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79952 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "648 B"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "35 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268897 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "680 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "70 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392164 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "680 B"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "17 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78943 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "25 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "22 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84811 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "11.4 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "30 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "34 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241619 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "4.5 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "73 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "82 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100948 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "3.2 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "33 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "84 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "103085 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "4.4 kB"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "4081 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1385 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "109 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748034 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "696 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "27 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1219 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "129 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539437 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "400 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314739 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 14021.70475,
+          "maxRssKiB": 1072400,
+          "peakHeapUsedBytes": 140094448,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "120 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12380 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "22.7 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12311 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "91 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15414 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "22.3 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "91 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39038 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "89 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135711 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "856 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6409 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "106 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81679 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "100 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71554 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "8 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "944 B"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "89 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76761 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "90 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "16 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24734 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "584 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "32 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79939 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "648 B"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "37 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268896 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "600 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "77 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392149 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "19 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78691 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "2.4 kB"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "28 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "24 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84749 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "11.1 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "39 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "30 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "36 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241627 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "4.7 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "88 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "91 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100819 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "48.3 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "45 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "93 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102903 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "3 kB"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "42 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "5681 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1559 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "111 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748072 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "696 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "40 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "28 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1292 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "132 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539000 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "2.1 kB"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "370 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314843 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 12315.283334,
+          "maxRssKiB": 1063136,
+          "peakHeapUsedBytes": 140096272,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "105 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12380 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "22.7 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12313 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "1.3 kB"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "81 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15414 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "12.3 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "82 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39052 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "80 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135713 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "872 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6383 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "8 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "96 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81679 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "94 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71554 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71578 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "944 B"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "87 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76761 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "85 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24748 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "584 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "26 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79950 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "392 B"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "34 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268895 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "680 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "73 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392165 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "9.3 kB"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "18 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78872 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "25 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "24 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "9 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84823 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "9.5 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "36 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241577 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "4.7 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "83 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "92 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100884 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "51.7 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "44 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "85 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102779 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "2.8 kB"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "32 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "4312 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1415 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "110 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748068 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "920 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "36 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "29 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1366 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "153 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1538093 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "912 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "412 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314956 bytes"
+            }
+          }
+        }
+      ],
+      "isolatedB4": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 1400.771125,
+          "maxRssKiB": 430016,
+          "peakHeapUsedBytes": 144429736,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "1295 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "37.6 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 1416.899625,
+          "maxRssKiB": 431184,
+          "peakHeapUsedBytes": 144406936,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "1311 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "37.2 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 1918.36875,
+          "maxRssKiB": 429632,
+          "peakHeapUsedBytes": 144439128,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "1795 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "37.4 kB"
+            }
+          }
+        }
+      ],
+      "pureSnapshot": [
+        {
+          "ms": 191.79487500000002,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 196.297375,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 195.1635,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 197.71270900000002,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 190.642709,
+          "snapshotBytes": 719978
+        }
+      ]
+    },
+    "previous": {
+      "revision": "739c6d044c798d484aeba4f4282e4ba7365c5ae2",
+      "node_wasm_sha256": "37c8a7b9e187ab4902f133ff64620e0de1646e34e9b0f9f5991c733122d70a7c",
+      "full": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 8628.671541000002,
+          "maxRssKiB": 1010800,
+          "peakHeapUsedBytes": 125471280,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "84 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.3 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12311 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "864 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "63 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15414 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "29 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "63 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39038 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "62 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135713 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "920 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6409 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "79 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81702 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "78 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71554 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "67 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76761 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "69 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24760 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "26 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79937 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "33 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268884 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "904 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "67 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392149 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "16 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "14 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78776 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "27 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "20 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84830 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "28 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "35 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241592 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "62 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "81 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100911 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "53.9 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "34 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "80 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "103065 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "37 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "951 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1371 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "108 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748052 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "28 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1160 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "121 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539484 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "331 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314913 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 8842.2395,
+          "maxRssKiB": 1016016,
+          "peakHeapUsedBytes": 125472192,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "85 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12380 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.5 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12313 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "736 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "64 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15414 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "10.9 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "65 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39038 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "936 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "62 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135713 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "920 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6409 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "520 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "8 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "80 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81679 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.3 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "81 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71556 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "74 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76759 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "73 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100630 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24746 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "26 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79953 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "34 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268882 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "68 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392151 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "15 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78766 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "4.3 kB"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "23 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "19 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84744 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "7.8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "27 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "35 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241564 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "2.7 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "64 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "78 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100958 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "51.4 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "31 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "81 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102869 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "964 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1395 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "109 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748070 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "27 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1134 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "123 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539639 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "327 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "315051 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 8445.263916999998,
+          "maxRssKiB": 1015808,
+          "peakHeapUsedBytes": 125469640,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "85 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.6 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12313 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "736 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "64 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15402 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "28.9 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "63 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39040 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "872 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "62 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135713 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "920 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6397 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "520 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "87 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81679 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.3 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "80 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71556 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "3.6 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "68 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76759 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "70 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24746 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "28 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79950 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "37 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268882 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "904 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "73 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392149 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "17 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "16 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78739 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "7 kB"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "20 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "19 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84756 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "31 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "33 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241594 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "66 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "79 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "101132 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "53.6 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "80 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102672 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "989 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1383 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "110 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748068 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "38 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "29 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1156 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "122 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539201 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "912 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "299 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314908 bytes"
+            }
+          }
+        }
+      ],
+      "isolatedB4": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 939.060542,
+          "maxRssKiB": 208816,
+          "peakHeapUsedBytes": 40871288,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "916 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "39 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 928.185,
+          "maxRssKiB": 207968,
+          "peakHeapUsedBytes": 40880304,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "906 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "39.2 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 928.950291,
+          "maxRssKiB": 208944,
+          "peakHeapUsedBytes": 40877736,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "907 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "39.2 kB"
+            }
+          }
+        }
+      ],
+      "pureSnapshot": [
+        {
+          "ms": 181.59975,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 171.39,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 187.409792,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 173.734166,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 175.68175,
+          "snapshotBytes": 719978
+        }
+      ]
+    },
+    "candidate": {
+      "revision": "1da9b49821f9a073714bbd099948e75fd7548fd7",
+      "node_wasm_sha256": "05424661140587e1d414b20983edab8e13bfa3731de3dcc9e07a49a4c66d10bb",
+      "full": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 15663.386625000001,
+          "maxRssKiB": 995088,
+          "peakHeapUsedBytes": 125485952,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "78 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.3 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12311 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "912 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "57 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15402 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "30.5 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "55 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39040 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "936 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "56 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135711 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "920 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6383 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "8 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "76 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81702 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "74 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71554 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71578 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "63 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76761 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.3 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "65 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "18 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24748 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "27 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79950 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "36 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268897 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "904 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "70 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392149 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "12 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78921 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "25 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "19 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84729 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "27 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "30 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "40 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241611 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "2.7 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "64 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "45 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "101108 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "53.8 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "31 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "44 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102671 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "673 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1528 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "112 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748072 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "39 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "28 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "5657 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "239 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539271 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "912 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "669 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314913 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 10820.950209,
+          "maxRssKiB": 1005808,
+          "peakHeapUsedBytes": 125484904,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "111 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.4 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "17 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "2 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12313 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "592 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "18 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "73 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15381 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "29 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "14 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "74 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39040 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "16 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "74 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135713 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "920 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "2 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6409 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "94 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81702 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "16 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "100 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71556 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "20 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "9 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "56.3 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "19 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "77 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76761 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "24 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "108 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100630 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "1.1 kB"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "20 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24746 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "928 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "15 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "42 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79953 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "4.3 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "35 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "51 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268884 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "1.3 kB"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "19 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "99 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392150 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "17 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "22 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78922 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "6.7 kB"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "25 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "20 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "28 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84712 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "56 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "48 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "86 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241598 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "2.7 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "133 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "56 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "13 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "100841 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "54.1 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "50 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "53 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102746 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "38 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "766 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "5 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.5 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1773 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "125 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748071 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "50 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "28 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1325 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "133 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539289 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "912 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "389 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "315034 bytes"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 8150.773042,
+          "maxRssKiB": 1001840,
+          "peakHeapUsedBytes": 125484632,
+          "heapSamples": 2,
+          "results": {
+            "[B1.1] Append N characters (time)": {
+              "loro": "74 ms"
+            },
+            "[B1.1] Append N characters (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.1] Append N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.1] Append N characters (docSize)": {
+              "loro": "12382 bytes"
+            },
+            "[B1.1] Append N characters (memUsed)": {
+              "loro": "16.4 kB"
+            },
+            "[B1.1] Append N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.2] Insert string of length N (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.2] Insert string of length N (avgUpdateSize)": {
+              "loro": "6089 bytes"
+            },
+            "[B1.2] Insert string of length N (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.2] Insert string of length N (docSize)": {
+              "loro": "12311 bytes"
+            },
+            "[B1.2] Insert string of length N (memUsed)": {
+              "loro": "912 B"
+            },
+            "[B1.2] Insert string of length N (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.3] Prepend N characters (time)": {
+              "loro": "56 ms"
+            },
+            "[B1.3] Prepend N characters (avgUpdateSize)": {
+              "loro": "87 bytes"
+            },
+            "[B1.3] Prepend N characters (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.3] Prepend N characters (docSize)": {
+              "loro": "15381 bytes"
+            },
+            "[B1.3] Prepend N characters (memUsed)": {
+              "loro": "29 kB"
+            },
+            "[B1.3] Prepend N characters (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.4] Insert N characters at random positions (time)": {
+              "loro": "54 ms"
+            },
+            "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+              "loro": "88 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.4] Insert N characters at random positions (docSize)": {
+              "loro": "39040 bytes"
+            },
+            "[B1.4] Insert N characters at random positions (memUsed)": {
+              "loro": "936 B"
+            },
+            "[B1.4] Insert N characters at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.5] Insert N words at random positions (time)": {
+              "loro": "55 ms"
+            },
+            "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+              "loro": "95 bytes"
+            },
+            "[B1.5] Insert N words at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.5] Insert N words at random positions (docSize)": {
+              "loro": "135711 bytes"
+            },
+            "[B1.5] Insert N words at random positions (memUsed)": {
+              "loro": "872 B"
+            },
+            "[B1.5] Insert N words at random positions (parseTime)": {
+              "loro": "9 ms"
+            },
+            "[B1.6] Insert string, then delete it (time)": {
+              "loro": "1 ms"
+            },
+            "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+              "loro": "6189 bytes"
+            },
+            "[B1.6] Insert string, then delete it (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B1.6] Insert string, then delete it (docSize)": {
+              "loro": "6409 bytes"
+            },
+            "[B1.6] Insert string, then delete it (memUsed)": {
+              "loro": "888 B"
+            },
+            "[B1.6] Insert string, then delete it (parseTime)": {
+              "loro": "8 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (time)": {
+              "loro": "76 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+              "loro": "100 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+              "loro": "3 ms"
+            },
+            "[B1.7] Insert/Delete strings at random positions (docSize)": {
+              "loro": "81702 bytes"
+            },
+            "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.8] Append N numbers (time)": {
+              "loro": "76 ms"
+            },
+            "[B1.8] Append N numbers (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.8] Append N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.8] Append N numbers (docSize)": {
+              "loro": "71556 bytes"
+            },
+            "[B1.8] Append N numbers (memUsed)": {
+              "loro": "2.6 kB"
+            },
+            "[B1.8] Append N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.9] Insert Array of N numbers (time)": {
+              "loro": "7 ms"
+            },
+            "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+              "loro": "35715 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (encodeTime)": {
+              "loro": "1 ms"
+            },
+            "[B1.9] Insert Array of N numbers (docSize)": {
+              "loro": "71580 bytes"
+            },
+            "[B1.9] Insert Array of N numbers (memUsed)": {
+              "loro": "3.6 kB"
+            },
+            "[B1.9] Insert Array of N numbers (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B1.10] Prepend N numbers (time)": {
+              "loro": "64 ms"
+            },
+            "[B1.10] Prepend N numbers (avgUpdateSize)": {
+              "loro": "93 bytes"
+            },
+            "[B1.10] Prepend N numbers (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.10] Prepend N numbers (docSize)": {
+              "loro": "76759 bytes"
+            },
+            "[B1.10] Prepend N numbers (memUsed)": {
+              "loro": "1.2 kB"
+            },
+            "[B1.10] Prepend N numbers (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (time)": {
+              "loro": "65 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+              "loro": "94 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B1.11] Insert N numbers at random positions (docSize)": {
+              "loro": "100632 bytes"
+            },
+            "[B1.11] Insert N numbers at random positions (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B1.11] Insert N numbers at random positions (parseTime)": {
+              "loro": "22 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+              "loro": "1 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+              "loro": "6188 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+              "loro": "0 ms"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+              "loro": "24733 bytes"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+              "loro": "13 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (time)": {
+              "loro": "32 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+              "loro": "23779 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+              "loro": "2 ms"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+              "loro": "79953 bytes"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+              "loro": "11 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (time)": {
+              "loro": "38 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+              "loro": "62642 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+              "loro": "4 ms"
+            },
+            "[B2.3] Concurrently insert N words at random positions (docSize)": {
+              "loro": "268895 bytes"
+            },
+            "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+              "loro": "984 B"
+            },
+            "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+              "loro": "10 ms"
+            },
+            "[B2.4] Concurrently insert & delete (time)": {
+              "loro": "75 ms"
+            },
+            "[B2.4] Concurrently insert & delete (updateSize)": {
+              "loro": "123725 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (encodeTime)": {
+              "loro": "7 ms"
+            },
+            "[B2.4] Concurrently insert & delete (docSize)": {
+              "loro": "392151 bytes"
+            },
+            "[B2.4] Concurrently insert & delete (memUsed)": {
+              "loro": "8.8 kB"
+            },
+            "[B2.4] Concurrently insert & delete (parseTime)": {
+              "loro": "12 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+              "loro": "12 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+              "loro": "132376 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+              "loro": "78976 bytes"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+              "loro": "0 B"
+            },
+            "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+              "loro": "21 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+              "loro": "17 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+              "loro": "171370 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+              "loro": "84694 bytes"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+              "loro": "7.8 kB"
+            },
+            "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+              "loro": "29 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+              "loro": "38 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+              "loro": "7912520 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+              "loro": "37 ms"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+              "loro": "241563 bytes"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+              "loro": "68 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+              "loro": "44 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+              "loro": "137490 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+              "loro": "8 ms"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+              "loro": "101013 bytes"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+              "loro": "53.8 kB"
+            },
+            "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+              "loro": "30 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+              "loro": "44 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+              "loro": "132870 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+              "loro": "102960 bytes"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+              "loro": "808 B"
+            },
+            "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+              "loro": "28 ms"
+            },
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "663 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "6 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "2 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "1.4 kB"
+            },
+            "[C1.1] Concurrently insert & delete 100K (time)": {
+              "loro": "1462 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+              "loro": "4269521 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+              "loro": "109 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (docSize)": {
+              "loro": "6748083 bytes"
+            },
+            "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+              "loro": "0 B"
+            },
+            "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+              "loro": "34 ms"
+            },
+            "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+              "loro": "29 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (time)": {
+              "loro": "1145 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (updateSize)": {
+              "loro": "2601744 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (encodeTime)": {
+              "loro": "116 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (docSize)": {
+              "loro": "1539278 bytes"
+            },
+            "[C1.2] Concurrently set Map 100K (memUsed)": {
+              "loro": "832 B"
+            },
+            "[C1.2] Concurrently set Map 100K (parseTime)": {
+              "loro": "349 ms"
+            },
+            "[C1.2] Concurrently set Map 100K (versionSize)": {
+              "loro": "314940 bytes"
+            }
+          }
+        }
+      ],
+      "isolatedB4": [
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 926.060166,
+          "maxRssKiB": 212176,
+          "peakHeapUsedBytes": 40934808,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "869 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "30 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230556 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "6 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "38.9 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 711.6012089999999,
+          "maxRssKiB": 212688,
+          "peakHeapUsedBytes": 40901272,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "682 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "11 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "39.1 kB"
+            }
+          }
+        },
+        {
+          "node": "v24.22.1",
+          "totalWallMs": 635.962042,
+          "maxRssKiB": 210736,
+          "peakHeapUsedBytes": 40873864,
+          "heapSamples": 2,
+          "results": {
+            "[B4] Apply real-world editing dataset (time)": {
+              "loro": "611 ms"
+            },
+            "[B4] Apply real-world editing dataset (encodeTime)": {
+              "loro": "9 ms"
+            },
+            "[B4] Apply real-world editing dataset (docSize)": {
+              "loro": "230554 bytes"
+            },
+            "[B4] Apply real-world editing dataset (parseTime)": {
+              "loro": "4 ms"
+            },
+            "[B4] Apply real-world editing dataset (memUsed)": {
+              "loro": "39.1 kB"
+            }
+          }
+        }
+      ],
+      "pureSnapshot": [
+        {
+          "ms": 180.53325,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 184.048625,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 179.070042,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 174.840333,
+          "snapshotBytes": 719978
+        },
+        {
+          "ms": 174.3845,
+          "snapshotBytes": 719978
+        }
+      ]
+    }
+  },
+  "yjs": {
+    "version": "13.6.32",
+    "full": {
+      "node": "v24.22.1",
+      "totalWallMs": 76025.73787499999,
+      "maxRssKiB": 1386816,
+      "peakHeapUsedBytes": 253482536,
+      "heapSamples": 2,
+      "results": {
+        "[B1.1] Append N characters (time)": {
+          "yjs": "85 ms"
+        },
+        "[B1.1] Append N characters (avgUpdateSize)": {
+          "yjs": "27 bytes"
+        },
+        "[B1.1] Append N characters (encodeTime)": {
+          "yjs": "0 ms"
+        },
+        "[B1.1] Append N characters (docSize)": {
+          "yjs": "6031 bytes"
+        },
+        "[B1.1] Append N characters (memUsed)": {
+          "yjs": "0 B"
+        },
+        "[B1.1] Append N characters (parseTime)": {
+          "yjs": "17 ms"
+        },
+        "[B1.2] Insert string of length N (time)": {
+          "yjs": "0 ms"
+        },
+        "[B1.2] Insert string of length N (avgUpdateSize)": {
+          "yjs": "6031 bytes"
+        },
+        "[B1.2] Insert string of length N (encodeTime)": {
+          "yjs": "0 ms"
+        },
+        "[B1.2] Insert string of length N (docSize)": {
+          "yjs": "6031 bytes"
+        },
+        "[B1.2] Insert string of length N (memUsed)": {
+          "yjs": "46 kB"
+        },
+        "[B1.2] Insert string of length N (parseTime)": {
+          "yjs": "14 ms"
+        },
+        "[B1.3] Prepend N characters (time)": {
+          "yjs": "78 ms"
+        },
+        "[B1.3] Prepend N characters (avgUpdateSize)": {
+          "yjs": "27 bytes"
+        },
+        "[B1.3] Prepend N characters (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.3] Prepend N characters (docSize)": {
+          "yjs": "6041 bytes"
+        },
+        "[B1.3] Prepend N characters (memUsed)": {
+          "yjs": "1 MB"
+        },
+        "[B1.3] Prepend N characters (parseTime)": {
+          "yjs": "19 ms"
+        },
+        "[B1.4] Insert N characters at random positions (time)": {
+          "yjs": "85 ms"
+        },
+        "[B1.4] Insert N characters at random positions (avgUpdateSize)": {
+          "yjs": "29 bytes"
+        },
+        "[B1.4] Insert N characters at random positions (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.4] Insert N characters at random positions (docSize)": {
+          "yjs": "29571 bytes"
+        },
+        "[B1.4] Insert N characters at random positions (memUsed)": {
+          "yjs": "1.2 MB"
+        },
+        "[B1.4] Insert N characters at random positions (parseTime)": {
+          "yjs": "25 ms"
+        },
+        "[B1.5] Insert N words at random positions (time)": {
+          "yjs": "91 ms"
+        },
+        "[B1.5] Insert N words at random positions (avgUpdateSize)": {
+          "yjs": "35 bytes"
+        },
+        "[B1.5] Insert N words at random positions (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.5] Insert N words at random positions (docSize)": {
+          "yjs": "87867 bytes"
+        },
+        "[B1.5] Insert N words at random positions (memUsed)": {
+          "yjs": "2.4 MB"
+        },
+        "[B1.5] Insert N words at random positions (parseTime)": {
+          "yjs": "21 ms"
+        },
+        "[B1.6] Insert string, then delete it (time)": {
+          "yjs": "1 ms"
+        },
+        "[B1.6] Insert string, then delete it (avgUpdateSize)": {
+          "yjs": "6053 bytes"
+        },
+        "[B1.6] Insert string, then delete it (encodeTime)": {
+          "yjs": "0 ms"
+        },
+        "[B1.6] Insert string, then delete it (docSize)": {
+          "yjs": "6040 bytes"
+        },
+        "[B1.6] Insert string, then delete it (memUsed)": {
+          "yjs": "24.8 kB"
+        },
+        "[B1.6] Insert string, then delete it (parseTime)": {
+          "yjs": "10 ms"
+        },
+        "[B1.7] Insert/Delete strings at random positions (time)": {
+          "yjs": "92 ms"
+        },
+        "[B1.7] Insert/Delete strings at random positions (avgUpdateSize)": {
+          "yjs": "31 bytes"
+        },
+        "[B1.7] Insert/Delete strings at random positions (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.7] Insert/Delete strings at random positions (docSize)": {
+          "yjs": "41917 bytes"
+        },
+        "[B1.7] Insert/Delete strings at random positions (memUsed)": {
+          "yjs": "1.3 MB"
+        },
+        "[B1.7] Insert/Delete strings at random positions (parseTime)": {
+          "yjs": "16 ms"
+        },
+        "[B1.8] Append N numbers (time)": {
+          "yjs": "145 ms"
+        },
+        "[B1.8] Append N numbers (avgUpdateSize)": {
+          "yjs": "32 bytes"
+        },
+        "[B1.8] Append N numbers (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.8] Append N numbers (docSize)": {
+          "yjs": "35641 bytes"
+        },
+        "[B1.8] Append N numbers (memUsed)": {
+          "yjs": "0 B"
+        },
+        "[B1.8] Append N numbers (parseTime)": {
+          "yjs": "20 ms"
+        },
+        "[B1.9] Insert Array of N numbers (time)": {
+          "yjs": "2 ms"
+        },
+        "[B1.9] Insert Array of N numbers (avgUpdateSize)": {
+          "yjs": "35653 bytes"
+        },
+        "[B1.9] Insert Array of N numbers (encodeTime)": {
+          "yjs": "0 ms"
+        },
+        "[B1.9] Insert Array of N numbers (docSize)": {
+          "yjs": "35653 bytes"
+        },
+        "[B1.9] Insert Array of N numbers (memUsed)": {
+          "yjs": "0 B"
+        },
+        "[B1.9] Insert Array of N numbers (parseTime)": {
+          "yjs": "12 ms"
+        },
+        "[B1.10] Prepend N numbers (time)": {
+          "yjs": "75 ms"
+        },
+        "[B1.10] Prepend N numbers (avgUpdateSize)": {
+          "yjs": "32 bytes"
+        },
+        "[B1.10] Prepend N numbers (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.10] Prepend N numbers (docSize)": {
+          "yjs": "35669 bytes"
+        },
+        "[B1.10] Prepend N numbers (memUsed)": {
+          "yjs": "2.4 MB"
+        },
+        "[B1.10] Prepend N numbers (parseTime)": {
+          "yjs": "24 ms"
+        },
+        "[B1.11] Insert N numbers at random positions (time)": {
+          "yjs": "76 ms"
+        },
+        "[B1.11] Insert N numbers at random positions (avgUpdateSize)": {
+          "yjs": "34 bytes"
+        },
+        "[B1.11] Insert N numbers at random positions (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B1.11] Insert N numbers at random positions (docSize)": {
+          "yjs": "59132 bytes"
+        },
+        "[B1.11] Insert N numbers at random positions (memUsed)": {
+          "yjs": "2 MB"
+        },
+        "[B1.11] Insert N numbers at random positions (parseTime)": {
+          "yjs": "17 ms"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (time)": {
+          "yjs": "0 ms"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (updateSize)": {
+          "yjs": "6094 bytes"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (encodeTime)": {
+          "yjs": "0 ms"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (docSize)": {
+          "yjs": "12152 bytes"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (memUsed)": {
+          "yjs": "0 B"
+        },
+        "[B2.1] Concurrently insert string of length N at index 0 (parseTime)": {
+          "yjs": "15 ms"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (time)": {
+          "yjs": "27 ms"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (updateSize)": {
+          "yjs": "33420 bytes"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (encodeTime)": {
+          "yjs": "2 ms"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (docSize)": {
+          "yjs": "66817 bytes"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (memUsed)": {
+          "yjs": "2.5 MB"
+        },
+        "[B2.2] Concurrently insert N characters at random positions (parseTime)": {
+          "yjs": "27 ms"
+        },
+        "[B2.3] Concurrently insert N words at random positions (time)": {
+          "yjs": "38 ms"
+        },
+        "[B2.3] Concurrently insert N words at random positions (updateSize)": {
+          "yjs": "89143 bytes"
+        },
+        "[B2.3] Concurrently insert N words at random positions (encodeTime)": {
+          "yjs": "2 ms"
+        },
+        "[B2.3] Concurrently insert N words at random positions (docSize)": {
+          "yjs": "178428 bytes"
+        },
+        "[B2.3] Concurrently insert N words at random positions (memUsed)": {
+          "yjs": "5.4 MB"
+        },
+        "[B2.3] Concurrently insert N words at random positions (parseTime)": {
+          "yjs": "34 ms"
+        },
+        "[B2.4] Concurrently insert & delete (time)": {
+          "yjs": "57 ms"
+        },
+        "[B2.4] Concurrently insert & delete (updateSize)": {
+          "yjs": "140984 bytes"
+        },
+        "[B2.4] Concurrently insert & delete (encodeTime)": {
+          "yjs": "3 ms"
+        },
+        "[B2.4] Concurrently insert & delete (docSize)": {
+          "yjs": "282104 bytes"
+        },
+        "[B2.4] Concurrently insert & delete (memUsed)": {
+          "yjs": "7.9 MB"
+        },
+        "[B2.4] Concurrently insert & delete (parseTime)": {
+          "yjs": "47 ms"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (time)": {
+          "yjs": "30 ms"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (updateSize)": {
+          "yjs": "49181 bytes"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (docSize)": {
+          "yjs": "36796 bytes"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (memUsed)": {
+          "yjs": "728.2 kB"
+        },
+        "[B3.1] 20\u221aN clients concurrently set number in Map (parseTime)": {
+          "yjs": "21 ms"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (time)": {
+          "yjs": "31 ms"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (updateSize)": {
+          "yjs": "85081 bytes"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (encodeTime)": {
+          "yjs": "2 ms"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (docSize)": {
+          "yjs": "72669 bytes"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (memUsed)": {
+          "yjs": "1.1 MB"
+        },
+        "[B3.2] 20\u221aN clients concurrently set Object in Map (parseTime)": {
+          "yjs": "21 ms"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (time)": {
+          "yjs": "71 ms"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (updateSize)": {
+          "yjs": "7826223 bytes"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (encodeTime)": {
+          "yjs": "42 ms"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (docSize)": {
+          "yjs": "7813822 bytes"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (memUsed)": {
+          "yjs": "8.6 MB"
+        },
+        "[B3.3] 20\u221aN clients concurrently set String in Map (parseTime)": {
+          "yjs": "68 ms"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (time)": {
+          "yjs": "26 ms"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (updateSize)": {
+          "yjs": "52749 bytes"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (docSize)": {
+          "yjs": "26594 bytes"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (memUsed)": {
+          "yjs": "932.9 kB"
+        },
+        "[B3.4] 20\u221aN clients concurrently insert text in Array (parseTime)": {
+          "yjs": "15 ms"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (time)": {
+          "yjs": "25 ms"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (updateSize)": {
+          "yjs": "48123 bytes"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (encodeTime)": {
+          "yjs": "1 ms"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (docSize)": {
+          "yjs": "24307 bytes"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (memUsed)": {
+          "yjs": "514.7 kB"
+        },
+        "[B3.5] 20\u221aN clients concurrently insert text (parseTime)": {
+          "yjs": "13 ms"
+        },
+        "[B4] Apply real-world editing dataset (time)": {
+          "yjs": "1500 ms"
+        },
+        "[B4] Apply real-world editing dataset (encodeTime)": {
+          "yjs": "4 ms"
+        },
+        "[B4] Apply real-world editing dataset (docSize)": {
+          "yjs": "226981 bytes"
+        },
+        "[B4] Apply real-world editing dataset (parseTime)": {
+          "yjs": "12 ms"
+        },
+        "[B4] Apply real-world editing dataset (memUsed)": {
+          "yjs": "2.9 MB"
+        },
+        "[C1.1] Concurrently insert & delete 100K (time)": {
+          "yjs": "25230 ms"
+        },
+        "[C1.1] Concurrently insert & delete 100K (updateSize)": {
+          "yjs": "4908122 bytes"
+        },
+        "[C1.1] Concurrently insert & delete 100K (encodeTime)": {
+          "yjs": "103 ms"
+        },
+        "[C1.1] Concurrently insert & delete 100K (docSize)": {
+          "yjs": "4908186 bytes"
+        },
+        "[C1.1] Concurrently insert & delete 100K (memUsed)": {
+          "yjs": "137.7 MB"
+        },
+        "[C1.1] Concurrently insert & delete 100K (parseTime)": {
+          "yjs": "1630 ms"
+        },
+        "[C1.1] Concurrently insert & delete 100K (versionSize)": {
+          "yjs": "222681 bytes"
+        },
+        "[C1.2] Concurrently set Map 100K (time)": {
+          "yjs": "19440 ms"
+        },
+        "[C1.2] Concurrently set Map 100K (updateSize)": {
+          "yjs": "980827 bytes"
+        },
+        "[C1.2] Concurrently set Map 100K (encodeTime)": {
+          "yjs": "39 ms"
+        },
+        "[C1.2] Concurrently set Map 100K (docSize)": {
+          "yjs": "738957 bytes"
+        },
+        "[C1.2] Concurrently set Map 100K (memUsed)": {
+          "yjs": "19 MB"
+        },
+        "[C1.2] Concurrently set Map 100K (parseTime)": {
+          "yjs": "7163 ms"
+        },
+        "[C1.2] Concurrently set Map 100K (versionSize)": {
+          "yjs": "416252 bytes"
+        }
+      }
+    },
+    "isolatedB4": {
+      "node": "v24.22.1",
+      "totalWallMs": 1542.693042,
+      "maxRssKiB": 245904,
+      "peakHeapUsedBytes": 42133224,
+      "heapSamples": 2,
+      "results": {
+        "[B4] Apply real-world editing dataset (time)": {
+          "yjs": "1515 ms"
+        },
+        "[B4] Apply real-world editing dataset (encodeTime)": {
+          "yjs": "4 ms"
+        },
+        "[B4] Apply real-world editing dataset (docSize)": {
+          "yjs": "226981 bytes"
+        },
+        "[B4] Apply real-world editing dataset (parseTime)": {
+          "yjs": "12 ms"
+        },
+        "[B4] Apply real-world editing dataset (memUsed)": {
+          "yjs": "2.8 MB"
+        }
+      }
+    }
+  },
+  "b4x100": {
+    "base": {
+      "historical": true,
+      "lastCompletedMarkerPct": 15,
+      "v8HeapOutOfMemory": true,
+      "totalWallMs": 201571.67587510776,
+      "maxRssBytes": 2470903808,
+      "lastGcSampleHeapMiB": 1646.1
+    },
+    "previous": {
+      "historical": true,
+      "editTimeMs": 92431,
+      "totalWallMs": 92896.591209,
+      "maxRssKiB": 526128,
+      "peakHeapUsedBytes": 68713416,
+      "heapSamples": 3173
+    },
+    "candidate": {
+      "node": "v24.22.1",
+      "totalWallMs": 83546.93079099999,
+      "maxRssKiB": 532576,
+      "peakHeapUsedBytes": 68616712,
+      "heapSamples": 3173,
+      "results": {
+        "[B4x100] Apply real-world editing dataset 100 times (time)": {
+          "loro": "83098 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (encodeTime)": {
+          "loro": "425 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (docSize)": {
+          "loro": "21016452 bytes"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (parseTime)": {
+          "loro": "7 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (memUsed)": {
+          "loro": "44 kB"
+        }
+      }
+    },
+    "yjs": {
+      "node": "v24.22.1",
+      "totalWallMs": 166777.399291,
+      "maxRssKiB": 1224832,
+      "peakHeapUsedBytes": 714289792,
+      "heapSamples": 3173,
+      "results": {
+        "[B4x100] Apply real-world editing dataset 100 times (time)": {
+          "yjs": "165081 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (encodeTime)": {
+          "yjs": "397 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (docSize)": {
+          "yjs": "22694543 bytes"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (parseTime)": {
+          "yjs": "1167 ms"
+        },
+        "[B4x100] Apply real-world editing dataset 100 times (memUsed)": {
+          "yjs": "266.2 MB"
+        }
+      }
+    }
+  }
+}
