@@ -193,3 +193,37 @@ describe("importing history that reuses local op ids", () => {
     expect(target.toJSON()).toEqual(source.toJSON());
   });
 });
+
+it("accepts the original binary update after a JSON history round trip", () => {
+  const a = new LoroDoc();
+  const b = new LoroDoc();
+  const payload = new Uint8Array([1, 2]);
+  a.getMap("m").set("payload", payload);
+  a.commit();
+  const json = JSON.parse(JSON.stringify(a.exportJsonUpdates(undefined, undefined, false)));
+  b.importJsonUpdates(json);
+  a.getMap("m").set("next", true);
+  a.commit();
+  b.import(a.export({ mode: "update" }));
+  expect(b.getMap("m").get("payload")).toEqual(payload);
+  expect(b.getMap("m").get("next")).toBe(true);
+  expect(b.version().toJSON()).toEqual(a.version().toJSON());
+
+  // A different writer deliberately reuses the first id with a different type or bytes.
+  for (const value of [[1, 2], new Uint8Array([2, 1])]) {
+    const conflict = new LoroDoc();
+    conflict.setPeerId(a.peerIdStr);
+    conflict.getMap("m").set("payload", value);
+    conflict.getMap("m").set("unexpected", true);
+    expect(() => b.import(conflict.export({ mode: "update" }))).toThrow(/has been used/);
+    expect(b.toJSON()).toEqual(a.toJSON());
+    expect(b.version().toJSON()).toEqual(a.version().toJSON());
+  }
+
+  // Old exporters used identical JSON arrays for byte payloads and plain lists.
+  delete json.changes[0].ops[0].binary_paths;
+  const legacy = new LoroDoc();
+  legacy.importJsonUpdates(json);
+  expect(legacy.getMap("m").get("payload")).toEqual([1, 2]);
+  expect(() => legacy.import(a.export({ mode: "update" }))).toThrow(/has been used/);
+});

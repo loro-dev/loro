@@ -25,6 +25,12 @@ fn js_json_numbers(doc: &LoroDoc, large_as_double: bool) -> String {
         .export_json_updates(&Default::default(), &doc.oplog_vv())
         .unwrap();
     let mut json = serde_json::to_value(&json).unwrap();
+    // Model older JSON exporters, which encoded binary as an unannotated list.
+    for change in json["changes"].as_array_mut().unwrap() {
+        for op in change["ops"].as_array_mut().unwrap() {
+            op.as_object_mut().unwrap().remove("binary_paths");
+        }
+    }
     // Model JS-number precision and integral-number normalization. Large I64s
     // passed through JSON.parse lose bits. In loro-wasm/src/convert.rs,
     // js_json_schema_to_loro_json_schema uses serde_wasm_bindgen: unsafe JS
@@ -653,4 +659,91 @@ fn detailed_batch_takes_the_history_mode() {
     );
     assert_eq!(map_value(&a, "number"), LoroValue::Double(2.0));
     assert_eq!(a.get_map("relay").get_value()["extra"], LoroValue::I64(1));
+}
+
+#[test]
+fn json_binary_prefix_accepts_original_update_with_exact_history() {
+    let a = LoroDoc::new();
+    let b = LoroDoc::new();
+    a.get_map("m").insert("payload", vec![1u8, 2]).unwrap();
+    a.commit();
+    let json = serde_json::to_string(
+        &a.export_json_updates_without_peer_compression(&Default::default(), &a.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    b.import_json_updates(json.as_str()).unwrap();
+    a.get_map("m").insert("next", true).unwrap();
+    a.commit();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(
+        map_value(&b, "payload"),
+        LoroValue::Binary(vec![1, 2].into())
+    );
+    assert_eq!(a.get_deep_value(), b.get_deep_value());
+    assert_eq!(a.oplog_vv(), b.oplog_vv());
+}
+
+#[test]
+fn json_binary_paths_preserve_nested_values_in_sequence_and_style_ops() {
+    let a = source();
+    let bytes = LoroValue::Binary(vec![].into());
+    let list = LoroValue::List(vec![].into());
+    let nested =
+        LoroValue::Map(vec![("0".into(), LoroValue::List(vec![bytes, list].into()))].into());
+    a.get_list("list").push(1).unwrap();
+    a.get_list("list").push(nested.clone()).unwrap();
+    let movable = a.get_movable_list("movable");
+    movable.push(nested.clone()).unwrap();
+    movable.push(1).unwrap();
+    movable.set(1, nested.clone()).unwrap();
+    a.get_text("text").insert(0, "ab").unwrap();
+    a.get_text("text").mark(0..2, "custom", nested).unwrap();
+    a.commit();
+
+    let json = serde_json::to_string(
+        &a.export_json_updates(&Default::default(), &a.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    let b = source();
+    b.import_json_updates(json.as_str()).unwrap();
+    b.import(&a.export(ExportMode::all_updates()).unwrap())
+        .unwrap();
+    assert_eq!(b.get_deep_value(), a.get_deep_value());
+    assert_eq!(style_delta(&b), style_delta(&a));
+}
+
+#[test]
+fn invalid_json_binary_paths_are_rejected_before_import() {
+    let a = source();
+    a.get_map("m").insert("first", true).unwrap();
+    a.get_map("m").insert("payload", vec![1u8, 2]).unwrap();
+    a.commit();
+    let schema = serde_json::to_value(
+        a.export_json_updates(&Default::default(), &a.oplog_vv())
+            .unwrap(),
+    )
+    .unwrap();
+    use serde_json::json;
+    for (paths, value) in [
+        (json!([[1]]), json!([1, 2])),
+        (json!([[0, "missing"]]), json!([1, 2])),
+        (json!([[0], [0]]), json!([1, 2])),
+        (json!([[0]]), json!([256])),
+        (json!([[0]]), json!([-1])),
+        (json!([[0]]), json!([1.5])),
+        (json!([[0]]), json!(true)),
+    ] {
+        let mut invalid = schema.clone();
+        let payload = &mut invalid["changes"][0]["ops"][1];
+        payload["binary_paths"] = paths;
+        payload["content"]["value"] = value;
+        let b = LoroDoc::new();
+        let before = b.oplog_vv();
+        assert!(b.import_json_updates(invalid.to_string().as_str()).is_err());
+        assert_eq!(b.oplog_vv(), before);
+        assert!(b.get_map("m").get("first").is_none());
+    }
 }

@@ -7838,6 +7838,8 @@ export type ExportMode = {
 };
 
 export type JsonOp = {
+  /** Binary value paths. The first index selects an inserted value (0 for a scalar). */
+  binary_paths?: [number, ...(number | string)[]][],
   container: ContainerID,
   counter: number,
   content: ListOp | TextOp | MapOp | TreeOp | MovableListOp | UnknownOp
