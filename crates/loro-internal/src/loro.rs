@@ -5471,7 +5471,9 @@ impl BatchImportGuard<'_> {
                 doc._checkout_to_latest_without_commit_with_event(
                     true,
                     "checkout".into(),
-                    EventTriggerKind::Checkout,
+                    // The batch is a remote import: reporting it as a checkout
+                    // would make the `UndoManager` clear its undo/redo stacks.
+                    EventTriggerKind::Import,
                     !self.has_doc_budget,
                 )
             });
