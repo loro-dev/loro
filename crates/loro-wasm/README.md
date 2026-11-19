@@ -173,50 +173,61 @@ test('sync example', () => {
 
 # Things to know
 
-Mistakes that come up often when using `loro-crdt`.
+These come up often when people start using `loro-crdt`.
 
-**Events fire on commit, not on each edit.** `doc.subscribe` and container
-`subscribe` callbacks run when a transaction is committed: on `doc.commit()`, or
-implicitly on `export`, `import` and `checkout`. Edits that are never committed
-send no events and are not in `subscribeLocalUpdates` output yet.
+## Events fire on commit
 
-**Text positions are UTF-16 indexes in JS.** `LoroText.insert`, `delete`,
-`slice`, `charAt` and text events count UTF-16 code units, like JS string
-indexes. Positions from a UTF-8 or Unicode code point source need converting.
+`doc.subscribe` and container `subscribe` callbacks run when a transaction is
+committed: on `doc.commit()`, or implicitly on `export`, `import` and
+`checkout`. An edit you haven't committed sends no event, and
+`subscribeLocalUpdates` doesn't include it yet.
 
-**Give every session its own peer ID.** Each `LoroDoc` gets a random peer ID.
-If you call `setPeerId`, never reuse one ID in two sessions that can edit at the
-same time, and don't use a user ID as the peer ID: one user can have several
-tabs or devices open. Reused IDs make updates look like duplicates and peers
-stop converging.
+## Text positions are UTF-16 indexes
 
-**Concurrent `setContainer` on the same map key keeps only one child.** `setContainer` and
-`getOrCreateContainer` make a regular child whose ID comes from the operation
-that created it. If two peers create a child at the same key at the same time,
-one wins and the other child's content is hidden. For a child that any peer may create first, use
-`ensureMergeableMap`, `ensureMergeableText` and the other `ensureMergeable*`
-methods: every peer gets the same child.
+`LoroText.insert`, `delete`, `slice`, `charAt` and text events count UTF-16
+code units, the same as JS string indexes. Convert positions that come from
+UTF-8 or code point offsets first.
 
-**`checkout` makes the document read-only.** After `doc.checkout(frontiers)` the
-document is detached: it shows an old version, edits throw, and imports go to
-history without changing what you see. Call `doc.checkoutToLatest()` (or
-`attach()`) to go back. To restore an old version as new edits, use
-`doc.revertTo(frontiers)` instead.
+## One peer ID per session
 
-**Container handles keep their document alive after `doc.free()`.** Every
-container object you get from a document (`doc.getText()`, `map.get()`,
-`list.insertContainer()` and so on) holds a reference to the document. So does a
-detached container (`new LoroText()`, `new LoroMap()`, ...) after you attach it
-with `setContainer` or `insertContainer`, since it keeps its attached copy (see
-`getAttached()`). `doc.free()` only frees the `LoroDoc` object: the document's
-memory is freed once every handle is freed too, either by its own `free()` or when
-the garbage collector finalizes it. Finalizers only run after the current task
-yields to the event loop, so code that creates and drops many documents in one
-synchronous loop (a test suite, a batch job, a request handler that never awaits)
-keeps all of them in WASM memory until it yields, and WASM memory never shrinks.
-In loro-dev/loro#1312, 1,000 documents with a 20,000-character text each grew
-WASM memory by about 44 MB when only `doc.free()` was called, and stayed flat when
-the text handle was freed too. Free the handles first, or let the loop yield:
+Each `LoroDoc` starts with a random peer ID. If you call `setPeerId`, don't give
+the same ID to two sessions that can edit at the same time, and don't use a user
+ID: one user can have several tabs or devices open. Peers that share an ID send
+updates that look like duplicates, and the docs stop converging.
+
+## Concurrent `setContainer` on one map key keeps one child
+
+`setContainer` and `getOrCreateContainer` make a regular child whose ID comes
+from the operation that created it. When two peers create a child at the same
+key at the same time, one wins and the other child's content is hidden. If more
+than one peer can create the child, use `ensureMergeableMap`,
+`ensureMergeableText` or another `ensureMergeable*` method, and every peer gets
+the same child.
+
+## `checkout` makes the document read-only
+
+After `doc.checkout(frontiers)` the document is detached. It shows the old
+version, edits throw, and imports go into history without changing what you
+see. `doc.checkoutToLatest()` (or `attach()`) brings it back. To restore an old
+version as new edits, use `doc.revertTo(frontiers)`.
+
+## Container handles keep the document alive after `doc.free()`
+
+Every container object you get from a document (`doc.getText()`, `map.get()`,
+`list.insertContainer()` and so on) holds a reference to the document. A
+detached container (`new LoroText()`, `new LoroMap()`, ...) does too once you
+attach it with `setContainer` or `insertContainer`, because it keeps its
+attached copy (see `getAttached()`). `doc.free()` only frees the `LoroDoc`
+object. The document's memory goes once every handle is gone too, either from
+its own `free()` or from the garbage collector finalizing it.
+
+Finalizers run only after the current task yields to the event loop. Code that
+creates and drops many documents in one synchronous loop (a test suite, a batch
+job, a request handler that never awaits) keeps all of them in WASM memory
+until it yields, and WASM memory never shrinks. In loro-dev/loro#1312, 1,000
+documents with a 20,000-character text each grew WASM memory by about 44 MB
+when only `doc.free()` was called. Freeing the text handle too kept it flat.
+Free the handles first, or let the loop yield:
 
 ```ts
 const doc = new LoroDoc();
@@ -228,11 +239,14 @@ text.free();
 doc.free();
 ```
 
-A handle stays usable after `doc.free()` for as long as it is alive, because it
-keeps the document.
+A handle still works after `doc.free()` while it's alive, since it keeps the
+document.
 
-**Undoing a deleted map key makes a new child container**, unless the child was
-created with `ensureMergeable*`. See [Undo and map child identity](#undo-and-map-child-identity).
+## Undoing a deleted map key makes a new child container
+
+A child made with `setContainer` comes back under a new container ID when undo
+restores its key. One made with `ensureMergeable*` keeps its ID. See
+[Undo and map child identity](#undo-and-map-child-identity).
 
 # Blog
 
