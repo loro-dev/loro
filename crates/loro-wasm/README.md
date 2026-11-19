@@ -73,6 +73,42 @@ Loro is a [CRDTs(Conflict-free Replicated Data Types)](https://crdt.tech/) libra
 > In this example, we demonstrate importing an entire Loro codebase into a Loro-powered 
 > version controller, preserving the complete Git DAG history while enabling fast version switching.
 
+## Freeing documents and container handles
+
+> [!IMPORTANT]
+> Container handles keep their document alive. `doc.free()` releases the
+> `LoroDoc` object, but the document's memory is only released once every
+> handle into it is released too.
+
+Every container object you get from a document (`doc.getText()`, `map.get()`,
+`list.insertContainer()` and so on) holds a reference to the document. So does
+a detached container (`new LoroText()`, `new LoroMap()`, ...) once you attach it
+with `setContainer` or `insertContainer`. A handle is released when you call its
+`free()` or when the JavaScript garbage collector finalizes it. Finalizers only
+run after the current task yields to the event loop, so code that creates and
+drops many documents in one synchronous loop (a test suite, a batch job, a
+request handler that never awaits) keeps every one of them in WASM memory until
+it yields. WASM memory never shrinks, so that high-water mark stays for the life
+of the process. In loro-dev/loro#1312, 1,000 documents with a 20,000-character
+text each grew WASM memory by about 44 MB when only `doc.free()` was called, and
+stayed flat when the text handle was freed too.
+
+To release a document right away, free its handles first:
+
+```ts
+const doc = new LoroDoc();
+const text = doc.getText("text");
+text.insert(0, "hello");
+doc.commit();
+
+text.free();
+doc.free();
+```
+
+Or let the loop yield (for example with an `await`) so the garbage collector can
+finalize the handles you no longer reference. A handle stays usable after
+`doc.free()` for as long as it is alive, because it keeps the document.
+
 ## Undo and map child identity
 
 `UndoManager` selects changes made by the bound local peer. When undoing the
