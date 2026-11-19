@@ -270,10 +270,14 @@ impl Change {
             && other.id.counter == self.id.counter + self.content_len() as Counter
             && other.deps.len() == 1
             && other.deps.as_single().unwrap().peer == self.id.peer
+            // Timestamps are untrusted: a peer whose clock rewound
+            // between commits produces `other.timestamp <
+            // self.timestamp`, which must decline the merge rather
+            // than trip the debug assert on import.
+            && other.timestamp >= self.timestamp
             && other.timestamp - self.timestamp <= merge_interval
             && self.commit_msg == other.commit_msg
         {
-            debug_assert!(other.timestamp >= self.timestamp);
             debug_assert!(other.lamport == self.lamport + self.len() as Lamport);
             true
         } else {
