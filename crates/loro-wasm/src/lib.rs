@@ -306,8 +306,8 @@ thread_local! {
 /// and so on) keep the document alive. `free()` on the doc only releases its memory
 /// once those handles are freed too, or after the garbage collector finalizes them,
 /// which needs the current task to yield. Free handles first when creating and
-/// dropping many documents in a synchronous loop. See "Freeing documents and
-/// container handles" in the package README.
+/// dropping many documents in a synchronous loop. See "Things to know" in
+/// the package README.
 ///
 /// @example
 /// ```ts
