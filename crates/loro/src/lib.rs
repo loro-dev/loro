@@ -2970,6 +2970,13 @@ impl LoroMap {
     pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
         self.handler.get_last_editor(key)
     }
+
+    /// Returns the peer and Lamport timestamp of the write that won at this
+    /// key in the current document version. A retained deletion is a write.
+    /// Returns `None` for a detached map or a key with no retained write.
+    pub fn get_last_edit_id(&self, key: &str) -> Option<IdLp> {
+        self.handler.get_last_edit_id(key)
+    }
 }
 
 impl Default for LoroMap {
