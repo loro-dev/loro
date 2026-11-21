@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Weak};
 
-use loro_common::{ContainerID, IdLp, LoroResult, PeerID};
+use loro_common::{ContainerID, IdLp, LoroResult};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -506,8 +506,8 @@ impl MapState {
         self.size
     }
 
-    pub fn get_last_edit_peer(&self, key: &str) -> Option<PeerID> {
-        self.map.get(&key.into()).map(|v| v.peer)
+    pub fn get_last_edit_id(&self, key: &str) -> Option<IdLp> {
+        self.map.get(&key.into()).map(|v| IdLp::new(v.peer, v.lamp))
     }
 }
 

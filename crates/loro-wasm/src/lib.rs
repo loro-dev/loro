@@ -344,6 +344,8 @@ extern "C" {
     pub type JsIdLp;
     #[wasm_bindgen(typescript_type = "ElemId[]")]
     pub type JsIdLps;
+    #[wasm_bindgen(typescript_type = "{ peer: PeerID, lamport: number }")]
+    pub type JsMapEditId;
     #[wasm_bindgen(typescript_type = "{ start: number, end: number }")]
     pub type JsRange;
     #[wasm_bindgen(typescript_type = "number|bool|string|null")]
@@ -4454,6 +4456,16 @@ impl LoroMap {
         self.handler
             .get_last_editor(key)
             .map(|x| JsValue::from_str(&x.to_string()).into())
+    }
+
+    /// Get the winning write for a key in the current version, including a
+    /// retained deletion. Pass its peer and Lamport timestamp to
+    /// `doc.getChangeAtLamport` to read the change if its history is available.
+    pub fn getLastEditId(&self, key: &str) -> JsResult<Option<JsMapEditId>> {
+        match self.handler.get_last_edit_id(key) {
+            Some(id) => Ok(Some(idlp_to_js(&id)?.into())),
+            None => Ok(None),
+        }
     }
 
     /// Check if the container is deleted
