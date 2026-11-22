@@ -278,6 +278,16 @@ impl<'a, T: DagNode, D: Dag<Node = T> + Debug> DagCausalIter<'a, D> {
             true
         });
 
+        // `out_degrees` is a hash map, so the loop above pushes the starting
+        // nodes in an order that depends on the hash of their ids. That order
+        // decides which concurrent branch is replayed first, and it can change
+        // the cost of a merge by orders of magnitude: when many concurrent
+        // inserts share one position, the branch that is replayed second
+        // scans past the other branch's run once per insert if its peer id is
+        // larger. Sort the starting nodes so the order is deterministic, and so
+        // that `pop` replays the larger peer first.
+        stack.sort_unstable();
+
         Ok(Self {
             dag,
             frontier: from,
@@ -482,6 +492,48 @@ mod tests {
                 .range(..=id)
                 .next_back()
                 .is_some_and(|(_, node)| node.contains_id(id))
+        }
+    }
+
+    /// Concurrent roots must be replayed in a deterministic order that does not
+    /// depend on the hash of their ids: the larger peer first. The replay order
+    /// decides the cost of merging concurrent inserts at one position, so a
+    /// hash-dependent order made some pairs of peer ids about 400 times slower
+    /// than others.
+    #[test]
+    fn concurrent_roots_replay_larger_peer_first() {
+        let pairs: [(u64, u64); 4] = [
+            (1, 2),
+            (0x7000_0000_0000_0000, 0x7000_0000_0000_0001),
+            (0xa5a5_a5a5_0000_0001, 0xa5a5_a5a5_0000_0002),
+            (0x0000_0000_0000_1000, 0xffff_0000_0000_0000),
+        ];
+        for (a, b) in pairs {
+            for (first, second) in [(a, b), (b, a)] {
+                let node = |peer| DummyNode {
+                    id: ID::new(peer, 0),
+                    lamport: 0,
+                    len: 3,
+                    deps: Frontiers::default(),
+                };
+                let mut vv = VersionVector::default();
+                vv.set_end(ID::new(a, 3));
+                vv.set_end(ID::new(b, 3));
+                let dag = DummyDag {
+                    frontier: Frontiers::default(),
+                    nodes: [(ID::new(a, 0), node(a)), (ID::new(b, 0), node(b))]
+                        .into_iter()
+                        .collect(),
+                    vv,
+                };
+                let mut target = IdSpanVector::default();
+                target.insert(first, CounterSpan::new(0, 3));
+                target.insert(second, CounterSpan::new(0, 3));
+                let peers: Vec<u64> = DagCausalIter::new(&dag, Frontiers::default(), target)
+                    .map(|r| r.data.id.peer)
+                    .collect();
+                assert_eq!(peers, vec![a.max(b), a.min(b)], "pair {a:#x}, {b:#x}");
+            }
         }
     }
 
