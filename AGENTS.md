@@ -49,6 +49,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Movable-list `Move`/`Set` import validation, and why a move of a deleted element
   is applied rather than rejected:
   [context/movable-list-op-validation.md](context/movable-list-op-validation.md).
+- Tree `Create`/`Move` parent validation on import (the op's causal history, why a
+  fast-path orphan crashed event conversion):
+  [context/tree-parent-validation.md](context/tree-parent-validation.md).
 - Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
   root-whitelisted latest state):
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).

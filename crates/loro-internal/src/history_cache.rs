@@ -392,6 +392,31 @@ impl ContainerHistoryCache {
         }
     }
 
+    /// Whether the tree `idx` holds node `target` in the shallow root state, deleted
+    /// nodes included. Nodes created before the shallow root cannot be resolved from the
+    /// trimmed history.
+    pub(crate) fn shallow_root_has_tree_node(
+        &self,
+        idx: ContainerIdx,
+        target: loro_common::TreeID,
+    ) -> bool {
+        let Some(state) = self.shallow_root_state.as_ref() else {
+            return false;
+        };
+        let mut store = state.store.lock();
+        let Some(c) = store.get_mut(idx) else {
+            return false;
+        };
+        let ctx = ContainerCreationContext {
+            configure: &Default::default(),
+            peer: 0,
+        };
+        match c.get_state_mut(idx, ctx) {
+            crate::state::State::TreeState(t) => !t.is_node_unexist(&target),
+            _ => false,
+        }
+    }
+
     /// Whether the movable list `idx` holds `elem_id` in the shallow root state.
     ///
     /// Elements created before the shallow root cannot be resolved from the trimmed
