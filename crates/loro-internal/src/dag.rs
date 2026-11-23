@@ -2227,6 +2227,7 @@ mod tests {
                 lookups.set(lookups.get() + 1);
                 Ok(dag.get(id))
             },
+            &|dep, target| dag.try_does_id_cover(dep, target),
             &side.id.into(),
             &prev_join.into(),
         )
