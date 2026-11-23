@@ -1874,21 +1874,23 @@ fn build_local_inverse(
             }
             // One op per movable list, so its snapshots are those of the span's
             // two ends; or only inserts, whose final places are read below.
-            RecordedOp::Movable(record) => match movable_at.get(&record.cid).map(|&i| &mut movable[i]) {
-                Some(r) if r.is_insert_only() && record.is_insert_only() => {
-                    r.merge_inserts(&record)
-                }
-                Some(r) if r.is_delete_only() && record.is_delete_only() => {
-                    if !r.merge_deletes(&record) {
-                        return None;
+            RecordedOp::Movable(record) => {
+                match movable_at.get(&record.cid).map(|&i| &mut movable[i]) {
+                    Some(r) if r.is_insert_only() && record.is_insert_only() => {
+                        r.merge_inserts(&record)
+                    }
+                    Some(r) if r.is_delete_only() && record.is_delete_only() => {
+                        if !r.merge_deletes(&record) {
+                            return None;
+                        }
+                    }
+                    Some(_) => return None,
+                    None => {
+                        movable_at.insert(record.cid.clone(), movable.len());
+                        movable.push(record);
                     }
                 }
-                Some(_) => return None,
-                None => {
-                    movable_at.insert(record.cid.clone(), movable.len());
-                    movable.push(record);
-                }
-            },
+            }
             #[cfg(feature = "counter")]
             RecordedOp::Counter {
                 container,
