@@ -379,7 +379,9 @@ impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
                     self.out_degrees.entry(*succ_id).and_modify(|i| *i -= 1);
                     if let Some(in_degree) = self.out_degrees.get(succ_id) {
                         if in_degree.is_zero() {
-                            heap.push((succ_id.peer != current_peer, *succ_id));
+                            // The heap drains into a LIFO stack: reverse only the ID
+                            // so larger peers pop first, while the same peer stays first.
+                            heap.push((succ_id.peer != current_peer, std::cmp::Reverse(*succ_id)));
                             self.out_degrees.remove(succ_id);
                         }
                     }
@@ -390,7 +392,7 @@ impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
                 self.succ.remove(&k);
             });
             while let Some(id) = heap.pop() {
-                self.stack.push(id.1)
+                self.stack.push(id.1 .0)
             }
 
             return Some(IterReturn {
@@ -535,6 +537,50 @@ mod tests {
                 assert_eq!(peers, vec![a.max(b), a.min(b)], "pair {a:#x}, {b:#x}");
             }
         }
+    }
+
+    #[test]
+    fn ready_successors_keep_same_peer_then_larger_peer_first() {
+        // A single root releases three successors, including its own peer.
+        let nodes = [
+            (5, 0, None),
+            (5, 1, Some(ID::new(5, 0))),
+            (2, 0, Some(ID::new(5, 0))),
+            (9, 0, Some(ID::new(5, 0))),
+        ];
+        let mut vv = VersionVector::default();
+        let mut target = IdSpanVector::default();
+        let nodes = nodes
+            .into_iter()
+            .map(|(peer, counter, dep)| {
+                let id = ID::new(peer, counter);
+                vv.set_end(id.inc(1));
+                (
+                    id,
+                    DummyNode {
+                        id,
+                        lamport: u32::from(dep.is_some()),
+                        len: 1,
+                        deps: dep.map(Frontiers::from_id).unwrap_or_default(),
+                    },
+                )
+            })
+            .collect();
+        for (peer, end) in [(5, 2), (2, 1), (9, 1)] {
+            target.insert(peer, CounterSpan::new(0, end));
+        }
+        let dag = DummyDag {
+            nodes,
+            vv,
+            frontier: Frontiers::default(),
+        };
+        let ids: Vec<_> = DagCausalIter::new(&dag, Frontiers::default(), target)
+            .map(|r| r.data.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![ID::new(5, 0), ID::new(5, 1), ID::new(9, 0), ID::new(2, 0)]
+        );
     }
 
     #[test]
