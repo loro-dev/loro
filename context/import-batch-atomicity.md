@@ -1,11 +1,16 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-23.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) stops the auto-commit txn,
 keeps the txn mutex for the whole critical section, force-detaches with
 `set_detached(true)`, and reattaches with a **single**
-`_checkout_to_latest_without_commit` at the end. Usually every blob updates only the
+`_checkout_to_latest_without_commit_with_event` at the end, reporting
+`by: "import"` so UndoManager keeps its undo/redo stacks, while preserving the
+existing `origin: "checkout"` contract. Single-blob batches still use standalone
+import labels.
+The checkout clears the dead-container cache even on a forward transition: a
+query while state lags behind imported history can cache a live child as deleted. Usually every blob updates only the
 `OpLog`, so a batch of N blobs costs one state apply instead of N.
 
 For an attached document with no applied history and snapshot-compatible state,
