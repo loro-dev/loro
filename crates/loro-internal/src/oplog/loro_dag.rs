@@ -1259,6 +1259,10 @@ impl Dag for AppDag {
     fn is_before_shallow_root(&self, frontiers: &Frontiers) -> bool {
         AppDag::is_before_shallow_root(self, frontiers)
     }
+
+    fn try_does_id_cover(&self, dep: ID, target: ID) -> LoroResult<Option<bool>> {
+        AppDag::try_does_id_cover(self, dep, target)
+    }
 }
 
 /// A vv already stored on parsed nodes, or why that read cannot answer.
