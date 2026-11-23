@@ -1623,12 +1623,15 @@ impl Handler {
                                 if !x.is_node_unexist(&target) {
                                     // The node was deleted: bring it back so it keeps its id,
                                     // metadata and children (loro-dev/loro#1212).
-                                    if x.revive_for_apply_diff(parent, position, target)? {
-                                        // It still holds its metadata, and the batch's
-                                        // entry for it is a full state: align, don't append.
-                                        revived_full_state
-                                            .insert(target.associated_meta_container());
-                                    }
+                                    // A `Move` does not carry metadata. The map already holds
+                                    // what the node had when it was deleted, and a recorded
+                                    // move inverse has no map entry. Marking it as a full
+                                    // state would clear that map
+                                    // (`apply_diff_with_movable_undo`), which is how undo of
+                                    // a move left a live node with empty data after a remote
+                                    // delete (loro-dev/loro#1311). A `Create` still marks
+                                    // the map, because a checkout sends its full state.
+                                    x.revive_for_apply_diff(parent, position, target)?;
                                 } else {
                                     let new_target = x.__internal__next_tree_id();
                                     if x.create_at_with_target_for_apply_diff(
