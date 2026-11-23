@@ -1,6 +1,6 @@
 # Dead Container Cache
 
-Verified against code 2026-10-01.
+Verified against code 2026-11-18.
 
 `DocState::is_deleted` (`crates/loro-internal/src/state/dead_containers_cache.rs`)
 answers whether a container is unreachable from a root: it walks the arena
@@ -64,11 +64,13 @@ query inserts even one entry before the next move, making a loop of queries
 and moves quadratic after caching many deleted containers. Empty caches need
 no allocation.
 
-Undo, redo, `revert_to`, and `apply_diff` do not revive container IDs by
-themselves: `Handler::apply_diff` creates a new tree node for a deleted target
-and remaps its metadata, and map/list children are recreated with new IDs.
-Their tree moves still go through `apply_local_op`. Only mergeable children
-keep their IDs, and those are not cached.
+Undo, redo, `revert_to`, and `apply_diff` revive a deleted tree node by
+moving it back (`TreeHandler::revive_for_apply_diff`, see
+[tree-events.md](tree-events.md)), so the node keeps its id, metadata map and
+children. Map/list children named in the diff are still recreated with new
+IDs. Only a target this doc has never seen gets a new tree node, with its
+metadata remapped. Their tree moves go through `apply_local_op`. Mergeable
+children keep their IDs, and those are not cached.
 
 Before 2026-09-28 every deletion went into one set that forward transitions
 never cleared (`clear_alive` removed nothing, since only deletions were

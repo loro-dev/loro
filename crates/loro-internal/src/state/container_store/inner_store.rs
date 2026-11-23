@@ -3,7 +3,10 @@ use crate::{
     configure::Configure,
     container::idx::ContainerIdx,
     kv_store::{KvStore, SharedBlockCache},
-    state::{container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState},
+    state::{
+        container_store::FRONTIERS_KEY, ContainerCreationContext, ContainerState,
+        FractionalIndexSetting, State,
+    },
     sync::Mutex,
     utils::kv_wrapper::KvWrapper,
     version::Frontiers,
@@ -707,6 +710,28 @@ impl InnerStore {
             }
         }
         out.into_iter().collect()
+    }
+
+    /// Fractional-index settings of decoded tree states that differ from the
+    /// default. A setting can only be changed on a decoded state, so lazy
+    /// entries are skipped without decoding them.
+    pub(crate) fn tree_fractional_index_settings(
+        &self,
+    ) -> Vec<(ContainerIdx, FractionalIndexSetting)> {
+        self.iter_entries()
+            .filter_map(|(slot, entry)| {
+                let State::TreeState(tree) = entry.try_get_state()? else {
+                    return None;
+                };
+                let setting = tree.fractional_index_setting();
+                (setting != FractionalIndexSetting::Jitter(0)).then(|| {
+                    (
+                        ContainerIdx::from_index_and_type(slot as u32, ContainerType::Tree),
+                        setting,
+                    )
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn iter_all_containers_mut(

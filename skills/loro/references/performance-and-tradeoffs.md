@@ -26,6 +26,7 @@ Use this chapter when users ask whether Loro can handle a workload, how to store
 - Hierarchies: use `LoroTree`; avoid forcing tree-shaped data into ad hoc map/list structures.
 - High-frequency presence or cursor movement: use `EphemeralStore`, not the persisted document.
 - Hard invariants such as balances, bookings, or permissions still need application/server-side validation outside the CRDT merge.
+- Many short-lived documents in JS/WASM: container handles keep their document alive after `doc.free()` until the handles are freed or the garbage collector finalizes them, which only happens after the code yields. Free handles before the doc in synchronous loops (tests, batch jobs). See "Things to know" in the `loro-crdt` README.
 
 ## Benchmark Interpretation
 

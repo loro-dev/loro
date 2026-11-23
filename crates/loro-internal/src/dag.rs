@@ -67,6 +67,11 @@ pub(crate) trait Dag: Debug {
     fn is_before_shallow_root(&self, _frontiers: &Frontiers) -> bool {
         false
     }
+    /// Whether `target` is `dep` or in its causal past, or `None` when this
+    /// DAG cannot tell cheaply.
+    fn try_does_id_cover(&self, _dep: ID, _target: ID) -> LoroResult<Option<bool>> {
+        Ok(None)
+    }
 }
 
 /// Whether the meet of two versions can serve as the replay base between them.
@@ -180,7 +185,12 @@ impl<T: Dag + ?Sized> DagUtils for T {
         a_id: &Frontiers,
         b_id: &Frontiers,
     ) -> LoroResult<Frontiers> {
-        latest_single_head_critical_version(&|id| self.try_get(id), a_id, b_id)
+        latest_single_head_critical_version(
+            &|id| self.try_get(id),
+            &|dep, target| self.try_does_id_cover(dep, target),
+            a_id,
+            b_id,
+        )
     }
 
     #[inline]
@@ -645,6 +655,34 @@ fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>
     Ok(Some(deps))
 }
 
+/// Like [`deps_to_ord_id_spans`], but also drops the implicit same-peer
+/// predecessor when an explicit dep has it in its causal past. Such a
+/// predecessor is a redundant path, not a second branch
+/// (`docs/critical-version-spec.md` §1.4): kept on the heap, it stops the
+/// single-head scan from narrowing whenever another peer wrote between two
+/// changes of this peer.
+fn critical_scan_parents<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
+    node: &OrdIdSpan<'a>,
+    get: &'a F,
+    covers: &impl Fn(ID, ID) -> LoroResult<Option<bool>>,
+) -> LoroResult<Option<Vec<OrdIdSpan<'a>>>> {
+    let Some(mut deps) = deps_to_ord_id_spans(node, get)? else {
+        return Ok(None);
+    };
+    // `deps_to_ord_id_spans` appends the predecessor after the explicit deps.
+    if deps.len() > node.deps.len() {
+        let prev = deps.last().unwrap().id_last();
+        for dep in node.deps.iter() {
+            if covers(dep, prev)? == Some(true) {
+                deps.pop();
+                break;
+            }
+        }
+    }
+
+    Ok(Some(deps))
+}
+
 /// The latest single-head critical version (Eg-walker §3.5/§3.6) of the
 /// union graph `ancestry(left) ∪ ancestry(right)`: the newest event `v`
 /// such that every other event in the union is an ancestor of `v` or
@@ -662,6 +700,7 @@ fn deps_to_ord_id_spans<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>
 /// the old behaviour.
 fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroResult<Option<D>>>(
     get: &'a F,
+    covers: &impl Fn(ID, ID) -> LoroResult<Option<bool>>,
     left: &Frontiers,
     right: &Frontiers,
 ) -> LoroResult<Frontiers> {
@@ -725,7 +764,7 @@ fn latest_single_head_critical_version<'a, D: DagNode + 'a, F: Fn(ID) -> LoroRes
             }
         }
 
-        match deps_to_ord_id_spans(&node, get)? {
+        match critical_scan_parents(&node, get, covers)? {
             Some(deps) if !deps.is_empty() => {
                 for dep in deps {
                     push_span(&mut queue, &mut in_heap, dep);
@@ -2188,6 +2227,7 @@ mod tests {
                 lookups.set(lookups.get() + 1);
                 Ok(dag.get(id))
             },
+            &|dep, target| dag.try_does_id_cover(dep, target),
             &side.id.into(),
             &prev_join.into(),
         )
