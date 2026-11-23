@@ -10,7 +10,8 @@ fn lazy_copy() -> (LoroDoc, LoroDoc) {
     source.get_text("t").insert(0, TEXT).unwrap();
     source.commit();
     let lazy = LoroDoc::new();
-    lazy.import(&source.export(ExportMode::Snapshot).unwrap()).unwrap();
+    lazy.import(&source.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
     (source, lazy)
 }
 
