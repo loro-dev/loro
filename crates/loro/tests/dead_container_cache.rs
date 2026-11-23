@@ -163,44 +163,38 @@ fn node_moved_into_deleted_subtree(doc: &LoroDoc) -> (LoroTree, TreeID, LoroMap,
     (tree, node, meta, alive_version)
 }
 
-/// Undo and `revert_to` go through `Handler::apply_diff`, which never moves a
-/// deleted node back: it creates a new node and copies the metadata. The old
-/// metadata stays deleted, and the new one is alive.
-fn assert_recreated_as_new_node(tree: &LoroTree, node: TreeID, meta: &LoroMap) {
-    assert!(tree.is_node_deleted(&node).unwrap());
-    assert!(meta.is_deleted());
-    assert!(meta.insert("k", 1).is_err());
-
-    let roots = tree.roots();
-    assert_eq!(roots.len(), 1);
-    assert_ne!(roots[0], node);
-    let new_meta = tree.get_meta(roots[0]).unwrap();
-    assert!(!new_meta.is_deleted());
-    assert_eq!(new_meta.get("v").unwrap().into_value().unwrap(), 1.into());
-    new_meta.insert("k", 1).unwrap();
+/// Undo and `revert_to` go through `Handler::apply_diff`, which moves a deleted
+/// node back (context/tree-events.md, "Undo brings deleted nodes back"). The
+/// metadata deletion cached by the query before must not outlive it.
+fn assert_revived(tree: &LoroTree, node: TreeID, meta: &LoroMap) {
+    assert!(!tree.is_node_deleted(&node).unwrap());
+    assert_eq!(tree.roots(), vec![node]);
+    assert!(!meta.is_deleted());
+    assert_eq!(meta.get("v").unwrap().into_value().unwrap(), 1.into());
+    meta.insert("k", 1).unwrap();
 }
 
 #[test]
-fn undo_after_is_deleted_query_recreates_node() {
+fn undo_after_is_deleted_query_revives_node() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     let mut undo = UndoManager::new(&doc);
     let (tree, node, meta, _) = node_moved_into_deleted_subtree(&doc);
 
     assert!(undo.undo().unwrap());
-    assert_recreated_as_new_node(&tree, node, &meta);
+    assert_revived(&tree, node, &meta);
     doc.commit();
 }
 
 #[test]
-fn revert_to_after_is_deleted_query_recreates_node() {
+fn revert_to_after_is_deleted_query_revives_node() {
     let doc = LoroDoc::new();
     doc.set_peer_id(1).unwrap();
     let (tree, node, meta, alive_version) = node_moved_into_deleted_subtree(&doc);
 
     doc.revert_to(&alive_version).unwrap();
     doc.commit();
-    assert_recreated_as_new_node(&tree, node, &meta);
+    assert_revived(&tree, node, &meta);
     doc.commit();
 }
 
