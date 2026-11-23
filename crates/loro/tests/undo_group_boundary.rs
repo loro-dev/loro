@@ -59,7 +59,10 @@ fn group_start_does_not_merge_after_a_disjoint_remote_edit() -> LoroResult<()> {
     assert!(undo.undo()?);
     send(&a, &b)?;
     assert_eq!(list.get_value().to_json_value(), json!([10]));
-    assert_eq!(b.get_movable_list("list").get_value().to_json_value(), json!([10]));
+    assert_eq!(
+        b.get_movable_list("list").get_value().to_json_value(),
+        json!([10])
+    );
     assert_eq!(a.get_text("text").get_richtext_value(), remote);
     assert!(undo.can_undo());
     Ok(())
