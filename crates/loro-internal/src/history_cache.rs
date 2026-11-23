@@ -245,6 +245,7 @@ impl ContainerHistoryCache {
                                 let item = l.get_list_item(elem.pos).unwrap();
                                 c.movable_list.record_shallow_root_state(
                                     item.id,
+                                    elem.value_id,
                                     idlp.peer,
                                     idlp.lamport.into(),
                                     elem.value.clone(),
@@ -962,9 +963,12 @@ impl HistoryCacheTrait for MovableListHistoryCache {
 }
 
 impl MovableListHistoryCache {
+    /// `id` is the winning move of the element and `value_id` its winning
+    /// set. They can come from different peers, so they are seeded apart.
     pub(crate) fn record_shallow_root_state(
         &mut self,
         id: IdFull,
+        value_id: IdLp,
         elem_peer: PeerID,
         elem_lamport: Lamport,
         value: LoroValue,
@@ -972,8 +976,8 @@ impl MovableListHistoryCache {
         self.set_set.insert(MovableListSetDeltaEntry {
             element_lamport: elem_lamport,
             element_peer: elem_peer,
-            lamport: id.lamport,
-            peer: id.peer,
+            lamport: value_id.lamport,
+            peer: value_id.peer,
             counter_or_value: Either::Right(Box::new(value.clone())),
         });
         self.move_set.insert(MovableListInnerDeltaEntry {
