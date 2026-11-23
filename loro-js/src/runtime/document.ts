@@ -1180,7 +1180,7 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
       emit: () =>
         this.#emit(
           "import",
-          undefined,
+          "checkout",
           before,
           after,
           changed,

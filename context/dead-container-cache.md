@@ -44,7 +44,8 @@ walk and assert that no cached entry on the chain contradicts the result.
   whose direction mode is `Import`, `Linear`, or `ImportGreaterUpdates`.
   `_checkout_without_emitting_with_event` also explicitly clears both sets
   before applying state, including `import_batch`'s reattach: its public event
-  is `Import` with an empty origin to preserve undo/redo history. Snapshot
+  is `Import` to preserve undo/redo history, with origin still `"checkout"`
+  for compatibility. Snapshot
   imports into an empty document also use `Import`.
 - `DocState::apply_diff` in any other mode clears `revivable` when the batch
   touches a Tree or MovableList container.

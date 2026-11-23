@@ -22,7 +22,7 @@ describe("undo", () => {
       });
       doc.importBatch(blobs);
       expect(events).toHaveLength(1);
-      expect(events[0]).toMatchObject({ by: "import", origin: "" });
+      expect(events[0]).toMatchObject({ by: "import", origin: "checkout" });
       if (redo) {
         expect(undo.canRedo()).toBe(true);
         expect(undo.redo()).toBe(true);

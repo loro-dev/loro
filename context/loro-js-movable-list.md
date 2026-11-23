@@ -321,8 +321,10 @@ loro.js, not specific to MovableList:
   deleted. It happens under List, Map and MovableList parents alike (also on
   `main`). The suite skips such map entries when it compares `diff()`.
 - Event labels: checkout events carry origin `"checkout"` only in Rust.
-  Multi-blob `importBatch` now matches on both engines (`by: "import"`, empty
-  origin); the harness no longer normalizes its labels. Rust's
+  Multi-blob `importBatch` matches on both engines (`by: "import"`,
+  `origin: "checkout"`); loro.js sets that origin only in its batch event
+  emitter, leaving single imports unchanged. The harness does not normalize
+  batch labels. Rust's
   `oplogVersion()` also counts the pending transaction.
 
 Differences in form, not in effect:

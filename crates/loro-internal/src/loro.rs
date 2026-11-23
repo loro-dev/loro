@@ -5513,7 +5513,7 @@ impl BatchImportGuard<'_> {
             checkout = validation.and_then(|()| {
                 doc._checkout_to_latest_without_commit_with_event(
                     true,
-                    Default::default(),
+                    "checkout".into(),
                     // The batch is a remote import: reporting it as a checkout
                     // would make the `UndoManager` clear its undo/redo stacks.
                     EventTriggerKind::Import,

@@ -6,7 +6,9 @@ Verified against code 2026-11-23.
 keeps the txn mutex for the whole critical section, force-detaches with
 `set_detached(true)`, and reattaches with a **single**
 `_checkout_to_latest_without_commit_with_event` at the end, reporting
-`by: "import"` with an empty origin so UndoManager keeps its undo/redo stacks.
+`by: "import"` so UndoManager keeps its undo/redo stacks, while preserving the
+existing `origin: "checkout"` contract. Single-blob batches still use standalone
+import labels.
 The checkout clears the dead-container cache even on a forward transition: a
 query while state lags behind imported history can cache a live child as deleted. Usually every blob updates only the
 `OpLog`, so a batch of N blobs costs one state apply instead of N.
