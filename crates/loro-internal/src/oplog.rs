@@ -83,15 +83,18 @@ pub(crate) struct ImportRollback {
     /// previous op of the same change, not validated yet
     /// (`OpLog::validate_style_end_anchors_in_import_scope`).
     style_end_refs: Vec<StyleEndRef>,
-    /// Tree `Create`/`Move` ops inserted in this scope that name a parent node, not
-    /// validated yet (`OpLog::validate_tree_parent_refs_in_import_scope`).
+    /// Tree `Create`/`Move` ops inserted in this scope that name a parent node, and
+    /// `Delete` ops, not validated yet
+    /// (`OpLog::validate_tree_parent_refs_in_import_scope`).
     tree_parent_refs: Vec<TreeParentRef>,
 }
 
 struct TreeParentRef {
     container: ContainerIdx,
     op_id: ID,
+    /// The parent a `Create`/`Move` names, or the target of a `Delete`.
     parent: TreeID,
+    is_delete: bool,
 }
 
 /// The op that has a tree node's id, and the tree it is in.
@@ -203,9 +206,9 @@ pub(crate) fn state_apply_can_reject(ty: ContainerType) -> bool {
     )
 }
 
-/// The parent node a tree `Create`/`Move` names, or `None` for the root, the deleted
-/// root and every other op.
-fn tree_op_parent_node(content: &InnerContent) -> Option<TreeID> {
+/// The node a tree op needs to exist: the parent a `Create`/`Move` names (`None` for
+/// the root and the deleted root), or the target of a `Delete` (with `true`).
+fn tree_op_node_ref(content: &InnerContent) -> Option<(TreeID, bool)> {
     match content {
         InnerContent::Tree(op) => match &**op {
             TreeOp::Create {
@@ -215,7 +218,8 @@ fn tree_op_parent_node(content: &InnerContent) -> Option<TreeID> {
             | TreeOp::Move {
                 parent: Some(parent),
                 ..
-            } if !parent.is_deleted_root() => Some(*parent),
+            } if !parent.is_deleted_root() => Some((*parent, false)),
+            TreeOp::Delete { target } => Some((*target, true)),
             _ => None,
         },
         _ => None,
@@ -238,7 +242,7 @@ pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
                 op.content,
                 InnerContent::List(list_op::InnerListOp::StyleEnd)
             ),
-            ContainerType::Tree => tree_op_parent_node(&op.content).is_some(),
+            ContainerType::Tree => tree_op_node_ref(&op.content).is_some(),
             _ => false,
         }
     } else {
@@ -430,14 +434,16 @@ impl OpLog {
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
                 if !from_local && op.container.get_type() == ContainerType::Tree {
-                    // Honest peers create a node before they use it as a parent, so a
-                    // parent created earlier in the same change needs no history lookup.
-                    if let Some(parent) = tree_op_parent_node(&op.content) {
+                    // Honest peers create a node before they use it as a parent or
+                    // delete it, so a node created earlier in the same change needs no
+                    // history lookup.
+                    if let Some((parent, is_delete)) = tree_op_node_ref(&op.content) {
                         if !created_in_change.contains(&(op.container, parent)) {
                             rollback.tree_parent_refs.push(TreeParentRef {
                                 container: op.container,
                                 op_id: ID::new(change.id.peer, op.counter),
                                 parent,
+                                is_delete,
                             });
                         }
                     }
@@ -1771,7 +1777,8 @@ impl OpLog {
     }
 
     /// Reject the tree `Create`/`Move` ops inserted since the open import rollback scope
-    /// began whose parent node was not created within the op's causal history.
+    /// began whose parent node was not created within the op's causal history, and the
+    /// `Delete` ops whose target was not.
     ///
     /// Honest peers only create under, or move into, nodes they can see, and a node's id
     /// is the id of the op that created it. The state applies imported ops on the fast
@@ -1797,9 +1804,14 @@ impl OpLog {
             if !self.is_visible_tree_parent(&r, parent)?
                 && !self.is_visible_tree_parent_by_target(&r)?
             {
+                let role = if r.is_delete {
+                    "deletes node"
+                } else {
+                    "names parent"
+                };
                 return Err(LoroError::DecodeError(
                     format!(
-                        "Tree op {} names parent {}, which is not in the tree's causal history",
+                        "Tree op {} {role} {}, which is not in the tree's causal history",
                         r.op_id, r.parent
                     )
                     .into_boxed_str(),

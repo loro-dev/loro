@@ -116,7 +116,7 @@ Standalone detached imports do not apply state, so preflight uses
 `import_op_can_reject(op, true)`: only MovableList `Move`/`Set` element validation
 and Text `StyleEnd` anchor validation
 (`OpLog::validate_style_end_anchors_in_import_scope`, loro-dev/loro#1254) and Tree
-parent validation (`OpLog::validate_tree_parent_refs_in_import_scope`,
+parent/delete-target validation (`OpLog::validate_tree_parent_refs_in_import_scope`,
 [tree-parent-validation.md](tree-parent-validation.md)) require a
 rollback scope. Text/List/Tree state validation still opens a scope
 when attached. An applied Text or scalar update can unlock a pre-existing bad

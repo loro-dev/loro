@@ -926,3 +926,70 @@ fn parents_revived_by_undo_redo_and_revert_are_accepted() {
         .unwrap();
     assert_eq!(doc.get_deep_value(), other.get_deep_value());
 }
+
+/// A `Delete` of a node that exists in no history used to panic in the event
+/// conversion (`is_node_deleted(&target).unwrap()` in `tree_state.rs`). It is rejected
+/// like an unknown parent.
+#[test]
+fn delete_of_an_unknown_node_is_rejected() {
+    for (subscribed, detached) in [(true, false), (false, false), (false, true)] {
+        let v = Victim::new(subscribed, false);
+        if detached {
+            v.doc.detach();
+        }
+        let before = Before::of(&v);
+        let hostile = forged(
+            vec!["1", "4242"],
+            "1@0",
+            1,
+            vec!["0@0"],
+            vec![tree_op(1, json!({"type": "delete", "target": "999999@1"}))],
+        );
+        let err = v.doc.import_json_updates(hostile).unwrap_err();
+        assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+        before.assert_unchanged(&v);
+        if v.doc.is_detached() {
+            v.doc.try_attach().unwrap();
+        }
+        assert_usable(&v.doc);
+    }
+}
+
+/// Deletes of nodes created earlier in the change, by another peer, or before a
+/// shallow root are honest.
+#[test]
+fn deletes_of_known_nodes_are_accepted() {
+    let src = base();
+    let root = TreeID::new(1, 0);
+    let tree = src.get_tree("tree");
+    let a = tree.create(root).unwrap();
+    let b = tree.create(root).unwrap();
+    tree.delete(b).unwrap();
+    src.commit();
+    let shallow = src
+        .export(ExportMode::shallow_snapshot(&src.oplog_frontiers()))
+        .unwrap();
+
+    let editor = LoroDoc::new();
+    editor.set_peer_id(6).unwrap();
+    editor
+        .import(&src.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let tree = editor.get_tree("tree");
+    tree.delete(a).unwrap();
+    let c = tree.create(None).unwrap();
+    tree.delete(c).unwrap();
+    editor.commit();
+    assert_accepted_everywhere(&editor, true);
+
+    let doc = LoroDoc::new();
+    doc.set_peer_id(5).unwrap();
+    doc.import(&shallow).unwrap();
+    let _sub = doc.subscribe_root(Arc::new(|_| {}));
+    doc.import(&editor.export(ExportMode::updates(&src.oplog_vv())).unwrap())
+        .unwrap();
+    assert_eq!(
+        doc.get_tree("tree").get_value(),
+        editor.get_tree("tree").get_value()
+    );
+}

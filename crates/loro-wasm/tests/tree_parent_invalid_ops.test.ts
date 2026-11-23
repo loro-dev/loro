@@ -75,6 +75,13 @@ const MOVE_JSON = forged(
   { type: "move", target: "0@0", parent: "999999@1", fractional_index: "80" },
   1,
 );
+/** Peer 1 deletes a node that never existed. */
+const DELETE_JSON = forged(
+  ["1", "4242"],
+  "1@0",
+  { type: "delete", target: "999999@1" },
+  1,
+);
 
 // Binary forms of the changes above, exported by a build that accepted them: the
 // fixed build cannot produce them through its public API.
@@ -141,7 +148,12 @@ describe("tree ops naming a parent outside their causal history", () => {
     });
 
     it(`throws on JSON updates, ${label}`, async () => {
-      for (const json of [SAME_PEER_JSON, NEW_PEER_JSON, MOVE_JSON]) {
+      for (const json of [
+        SAME_PEER_JSON,
+        NEW_PEER_JSON,
+        MOVE_JSON,
+        DELETE_JSON,
+      ]) {
         await expectRejected(subscribed, (doc) => doc.importJsonUpdates(json));
       }
     });

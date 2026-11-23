@@ -1,6 +1,6 @@
 # Tree Parent Validation on Import
 
-Verified against code 2026-11-22 (main `41845694` plus this change).
+Verified against code 2026-11-23 (main `dbe7fc25` plus this change).
 
 A tree `Create`/`Move` names its parent as a node id. The import fast path applies
 raw ops with the parent check off (`need_check` is false for `DiffMode::Linear` in
@@ -13,22 +13,40 @@ subscriber, left an orphan in the state. The three diff modes also disagreed on 
 
 ## The rule
 
-A tree `Create`/`Move` whose parent is a node (not the root, not the deleted root)
-is valid only if the op that has the parent's id (`peer@counter` of the `TreeID`) is
-an op on that node, in the same tree container, and is in the op's causal history. If
-history was trimmed by a shallow snapshot, a parent that is in the shallow root state
-(deleted nodes included) is also valid. Anything else is a `LoroError::DecodeError`
-and the import rolls back.
+A tree `Create`/`Move` whose parent is a node (not the root, not the deleted root),
+and a `Delete` of a node, is valid only if a `Create` or `Move` on that node, in the
+same tree container, is in the op's causal history (an earlier op of the same change
+counts). If history was trimmed by a shallow snapshot, a node that is in the shallow
+root state (deleted nodes included) is also valid. Anything else is a
+`LoroError::DecodeError` and the import rolls back.
+
+Two lookups implement it, cheapest first:
+
+1. By id (`OpLog::resolve_tree_parent`, `is_visible_tree_parent`): the op that has
+   the node's id (`peer@counter` of the `TreeID`), when it is a tree op on that node
+   in the same tree, plus one vv check. Every node created by a current build
+   resolves here, then the shallow root state.
+2. By target (`OpLog::is_visible_tree_parent_by_target`), only when (1) fails: every
+   `Create`/`Move` on the node in the tree's import cache
+   (`ContainerHistoryCache::get_tree`), checked against the op's vv. Building that
+   cache parses the whole history once, so it must stay off the path of valid
+   current-format imports.
 
 It reads only the op's own causal history, never the importing doc's state, so a peer
 that already has a concurrent change creating the parent decides like a peer that
 does not, on every import path.
 
-Why "the op with the parent's id": every `TreeID` is the id of the `Create` op that
-first made the node. Undo/redo and `apply_diff` revive a node with a new `Create` op
-that carries the old id (`TreeHandler::create_at_with_target_for_apply_diff`), but
-the original `Create` is still in history, so this lookup finds it. No target index
-is needed.
+Why (1) usually suffices: a `TreeID` is the id of the `Create` op that first made
+the node. Undo/redo and `revert_to` bring a deleted node back with a `Move` of its
+old id (`TreeHandler::revive_for_apply_diff`), and `apply_diff` gives a node the
+doc never had a fresh id (`__internal__next_tree_id` before
+`create_at_with_target_for_apply_diff`), so the original `Create` is in history.
+
+Why (2) exists: before loro-dev/loro#468 (1.0.0-beta.5), `apply_diff` and undo
+re-created a node the doc had never seen under the diff's own `TreeID`, by an op
+with another id. The encoding stores such an op as a `Move` (a `Create` is only
+encoded when the target equals the op id), so that node has no op with its id in
+the history, and (1) alone rejected honest children of it.
 
 ## Where
 
@@ -49,8 +67,14 @@ is needed.
   by op (see `movable-list-op-validation.md`). The tree state in a snapshot cannot hold
   an orphan (its parents are encoded as indices into the node list), but the history
   of a snapshot written by a build without this check can.
-- `Delete` or `Move` of a target that never existed, and a `Move` that closes a cycle,
-  are not checked here.
+- A `Move` of a target with no op in history is accepted (see (2): it is how old
+  builds encoded a re-created node). With a subscriber its event still panics on
+  main, independently of this check: the node's metadata container has no known
+  parent (`ContainerWrapper::new`, "a container gets state only once its parent is
+  known"), since the arena only links metadata containers created by `Create` ops
+  (`InnerContent::visit_created_children`) or by the op with the container's id
+  (`creator_resolver`). Linking them for such `Move`s is a follow-up.
+- A `Move` that closes a cycle is not checked here.
 
 ## Tests
 

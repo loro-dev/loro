@@ -93,7 +93,8 @@ over graceful degradation.
 - Movable-list `Move`/`Set` element validation on import, plus change-store
   rollback records and KV block-range decoding:
   [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).
-- Tree `Create`/`Move` parent validation on import (`validate_tree_parent_refs_in_import_scope`):
+- Tree `Create`/`Move` parent and `Delete` target validation on import
+  (`validate_tree_parent_refs_in_import_scope`):
   [../../context/tree-parent-validation.md](../../context/tree-parent-validation.md).
 - Root container visibility after import/checkout (`materialize_touched_roots`):
   [../../context/root-container-visibility.md](../../context/root-container-visibility.md).
