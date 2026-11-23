@@ -14,7 +14,7 @@ use crate::{cursor::AbsolutePosition, VersionVector};
 use self::{crdt_rope::CrdtRope, id_to_cursor::IdToCursor};
 
 use super::{
-    fugue_span::{FugueSpan, Status},
+    fugue_span::{FugueSpan, OptionalStatus, Status, UNKNOWN_REAL_ID_UNSET},
     RichtextChunk,
 };
 
@@ -57,10 +57,9 @@ impl Tracker {
 
         let result = this.rope.tree.push(FugueSpan {
             content: RichtextChunk::new_unknown(UNKNOWN_SPAN_LEN),
-            id: IdFull::new(UNKNOWN_PEER_ID, 0, 0),
-            real_id: None,
+            id: IdFull::new(UNKNOWN_PEER_ID, 0, UNKNOWN_REAL_ID_UNSET),
             status: Status::default(),
-            diff_status: None,
+            diff_status: OptionalStatus::NONE,
             origin_left: None,
             origin_right: None,
         });
@@ -153,21 +152,19 @@ impl Tracker {
         &mut self,
         pos: usize,
         content: RichtextChunk,
-        op_id: IdFull,
+        mut op_id: IdFull,
         update_vv: bool,
     ) {
+        if op_id.peer == UNKNOWN_PEER_ID {
+            op_id.lamport = UNKNOWN_REAL_ID_UNSET;
+        }
         let result = self.rope.insert(
             pos,
             FugueSpan {
                 content,
                 id: op_id,
-                real_id: if op_id.peer == UNKNOWN_PEER_ID {
-                    None
-                } else {
-                    Some(op_id.id().try_into().unwrap())
-                },
                 status: Status::default(),
-                diff_status: None,
+                diff_status: OptionalStatus::NONE,
                 origin_left: None,
                 origin_right: None,
             },
@@ -360,14 +357,13 @@ impl Tracker {
                 // id_to_cursor need to track its split.
                 // It would be much harder to implement correctly
                 content: RichtextChunk::new_move(),
-                id: op_id,
-                real_id: if op_id.peer == UNKNOWN_PEER_ID {
-                    None
+                id: if op_id.peer == UNKNOWN_PEER_ID {
+                    IdFull::new(UNKNOWN_PEER_ID, op_id.counter, UNKNOWN_REAL_ID_UNSET)
                 } else {
-                    Some(op_id.id().try_into().unwrap())
+                    op_id
                 },
                 status: Status::default(),
-                diff_status: None,
+                diff_status: OptionalStatus::NONE,
                 origin_left: None,
                 origin_right: None,
             },
@@ -652,7 +648,7 @@ impl Tracker {
         let mut index = 0;
         for span in self.rope.tree.iter() {
             let is_activated = span.is_activated_in_diff();
-            let span_id = span.real_id();
+            let span_id = self.rope.real_id_or_placeholder(span);
             let id_span = span_id.to_span(span.rle_len());
             if id_span.contains(id) {
                 if is_activated {
@@ -715,7 +711,7 @@ impl Tracker {
             }
 
             let span_len = span.rle_len();
-            let real_id = span.real_id();
+            let real_id = self.rope.real_id_or_placeholder(span);
             if real_id.peer == UNKNOWN_PEER_ID {
                 index += span_len;
                 continue;
@@ -750,7 +746,8 @@ impl Tracker {
     pub(crate) fn estimated_heap_bytes(&self) -> usize {
         let vv_bytes = (self.applied_vv.len() + self.current_vv.len()) * 16;
         let rope_nodes = self.rope.tree.node_len();
-        let rope_bytes = rope_nodes * (std::mem::size_of::<FugueSpan>() + 16);
+        let rope_bytes = rope_nodes * (std::mem::size_of::<FugueSpan>() + 12)
+            + self.rope.unknown_real_ids_bytes();
         vv_bytes
             .saturating_add(rope_bytes)
             .saturating_add(self.id_to_cursor.estimated_heap_bytes())

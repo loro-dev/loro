@@ -944,15 +944,31 @@ describe("loro-wasm-compatible runtime", () => {
       value: 2.5,
       prop: 0,
     });
-    expect(Array.isArray((ops[1]!.content as { value: unknown }).value)).toBe(true);
+    expect((ops[1]!.content as { value: unknown }).value).toBe("🦜:binary:AP8=");
+    expect((ops[2]!.content as { value: unknown }).value).toBe("🦜:binary:AExNAQLcFtg=");
 
-    // The JSON schema has no binary type: Rust imports byte arrays, including
-    // mergeable markers, as number lists. loro.js reads them the same way.
     const imported = new LoroDoc();
     imported.importJsonUpdates(rust);
     expect(imported.toJSON()).toEqual({
       c: 2.5,
-      m: { b: [0, 255], s: [0, 76, 77, 1, 2, 220, 22, 216] },
+      m: { b: Uint8Array.of(0, 255), s: "hello" },
+    });
+  });
+
+  test("relays binary values through JSON updates before binary update import", () => {
+    const a = new LoroDoc();
+    const b = new LoroDoc();
+    a.getMap("m").set("payload", new Uint8Array([1, 2]));
+    a.commit();
+    b.importJsonUpdates(
+      JSON.parse(JSON.stringify(a.exportJsonUpdates(undefined, undefined, false))),
+    );
+    expect(b.getMap("m").get("payload")).toEqual(new Uint8Array([1, 2]));
+    a.getMap("m").set("next", true);
+    a.commit();
+    b.import(a.export({ mode: "update" }));
+    expect(b.toJSON()).toEqual({
+      m: { payload: new Uint8Array([1, 2]), next: true },
     });
   });
 
@@ -1025,9 +1041,11 @@ describe("loro-wasm-compatible runtime", () => {
     source.setPeerId(1);
     source.getText("text").insert(0, "secret");
     source.getMap("map").set("token", "private");
+    source.getMap("map").set("bytes", Uint8Array.of(1, 2, 3));
     const child = source.getMap("map").setContainer("child", new LoroMap());
     child.set("inside", 42);
     source.getList("list").push("hidden");
+    source.getList("list").push(Uint8Array.of(9));
     source.commit();
 
     const redacted = redactJsonUpdates(source.exportJsonUpdates(), {
@@ -1037,8 +1055,8 @@ describe("loro-wasm-compatible runtime", () => {
     target.importJsonUpdates(redacted);
     expect(target.toJSON()).toEqual({
       text: "������",
-      map: { token: null, child: { inside: null } },
-      list: [null],
+      map: { token: null, bytes: null, child: { inside: null } },
+      list: [null, null],
     });
   });
 

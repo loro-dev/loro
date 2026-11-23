@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   globalMemoryStats,
   getGlobalMemoryBudget,
@@ -261,10 +261,13 @@ describe("Global WASM MemoryBudget & GlobalMemoryStats", () => {
   });
 
   it("prevents OOM WASM trap inside a 64 MiB Durable-Object-style V8 memory cap", (ctx) => {
-    const nodejsEntry = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../nodejs/index.js",
-    );
+    // A file URL: Node rejects an absolute Windows path as a module specifier.
+    const nodejsEntry = pathToFileURL(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../nodejs/index.js",
+      ),
+    ).href;
     const probe = spawnSync(
       process.execPath,
       ["--wasm-max-mem-pages=1024", "-e", ""],

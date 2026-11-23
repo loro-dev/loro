@@ -92,7 +92,7 @@ MoonBit 在 `jsonschema_import_sort_and_validate_changes(...)` 中做了上述�
 - `LoroValue::Container`（JSON 中 `"🦜:cid:..."`）仅支持 normal container，并且要求它的 `peer/counter` 与当前 op 的 `op_id(peer, counter)` **一致**：
   - 二进制 ValueEncoding 里对 container value 只存 `container_type`（不存 peer/counter），因此必须从 `op_id` 推回 container id；
   - root container value（`cid:root-*`）在二进制 value 里不可表示，目前直接拒绝。
-- `LoroValue` 的 JSON 数组会一律解析为 `List`（与 Rust 侧 `LoroValue` JSON 反序列化行为对齐）；因此 JSON 里无法无歧义区分 `Binary` 与 `List` 的数组形态。
+- `LoroValue::Binary` 使用 `"🦜:binary:{Base64}"`（标准 RFC 4648 Base64，校验长度、字符集与 canonical padding bits）还原为 `Binary`；普通 JSON 数组仍解析为 `List`（兼容旧版 JsonSchema 输出）。
 
 ---
 

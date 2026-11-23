@@ -18,6 +18,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
 ## Context Index
 
+- Experimental hot-path allocation changes and their invariants:
+  [context/hot-path-prototypes.md](context/hot-path-prototypes.md).
+
 - Undo/redo item boundaries when remote edits make an inverse a no-op:
   [context/undo-history-boundaries.md](context/undo-history-boundaries.md).
 - Rust undo failure rollback and transaction writer serialization:

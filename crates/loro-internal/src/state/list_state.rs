@@ -308,6 +308,23 @@ impl ListState {
         std::mem::size_of::<Self>().saturating_add(entries_bytes)
     }
 
+    pub(crate) fn has_child_containers(&self) -> bool {
+        match &self.list {
+            ListEntries::Tiny {
+                child_container_to_index,
+                ..
+            } => child_container_to_index
+                .as_ref()
+                .is_some_and(|m| !m.is_empty()),
+            ListEntries::Tree {
+                child_container_to_index,
+                ..
+            } => child_container_to_index
+                .as_ref()
+                .is_some_and(|m| !m.is_empty()),
+        }
+    }
+
     pub fn contains_child_container(&self, id: &ContainerID) -> bool {
         match &self.list {
             ListEntries::Tiny {

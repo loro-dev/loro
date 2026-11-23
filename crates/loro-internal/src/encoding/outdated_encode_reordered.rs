@@ -29,6 +29,15 @@ use super::value::FutureValue;
 /// It will return an data corruption error instead.
 pub(super) const MAX_COLLECTION_SIZE: usize = 1 << 28;
 
+#[inline]
+pub(crate) fn str_unicode_len(s: &str) -> usize {
+    if s.is_ascii() {
+        s.len()
+    } else {
+        s.chars().count()
+    }
+}
+
 pub(crate) struct ImportChangesResult {
     pub latest_ids: Vec<ID>,
     pub pending_changes: Vec<Change>,
@@ -128,7 +137,7 @@ mod encode {
     #[inline]
     pub(crate) fn encode_op<'p, 'a: 'p>(
         op: &'a Op,
-        delete_start: &mut Vec<EncodedDeleteStartId>,
+        delete_start: &mut smallvec::SmallVec<[EncodedDeleteStartId; 1]>,
         value_writer: &mut ValueWriter,
         registers: &mut dyn ValueEncodeRegister,
     ) -> ValueKind {
@@ -205,6 +214,10 @@ mod encode {
     }
 }
 
+/// Shared pending-values patch `(placeholder_arc, resolved_arc)` returned by
+/// [`DecodedBlockBuffers::take_pending_values`].
+pub(crate) type PendingValuesPatch = (Arc<Vec<LoroValue>>, Arc<Vec<LoroValue>>);
+
 /// The text and list values of the ops decoded from one change block.
 ///
 /// They are dropped with those ops. Decoding into the doc's arenas instead,
@@ -216,9 +229,11 @@ pub(crate) struct DecodedBlockBuffers {
     text: Option<AppendOnlyBytes>,
     text_capacity: usize,
     values: Vec<LoroValue>,
-    /// What list slices point into until [`Self::finish`] gives them `values`.
+    /// What list slices point into until [`Self::take_pending_values`] fills them.
     /// Created with the first list value, so most blocks allocate nothing here.
     pending_values: Option<Arc<Vec<LoroValue>>>,
+    /// Multi-value inserts. Their slices stay pending until the caller patches them.
+    pending_inserts: u32,
 }
 
 impl DecodedBlockBuffers {
@@ -230,7 +245,12 @@ impl DecodedBlockBuffers {
             text_capacity,
             values: Vec::new(),
             pending_values: None,
+            pending_inserts: 0,
         }
+    }
+
+    pub(crate) fn pending_insert_count(&self) -> u32 {
+        self.pending_inserts
     }
 
     fn push_text(&mut self, s: &str) -> BytesSlice {
@@ -242,7 +262,8 @@ impl DecodedBlockBuffers {
         bytes.slice(start..)
     }
 
-    /// A multi-value slice can be neither read nor merged before [`Self::finish`].
+    /// A multi-value slice can be neither read nor merged before the caller
+    /// patches it with [`Self::take_pending_values`].
     fn push_values(&mut self, list: LoroListValue) -> ValueSlice {
         let list = list.into_arc();
         if list.len() == 1 {
@@ -259,22 +280,17 @@ impl DecodedBlockBuffers {
             Ok(mut list) => self.values.append(&mut list),
             Err(list) => self.values.extend_from_slice(&list),
         }
+        self.pending_inserts += 1;
         let pending = self.pending_values.get_or_insert_with(Default::default);
         ValueSlice::pending(pending, start..self.values.len())
     }
 
-    /// Points the slices that [`Self::push_values`] returned at the values.
-    pub fn finish<'a>(self, slices: impl Iterator<Item = &'a mut ValueSlice>) {
-        let Some(pending) = self.pending_values else {
-            return;
-        };
+    /// The shared buffer and the values it should point at, when any slice is pending.
+    pub(crate) fn take_pending_values(self) -> Option<PendingValuesPatch> {
+        let pending = self.pending_values?;
         let mut values = self.values;
-        // The values live as long as any op slice of the block.
         values.shrink_to_fit();
-        let values = Arc::new(values);
-        for slice in slices {
-            slice.replace_buffer(&pending, &values);
-        }
+        Some((pending, Arc::new(values)))
     }
 }
 
@@ -292,7 +308,7 @@ pub(crate) fn decode_op(
     let content = match cid.container_type() {
         ContainerType::Text => match value {
             Value::Str(s) => {
-                let unicode_len = s.chars().count();
+                let unicode_len = str_unicode_len(s);
                 crate::op::InnerContent::List(
                     crate::container::list::list_op::InnerListOp::InsertText {
                         slice: buffers.push_text(s),
@@ -559,11 +575,11 @@ pub type PeerIdx = usize;
 #[derive(Debug, Clone)]
 pub(crate) struct EncodedDeleteStartId {
     #[columnar(strategy = "DeltaRle")]
-    peer_idx: usize,
+    pub(crate) peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
-    counter: i32,
+    pub(crate) counter: i32,
     #[columnar(strategy = "DeltaRle")]
-    len: isize,
+    pub(crate) len: isize,
 }
 
 #[cfg(test)]

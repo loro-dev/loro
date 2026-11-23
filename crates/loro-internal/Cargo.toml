@@ -15,7 +15,7 @@ keywords = ["crdt", "local-first"]
 
 [dependencies]
 generic-btree = { version = "^0.10.8" }
-smallvec = { workspace = true }
+smallvec = { workspace = true, features = ["write"] }
 loro-delta = { path = "../delta", version = "1.18.0", package = "loro-delta" }
 rle = { path = "../rle", version = "1.6.0", package = "loro-rle" }
 loro-common = { path = "../loro-common", version = "1.18.0" }

@@ -28,7 +28,9 @@ pub use span::*;
 #[doc(hidden)]
 pub use value::wasm::try_convert as try_loro_value_to_js_value;
 pub use value::{
-    to_value, LoroBinaryValue, LoroListValue, LoroMapValue, LoroStringValue, LoroValue,
+    decode_loro_binary_base64, encode_loro_binary_string, serialize_json_schema_value,
+    serialize_json_schema_values, to_value, try_decode_loro_binary_string, LoroBinaryValue,
+    LoroListValue, LoroMapValue, LoroStringValue, LoroValue, LORO_BINARY_PREFIX,
 };
 
 /// Unique id for each peer. It's a random u64 by default.

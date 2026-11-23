@@ -668,6 +668,15 @@ impl NodePosition {
     }
 }
 
+/// A tree's fractional-index generation setting without its RNG. It is local
+/// configuration, not part of the document, so it is carried over by hand when
+/// a tree state is replaced (see `DocState::tree_fractional_index_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FractionalIndexSetting {
+    Disabled,
+    Jitter(u8),
+}
+
 pub(crate) enum FiIfNotConfigured {
     UseJitterZero,
     #[allow(unused)]
@@ -684,7 +693,9 @@ impl TreeState {
             children: Default::default(),
             fractional_index_config: TreeFractionalIndexConfigInner::GenerateFractionalIndex {
                 jitter: 0,
-                rng: Box::new(rand::rngs::StdRng::seed_from_u64(0)),
+                // Seed from the peer, as `enable_generate_fractional_index` does, so
+                // that enabling jitter later draws different bytes on each peer.
+                rng: Box::new(rand::rngs::StdRng::seed_from_u64(peer_id)),
             },
             peer_id,
         }
@@ -1004,6 +1015,22 @@ impl TreeState {
         self.fractional_index_config = TreeFractionalIndexConfigInner::MoveDisabled;
     }
 
+    pub(crate) fn fractional_index_setting(&self) -> FractionalIndexSetting {
+        match &self.fractional_index_config {
+            TreeFractionalIndexConfigInner::GenerateFractionalIndex { jitter, .. } => {
+                FractionalIndexSetting::Jitter(*jitter)
+            }
+            TreeFractionalIndexConfigInner::MoveDisabled => FractionalIndexSetting::Disabled,
+        }
+    }
+
+    pub(crate) fn set_fractional_index_setting(&mut self, setting: FractionalIndexSetting) {
+        match setting {
+            FractionalIndexSetting::Disabled => self.disable_generate_fractional_index(),
+            FractionalIndexSetting::Jitter(jitter) => self.enable_generate_fractional_index(jitter),
+        }
+    }
+
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {
         self.trees.get(target).and_then(|x| x.position.clone())
     }
@@ -1180,7 +1207,7 @@ impl TreeState {
     /// Pushes a `Create` for every node below `root`: parents before their
     /// children and siblings in order, so each `index` is valid when the
     /// events are applied in sequence.
-    fn push_subtree_creation(&self, root: TreeID, ans: &mut Vec<TreeDiffItem>) {
+    pub(crate) fn push_subtree_creation(&self, root: TreeID, ans: &mut Vec<TreeDiffItem>) {
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             let parent = TreeParentId::Node(node);

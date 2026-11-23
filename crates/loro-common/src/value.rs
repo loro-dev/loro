@@ -920,6 +920,161 @@ pub mod wasm {
 }
 
 const LORO_CONTAINER_ID_PREFIX: &str = "🦜:";
+pub const LORO_BINARY_PREFIX: &str = "🦜:binary:";
+
+const BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn encode_loro_binary_string(bytes: &[u8]) -> String {
+    let encoded_len = bytes.len().div_ceil(3) * 4;
+    let mut out = String::with_capacity(LORO_BINARY_PREFIX.len() + encoded_len);
+    out.push_str(LORO_BINARY_PREFIX);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in &mut chunks {
+        let n = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
+        out.push(BASE64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+        out.push(BASE64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+        out.push(BASE64_ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+        out.push(BASE64_ALPHABET[(n & 0x3f) as usize] as char);
+    }
+    match chunks.remainder() {
+        [] => {}
+        [b0] => {
+            let n = (*b0 as u32) << 16;
+            out.push(BASE64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+            out.push(BASE64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+            out.push('=');
+            out.push('=');
+        }
+        [b0, b1] => {
+            let n = ((*b0 as u32) << 16) | ((*b1 as u32) << 8);
+            out.push(BASE64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
+            out.push(BASE64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
+            out.push(BASE64_ALPHABET[((n >> 6) & 0x3f) as usize] as char);
+            out.push('=');
+        }
+        _ => unreachable!(),
+    }
+    out
+}
+
+#[inline]
+fn decode_base64_val(b: u8) -> Option<u8> {
+    match b {
+        b'A'..=b'Z' => Some(b - b'A'),
+        b'a'..=b'z' => Some(b - b'a' + 26),
+        b'0'..=b'9' => Some(b - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
+pub fn decode_loro_binary_base64(b64: &str) -> Result<Vec<u8>, &'static str> {
+    let raw = b64.as_bytes();
+    if !raw.len().is_multiple_of(4) {
+        return Err("Invalid binary base64 length");
+    }
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+    let pad = if raw[raw.len() - 2] == b'=' {
+        2
+    } else if raw[raw.len() - 1] == b'=' {
+        1
+    } else {
+        0
+    };
+    let mut out = Vec::with_capacity((raw.len() / 4) * 3 - pad);
+    let full_quanta = raw.len() / 4 - usize::from(pad > 0);
+    for chunk in raw[..full_quanta * 4].chunks_exact(4) {
+        let v0 = decode_base64_val(chunk[0]).ok_or("Invalid binary base64 character")?;
+        let v1 = decode_base64_val(chunk[1]).ok_or("Invalid binary base64 character")?;
+        let v2 = decode_base64_val(chunk[2]).ok_or("Invalid binary base64 character")?;
+        let v3 = decode_base64_val(chunk[3]).ok_or("Invalid binary base64 character")?;
+        let n = ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6) | (v3 as u32);
+        out.push((n >> 16) as u8);
+        out.push((n >> 8) as u8);
+        out.push(n as u8);
+    }
+    if pad > 0 {
+        let last = &raw[full_quanta * 4..];
+        let v0 = decode_base64_val(last[0]).ok_or("Invalid binary base64 character")?;
+        let v1 = decode_base64_val(last[1]).ok_or("Invalid binary base64 character")?;
+        if pad == 2 {
+            if last[3] != b'=' {
+                return Err("Invalid binary base64 padding");
+            }
+            if v1 & 0x0f != 0 {
+                return Err("Invalid binary base64 non-zero padding bits");
+            }
+            out.push((v0 << 2) | (v1 >> 4));
+        } else {
+            let v2 = decode_base64_val(last[2]).ok_or("Invalid binary base64 character")?;
+            if v2 & 0x03 != 0 {
+                return Err("Invalid binary base64 non-zero padding bits");
+            }
+            let n = ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6);
+            out.push((n >> 16) as u8);
+            out.push((n >> 8) as u8);
+        }
+    }
+    Ok(out)
+}
+
+pub fn try_decode_loro_binary_string(s: &str) -> Option<Vec<u8>> {
+    s.strip_prefix(LORO_BINARY_PREFIX)
+        .and_then(|b64| decode_loro_binary_base64(b64).ok())
+}
+
+struct JsonSchemaValueRef<'a>(&'a LoroValue);
+
+impl Serialize for JsonSchemaValueRef<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if !serializer.is_human_readable() {
+            return self.0.serialize(serializer);
+        }
+        match self.0 {
+            LoroValue::Null => serializer.serialize_unit(),
+            LoroValue::Bool(b) => serializer.serialize_bool(*b),
+            LoroValue::Double(d) => serializer.serialize_f64(*d),
+            LoroValue::I64(i) => serializer.serialize_i64(*i),
+            LoroValue::String(s) => serializer.serialize_str(s),
+            LoroValue::Binary(b) => serializer.serialize_str(&encode_loro_binary_string(b)),
+            LoroValue::List(l) => serializer.collect_seq(l.iter().map(JsonSchemaValueRef)),
+            LoroValue::Map(m) => {
+                serializer.collect_map(m.iter().map(|(k, v)| (k, JsonSchemaValueRef(v))))
+            }
+            LoroValue::Container(id) => {
+                serializer.serialize_str(&format!("{LORO_CONTAINER_ID_PREFIX}{id}"))
+            }
+        }
+    }
+}
+
+pub fn serialize_json_schema_value<S>(value: &LoroValue, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    JsonSchemaValueRef(value).serialize(serializer)
+}
+
+pub fn serialize_json_schema_values<S>(
+    values: &[LoroValue],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if serializer.is_human_readable() {
+        serializer.collect_seq(values.iter().map(JsonSchemaValueRef))
+    } else {
+        values.serialize(serializer)
+    }
+}
 
 impl Serialize for LoroValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -1101,6 +1256,10 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
+        if let Some(b64) = v.strip_prefix(LORO_BINARY_PREFIX) {
+            let bytes = decode_loro_binary_base64(b64).map_err(E::custom)?;
+            return Ok(LoroValue::Binary(bytes.into()));
+        }
         if let Some(id) = v.strip_prefix(LORO_CONTAINER_ID_PREFIX) {
             return Ok(LoroValue::Container(
                 ContainerID::try_from(id)
@@ -1114,6 +1273,10 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     where
         E: serde::de::Error,
     {
+        if let Some(b64) = v.strip_prefix(LORO_BINARY_PREFIX) {
+            let bytes = decode_loro_binary_base64(b64).map_err(E::custom)?;
+            return Ok(LoroValue::Binary(bytes.into()));
+        }
         if let Some(id) = v.strip_prefix(LORO_CONTAINER_ID_PREFIX) {
             return Ok(LoroValue::Container(
                 ContainerID::try_from(id)
@@ -1138,6 +1301,13 @@ impl<'de> serde::de::Visitor<'de> for LoroValueVisitor {
     {
         let binary = Vec::from_iter(v.iter().copied());
         Ok(LoroValue::Binary(binary.into()))
+    }
+
+    fn visit_byte_buf<E>(self, v: Vec<u8>) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(LoroValue::Binary(v.into()))
     }
 
     fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>

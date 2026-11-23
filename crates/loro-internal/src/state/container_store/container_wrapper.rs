@@ -60,7 +60,13 @@ struct DecodedHeader {
 }
 
 #[derive(Debug)]
-enum LazyDecodedValue {
+struct LazyDecodedValue {
+    kind: LazyDecodedValueKind,
+    cached_bytes: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Debug)]
+enum LazyDecodedValueKind {
     Value(LoroValue),
     Text {
         value: LoroValue,
@@ -74,22 +80,69 @@ enum LazyDecodedValue {
 }
 
 impl LazyDecodedValue {
+    fn plain(value: LoroValue) -> Self {
+        Self {
+            kind: LazyDecodedValueKind::Value(value),
+            cached_bytes: std::sync::atomic::AtomicUsize::new(usize::MAX),
+        }
+    }
+
     fn text(value: LoroValue) -> Self {
         let text = value
             .as_string()
             .expect("decoded text value should be a string");
-        Self::Text {
-            unicode_len: count_unicode_chars(text.as_bytes()),
-            utf16_len: count_utf16_len(text.as_bytes()),
-            value,
+        Self {
+            kind: LazyDecodedValueKind::Text {
+                unicode_len: count_unicode_chars(text.as_bytes()),
+                utf16_len: count_utf16_len(text.as_bytes()),
+                value,
+            },
+            cached_bytes: std::sync::atomic::AtomicUsize::new(usize::MAX),
+        }
+    }
+
+    fn map(ordered: BTreeMap<String, LoroValue>) -> Self {
+        Self {
+            kind: LazyDecodedValueKind::Map {
+                ordered,
+                value: OnceCell::new(),
+            },
+            cached_bytes: std::sync::atomic::AtomicUsize::new(usize::MAX),
         }
     }
 
     fn to_loro_value(&self) -> LoroValue {
-        match self {
-            Self::Value(value) | Self::Text { value, .. } => value.clone(),
-            Self::Map { ordered, value } => value
-                .get_or_init(|| {
+        match &self.kind {
+            LazyDecodedValueKind::Value(value) | LazyDecodedValueKind::Text { value, .. } => {
+                value.clone()
+            }
+            LazyDecodedValueKind::Map { ordered, value } => {
+                let mut initialized = false;
+                let v = value.get_or_init(|| {
+                    initialized = true;
+                    LoroValue::Map(
+                        ordered
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect::<loro_common::LoroMapValue>(),
+                    )
+                });
+                if initialized {
+                    self.cached_bytes
+                        .store(usize::MAX, std::sync::atomic::Ordering::Relaxed);
+                }
+                v.clone()
+            }
+        }
+    }
+
+    fn to_loro_value_ephemeral(&self) -> LoroValue {
+        match &self.kind {
+            LazyDecodedValueKind::Value(value) | LazyDecodedValueKind::Text { value, .. } => {
+                value.clone()
+            }
+            LazyDecodedValueKind::Map { ordered, value } => {
+                value.get().cloned().unwrap_or_else(|| {
                     LoroValue::Map(
                         ordered
                             .iter()
@@ -97,60 +150,52 @@ impl LazyDecodedValue {
                             .collect::<loro_common::LoroMapValue>(),
                     )
                 })
-                .clone(),
-        }
-    }
-
-    fn to_loro_value_ephemeral(&self) -> LoroValue {
-        match self {
-            Self::Value(value) | Self::Text { value, .. } => value.clone(),
-            Self::Map { ordered, value } => value.get().cloned().unwrap_or_else(|| {
-                LoroValue::Map(
-                    ordered
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
-                        .collect::<loro_common::LoroMapValue>(),
-                )
-            }),
+            }
         }
     }
 
     fn as_map(&self) -> Option<&BTreeMap<String, LoroValue>> {
-        match self {
-            Self::Map { ordered, .. } => Some(ordered),
+        match &self.kind {
+            LazyDecodedValueKind::Map { ordered, .. } => Some(ordered),
             _ => None,
         }
     }
 
     fn unicode_len(&self) -> Option<usize> {
-        match self {
-            Self::Text { unicode_len, .. } => Some(*unicode_len),
+        match &self.kind {
+            LazyDecodedValueKind::Text { unicode_len, .. } => Some(*unicode_len),
             _ => None,
         }
     }
 
     fn utf16_len(&self) -> Option<usize> {
-        match self {
-            Self::Text { utf16_len, .. } => Some(*utf16_len),
+        match &self.kind {
+            LazyDecodedValueKind::Text { utf16_len, .. } => Some(*utf16_len),
             _ => None,
         }
     }
 
     fn utf8_len(&self) -> Option<usize> {
-        match self {
+        match &self.kind {
             // The decoded text value is the string itself, so its byte length
             // is a cheap `str::len` — no need to cache a separate field.
-            Self::Text { value, .. } => value.as_string().map(|s| s.len()),
+            LazyDecodedValueKind::Text { value, .. } => value.as_string().map(|s| s.len()),
             _ => None,
         }
     }
 
     fn estimated_bytes(&self) -> usize {
-        match self {
-            Self::Value(value) | Self::Text { value, .. } => std::mem::size_of::<Self>()
-                .saturating_add(value.estimated_heap_bytes())
-                .saturating_sub(std::mem::size_of::<LoroValue>()),
-            Self::Map { ordered, value } => {
+        let cached = self.cached_bytes.load(std::sync::atomic::Ordering::Relaxed);
+        if cached != usize::MAX {
+            return cached;
+        }
+        let computed = match &self.kind {
+            LazyDecodedValueKind::Value(value) | LazyDecodedValueKind::Text { value, .. } => {
+                std::mem::size_of::<Self>()
+                    .saturating_add(value.estimated_heap_bytes())
+                    .saturating_sub(std::mem::size_of::<LoroValue>())
+            }
+            LazyDecodedValueKind::Map { ordered, value } => {
                 let ordered_bytes: usize = ordered
                     .iter()
                     .map(|(k, v)| k.capacity() + v.estimated_heap_bytes() + 32)
@@ -160,7 +205,10 @@ impl LazyDecodedValue {
                     .saturating_add(ordered_bytes)
                     .saturating_add(materialized)
             }
-        }
+        };
+        self.cached_bytes
+            .store(computed, std::sync::atomic::Ordering::Relaxed);
+        computed
     }
 }
 
@@ -264,10 +312,7 @@ impl ContainerWrapper {
     pub(super) fn resident_map_is_empty(&self) -> Option<bool> {
         match &self.data {
             ContainerData::State(State::MapState(map)) => Some(map.len() == 0),
-            ContainerData::Lazy(lazy) => match lazy.value.as_ref()? {
-                LazyDecodedValue::Map { ordered, .. } => Some(ordered.is_empty()),
-                _ => None,
-            },
+            ContainerData::Lazy(lazy) => lazy.value.as_ref()?.as_map().map(BTreeMap::is_empty),
             _ => None,
         }
     }
@@ -703,8 +748,33 @@ impl ContainerWrapper {
         std::mem::take(&mut self.accounted_value_cache_bytes)
     }
 
+    pub(super) fn needs_value_cache_tracking(&self) -> bool {
+        self.accounted_value_cache_bytes != 0 || self.is_evictable_cached_value()
+    }
+
+    #[inline]
+    pub(super) fn try_mark_value_cache_hit(&mut self) -> bool {
+        if self.in_value_cache_queue
+            && self.is_evictable_cached_value()
+            && self.estimated_cached_value_bytes() == self.accounted_value_cache_bytes
+        {
+            self.value_cache_referenced = true;
+            true
+        } else {
+            false
+        }
+    }
+
     pub(super) fn is_materialized_state(&self) -> bool {
         matches!(self.data, ContainerData::State(_))
+    }
+
+    pub(super) fn is_fully_materialized_state(&self) -> bool {
+        match &self.data {
+            ContainerData::State(State::RichtextState(s)) => s.is_loaded(),
+            ContainerData::State(_) => true,
+            ContainerData::Lazy(_) => false,
+        }
     }
 
     pub(super) fn take_state_referenced(&mut self) -> bool {
@@ -739,8 +809,8 @@ impl ContainerWrapper {
             return false;
         };
         matches!(
-            lazy.value.as_ref(),
-            Some(LazyDecodedValue::Map { value, .. }) if value.get().is_some()
+            lazy.value.as_ref().map(|v| &v.kind),
+            Some(LazyDecodedValueKind::Map { value, .. }) if value.get().is_some()
         )
     }
 
@@ -763,7 +833,7 @@ impl ContainerWrapper {
         ctx: ContainerCreationContext,
     ) -> LoroResult<(LazyDecodedValue, usize, Option<State>)> {
         let Some((bytes, value_offset)) = self.value_bytes_and_offset() else {
-            return Ok((LazyDecodedValue::Value(self.kind.default_value()), 0, None));
+            return Ok((LazyDecodedValue::plain(self.kind.default_value()), 0, None));
         };
         let b = &bytes[value_offset..];
 
@@ -779,24 +849,21 @@ impl ContainerWrapper {
             ContainerType::Map => {
                 let (v, rest) = MapState::decode_value_as_btree_map(b)?;
                 (
-                    LazyDecodedValue::Map {
-                        ordered: v,
-                        value: OnceCell::new(),
-                    },
+                    LazyDecodedValue::map(v),
                     b.len() - rest.len() + value_offset,
                 )
             }
             ContainerType::List => {
                 let (v, rest) = ListState::decode_value(b)?;
                 (
-                    LazyDecodedValue::Value(v),
+                    LazyDecodedValue::plain(v),
                     b.len() - rest.len() + value_offset,
                 )
             }
             ContainerType::MovableList => {
                 let (v, rest) = MovableListState::decode_value(b)?;
                 (
-                    LazyDecodedValue::Value(v),
+                    LazyDecodedValue::plain(v),
                     b.len() - rest.len() + value_offset,
                 )
             }
@@ -804,20 +871,20 @@ impl ContainerWrapper {
                 let mut state = TreeState::decode_snapshot_fast(idx, (LoroValue::Null, b), ctx)?;
                 let value = state.get_value();
                 decoded_state = Some(State::TreeState(Box::new(state)));
-                (LazyDecodedValue::Value(value), value_offset)
+                (LazyDecodedValue::plain(value), value_offset)
             }
             #[cfg(feature = "counter")]
             ContainerType::Counter => {
                 let (v, rest) = CounterState::decode_value(b)?;
                 (
-                    LazyDecodedValue::Value(v),
+                    LazyDecodedValue::plain(v),
                     b.len() - rest.len() + value_offset,
                 )
             }
             ContainerType::Unknown(_) => {
                 let (v, rest) = UnknownState::decode_value(b)?;
                 (
-                    LazyDecodedValue::Value(v),
+                    LazyDecodedValue::plain(v),
                     b.len() - rest.len() + value_offset,
                 )
             }

@@ -6,16 +6,16 @@ mod shallow_snapshot;
 pub(crate) mod value;
 pub(crate) mod value_register;
 pub(crate) use outdated_encode_reordered::{
-    decode_op, encode_op, get_op_prop, DecodedBlockBuffers, EncodedDeleteStartId,
+    decode_op, encode_op, get_op_prop, str_unicode_len, DecodedBlockBuffers, EncodedDeleteStartId,
     IterableEncodedDeleteStartId,
 };
 use outdated_encode_reordered::{import_changes_to_oplog, ImportChangesResult};
 pub(crate) use value::OwnedValue;
 
-use crate::change::Change;
 use crate::oplog::ImportedValues;
 use crate::version::{Frontiers, VersionRange};
 use crate::LoroDoc;
+use crate::{arena::SharedArena, change::Change};
 use crate::{oplog::OpLog, LoroError, VersionVector};
 use bytes::Bytes;
 use loro_common::{IdSpan, InternalString, LoroEncodeError, LoroResult, ID};
@@ -300,7 +300,7 @@ pub(crate) fn decode_oplog_changes(
             Err(LoroError::ImportUnsupportedEncodingMode)
         }
         EncodeMode::FastSnapshot => fast_snapshot::decode_oplog(oplog, body, values),
-        EncodeMode::FastUpdates => fast_snapshot::decode_updates(oplog, body.to_vec().into()),
+        EncodeMode::FastUpdates => fast_snapshot::decode_updates_slice(oplog, body),
         EncodeMode::Auto => unreachable!(),
     }
 }
@@ -539,6 +539,39 @@ pub(crate) fn export_pending_updates(oplog: &OpLog) -> Result<Option<Vec<u8>>, L
         Ok(())
     })
     .map(Some)
+}
+
+pub(crate) fn encode_single_change_fast_update(change: &Change, arena: &SharedArena) -> Vec<u8> {
+    if let Some(update) = crate::oplog::encode_single_op_update(change, arena) {
+        return update;
+    }
+    let block = crate::oplog::encode_change_block(std::slice::from_ref(change), arena);
+    let prefix_len = (u64::BITS - (block.len() as u64).leading_zeros()).div_ceil(7) as usize;
+    encode_with_capacity(
+        EncodeMode::FastUpdates,
+        MIN_HEADER_SIZE + prefix_len + block.len(),
+        &mut |output| {
+            leb128::write::unsigned(output, block.len() as u64).unwrap();
+            output.extend_from_slice(&block);
+            Ok(())
+        },
+    )
+    .unwrap()
+}
+
+pub(crate) fn encode_update_block(block: &impl serde::Serialize) -> Vec<u8> {
+    let len = postcard::experimental::serialized_size(block).unwrap();
+    let prefix_len = (u64::BITS - (len as u64).leading_zeros()).div_ceil(7) as usize;
+    encode_with_capacity(
+        EncodeMode::FastUpdates,
+        MIN_HEADER_SIZE + prefix_len + len,
+        &mut |out| {
+            leb128::write::unsigned(out, len as u64).unwrap();
+            postcard::to_io(block, out).unwrap();
+            Ok(())
+        },
+    )
+    .unwrap()
 }
 
 pub(crate) fn export_fast_updates_in_range(oplog: &OpLog, spans: &[IdSpan]) -> Vec<u8> {

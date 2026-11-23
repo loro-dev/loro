@@ -1,6 +1,6 @@
 # Internal Encoding Context
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-18.
 
 Loro has one binary blob envelope, two current binary body formats, two
 recognized-but-unsupported legacy top-level modes, and a separate JSON updates
@@ -136,6 +136,23 @@ unmatched incoming blocks use a temporary arena, and only checked new suffixes
 are moved into the document arena. This changes no on-wire format. See
 [import-peer-id-reuse.md](import-peer-id-reuse.md) for the semantic fallback and
 [arena-parent-links.md](arena-parent-links.md) for converted-op parent links.
+
+In release builds, `ChangeStore::import_all` (`change_store.rs`) validates
+`frontiers` via `validate_frontiers_and_head_summary` +
+`decode_lamport_and_timestamp_at` (`block_encode.rs`, `block_meta_encode.rs`)
+instead of calling `get_change` on each frontier ID. Only the `EncodedBlock`
+header and `change_meta` timestamp delta-of-delta column are read (with a
+single sequential SSTable cursor scan when `frontiers.len() >= 64` and all
+counters start at `0`), leaving `mem_parsed_kv` empty and `SharedArena`
+untouched while returning `(next_lamport, max_timestamp)` in `BatchDecodeInfo`.
+`AppDag` (`loro_dag.rs`) caches `(head_next_lamport, head_max_timestamp)` at
+the current frontiers and updates them incrementally across local transactions,
+remote imports, merged commits (`ChangeStore::insert_change*` returns the
+stored timestamp), and import rollbacks so subsequent `Transaction` creation
+stays $O(1)$ without loading cold DAG nodes or change blocks. (Note: `#[cfg(test)]`
+inside `loro-internal` still parses each peer's last block in `import_all`;
+integration tests in `crates/loro/tests/hot_path_regressions.rs` exercise the
+release behavior.)
 
 Default snapshot export does not walk the alive-container graph. It relies on a
 write-time invariant: every container brought alive by an applied op or diff
@@ -275,6 +292,44 @@ overflow, and truncated block payloads, then sorts decoded changes by lamport.
 changes, applies newly-unlocked pending changes, and rejects dependencies before
 a shallow root.
 
+### Local updates and small blocks
+
+`Transaction::_commit` asks `ChangeStore::insert_change_with_local_update`
+for the update bytes when there is a local-update subscriber. The store
+encodes a small unsplit change at insertion time. For merged commits it
+encodes the incoming ops with the inherited timestamp and previous self ID.
+A deletion that coalesces across the boundary uses the stored slice because
+merging can change its direction. Debug assertions compare the bytes to an
+export of the stored slice. Split changes and rollback-managed history use
+normal range export. `emit_post_commit` still tests for subscribers after
+observer callbacks and can export the range if an observer registered a new
+subscriber. Callbacks run after the commit locks are released.
+
+Both paths use the same block columns, envelope and checksum. Registers for
+blocks of one change with up to eight ops begin inline and switch to indexed
+lookup if they grow. Byte-only exports skip the cached `ChangesBlockHeader`.
+`local_update_encoding.rs` checks the wire bytes against the exact range
+and imports updates into a replica.
+
+A one-op change with no foreign dependencies or Tree positions can encode
+its singleton column runs into stack buffers. It writes the block into the
+final update buffer using the ordinary postcard wire layout and envelope.
+The debug path compares against the general block encoder, including the
+length prefix. Both encoders share op/value registration and serialization.
+
+A FastUpdates decoder reuses the first nonempty block's change vector and
+sorts only if two or more changes are present. For in-memory batches, the
+sort-key pass validates all update bodies in a temporary arena and keeps
+only the change count and mode. Checksum verification and history application
+still occur at each blob's turn. See
+[import-batch-atomicity.md](import-batch-atomicity.md).
+
+For many-peer snapshots, a cached-block miss at counter zero can use an
+exact KV lookup. A peer's earlier blocks cannot precede that key. Canonical
+ordered frontiers reserve their map from the decoded peer count. Duplicate
+or unordered input uses the existing deduplication. Postcard already
+provides the decoded entry count to the version-vector map decoder.
+
 ### Change-header allocation and malformed columns (#1262)
 
 Verified against code 2026-11-12. In
@@ -363,8 +418,9 @@ predecessors can remain pending and later unlock normally.
 `encoding.rs::export_pending_updates` uses the existing `FastUpdates = 4`
 envelope with singleton change blocks, not a temporary `ChangeStore`: pending
 history can have holes and cannot satisfy the store's continuity contract.
-`PendingChange::Unknown` retains the Lamport supplied by the input even though
-the local DAG cannot yet resolve it. Export preserves that value (adjusted by a
+`PendingChange` (`oplog/pending_changes.rs`) retains the Lamport supplied by the
+input alongside its cached byte estimate even though the local DAG cannot yet
+resolve it. Export preserves that value (adjusted by a
 slice offset); it does not invent a Lamport or fill missing history. Import
 resolves Lamport values through the existing import path. When the deps of a
 pending change arrive, its Lamport comes from the deps only. The supplied value
@@ -572,7 +628,11 @@ with tests in `crates/loro/tests/shallow_snapshot_concurrency.rs`.
 - `schema_version = 1`,
 - `start_version`,
 - optional peer compression table,
-- JSON changes and ops.
+- JSON changes and ops, with `LoroValue::Container` encoded as `🦜:cid:...` and
+  `LoroValue::Binary` (including mergeable container markers and nested binary
+  values) encoded as canonical RFC 4648 Base64 `🦜:binary:<base64>` so JSON
+  update round-trips preserve `Binary` for subsequent exact binary imports.
+  `ToJson` / `LoroValue::Serialize` outside `JsonSchema` still writes byte lists.
 
 Malformed JSON schema should return `Err` without partial import. Look at
 [crates/loro-internal/src/tests/import_atomicity.rs](../crates/loro-internal/src/tests/import_atomicity.rs)
@@ -591,6 +651,20 @@ the range check does not rewind the reader. The two `delta_int_decoding_*`
 module tests cover literal oversized values, both bounds, nonminimal zero and
 minus one, and a truncated varint. `read_usize`, raw-tree counters and other
 integer fields are separate paths and are unchanged by this fix.
+
+## Op lengths must match their content
+
+Verified against code 2026-11-18. A change block gives each op a `len` column,
+and `block_encode.rs::decode_block` advances the op counter by it. The op's
+content is decoded separately (`decode_op`), so the two can disagree in a
+damaged block whose checksum still matches. A text insert of 11 characters
+with `len` 4 overlapped the next op's counters and panicked in the diff
+calculator. With `len` 3 it was imported, and the doc could not export a
+readable copy of itself (loro-dev/loro#1293). `decode_block` now requires
+`content.atom_len() == len` for every op. A list insert whose values are
+patched in after the block's value buffer is filled is checked after the
+patch. `visit_text_insert_block` (the known-history reader) already had the
+text check. Test: `cargo test -p loro --test import_text_insert_length`.
 
 ## Validation Shortcuts
 

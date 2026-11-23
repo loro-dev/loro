@@ -178,35 +178,36 @@ single-blob special case. Large batches still use the two-pass streaming path.
 
 ## Last handle and registry references
 
-Verified against code 2026-11-16.
+Verified against code 2026-11-18.
 
 `Drop for LoroDoc` (`lib.rs`) commits pending edits only when it releases the last
-handle. The global registry (`GlobalMemoryPool::snapshot_live_docs`, `loro.rs`)
+user handle. The global registry (`GlobalMemoryPool::snapshot_live_docs`, `loro.rs`)
 holds temporary `Arc<LoroDocInner>`s; a plain `strong_count == 1` check made the
 last handle skip its commit while a scan held one, and the edits were lost when
 the registry released it (reproduced: about half of 20,000 drops with a thread
-calling `global_memory_stats`). `DocDropGate` (a mutex outside `LoroDocInner`,
-shared with the registry entry) fixes it:
+calling `global_memory_stats`). `LoroDocInner::user_handles` (a lock-free
+`AtomicUsize` counting only live user-facing `LoroDoc` and attached container
+handles) fixes it without locking a drop-gate mutex on every handle drop:
 
-- `RegistryRef::upgrade` upgrades and increments `registry_refs` under the gate;
-  `RegistryRef::drop` drops its `Arc`, then decrements, under the gate.
-- A handle drop reads `strong_count - 1 - registry_refs` under the gate. If other
-  handles remain, it releases its `Arc` inside the gate (`ManuallyDrop`), so two
-  handles dropped concurrently cannot both see each other. Otherwise it commits.
-- The registry never commits. Its final release may drop the document under the
-  gate; that drop takes the registry lock, so `snapshot_live_docs` never holds
-  the registry lock while taking a gate.
-- Registry code must not create a `LoroDoc` handle from a registry reference
-  (`LoroDocInner::arm_budget_scope_on_txn` exists for that reason).
-- Short-lived `Weak` upgrades inside state code happen while a handle is in use,
-  so they cannot be the reference that outlives the last handle.
+- `LoroDoc::new` initializes `user_handles` to `1` (`from_new_inner`);
+  `LoroDoc::clone` and `LoroDoc::from_inner` increment it; internal borrowed
+  views (`LoroDoc::borrow_from_inner`) and `RegistryRef::upgrade` never touch it.
+- `Drop for LoroDoc` decrements `user_handles` via `compare_exchange` when `> 1`
+  and releases its `ManuallyDrop<Arc<LoroDocInner>>` immediately. When `1`, it
+  runs `implicit_commit_then_stop()` while keeping `user_handles == 1` (so any
+  temporary event handlers created during post-commit emission take the `> 1`
+  fast path rather than nesting a second final commit, and a subscriber that
+  retains a cloned handle causes the `1 -> 0` CAS to retry as a non-final drop).
+- The registry never commits. Its `RegistryRef` holds only `Arc<LoroDocInner>`,
+  and `snapshot_live_docs` upgrades `Weak<LoroDocInner>` entries under the
+  registry lock without per-document gate allocations.
+- Registry code must not create a counted `LoroDoc` handle from a registry
+  reference (`LoroDocInner::arm_budget_scope_on_txn` exists for that reason).
 
 Tests: `reclamation_work_tests` in `loro.rs`, two threaded tests in
-`crates/loro/tests/global_memory_budget.rs`, and the Loom model
-`crates/loro/tests/global_registry_loom.rs` (part of `pnpm test-loom`). The model
-starts the scan before the drop through a loom atomic; without that, DPOR sees
-no conflict (the registry map and `Arc` counts are not loom objects) and explores
-one execution. It fails against the old `strong_count` rule.
+`crates/loro/tests/global_memory_budget.rs`, concurrent clone/drop tests in
+`crates/loro/tests/hot_path_regressions.rs`, and the Loom models in
+`crates/loro/tests/global_registry_loom.rs` (part of `pnpm test-loom`).
 
 ## Boxed op payloads
 
@@ -407,8 +408,11 @@ The state undo log and recorded UndoManager inverses are documented above and in
 
 - File-backed KV flush still rewrites the full table; sweep backoff limits how
   often it happens. Incremental levels and streaming merges remain future work.
-- WASM short-string conversion and large `importBatchDetailed` metadata can
-  still allocate; no allocation-preflight bypass is allowed to optimize them.
+- WASM `insert`, `insertUtf8` and `splice` encode strings up to 42 UTF-16 code
+  units in a 128-byte Rust stack buffer. Empty strings and single code units
+  skip the encoding view entirely. Larger strings and environments
+  without `TextEncoder.encodeInto` go through the original checked conversion.
+  Large `importBatchDetailed` calls retain their streaming preflights.
 - The small-oplog shallow-snapshot threshold intentionally retains its input;
   `pruned_root` retention has not been measured independently.
 - Full interleaved A/B coverage against main for JSON, checkout and unbudgeted

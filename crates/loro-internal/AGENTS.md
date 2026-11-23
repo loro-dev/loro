@@ -7,6 +7,10 @@ over graceful degradation.
 
 ## Internal Map
 
+- Transaction capacity, lock-free user handle counting, shared handler ownership,
+  and compact text/list inverse optimizations:
+  [../../context/hot-path-prototypes.md](../../context/hot-path-prototypes.md).
+
 - `src/undo.rs`: one recorded item per undo/redo call, including no-ops:
   [../../context/undo-history-boundaries.md](../../context/undo-history-boundaries.md).
 - Undo transaction rollback and writer gate:
@@ -54,7 +58,12 @@ over graceful degradation.
   [../../context/callback-panics.md](../../context/callback-panics.md).
 - `src/state.rs` and `src/state/`: materialized document state, container stores,
   diff application, checkout/replay, deep value, dead-container tracking, and
-  mergeable container visibility. Read `src/state/AGENTS.md` and
+  mergeable container visibility. `src/state/direct_import.rs` (`try_apply`)
+  applies quiet attached linear causal appends (plain text, list, map, counter)
+  directly from `BlockChangeRef` to `DocState` after `validate_and_simulate`
+  pre-validation before any container write, falling back to `DiffCalculator` on
+  styled text, trees, movable lists, child containers, binary markers, deleted
+  or dangling containers, or subscribers. Read `src/state/AGENTS.md` and
   [../../context/mergeable-containers.md](../../context/mergeable-containers.md)
   before changing mergeable containers.
 - `src/handler.rs`: typed container handlers, local operation creation, and

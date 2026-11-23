@@ -34,7 +34,13 @@ fn jsonschema_import_loro_value(
         }
       }
     Json::String(s) =>
-      if s.has_prefix(LORO_CONTAINER_ID_PREFIX) {
+      if s.has_prefix(LORO_BINARY_PREFIX) {
+        let b64 = (s[LORO_BINARY_PREFIX.length():] catch {
+          _ =>
+            raise DecodeError("jsonschema_import: invalid binary value string")
+        }).to_string()
+        LoroValue::Binary(jsonschema_import_base64_to_bytes(b64))
+      } else if s.has_prefix(LORO_CONTAINER_ID_PREFIX) {
         let cid_str = (s[LORO_CONTAINER_ID_PREFIX.length():] catch {
           _ =>
             raise DecodeError(

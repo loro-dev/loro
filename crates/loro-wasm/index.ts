@@ -434,10 +434,30 @@ function decorateMethod(prototype: object, method: PropertyKey) {
     return;
   }
 
-  const wrapped = function (this: unknown, ...args: unknown[]) {
+  const wrapped = function (
+    this: unknown,
+    a?: unknown,
+    b?: unknown,
+    c?: unknown,
+  ) {
     let result;
     try {
-      result = original.apply(this, args);
+      switch (arguments.length) {
+        case 0:
+          result = original.call(this);
+          break;
+        case 1:
+          result = original.call(this, a);
+          break;
+        case 2:
+          result = original.call(this, a, b);
+          break;
+        case 3:
+          result = original.call(this, a, b, c);
+          break;
+        default:
+          result = Reflect.apply(original, this, arguments);
+      }
       return result;
     } finally {
       if (result && typeof (result as Promise<unknown>).then === "function") {

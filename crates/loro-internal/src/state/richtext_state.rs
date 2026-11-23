@@ -77,6 +77,11 @@ impl RichtextState {
         self.version_id
     }
 
+    #[inline(always)]
+    pub(crate) fn is_loaded(&self) -> bool {
+        matches!(self.state, LazyLoad::Dst(_))
+    }
+
     /// Get the text content of the richtext
     ///
     /// This uses `mut` because we may need to build the state from snapshot
@@ -939,6 +944,17 @@ impl ContainerState for RichtextState {
                     unicode_len: _,
                     pos,
                 } => {
+                    if let LazyLoad::Src(loader) = &mut self.state {
+                        if loader.start_anchor_pos.is_empty()
+                            && loader.style_ranges.is_empty()
+                            && *pos as usize == loader.entity_index
+                        {
+                            let chunk =
+                                RichtextStateChunk::try_new(slice.clone(), r_op.id_full()).unwrap();
+                            loader.push(chunk);
+                            return Ok(ApplyLocalOpReturn::default());
+                        }
+                    }
                     self.state.get_mut().insert_at_entity_index(
                         *pos as usize,
                         slice.clone(),
@@ -1064,8 +1080,16 @@ impl RichtextState {
 
     #[inline]
     #[allow(dead_code)]
-    pub(crate) fn has_styles(&mut self) -> bool {
-        self.state.get_mut().has_styles()
+    pub(crate) fn has_styles(&self) -> bool {
+        match &self.state {
+            LazyLoad::Src(s) => !s.start_anchor_pos.is_empty() || !s.style_ranges.is_empty(),
+            LazyLoad::Dst(d) => d.has_styles(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_empty_lazy_loader(&self) -> bool {
+        matches!(&self.state, LazyLoad::Src(s) if s.elements.is_empty())
     }
 
     pub(crate) fn has_style_key_in_entity_range(

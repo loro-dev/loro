@@ -27,10 +27,7 @@
           "content": {
             "type": "insert",
             "key": "b",
-            "value": [
-              0,
-              255
-            ]
+            "value": "🦜:binary:AP8="
           },
           "counter": 1
         },
@@ -39,16 +36,7 @@
           "content": {
             "type": "insert",
             "key": "s",
-            "value": [
-              0,
-              76,
-              77,
-              1,
-              2,
-              220,
-              22,
-              216
-            ]
+            "value": "🦜:binary:AExNAQLcFtg="
           },
           "counter": 2
         },

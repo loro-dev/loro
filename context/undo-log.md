@@ -1,6 +1,20 @@
 # Undo Without Checkouts: Recorded Inverses
 
-Verified against code 2026-11-17.
+Verified against code 2026-11-18.
+
+The hot-path optimization stores a text or list insertion run's inverse as
+container ID, event position and length (`CommitInverse::compact_insert`), and
+materializes the delta during `LocalInverse::seal`. Continuous runs are coalesced
+within a transaction and in place across grouped commits (`LocalInverse::chain`).
+Mixed text inverses containing both insertions and deletions fall back to checkout;
+other operations retain the composition described below.
+The general delta composer excludes zero-output deletion fragments beyond the
+end of a deletion and coalesces adjacent deletion leaves across leaf boundaries,
+preventing repeated scans of an already-deleted prefix or suffix in
+mixed-container groups and list undo/redo. This applies below undo recording;
+it does not broaden the set of recorded inverse shapes.
+See [hot-path prototypes](hot-path-prototypes.md) for its representation and
+validation boundaries.
 
 ## Why
 
@@ -49,6 +63,11 @@ snapshot (`crates/loro/examples/undo_cold_bench.rs`, before this change):
    elements' history (`movable_list::scopes`). The rest (the transform
    against the stack's composed remote diff, applying it as new ops) is
    unchanged. No checkout happens, so none is undone afterwards.
+
+Sealing borrows stored commit diffs. Only a container's first diff is cloned into
+the result; later diffs compose by reference. Compact text insertion inverses
+apply their deletion to the accumulated delta directly after the first entry,
+avoiding a temporary tree and batch for every grouped commit.
 
 The inverse must equal what the checkout reports. Rules found by that check:
 
@@ -120,7 +139,9 @@ map values it compares against included, is part of `undo_bytes` (so
 
 ## Not recorded yet (undo checks out, as before)
 
-Text marks, movable-list steps outside the shapes above, tree deletions of a subtree or of a node with
+Mixed text inverses containing both inserted and deleted text in one container
+(including those composed across a group), text marks, movable-list steps outside
+the shapes above, tree deletions of a subtree or of a node with
 metadata, moves out of a deleted parent, writes that would revive a child
 container (restoring a deleted container value), map binary values (mergeable markers),
 anything touching a mergeable container,

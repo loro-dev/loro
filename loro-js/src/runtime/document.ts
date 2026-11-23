@@ -10046,6 +10046,95 @@ function decodedOperationToJson(
   };
 }
 
+const LORO_JSON_BINARY_PREFIX = "🦜:binary:";
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function encodeJsonBinaryString(bytes: Uint8Array): `🦜:binary:${string}` {
+  let out = LORO_JSON_BINARY_PREFIX;
+  const fullEnd = bytes.length - (bytes.length % 3);
+  for (let i = 0; i < fullEnd; i += 3) {
+    const n = (bytes[i]! << 16) | (bytes[i + 1]! << 8) | bytes[i + 2]!;
+    out +=
+      BASE64_CHARS[(n >>> 18) & 0x3f]! +
+      BASE64_CHARS[(n >>> 12) & 0x3f]! +
+      BASE64_CHARS[(n >>> 6) & 0x3f]! +
+      BASE64_CHARS[n & 0x3f]!;
+  }
+  const rem = bytes.length - fullEnd;
+  if (rem === 1) {
+    const n = bytes[fullEnd]! << 16;
+    out += BASE64_CHARS[(n >>> 18) & 0x3f]! + BASE64_CHARS[(n >>> 12) & 0x3f]! + "==";
+  } else if (rem === 2) {
+    const n = (bytes[fullEnd]! << 16) | (bytes[fullEnd + 1]! << 8);
+    out +=
+      BASE64_CHARS[(n >>> 18) & 0x3f]! +
+      BASE64_CHARS[(n >>> 12) & 0x3f]! +
+      BASE64_CHARS[(n >>> 6) & 0x3f]! +
+      "=";
+  }
+  return out as `🦜:binary:${string}`;
+}
+
+function decodeBase64Sextet(code: number): number {
+  if (code >= 0x41 && code <= 0x5a) return code - 0x41;
+  if (code >= 0x61 && code <= 0x7a) return code - 0x61 + 26;
+  if (code >= 0x30 && code <= 0x39) return code - 0x30 + 52;
+  if (code === 0x2b) return 62;
+  if (code === 0x2f) return 63;
+  return -1;
+}
+
+function decodeJsonBinaryBase64(b64: string): Uint8Array {
+  if (b64.length % 4 !== 0) {
+    throw new TypeError("Invalid binary base64 length in JSON update");
+  }
+  if (b64.length === 0) return new Uint8Array(0);
+  const pad =
+    b64.charCodeAt(b64.length - 2) === 0x3d
+      ? 2
+      : b64.charCodeAt(b64.length - 1) === 0x3d
+        ? 1
+        : 0;
+  const out = new Uint8Array((b64.length / 4) * 3 - pad);
+  const fullQuantaEnd = b64.length - (pad > 0 ? 4 : 0);
+  let writeOffset = 0;
+  for (let i = 0; i < fullQuantaEnd; i += 4) {
+    const v0 = decodeBase64Sextet(b64.charCodeAt(i));
+    const v1 = decodeBase64Sextet(b64.charCodeAt(i + 1));
+    const v2 = decodeBase64Sextet(b64.charCodeAt(i + 2));
+    const v3 = decodeBase64Sextet(b64.charCodeAt(i + 3));
+    if ((v0 | v1 | v2 | v3) < 0) {
+      throw new TypeError("Invalid binary base64 character in JSON update");
+    }
+    const n = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
+    out[writeOffset++] = (n >>> 16) & 0xff;
+    out[writeOffset++] = (n >>> 8) & 0xff;
+    out[writeOffset++] = n & 0xff;
+  }
+  if (pad > 0) {
+    const v0 = decodeBase64Sextet(b64.charCodeAt(fullQuantaEnd));
+    const v1 = decodeBase64Sextet(b64.charCodeAt(fullQuantaEnd + 1));
+    if ((v0 | v1) < 0) {
+      throw new TypeError("Invalid binary base64 character in JSON update");
+    }
+    if (pad === 2) {
+      if (b64.charCodeAt(fullQuantaEnd + 3) !== 0x3d || (v1 & 0x0f) !== 0) {
+        throw new TypeError("Invalid binary base64 padding in JSON update");
+      }
+      out[writeOffset] = ((v0 << 2) | (v1 >>> 4)) & 0xff;
+    } else {
+      const v2 = decodeBase64Sextet(b64.charCodeAt(fullQuantaEnd + 2));
+      if (v2 < 0 || (v2 & 0x03) !== 0) {
+        throw new TypeError("Invalid binary base64 padding in JSON update");
+      }
+      const n = (v0 << 18) | (v1 << 12) | (v2 << 6);
+      out[writeOffset++] = (n >>> 16) & 0xff;
+      out[writeOffset] = (n >>> 8) & 0xff;
+    }
+  }
+  return out;
+}
+
 function changeLoroValueToJson(
   value: ChangeLoroValue,
   keys: readonly string[],
@@ -10061,14 +10150,8 @@ function changeLoroValueToJson(
       return value.value;
     case "i64":
       return Number(value.value);
-    case "binary": {
-      // The JSON schema has no binary type; Rust writes a byte array as numbers.
-      const bytes = value.value;
-      const numbers = new Array<number>(bytes.length);
-      for (let index = 0; index < bytes.length; index += 1)
-        numbers[index] = bytes[index]!;
-      return numbers;
-    }
+    case "binary":
+      return encodeJsonBinaryString(value.value);
     case "list":
       return value.value.map((item, index) =>
         changeLoroValueToJson(
@@ -10447,6 +10530,12 @@ function jsonValueToChangeLoroValue(
   if (typeof value === "number") return jsonNumberToChangeLoroValue(value);
   if (typeof value === "bigint") return { type: "i64", value };
   if (typeof value === "string") {
+    if (value.startsWith(LORO_JSON_BINARY_PREFIX)) {
+      return {
+        type: "binary",
+        value: decodeJsonBinaryBase64(value.slice(LORO_JSON_BINARY_PREFIX.length)),
+      };
+    }
     if (value.startsWith("🦜:")) {
       const rawId = value.slice("🦜:".length);
       if (isContainerId(rawId)) {
@@ -10463,6 +10552,7 @@ function jsonValueToChangeLoroValue(
           value: containerTypeToRawByte(child.containerType),
         };
       }
+      throw new TypeError("Invalid Loro container ID in JSON update");
     }
     return { type: "string", value };
   }

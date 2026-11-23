@@ -59,6 +59,22 @@ impl StrArena {
     }
 
     pub fn alloc(&mut self, input: &str) {
+        if input.is_ascii() {
+            // The char loop saves a chunk when `byte_index - last > 128`, so an
+            // ASCII chunk is 129 bytes and the tail is whatever remains.
+            let mut last = 0;
+            while last < input.len() {
+                let end = if input.len() - last > INDEX_INTERVAL as usize + 1 {
+                    last + INDEX_INTERVAL as usize + 1
+                } else {
+                    input.len()
+                };
+                let n = (end - last) as u32;
+                self._alloc(&input[last..end], n, n as i32);
+                last = end;
+            }
+            return;
+        }
         let mut utf16 = 0;
         let mut unicode_len = 0;
         let mut last_save_index = 0;

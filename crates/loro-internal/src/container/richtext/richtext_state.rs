@@ -64,10 +64,20 @@ use cache::CachedCursor;
 mod cache {
     use super::*;
 
-    #[derive(Clone, Debug)]
+    const UNSET: usize = usize::MAX;
+    #[cfg(debug_assertions)]
+    const POSITION_TYPES: [PosType; 5] = [
+        PosType::Bytes,
+        PosType::Unicode,
+        PosType::Utf16,
+        PosType::Event,
+        PosType::Entity,
+    ];
+
+    #[derive(Clone, Copy, Debug)]
     pub(super) struct CachedCursor {
         leaf: LeafIndex,
-        pub(super) index: FxHashMap<PosType, usize>,
+        index: [usize; 5],
     }
 
     impl RichtextState {
@@ -89,145 +99,67 @@ mod cache {
             } else {
                 0
             };
-
-            let pos = pos - offset;
-            match &mut self.cached_cursor {
-                Some(c) => {
-                    if c.leaf == leaf {
-                        c.index.insert(pos_type, pos);
-                    } else {
-                        c.leaf = leaf;
-                        c.index.clear();
-                        c.index.insert(pos_type, pos);
-                    }
-                }
-                None => {
-                    self.cached_cursor = Some(CachedCursor {
-                        leaf,
-                        index: FxHashMap::default(),
-                    });
-                    self.cached_cursor
-                        .as_mut()
-                        .unwrap()
-                        .index
-                        .insert(pos_type, pos);
-                }
-            }
+            let mut cursor = self
+                .cached_cursor
+                .filter(|cursor| cursor.leaf == leaf)
+                .unwrap_or(CachedCursor {
+                    leaf,
+                    index: [UNSET; 5],
+                });
+            cursor.index[pos_type as usize] = pos - offset;
             if let Some(entity_index) = entity_index {
-                self.cached_cursor
-                    .as_mut()
-                    .unwrap()
-                    .index
-                    .insert(PosType::Entity, entity_index - entity_offset);
+                cursor.index[PosType::Entity as usize] = entity_index - entity_offset;
             }
+            self.cached_cursor = Some(cursor);
         }
 
-        pub(super) fn try_get_cache_or_clean(
+        pub(super) fn try_get_cached_cursor(
             &mut self,
             index: usize,
             pos_type: PosType,
         ) -> Option<Cursor> {
-            let mut cursor = self.cached_cursor.take();
-            let ans = 'block: {
-                match &mut cursor {
-                    Some(c) => {
-                        let cache_index = c.index.get(&pos_type);
-                        if let Some(cache_index) = cache_index {
-                            if index < *cache_index {
-                                return None;
-                            }
-                        }
-
-                        let cached_index = match c.index.entry(pos_type) {
-                            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                                let index = self.get_index_from_cursor(
-                                    Cursor {
-                                        leaf: c.leaf,
-                                        offset: 0,
-                                    },
-                                    pos_type,
-                                )?;
-                                vacant_entry.insert(index);
-                                index
-                            }
-                            std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                                *occupied_entry.get()
-                            }
-                        };
-
-                        if index < cached_index {
-                            return None;
-                        }
-
-                        if cached_index == index {
-                            break 'block Some(Cursor {
-                                leaf: c.leaf,
-                                offset: 0,
-                            });
-                        }
-
-                        let elem = self.tree.get_elem(c.leaf)?;
-                        let elem_len = elem.len_with(pos_type);
-                        if cached_index + elem_len == index {
-                            let offset = elem.len_with(PosType::Entity);
-                            break 'block Some(Cursor {
-                                leaf: c.leaf,
-                                offset,
-                            });
-                        }
-
-                        if index > cached_index + elem_len {
-                            return None;
-                        }
-
-                        let offset =
-                            pos_type_offset_to_entity_offset(pos_type, elem, index - cached_index)?;
-                        Some(Cursor {
-                            leaf: c.leaf,
-                            offset,
-                        })
-                    }
-                    None => None,
+            let leaf = self.cached_cursor?.leaf;
+            let start = self.get_cache_leaf_start_index(pos_type)?;
+            let relative = index.checked_sub(start)?;
+            let offset = if relative == 0 {
+                0
+            } else {
+                let elem = self.tree.get_elem(leaf)?;
+                let len = elem.len_with(pos_type);
+                if relative == len {
+                    elem.len_with(PosType::Entity)
+                } else if relative < len {
+                    pos_type_offset_to_entity_offset(pos_type, elem, relative)?
+                } else {
+                    return None;
                 }
             };
-
-            self.cached_cursor = cursor;
-            #[cfg(debug_assertions)]
-            {
-                if let Some(c) = ans.as_ref() {
-                    let actual = self.get_index_from_cursor(*c, pos_type);
-                    assert_eq!(actual.unwrap(), index);
-                }
-            }
-            ans
+            let cursor = Cursor { leaf, offset };
+            debug_assert_eq!(self.get_index_from_cursor(cursor, pos_type), Some(index));
+            Some(cursor)
         }
 
         pub(super) fn get_cache_entity_index(&mut self) -> Option<usize> {
             self.get_cache_leaf_start_index(PosType::Entity)
         }
 
-        /// Index (in `pos_type` units) of the start of the currently cached leaf,
-        /// computing it once via `get_index_from_cursor` and memoizing it on the
-        /// cached cursor for reuse by later same-leaf queries.
         pub(super) fn get_cache_leaf_start_index(&mut self, pos_type: PosType) -> Option<usize> {
-            let mut cursor = self.cached_cursor.take()?;
-            let ans = {
-                let leaf = cursor.leaf;
-                match cursor.index.entry(pos_type) {
-                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                        let index =
-                            self.get_index_from_cursor(Cursor { leaf, offset: 0 }, pos_type)?;
-                        vacant_entry.insert(index);
-                        index
-                    }
-                    std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                        *occupied_entry.get()
-                    }
-                }
-            };
-
-            self.cached_cursor = Some(cursor);
-            Some(ans)
+            let mut cursor = self.cached_cursor?;
+            let index = &mut cursor.index[pos_type as usize];
+            if *index == UNSET {
+                *index = self.get_index_from_cursor(
+                    Cursor {
+                        leaf: cursor.leaf,
+                        offset: 0,
+                    },
+                    pos_type,
+                )?;
+                let computed = *index;
+                self.cached_cursor = Some(cursor);
+                Some(computed)
+            } else {
+                Some(*index)
+            }
         }
 
         /// Resolve the `pos_type` index of an arbitrary cursor using the cached
@@ -254,16 +186,19 @@ mod cache {
             #[cfg(debug_assertions)]
             {
                 if let Some(c) = &self.cached_cursor {
-                    for (pos_type, index) in &c.index {
+                    for pos_type in POSITION_TYPES {
+                        let index = c.index[pos_type as usize];
+                        if index == UNSET {
+                            continue;
+                        }
                         let actual = self.get_index_from_cursor(
                             Cursor {
                                 leaf: c.leaf,
                                 offset: 0,
                             },
-                            *pos_type,
+                            pos_type,
                         );
-
-                        assert_eq!(actual.unwrap(), *index);
+                        assert_eq!(actual, Some(index));
                     }
                 }
             }
@@ -1428,16 +1363,10 @@ impl RichtextState {
         } else {
             0
         };
-        let cursor_bytes = self.cached_cursor.as_ref().map_or(0, |c| {
-            std::mem::size_of::<CachedCursor>()
-                + c.index.capacity()
-                    * (std::mem::size_of::<PosType>() + std::mem::size_of::<usize>() + 8)
-        });
         std::mem::size_of::<Self>()
             .saturating_add(bytes_len)
             .saturating_add(entity_len.saturating_mul(24))
             .saturating_add(style_bytes)
-            .saturating_add(cursor_bytes)
     }
 
     pub(crate) fn reclaim_auxiliary_caches(&mut self) {
@@ -1466,7 +1395,7 @@ impl RichtextState {
             // A cached cursor next to a style anchor would skip the anchor
             // rules of `find_best_insert_pos`.
             let cached = self
-                .try_get_cache_or_clean(pos, pos_type)
+                .try_get_cached_cursor(pos, pos_type)
                 .filter(|c| !self.has_styles() || !self.anchor_rules_may_move_insert(*c));
             if let Some(c) = cached {
                 let entity_index = self.get_cache_entity_index().unwrap();
@@ -1640,7 +1569,7 @@ impl RichtextState {
                 .as_mut()
                 .map(|x| x.insert(entity_index, elem.rle_len()));
             let q = &entity_index;
-            if let Some(c) = self.try_get_cache_or_clean(entity_index, PosType::Entity) {
+            if let Some(c) = self.try_get_cached_cursor(entity_index, PosType::Entity) {
                 let p = self.tree.prefer_left(c).unwrap_or(c);
                 self.tree.insert_by_path(p, elem).0
             } else {
@@ -2423,7 +2352,8 @@ impl RichtextState {
                 // drop in place
                 let mut event_len = 0;
                 let mut updater = StyleRangeUpdater::new(self.style_ranges.as_mut(), pos);
-                self.tree.update_leaf(start_cursor.leaf, |elem| {
+                let text_leaf = matches!(elem, RichtextStateChunk::Text(_));
+                let (leaf_survived, _) = self.tree.update_leaf(start_cursor.leaf, |elem| {
                     updater.update(&*elem);
                     match elem {
                         RichtextStateChunk::Text(text) => {
@@ -2455,6 +2385,24 @@ impl RichtextState {
                 let affected_range = updater.get_affected_range(pos);
                 if let Some(s) = self.style_ranges.as_mut() {
                     s.delete(pos..pos + len);
+                }
+
+                // A partial deletion leaves the same text leaf at the same
+                // prefix. A whole-leaf deletion or anchor removal stays cold.
+                if text_leaf && leaf_survived {
+                    let event_pos_type = if cfg!(feature = "wasm") {
+                        PosType::Utf16
+                    } else {
+                        PosType::Unicode
+                    };
+                    self.record_cache(
+                        start_cursor.leaf,
+                        start_f.event_index,
+                        event_pos_type,
+                        start_cursor.offset,
+                        Some(pos),
+                    );
+                    self.check_cache();
                 }
 
                 DrainInfo {
