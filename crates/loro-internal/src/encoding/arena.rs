@@ -40,13 +40,13 @@ impl ValueEncodeRegister for EncodedRegisters<'_> {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct EncodedContainer {
     #[columnar(strategy = "BoolRle")]
-    is_root: bool,
+    pub(crate) is_root: bool,
     #[columnar(strategy = "Rle")]
-    kind: u8,
+    pub(crate) kind: u8,
     #[columnar(strategy = "Rle")]
-    peer_idx: usize,
+    pub(crate) peer_idx: usize,
     #[columnar(strategy = "DeltaRle")]
-    key_idx_or_counter: i32,
+    pub(crate) key_idx_or_counter: i32,
 }
 
 impl EncodedContainer {
@@ -102,7 +102,7 @@ impl ContainerArena {
     }
 
     pub fn from_containers(
-        cids: Vec<ContainerID>,
+        cids: &[ContainerID],
         peer_register: &mut ValueRegister<PeerID>,
         key_reg: &mut ValueRegister<InternalString>,
     ) -> Self {
@@ -118,15 +118,26 @@ impl ContainerArena {
 
     pub fn push(
         &mut self,
-        id: ContainerID,
+        id: &ContainerID,
         peer_register: &mut ValueRegister<PeerID>,
         register_key: &mut ValueRegister<InternalString>,
     ) {
+        self.containers
+            .push(EncodedContainer::register(id, peer_register, register_key));
+    }
+}
+
+impl EncodedContainer {
+    pub(crate) fn register(
+        id: &ContainerID,
+        peer_register: &mut ValueRegister<PeerID>,
+        register_key: &mut ValueRegister<InternalString>,
+    ) -> Self {
         let (is_root, kind, peer_idx, key_idx_or_counter) = match id {
             ContainerID::Root {
                 container_type,
                 name,
-            } => (true, container_type, 0, register_key.register(&name) as i32),
+            } => (true, container_type, 0, register_key.register(name) as i32),
             ContainerID::Normal {
                 container_type,
                 peer,
@@ -134,16 +145,16 @@ impl ContainerArena {
             } => (
                 false,
                 container_type,
-                peer_register.register(&peer),
-                counter,
+                peer_register.register(peer),
+                *counter,
             ),
         };
-        self.containers.push(EncodedContainer {
+        Self {
             is_root,
             kind: kind.to_u8(),
             peer_idx,
             key_idx_or_counter,
-        });
+        }
     }
 }
 

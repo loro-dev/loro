@@ -1424,8 +1424,8 @@ fn undo_tree_concurrent_delete2() -> LoroResult<()> {
             .get("id")
             .unwrap()
             .to_json_value(),
-        // create a new node
-        json!("1@2")
+        // the deleted child comes back with its own id
+        json!("1@1")
     );
     Ok(())
 }

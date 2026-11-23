@@ -127,36 +127,56 @@ pub use version::VersionVector;
 /// `LoroDoc::detach()` separates [DocState] from [OpLog]. In this mode,
 /// updates to [OpLog] won't affect [DocState], while updates to [DocState]
 /// will continue to affect [OpLog].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[repr(transparent)]
 pub struct LoroDoc {
-    // Released explicitly in `Drop for LoroDoc`, inside the drop gate when this
-    // handle is not the last one (see `DocDropGate`).
+    // Released explicitly in `Drop for LoroDoc` after updating `user_handles`.
     inner: std::mem::ManuallyDrop<Arc<LoroDocInner>>,
 }
 
-impl LoroDoc {
-    pub(crate) fn from_inner(inner: Arc<LoroDocInner>) -> Self {
+impl Clone for LoroDoc {
+    #[inline]
+    fn clone(&self) -> Self {
+        self.inner
+            .user_handles
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
-            inner: std::mem::ManuallyDrop::new(inner),
+            inner: self.inner.clone(),
         }
     }
 }
 
-/// Serializes the "is this the last handle?" decision in `Drop for LoroDoc`
-/// with the global registry's temporary references.
-///
-/// The registry upgrades its `Weak` and increments `registry_refs` while holding
-/// this lock, and drops its `Arc` and decrements while holding it. A handle that
-/// is not the last one also releases its `Arc` while holding it. So inside the
-/// lock, `strong_count - registry_refs` counts exactly the other handles (plus
-/// short-lived upgrades made while one of those handles is in use), and the
-/// last handle always commits, however the registry interleaves. Kept outside
-/// `LoroDocInner` so that the final drop may happen while the lock is held.
-/// See `context/memory-budget.md` ("Last handle and registry references").
-#[derive(Debug, Default)]
-pub(crate) struct DocDropGate {
-    pub(crate) registry_refs: crate::sync::Mutex<usize>,
+impl LoroDoc {
+    #[inline]
+    pub(crate) fn from_inner(inner: Arc<LoroDocInner>) -> Self {
+        inner
+            .user_handles
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            inner: std::mem::ManuallyDrop::new(inner),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn from_new_inner(inner: Arc<LoroDocInner>) -> Self {
+        debug_assert_eq!(
+            inner
+                .user_handles
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
+        Self {
+            inner: std::mem::ManuallyDrop::new(inner),
+        }
+    }
+
+    /// Borrows a `&LoroDoc` view over an existing `&Arc<LoroDocInner>` without
+    /// creating or dropping a counted user handle.
+    #[inline]
+    pub(crate) fn borrow_from_inner(inner: &Arc<LoroDocInner>) -> &Self {
+        // SAFETY: `LoroDoc` and `ManuallyDrop<Arc<LoroDocInner>>` are both `#[repr(transparent)]`.
+        unsafe { &*(inner as *const Arc<LoroDocInner> as *const Self) }
+    }
 }
 
 impl std::ops::Deref for LoroDoc {
@@ -204,6 +224,7 @@ pub struct LoroDocInner {
             >,
         >,
     >,
+    pub(crate) active_undo_managers: std::sync::atomic::AtomicUsize,
     pub(crate) memory_budget: crate::sync::Mutex<memory::MemoryBudget>,
     pub(crate) budget_flags: std::sync::atomic::AtomicU8,
     pub(crate) kv_block_cache: kv_store::SharedBlockCache,
@@ -216,7 +237,11 @@ pub struct LoroDocInner {
     /// Skips per-document soft sweeps that recently failed; see [`loro::SoftBackoff`].
     pub(crate) soft_backoff: loro::SoftBackoff,
     pub(crate) last_access_tick: std::sync::atomic::AtomicU64,
-    pub(crate) drop_gate: Arc<DocDropGate>,
+    /// Number of live user-facing `LoroDoc` handles (including attached container
+    /// handlers). Temporary internal `Arc<LoroDocInner>` upgrades (such as
+    /// `RegistryRef` or `Transaction::commit`) do not touch this counter, so the
+    /// last user handle commits lock-free without racing registry scans.
+    pub(crate) user_handles: crate::sync::AtomicUsize,
 }
 
 impl Drop for LoroDocInner {
@@ -235,31 +260,61 @@ impl Drop for LoroDocInner {
 pub const LORO_VERSION: &str = include_str!("../VERSION");
 
 impl Drop for LoroDoc {
+    #[inline]
     fn drop(&mut self) {
-        struct ReleaseOnExit(*mut std::mem::ManuallyDrop<Arc<LoroDocInner>>);
-        impl Drop for ReleaseOnExit {
-            fn drop(&mut self) {
-                // SAFETY: points at `LoroDoc::inner`, which is not used after this
-                // guard runs, also when the commit below unwinds.
-                unsafe { std::mem::ManuallyDrop::drop(&mut *self.0) }
+        use std::sync::atomic::Ordering::{AcqRel, Relaxed};
+
+        let mut cur = self.inner.user_handles.load(Relaxed);
+        loop {
+            if cur > 1 {
+                match self
+                    .inner
+                    .user_handles
+                    .compare_exchange(cur, cur - 1, AcqRel, Relaxed)
+                {
+                    Ok(_) => {
+                        // SAFETY: `inner` is not used after this.
+                        unsafe { std::mem::ManuallyDrop::drop(&mut self.inner) };
+                        return;
+                    }
+                    Err(actual) => {
+                        cur = actual;
+                        continue;
+                    }
+                }
+            }
+
+            struct ReleaseOnUnwind(*mut std::mem::ManuallyDrop<Arc<LoroDocInner>>);
+            impl Drop for ReleaseOnUnwind {
+                fn drop(&mut self) {
+                    // SAFETY: points at `LoroDoc::inner`, which is not used after
+                    // unwinding exits `Drop::drop`.
+                    unsafe {
+                        let inner = &mut *self.0;
+                        inner.user_handles.fetch_sub(1, AcqRel);
+                        std::mem::ManuallyDrop::drop(inner);
+                    }
+                }
+            }
+
+            let guard = ReleaseOnUnwind(&mut self.inner);
+            let _ = self.implicit_commit_then_stop();
+            std::mem::forget(guard);
+
+            match self
+                .inner
+                .user_handles
+                .compare_exchange(1, 0, AcqRel, Relaxed)
+            {
+                Ok(_) => {
+                    // SAFETY: `inner` is not used after this.
+                    unsafe { std::mem::ManuallyDrop::drop(&mut self.inner) };
+                    return;
+                }
+                Err(actual) => {
+                    cur = actual;
+                }
             }
         }
-
-        let gate = Arc::clone(&self.inner.drop_gate);
-        let refs = gate.registry_refs.lock_ignoring_poison();
-        let others = Arc::strong_count(&self.inner)
-            .saturating_sub(1)
-            .saturating_sub(*refs);
-        if others > 0 {
-            // Release inside the gate: a concurrent `drop` of the other handle must
-            // not count this one as still alive.
-            // SAFETY: `inner` is not used after this.
-            unsafe { std::mem::ManuallyDrop::drop(&mut self.inner) };
-            drop(refs);
-            return;
-        }
-        drop(refs);
-        let _release = ReleaseOnExit(&mut self.inner);
-        let _ = self.implicit_commit_then_stop();
     }
 }

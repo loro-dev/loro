@@ -211,7 +211,7 @@ pub enum OwnedValue {
     DeleteOnce,
     DeleteSeq,
     DeltaInt(i32),
-    LoroValue(LoroValue),
+    LoroValue(#[serde(serialize_with = "loro_common::serialize_json_schema_value")] LoroValue),
     MarkStart(MarkStart),
     TreeMove(EncodedTreeMove),
     RawTreeMove(RawTreeMove),
@@ -223,6 +223,7 @@ pub enum OwnedValue {
     ListSet {
         peer_idx: usize,
         lamport: Lamport,
+        #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
         value: LoroValue,
     },
     #[serde(untagged)]
@@ -462,6 +463,7 @@ impl<'a> Value<'a> {
 pub struct MarkStart {
     pub len: u32,
     pub key: InternalString,
+    #[serde(serialize_with = "loro_common::serialize_json_schema_value")]
     pub value: LoroValue,
     pub info: u8,
 }
@@ -537,7 +539,7 @@ impl EncodedTreeMove {
         Ok(op)
     }
 
-    pub fn from_tree_op<'p, 'a: 'p>(op: &'a TreeOp, registers: &mut EncodedRegisters) -> Self {
+    pub fn from_tree_op(op: &TreeOp, registers: &mut EncodedRegisters<'_>) -> Self {
         match op {
             TreeOp::Create {
                 target,
@@ -553,7 +555,7 @@ impl EncodedTreeMove {
                 let either::Right(position_register) = &mut registers.position else {
                     unreachable!()
                 };
-                let position = position_register.get(&bytes).unwrap();
+                let position = position_register.get(bytes).unwrap();
                 let target_idx = registers.tree_id.register(&EncodedTreeID {
                     peer_idx: registers.peer.register(&target.peer),
                     counter: target.counter,
@@ -593,7 +595,7 @@ impl EncodedTreeMove {
 }
 
 pub struct ValueWriter {
-    buffer: Vec<u8>,
+    buffer: smallvec::SmallVec<[u8; 128]>,
 }
 
 pub struct ValueReader<'a> {
@@ -1000,7 +1002,9 @@ impl<'a> ValueReader<'a> {
 
 impl ValueWriter {
     pub fn new() -> Self {
-        ValueWriter { buffer: Vec::new() }
+        ValueWriter {
+            buffer: smallvec::SmallVec::new(),
+        }
     }
 
     pub fn write_value_type_and_content(
@@ -1023,7 +1027,8 @@ impl ValueWriter {
             Key(&'a str),
         }
         let start = self.buffer.len();
-        let mut pending = vec![Task::Value(value, false)];
+        let mut pending: smallvec::SmallVec<[Task<'_>; 8]> =
+            smallvec::smallvec![Task::Value(value, false)];
         while let Some(task) = pending.pop() {
             let (value, with_kind) = match task {
                 Task::Value(value, with_kind) => (value, with_kind),
@@ -1144,8 +1149,12 @@ impl ValueWriter {
         self.buffer.len() - len
     }
 
+    pub(crate) fn as_bytes(&self) -> &[u8] {
+        &self.buffer
+    }
+
     pub(crate) fn finish(self) -> Vec<u8> {
-        self.buffer
+        self.buffer.into_vec()
     }
 
     fn write_raw_tree_move(&mut self, op: RawTreeMove) -> usize {

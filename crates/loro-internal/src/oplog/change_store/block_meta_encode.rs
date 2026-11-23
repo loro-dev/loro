@@ -26,10 +26,8 @@ pub(crate) fn encode_changes(
     };
     // First Counter + Change Len
     let mut lengths_bytes = Vec::new();
-    let mut counter = vec![];
 
     for (i, c) in block.iter().enumerate() {
-        counter.push(c.id.counter);
         let is_last = i == block.len() - 1;
         if !is_last {
             leb128::write::unsigned(&mut lengths_bytes, c.atom_len() as u64).unwrap();
@@ -322,6 +320,258 @@ pub(super) fn decode_delta_of_delta<T: TryFrom<i64>>(
         return Err(corrupt());
     }
     Ok((values, &bits[bit_index.div_ceil(8)..]))
+}
+
+/// Validate a delta-of-delta column of `count` elements without allocating a `Vec`,
+/// returning the element at `target_index` (when `count > 0`) and the remaining slice.
+pub(super) fn decode_nth_delta_of_delta_i64(
+    bytes: &[u8],
+    count: usize,
+    target_index: usize,
+) -> LoroResult<(Option<i64>, &[u8])> {
+    decode_nth_delta_of_delta_bounded(bytes, count, target_index, i64::MIN, i64::MAX)
+}
+
+fn decode_nth_delta_of_delta_bounded(
+    bytes: &[u8],
+    count: usize,
+    target_index: usize,
+    min_val: i64,
+    max_val: i64,
+) -> LoroResult<(Option<i64>, &[u8])> {
+    let corrupt = || LoroError::DecodeDataCorruptionError;
+    let (head, bytes): (Option<i64>, _) =
+        postcard::take_from_bytes(bytes).map_err(|_| corrupt())?;
+    let (&last_used_bit, bits) = bytes.split_first().ok_or_else(corrupt)?;
+    if last_used_bit > 8
+        || head.is_some() != (count != 0)
+        || count.saturating_sub(1) > bits.len().saturating_mul(8)
+    {
+        return Err(corrupt());
+    }
+    if count == 0 {
+        if last_used_bit != 0 {
+            return Err(corrupt());
+        }
+        return Ok((None, bits));
+    }
+    if target_index >= count {
+        return Err(corrupt());
+    }
+    let mut bit_index = 0usize;
+    let mut read = |width: usize| -> LoroResult<u64> {
+        let mut value = 0u64;
+        for _ in 0..width {
+            let byte = *bits.get(bit_index / 8).ok_or_else(corrupt)?;
+            value = (value << 1) | u64::from((byte >> (7 - bit_index % 8)) & 1);
+            bit_index = bit_index.checked_add(1).ok_or_else(corrupt)?;
+        }
+        Ok(value)
+    };
+    let mut value = head.unwrap_or(0);
+    if value < min_val || value > max_val {
+        return Err(corrupt());
+    }
+    let mut delta = 0i64;
+    let mut target_val = (target_index == 0).then_some(value);
+    for idx in 1..count {
+        if read(1)? != 0 {
+            let (width, bias) = if read(1)? == 0 {
+                (7, 63)
+            } else if read(1)? == 0 {
+                (9, 255)
+            } else if read(1)? == 0 {
+                (12, 2047)
+            } else if read(1)? == 0 {
+                (21, (1 << 20) - 1)
+            } else {
+                (64, 0)
+            };
+            let delta_of_delta = (read(width)? as i64)
+                .checked_sub(bias)
+                .ok_or_else(corrupt)?;
+            delta = delta.checked_add(delta_of_delta).ok_or_else(corrupt)?;
+        }
+        value = value.checked_add(delta).ok_or_else(corrupt)?;
+        if value < min_val || value > max_val {
+            return Err(corrupt());
+        }
+        if idx == target_index {
+            target_val = Some(value);
+        }
+    }
+    let expected_last = if bit_index == 0 {
+        0
+    } else {
+        (bit_index - 1) % 8 + 1
+    };
+    if usize::from(last_used_bit) != expected_last {
+        return Err(corrupt());
+    }
+    Ok((target_val, &bits[bit_index.div_ceil(8)..]))
+}
+
+/// Resolve `(change_index, lamport_at_id)` for `target_id` from a block's header column
+/// without allocating `Peers`, `Frontiers`, or `Lamport` vectors in the common case.
+pub(super) fn decode_change_index_and_lamport_at(
+    mut bytes: &[u8],
+    n_changes: usize,
+    first_counter: Counter,
+    counter_len: Counter,
+    lamport_start: Lamport,
+    lamport_len: Lamport,
+    target_id: ID,
+) -> LoroResult<Option<(usize, Lamport)>> {
+    if n_changes == 0 {
+        return Err(LoroError::DecodeError(
+            "Decode block error: empty change block".into(),
+        ));
+    }
+
+    let peer_num =
+        usize::try_from(leb128::read::unsigned(&mut bytes).map_err(|e| {
+            LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
+        })?)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+    let peers_bytes_len = peer_num
+        .checked_mul(8)
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: peer length overflow".into()))?;
+    if peer_num == 0 || bytes.len() < peers_bytes_len {
+        return Err(LoroError::DecodeError(
+            "Decode block error: invalid peer table".into(),
+        ));
+    }
+    let block_peer = PeerID::from_le_bytes(
+        bytes[..8]
+            .try_into()
+            .expect("peer byte range should be checked"),
+    );
+    if block_peer != target_id.peer {
+        return Ok(None);
+    }
+    let end_counter = first_counter
+        .checked_add(counter_len)
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: counter overflow".into()))?;
+    if target_id.counter < first_counter || target_id.counter >= end_counter {
+        return Ok(None);
+    }
+
+    let mut bytes = &bytes[peers_bytes_len..];
+    if n_changes - 1 > bytes.len() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+
+    // Fast zero-allocation validation for single-change blocks with zero foreign deps.
+    if n_changes == 1 {
+        let valid_zero_foreign_deps = (first_counter >= 1 && bytes == [0, 1, 1, 0, 0, 0, 0, 0])
+            || bytes == [1, 1, 0, 0, 0, 0, 0];
+        if valid_zero_foreign_deps {
+            let last_lamport = lamport_start
+                .checked_add(lamport_len)
+                .and_then(|end| end.checked_sub(counter_len as u32))
+                .ok_or_else(|| {
+                    LoroError::DecodeError("Decode block error: invalid lamport".into())
+                })?;
+            let offset = (target_id.counter - first_counter) as Lamport;
+            let lamport_at = last_lamport.checked_add(offset).ok_or_else(|| {
+                LoroError::DecodeError("Decode block error: invalid lamport".into())
+            })?;
+            return Ok(Some((0, lamport_at)));
+        }
+    }
+
+    let mut cur_counter = first_counter;
+    let mut known_len: Counter = 0;
+    let mut found: Option<(usize, Counter)> = None;
+    for idx in 0..n_changes - 1 {
+        let len = Counter::try_from(leb128::read::unsigned(&mut bytes).map_err(|e| {
+            LoroError::DecodeError(format!("Decode block error {e}").into_boxed_str())
+        })?)
+        .map_err(|_| LoroError::DecodeDataCorruptionError)?;
+        known_len = known_len.checked_add(len).ok_or_else(|| {
+            LoroError::DecodeError("Decode block error: counter length overflow".into())
+        })?;
+        let next_counter = cur_counter
+            .checked_add(len)
+            .ok_or_else(|| LoroError::DecodeError("Decode block error: counter overflow".into()))?;
+        if found.is_none() && target_id.counter < next_counter {
+            found = Some((idx, cur_counter));
+        }
+        cur_counter = next_counter;
+    }
+    let last_len = counter_len.checked_sub(known_len).ok_or_else(|| {
+        LoroError::DecodeError("Decode block error: invalid counter length".into())
+    })?;
+    let (target_idx, change_start_counter) = found.unwrap_or((n_changes - 1, cur_counter));
+
+    let (dep_self, bytes) = BoolRleDecoder::new(bytes)
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
+    let mut check_counter = first_counter;
+    for (i, &self_dep) in dep_self.iter().enumerate() {
+        if self_dep && check_counter.checked_sub(1).is_none() {
+            return Err(LoroError::DecodeError(
+                "Decode block error: invalid self dependency".into(),
+            ));
+        }
+        if i == 0 && first_counter == 0 && self_dep {
+            return Err(LoroError::DecodeError(
+                "Decode block error: invalid self dependency".into(),
+            ));
+        }
+        check_counter = check_counter.saturating_add(1);
+    }
+    let (deps_len, bytes) = AnyRleDecoder::<usize>::new(bytes)
+        .take_n_finalize(n_changes)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
+    let other_dep_num = deps_len.iter().try_fold(0usize, |sum, &len| {
+        if len >= peer_num {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+        sum.checked_add(len)
+            .ok_or(LoroError::DecodeDataCorruptionError)
+    })?;
+    if other_dep_num.saturating_sub(1) > bytes.len().saturating_mul(8) {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    let (dep_peers, bytes) = AnyRleDecoder::<usize>::new(bytes)
+        .take_n_finalize(other_dep_num)
+        .map_err(|_| LoroError::DecodeError("Decode block error: invalid deps".into()))?;
+    if dep_peers.iter().any(|&idx| idx >= peer_num) {
+        return Err(LoroError::DecodeError(
+            "Decode block error: invalid peer index".into(),
+        ));
+    }
+    let (_, bytes) =
+        decode_nth_delta_of_delta_bounded(bytes, other_dep_num, 0, 0, Counter::MAX as i64)?;
+
+    let last_lamport = lamport_start
+        .checked_add(lamport_len)
+        .and_then(|end| end.checked_sub(last_len as u32))
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: invalid lamport".into()))?;
+    let (change_lamport, rest) = if target_idx < n_changes - 1 {
+        let (lp, rest) = decode_nth_delta_of_delta_bounded(
+            bytes,
+            n_changes - 1,
+            target_idx,
+            0,
+            Lamport::MAX as i64,
+        )?;
+        let lp = lp.ok_or(LoroError::DecodeDataCorruptionError)? as Lamport;
+        (lp, rest)
+    } else {
+        let (_, rest) =
+            decode_nth_delta_of_delta_bounded(bytes, n_changes - 1, 0, 0, Lamport::MAX as i64)?;
+        (last_lamport, rest)
+    };
+    if !rest.is_empty() {
+        return Err(LoroError::DecodeDataCorruptionError);
+    }
+    let offset = (target_id.counter - change_start_counter) as Lamport;
+    let lamport_at = change_lamport
+        .checked_add(offset)
+        .ok_or_else(|| LoroError::DecodeError("Decode block error: invalid lamport".into()))?;
+    Ok(Some((target_idx, lamport_at)))
 }
 
 struct EncodedDeps {

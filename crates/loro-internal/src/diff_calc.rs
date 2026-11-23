@@ -11,6 +11,7 @@ mod unknown;
 use either::Either;
 use generic_btree::rle::{HasLength as _, Sliceable as _};
 use itertools::Itertools;
+use rle::{HasLength as _, Sliceable as _};
 use tracker_texts::TrackerTexts;
 use tracker_values::TrackerValues;
 
@@ -277,16 +278,19 @@ impl DiffCalculator {
         //   `InternalContainerDiff::diff_mode`, which is what the state layer's
         //   per-container logic (`need_check` / `need_compare`) consumes.
         let mut calc_mode = origin_diff_mode;
-        match &mut self.retain_mode {
+        let is_once = match &mut self.retain_mode {
             DiffCalculatorRetainMode::Once { used } => {
                 if *used {
                     panic!("DiffCalculator with retain_mode Once can only be used once");
                 }
+                *used = true;
+                true
             }
             DiffCalculatorRetainMode::Persist => {
                 calc_mode = DiffMode::Checkout;
+                false
             }
-        }
+        };
 
         let affected_set = {
             loro_common::debug!("replay_base: {:?} mode={:?}", &replay_base, calc_mode);
@@ -460,6 +464,9 @@ impl DiffCalculator {
                         oplog.arena.register_container(c);
                     });
                     calc.finish_this_round();
+                    if is_once {
+                        calc.release_transient_memory(container_idx);
+                    }
                     if !diff.is_empty() || bring_back {
                         ans.insert(
                             container_idx,
@@ -632,6 +639,28 @@ impl ContainerDiffCalculator {
             #[cfg(feature = "counter")]
             Self::Counter(calc) => calc.estimated_bytes(),
             Self::Unknown(_) => std::mem::size_of::<UnknownDiffCalculator>(),
+        }
+    }
+
+    fn release_transient_memory(&mut self, idx: ContainerIdx) {
+        match self {
+            Self::Map(_) => *self = Self::Map(MapDiffCalculator::new(idx)),
+            Self::List(calc) => {
+                *calc.tracker = ListTracker {
+                    tracker: RichtextTracker::new_empty(),
+                    values: TrackerValues::default(),
+                    linear: None,
+                };
+                calc.start_vv = VersionVector::new();
+            }
+            Self::Richtext(calc) => {
+                *calc.mode = RichtextCalcMode::Uninitialized;
+            }
+            Self::Tree(_) => *self = Self::Tree(TreeDiffCalculator::new(idx)),
+            Self::MovableList(_) => *self = Self::MovableList(MovableListDiffCalculator::new(idx)),
+            #[cfg(feature = "counter")]
+            Self::Counter(_) => *self = Self::Counter(CounterDiffCalculator::new(idx)),
+            Self::Unknown(_) => {}
         }
     }
 }
@@ -848,8 +877,6 @@ impl DiffCalculatorTrait for MapDiffCalculator {
     }
 }
 
-use rle::{HasLength as _, Sliceable};
-
 #[derive(Default)]
 pub(crate) struct ListDiffCalculator {
     start_vv: VersionVector,
@@ -862,6 +889,9 @@ pub(crate) struct ListDiffCalculator {
 struct ListTracker {
     tracker: RichtextTracker,
     values: TrackerValues,
+    /// Positional delta while `DiffMode::Linear`. `None` means the CRDT tracker is in use.
+    /// Movable lists never set this: their `start_tracking` does not call through to here.
+    linear: Option<Delta<SliceWithId>>,
 }
 
 impl ListTracker {
@@ -869,6 +899,7 @@ impl ListTracker {
     fn reset(&mut self) {
         self.tracker = RichtextTracker::new_with_unknown();
         self.values.clear();
+        self.linear = None;
     }
 
     #[inline(never)]
@@ -1016,8 +1047,14 @@ impl std::fmt::Debug for ListDiffCalculator {
 }
 
 impl DiffCalculatorTrait for ListDiffCalculator {
-    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, _mode: DiffMode) {
+    fn start_tracking(&mut self, _oplog: &OpLog, vv: &crate::VersionVector, mode: DiffMode) {
         self.source_not_in_op_context = false;
+        if mode == DiffMode::Linear {
+            // Stored positions are the document positions. Skip the tracker checkout.
+            self.tracker.linear = Some(Delta::new());
+            return;
+        }
+        self.tracker.linear = None;
         if !vv.includes_vv(&self.start_vv) || !self.tracker.all_vv().includes_vv(vv) {
             self.tracker.reset();
             self.start_vv = vv.clone();
@@ -1032,6 +1069,28 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         op: crate::op::RichOp,
         vv: Option<&crate::VersionVector>,
     ) {
+        if let Some(acc) = self.tracker.linear.as_mut() {
+            let op_delta = match &op.op().content {
+                InnerContent::List(InnerListOp::Insert { slice, pos }) => {
+                    Delta::new().retain(*pos as usize).insert(SliceWithId {
+                        values: Either::Left(slice.clone()),
+                        id: op.id_full(),
+                        elem_id: None,
+                    })
+                }
+                InnerContent::List(InnerListOp::Delete(del)) => {
+                    let start = usize::try_from(del.start()).unwrap_or(0);
+                    Delta::new()
+                        .retain(start)
+                        .delete(rle::HasLength::atom_len(del))
+                }
+                _ => unreachable!(),
+            };
+            let taken = std::mem::take(acc);
+            *acc = taken.compose(op_delta);
+            return;
+        }
+
         if let Some(vv) = vv {
             self.tracker.checkout(vv);
         }
@@ -1048,6 +1107,27 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         info: DiffCalcVersionInfo,
         mut on_new_container: impl FnMut(&ContainerID),
     ) -> (InternalDiff, DiffMode) {
+        if let Some(delta) = self.tracker.linear.take() {
+            for item in delta.iter() {
+                if let DeltaItem::Insert { insert, .. } = item {
+                    match &insert.values {
+                        Either::Left(values) => {
+                            for value in values.as_slice() {
+                                if let LoroValue::Container(container) = value {
+                                    on_new_container(container);
+                                }
+                            }
+                        }
+                        Either::Right(LoroValue::Container(container)) => {
+                            on_new_container(container);
+                        }
+                        Either::Right(_) => {}
+                    }
+                }
+            }
+            return (InternalDiff::ListRaw(delta), DiffMode::Linear);
+        }
+
         let mut delta = Delta::new();
         let (mut retreat, _) = info.from_vv.diff_iter(info.to_vv);
         let has_retreat = retreat.next().is_some();
@@ -1068,6 +1148,11 @@ impl DiffCalculatorTrait for ListDiffCalculator {
         let diff_items = if should_rebuild {
             #[cfg(test)]
             FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
+            *self.tracker = ListTracker {
+                tracker: RichtextTracker::new_empty(),
+                values: TrackerValues::default(),
+                linear: None,
+            };
             let mut merged = info.from_vv.clone();
             merged.merge(info.to_vv);
             let mut full_tracker = Self::build_full_tracker(idx, oplog, &merged);
@@ -1224,6 +1309,8 @@ struct FullTracker {
 
 #[derive(Debug)]
 enum RichtextCalcMode {
+    /// No tracker yet. `new` stays here so a linear import does not allocate a `RichtextTracker`.
+    Uninitialized,
     Crdt {
         tracker: Box<RichtextTracker>,
         /// (op, end_pos)
@@ -1248,15 +1335,19 @@ enum RichtextCalcMode {
 impl RichtextDiffCalculator {
     pub fn new() -> Self {
         Self {
-            mode: Box::new(RichtextCalcMode::Crdt {
-                tracker: Box::new(RichtextTracker::new_with_unknown()),
-                styles: Vec::new(),
-                texts: TrackerTexts::default(),
-                start_vv: VersionVector::new(),
-                source_not_in_op_context: false,
-                shallow_root_seeded: false,
-                full: None,
-            }),
+            mode: Box::new(RichtextCalcMode::Uninitialized),
+        }
+    }
+
+    fn new_crdt_mode() -> RichtextCalcMode {
+        RichtextCalcMode::Crdt {
+            tracker: Box::new(RichtextTracker::new_with_unknown()),
+            styles: Vec::new(),
+            texts: TrackerTexts::default(),
+            start_vv: VersionVector::new(),
+            source_not_in_op_context: false,
+            shallow_root_seeded: false,
+            full: None,
         }
     }
 
@@ -1272,6 +1363,7 @@ impl RichtextDiffCalculator {
 
     pub(crate) fn estimated_bytes(&self) -> usize {
         let mode_bytes = match &*self.mode {
+            RichtextCalcMode::Uninitialized => 0,
             RichtextCalcMode::Crdt {
                 tracker,
                 styles,
@@ -1313,6 +1405,7 @@ impl RichtextDiffCalculator {
         match &*self.mode {
             RichtextCalcMode::Crdt { texts, .. } => texts.len(),
             RichtextCalcMode::Linear { .. } => unreachable!(),
+            RichtextCalcMode::Uninitialized => 0,
         }
     }
 
@@ -1325,6 +1418,7 @@ impl RichtextDiffCalculator {
                 styles.iter().map(|(s, _)| ID::new(s.peer, s.cnt)).collect()
             }
             RichtextCalcMode::Linear { .. } => unreachable!(),
+            RichtextCalcMode::Uninitialized => Vec::new(),
         }
     }
 
@@ -1398,6 +1492,7 @@ impl RichtextDiffCalculator {
                 tracker.get_target_id_latest_index_at_new_version(id)
             }
             RichtextCalcMode::Linear { .. } => unreachable!(),
+            RichtextCalcMode::Uninitialized => None,
         }
     }
 
@@ -1795,8 +1890,10 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 };
             }
             _ => {
+                // A calculator that just ran in linear mode has no CRDT tracker.
+                // Allocate one here instead of panicking on the next import.
                 if !matches!(&*self.mode, RichtextCalcMode::Crdt { .. }) {
-                    unreachable!();
+                    *self.mode = Self::new_crdt_mode();
                 }
             }
         }
@@ -1846,6 +1943,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                 tracker.checkout(vv);
             }
             RichtextCalcMode::Linear { .. } => {}
+            RichtextCalcMode::Uninitialized => {
+                unreachable!("start_tracking initializes the richtext calculator")
+            }
         }
     }
 
@@ -1949,6 +2049,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     tracker.checkout(vv);
                 }
                 Self::apply_crdt_op_to_tracker(oplog, tracker, styles, texts, op);
+            }
+            RichtextCalcMode::Uninitialized => {
+                unreachable!("apply_change before start_tracking")
             }
         }
     }
@@ -2071,6 +2174,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
         }
 
         match &mut *self.mode {
+            RichtextCalcMode::Uninitialized => {
+                unreachable!("calculate_diff before start_tracking")
+            }
             RichtextCalcMode::Linear { diff, .. } => (
                 InternalDiff::RichtextRaw(std::mem::take(diff)),
                 DiffMode::Linear,
@@ -2122,6 +2228,9 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
                     // shallow-root state and replay only the retained suffix of history.
                     #[cfg(test)]
                     FULL_TRACKER_REBUILD_COUNT.with(|c| c.set(c.get() + 1));
+                    **tracker = RichtextTracker::new_empty();
+                    *styles = Vec::new();
+                    *texts = TrackerTexts::default();
                     let mut merged = info.from_vv.clone();
                     merged.merge(info.to_vv);
                     let (mut full_tracker, full_styles, full_texts) =
@@ -2187,7 +2296,7 @@ impl DiffCalculatorTrait for RichtextDiffCalculator {
 
     fn finish_this_round(&mut self) {
         match &mut *self.mode {
-            RichtextCalcMode::Crdt { .. } => {}
+            RichtextCalcMode::Crdt { .. } | RichtextCalcMode::Uninitialized => {}
             RichtextCalcMode::Linear {
                 diff,
                 last_style_start,
@@ -2296,6 +2405,7 @@ impl DiffCalculatorTrait for MovableListDiffCalculator {
                         if change.value_id.is_some() && change.value_id.as_ref().unwrap() > &idlp {
                         } else {
                             change.value_id = Some(idlp);
+                            change.value_updated = true;
                             if !skip_value_clone {
                                 change.value = value.clone();
                             }
@@ -2676,7 +2786,9 @@ fn causal_existing_peer_import_uses_current_version_as_replay_base() {
     let (base, _) =
         oplog.iter_from_replay_base_causally(&before, &before_frontiers, &after, &after_frontiers);
     assert_eq!(base.vv, before);
-    assert_eq!(base.diff_mode, DiffMode::ImportGreaterUpdates);
+    // The new op's minimal parents are exactly the relay frontier, so the
+    // extension is linear. The replay base stays `before`.
+    assert_eq!(base.diff_mode, DiffMode::Linear);
     assert_eq!(
         changed_containers_between(&oplog, &before, &after).unwrap(),
         [expected_idx].into_iter().collect()

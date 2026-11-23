@@ -7,29 +7,30 @@ use crate::{
 };
 
 fn get_all_points<T: DagNode, D: Dag<Node = T>>(graph: &D, points: &mut HashSet<ID>, current: &ID) {
-    points.insert(*current);
-    for to_id in graph.get(*current).unwrap().deps().iter() {
-        get_all_points(graph, points, &to_id);
+    let mut pending = vec![*current];
+    while let Some(next) = pending.pop() {
+        if points.insert(next) {
+            pending.extend(graph.get(next).unwrap().deps().iter());
+        }
     }
 }
 
 pub fn get_end_list<T: DagNode, D: Dag<Node = T>>(graph: &D, start_list: &Frontiers) -> Frontiers {
     let mut end_set: HashSet<ID> = HashSet::new();
-    for start_id in start_list.iter() {
-        end_dfs(graph, &start_id, &mut end_set);
+    let mut visited = HashSet::new();
+    let mut pending: Vec<_> = start_list.iter().collect();
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        let node = graph.get(current).unwrap();
+        if node.deps().is_empty() {
+            end_set.insert(current);
+        } else {
+            pending.extend(node.deps().iter());
+        }
     }
     end_set.into_iter().collect()
-}
-
-fn end_dfs<T: DagNode, D: Dag<Node = T>>(graph: &D, current: &ID, end_set: &mut HashSet<ID>) {
-    let binding = graph.get(*current).unwrap();
-    let deps = binding.deps();
-    if deps.is_empty() {
-        end_set.insert(*current);
-    }
-    for to_id in deps.iter() {
-        end_dfs(graph, &to_id, end_set);
-    }
 }
 
 pub fn calc_critical_version_dfs<T: DagNode, D: Dag<Node = T>>(
@@ -68,16 +69,16 @@ fn dfs<T: DagNode, D: Dag<Node = T>>(
     escape: &ID,
     end_list_set: &HashSet<ID>,
 ) -> bool {
-    if current == escape {
-        return false;
-    }
-    if end_list_set.contains(current) {
-        return true;
-    }
-    for to_id in graph.get(*current).unwrap().deps().iter() {
-        if dfs(graph, &to_id, escape, end_list_set) {
+    let mut visited = HashSet::new();
+    let mut pending = vec![*current];
+    while let Some(next) = pending.pop() {
+        if next == *escape || !visited.insert(next) {
+            continue;
+        }
+        if end_list_set.contains(&next) {
             return true;
         }
+        pending.extend(graph.get(next).unwrap().deps().iter());
     }
     false
 }
@@ -138,6 +139,7 @@ mod additional_tests {
         nodes: BTreeMap<ID, TestNode>,
         vv: VersionVector,
         frontier: Frontiers,
+        reads: std::cell::Cell<usize>,
     }
 
     impl TestDag {
@@ -154,6 +156,7 @@ mod additional_tests {
                 nodes,
                 vv,
                 frontier,
+                reads: std::cell::Cell::new(0),
             }
         }
     }
@@ -162,6 +165,7 @@ mod additional_tests {
         type Node = TestNode;
 
         fn get(&self, id: ID) -> Option<Self::Node> {
+            self.reads.set(self.reads.get() + 1);
             self.nodes.get(&id).cloned()
         }
 
@@ -229,6 +233,28 @@ mod additional_tests {
 
         let critical = calc_critical_version_dfs(&dag, &merge.id.into(), &root.id.into());
         assert!(critical.is_empty());
+    }
+
+    #[test]
+    fn shared_ancestors_are_read_once_per_traversal() {
+        let root = node(1, 0, 0, Frontiers::default());
+        let left = node(2, 0, 1, root.id.into());
+        let right = node(3, 0, 1, root.id.into());
+        let head = node(4, 0, 2, Frontiers::from([left.id, right.id]));
+        let dag = TestDag::new(
+            vec![root.clone(), left, right, head.clone()],
+            head.id.into(),
+        );
+        let mut points = HashSet::new();
+        get_all_points(&dag, &mut points, &head.id);
+        assert_eq!(points.len(), 4);
+        assert_eq!(dag.reads.get(), 4);
+        dag.reads.set(0);
+        assert_eq!(get_end_list(&dag, &head.id.into()), root.id.into());
+        assert_eq!(dag.reads.get(), 4);
+        dag.reads.set(0);
+        assert!(!dfs(&dag, &head.id, &ID::new(9, 0), &HashSet::new()));
+        assert_eq!(dag.reads.get(), 4);
     }
 }
 

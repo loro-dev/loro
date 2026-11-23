@@ -19,22 +19,29 @@ use rle::{HasLength, Sliceable};
 use rustc_hash::FxHashMap;
 
 #[derive(Debug, Clone)]
-pub enum PendingChange {
+pub(crate) struct PendingChange {
     // Retains the input's supplied Lamport, which cannot yet be resolved against
     // the DAG. Resolve it when the change can be applied.
-    Unknown(Change),
-    // TODO: Refactor, remove this?
-    #[allow(unused)]
-    Known(Change),
+    pub(crate) change: Change,
+    pub(crate) estimated_bytes: usize,
+}
+
+impl PendingChange {
+    #[inline]
+    pub(crate) fn new(change: Change) -> Self {
+        let estimated_bytes = change_estimated_bytes(&change);
+        Self {
+            change,
+            estimated_bytes,
+        }
+    }
 }
 
 impl Deref for PendingChange {
     type Target = Change;
+    #[inline]
     fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Unknown(a) => a,
-            Self::Known(a) => a,
-        }
+        &self.change
     }
 }
 
@@ -266,7 +273,7 @@ impl PendingChanges {
         for tree in self.changes.values() {
             for slot in tree.values() {
                 for pc in slot {
-                    total = total.saturating_add(change_estimated_bytes(pc));
+                    total = total.saturating_add(pc.estimated_bytes);
                 }
             }
         }
@@ -559,35 +566,13 @@ impl PendingChangesRollback {
 }
 
 impl OpLog {
-    fn push_pending_change(
-        &mut self,
-        missing_dep: ID,
-        change: PendingChange,
-        enforce_quota: bool,
-    ) -> LoroResult<()> {
+    fn push_pending_change_unchecked(&mut self, missing_dep: ID, change: PendingChange) {
         let Self {
             pending_changes,
             import_rollback,
-            max_pending_bytes,
             ..
         } = self;
-        if pending_changes.has_in_slot(missing_dep, &change) {
-            return Ok(());
-        }
-        let delta = change_estimated_bytes(&change);
-        if enforce_quota {
-            if let Some(limit) = *max_pending_bytes {
-                let projected = pending_changes.used_bytes.saturating_add(delta);
-                if projected > limit {
-                    return Err(LoroError::memory_limit_exceeded(
-                        MemoryLimitKind::PendingPool,
-                        projected,
-                        limit,
-                    ));
-                }
-            }
-        }
-
+        let delta = change.estimated_bytes;
         if let Some(rollback) = import_rollback.as_mut() {
             let pre_len = pending_changes.slot_len(missing_dep.peer, missing_dep.counter);
             rollback.pending.record_added(missing_dep, pre_len);
@@ -601,6 +586,33 @@ impl OpLog {
             .or_default()
             .push(change);
         pending_changes.used_bytes = pending_changes.used_bytes.saturating_add(delta);
+    }
+
+    fn push_pending_change(
+        &mut self,
+        missing_dep: ID,
+        change: PendingChange,
+        enforce_quota: bool,
+    ) -> LoroResult<()> {
+        if self.pending_changes.has_in_slot(missing_dep, &change) {
+            return Ok(());
+        }
+        if enforce_quota {
+            if let Some(limit) = self.max_pending_bytes {
+                let projected = self
+                    .pending_changes
+                    .used_bytes
+                    .saturating_add(change.estimated_bytes);
+                if projected > limit {
+                    return Err(LoroError::memory_limit_exceeded(
+                        MemoryLimitKind::PendingPool,
+                        projected,
+                        limit,
+                    ));
+                }
+            }
+        }
+        self.push_pending_change_unchecked(missing_dep, change);
         Ok(())
     }
 
@@ -623,14 +635,16 @@ impl OpLog {
         let mut newly_applied_ids = Vec::new();
 
         for change in remote_changes {
-            let local_change = PendingChange::Unknown(change);
-            match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &local_change) {
+            match remote_change_apply_state(self.vv(), self.shallow_since_vv(), &change) {
                 ChangeState::AwaitingMissingDependency(miss_dep) => {
+                    let local_change = PendingChange::new(change);
                     let is_dup = self.pending_changes.has_in_slot(miss_dep, &local_change);
                     if !is_dup {
                         if let Some(limit) = self.max_pending_bytes {
-                            let delta = change_estimated_bytes(&local_change);
-                            let projected = self.pending_changes.used_bytes.saturating_add(delta);
+                            let projected = self
+                                .pending_changes
+                                .used_bytes
+                                .saturating_add(local_change.estimated_bytes);
                             if projected > limit {
                                 return Err(LoroError::memory_limit_exceeded(
                                     MemoryLimitKind::PendingPool,
@@ -643,14 +657,16 @@ impl OpLog {
                     let rollback = self.import_rollback.as_mut().map(|r| &mut r.pending);
                     self.pending_changes.claim(&local_change, rollback);
                     let span = local_change.id_span();
-                    self.push_pending_change(miss_dep, local_change, true)?;
+                    if !is_dup {
+                        self.push_pending_change_unchecked(miss_dep, local_change);
+                    }
                     parked.push(span);
                 }
                 ChangeState::DependsOnTrimmedHistory => dropped_trimmed = true,
                 ChangeState::Applied => {}
                 ChangeState::CanApplyDirectly => {
-                    newly_applied_ids.push(local_change.id_last());
-                    self.apply_change_from_remote(local_change, would_affect.as_deref_mut())?;
+                    newly_applied_ids.push(change.id_last());
+                    self.apply_change_from_remote(change, would_affect.as_deref_mut())?;
                 }
             }
         }
@@ -714,10 +730,7 @@ impl OpLog {
             let mut pending_set = Vec::with_capacity(to_remove.len());
             for cnt in to_remove {
                 let pending_changes = tree.remove(&cnt).unwrap();
-                let removed_bytes: usize = pending_changes
-                    .iter()
-                    .map(|c| change_estimated_bytes(c))
-                    .sum();
+                let removed_bytes: usize = pending_changes.iter().map(|c| c.estimated_bytes).sum();
                 self.pending_changes.used_bytes = self
                     .pending_changes
                     .used_bytes
@@ -744,7 +757,7 @@ impl OpLog {
                         ChangeState::CanApplyDirectly => {
                             new_ids.push(pending_change.id_last());
                             self.apply_change_from_remote(
-                                pending_change,
+                                pending_change.change,
                                 would_affect.as_deref_mut(),
                             )?;
                         }
@@ -762,10 +775,9 @@ impl OpLog {
 
     pub(super) fn apply_change_from_remote(
         &mut self,
-        change: PendingChange,
+        change: Change,
         would_affect: Option<&mut VersionRange>,
     ) -> loro_common::LoroResult<()> {
-        let (PendingChange::Known(change) | PendingChange::Unknown(change)) = change;
         let Some(mut change) = self.trim_the_known_part_of_change(change) else {
             return Ok(());
         };
@@ -1555,12 +1567,12 @@ mod shallow_cut_tests {
         )
         .unwrap();
         assert_eq!(changes.len(), 1);
-        let pending = PendingChange::Unknown(changes.into_iter().next().unwrap());
+        let change = changes.into_iter().next().unwrap();
         assert!(matches!(
-            remote_change_apply_state(oplog.vv(), oplog.shallow_since_vv(), &pending),
+            remote_change_apply_state(oplog.vv(), oplog.shallow_since_vv(), &change),
             ChangeState::CanApplyDirectly
         ));
-        oplog.apply_change_from_remote(pending, None).unwrap();
+        oplog.apply_change_from_remote(change, None).unwrap();
         assert_eq!(oplog.vv(), &source.oplog_vv());
     }
 

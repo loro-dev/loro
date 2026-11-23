@@ -501,7 +501,7 @@ impl ContainerStore {
             .get_state_mut(idx, ctx!(self))
     }
 
-    pub(crate) fn ensure_container(&mut self, id: &loro_common::ContainerID) {
+    pub(crate) fn ensure_container(&mut self, id: &loro_common::ContainerID) -> ContainerIdx {
         let idx = self.arena.register_container(id);
         self.store.ensure_container(idx, || {
             let state = super::create_state_(
@@ -511,6 +511,7 @@ impl ContainerStore {
             );
             ContainerWrapper::new(state, &self.arena)
         });
+        idx
     }
 
     pub(super) fn get_or_create_imm(&mut self, idx: ContainerIdx) -> &State {
@@ -1585,7 +1586,7 @@ mod test {
             assert_eq!(doc.get_map(child_id).get("key"), Some((i as i64).into()));
         }
         {
-            let mut state = doc.app_state().lock();
+            let state = doc.app_state().lock();
             assert!(
                 state.store.store.cached_value_count_for_test()
                     <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,
@@ -1653,7 +1654,7 @@ mod test {
             assert_eq!(doc.get_map(child_id).get("key"), Some((i as i64).into()));
         }
         {
-            let mut state = doc.app_state().lock();
+            let state = doc.app_state().lock();
             assert!(
                 state.store.store.cached_value_count_for_test()
                     <= DEFAULT_DECODED_VALUE_CACHE_LIMIT,

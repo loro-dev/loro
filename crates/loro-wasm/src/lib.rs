@@ -477,7 +477,6 @@ extern "C" {
 }
 
 mod observer {
-    use js_sys::Array;
     use std::thread::ThreadId;
 
     use wasm_bindgen::JsValue;
@@ -527,13 +526,9 @@ mod observer {
             }
         }
 
-        pub fn call_with_args(&self, args: &[SafeJsValue]) -> JsResult<JsValue> {
+        pub fn call0(&self) -> JsResult<JsValue> {
             if std::thread::current().id() == self.thread {
-                let array = Array::new_with_length(args.len() as u32);
-                for (idx, arg) in args.iter().enumerate() {
-                    array.set(idx as u32, arg.0.clone());
-                }
-                self.f.apply(&JsValue::NULL, &array)
+                self.f.call0(&JsValue::NULL)
             } else {
                 Err(JsValue::from_str("Observer called from different thread"))
             }
@@ -569,6 +564,59 @@ fn js_str_to_string_checked(arg: JsStrArg) -> JsResult<String> {
     }
     val.as_string()
         .ok_or_else(|| JsError::new("Expected a string").into())
+}
+
+#[wasm_bindgen(inline_js = "
+const charCodeAt = Function.call.bind(String.prototype.charCodeAt);
+export function shortTextCodeUnit(text) {
+    if (typeof text !== 'string') return -1;
+    if (text.length === 0) return -2;
+    if (text.length === 1) return charCodeAt(text, 0);
+    return text.length <= 42 ? -3 : -1;
+}
+let shortTextEncoder;
+export function encodeShortText(text, target) {
+    // All UTF-16 sequences up to 42 units fit in 128 UTF-8 bytes.
+    try {
+        if (typeof TextEncoder !== 'function') return -1;
+        shortTextEncoder ??= new TextEncoder();
+        if (typeof shortTextEncoder.encodeInto !== 'function') return -1;
+        return shortTextEncoder.encodeInto(text, target).written;
+    } catch {
+        return -1;
+    }
+}
+")]
+extern "C" {
+    #[wasm_bindgen(js_name = shortTextCodeUnit)]
+    fn short_text_code_unit(value: &JsValue) -> i32;
+    #[wasm_bindgen(js_name = encodeShortText)]
+    fn encode_short_text(value: &JsValue, target: &mut [u8]) -> i32;
+}
+
+fn with_js_str_checked<R>(arg: JsStrArg, f: impl FnOnce(&str) -> R) -> JsResult<R> {
+    match short_text_code_unit(arg.as_ref()) {
+        -2 => return Ok(f("")),
+        code @ 0..=0xffff => {
+            let mut buffer = [0; 4];
+            let ch = char::from_u32(code as u32).unwrap_or('\u{fffd}');
+            return Ok(f(ch.encode_utf8(&mut buffer)));
+        }
+        -3 => {
+            let mut buffer = [0; 128];
+            let written = encode_short_text(arg.as_ref(), &mut buffer);
+            let text = usize::try_from(written)
+                .ok()
+                .and_then(|written| buffer.get(..written))
+                .and_then(|bytes| std::str::from_utf8(bytes).ok());
+            if let Some(text) = text {
+                return Ok(f(text));
+            }
+        }
+        _ => {}
+    }
+    let text = js_str_to_string_checked(arg)?;
+    Ok(f(&text))
 }
 
 fn js_u8_byte_len(val: &JsValue) -> usize {
@@ -1895,7 +1943,7 @@ impl LoroDoc {
         let sub = self.doc.subscribe_jsonpath(
             jsonpath,
             Arc::new(move || {
-                enqueue_pending_call(observer.clone(), Vec::new());
+                enqueue_pending_call(observer.clone(), PendingArgs::None);
             }),
         )?;
 
@@ -2554,10 +2602,8 @@ impl LoroDoc {
     pub fn subscribe_local_updates(&self, f: js_sys::Function) -> JsValue {
         let observer = observer::Observer::new(f);
         let sub = self.doc.subscribe_local_update(Box::new(move |e| {
-            let arr = js_sys::Uint8Array::new_with_length(e.len() as u32);
-            arr.copy_from(e);
-            let js_value: JsValue = arr.into();
-            put_js_value_in_pending_queue(observer.clone(), js_value);
+            let bytes = Uint8Array::from(e.as_slice());
+            put_js_value_in_pending_queue(observer.clone(), bytes.into());
             true
         }));
 
@@ -3133,57 +3179,62 @@ impl LoroDoc {
     }
 }
 
+enum PendingArgs {
+    None,
+    One(SafeJsValue),
+    Three([SafeJsValue; 3]),
+}
+
 struct PendingCall {
     observer: observer::Observer,
-    args: Vec<SafeJsValue>,
+    args: PendingArgs,
 }
-
-impl PendingCall {
-    fn new(observer: observer::Observer, args: Vec<JsValue>) -> Self {
-        let args = args.into_iter().map(SafeJsValue).collect();
-        Self { observer, args }
-    }
-}
-
-unsafe impl Send for PendingCall {}
-unsafe impl Sync for PendingCall {}
 
 struct PendingEvent {
-    vec: VecDeque<PendingCall>,
-    event_counter: usize,
-    call_counter: usize,
+    queue: VecDeque<PendingCall>,
+    check_scheduled: bool,
 }
 
 static GLOBAL_PENDING_EVENTS: Mutex<PendingEvent> = Mutex::new(PendingEvent {
-    vec: VecDeque::new(),
-    event_counter: 0,
-    call_counter: 0,
+    queue: VecDeque::new(),
+    check_scheduled: false,
 });
 
-fn schedule_pending_event_check(event_counter: usize) {
+static HAS_PENDING_EVENTS: AtomicBool = AtomicBool::new(false);
+static IS_CALLING: AtomicBool = AtomicBool::new(false);
+
+fn schedule_pending_event_check() {
     let promise = Promise::resolve(&JsValue::NULL);
     type C = Closure<dyn FnMut(JsValue)>;
     let drop_handler: Rc<RefCell<Option<C>>> = Rc::new(RefCell::new(None));
     let copy = drop_handler.clone();
     let closure = Closure::once(move |_: JsValue| {
         drop(copy);
-        throw_err_if_not_called(event_counter);
+        let mut pending = GLOBAL_PENDING_EVENTS.lock().unwrap();
+        pending.check_scheduled = false;
+        let missed = !pending.queue.is_empty();
+        drop(pending);
+        if missed {
+            console_error!("[LORO_INTERNAL_ERROR] Event not called");
+        }
     });
     let _ = promise.then(&closure);
     drop_handler.borrow_mut().replace(closure);
 }
 
-fn enqueue_pending_call(observer: observer::Observer, args: Vec<JsValue>) {
-    let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
-    e.vec.push_back(PendingCall::new(observer, args));
-    e.event_counter += 1;
-    let event_counter = e.event_counter;
-    drop(e);
-    schedule_pending_event_check(event_counter);
+fn enqueue_pending_call(observer: observer::Observer, args: PendingArgs) {
+    let mut pending = GLOBAL_PENDING_EVENTS.lock().unwrap();
+    pending.queue.push_back(PendingCall { observer, args });
+    HAS_PENDING_EVENTS.store(true, atomic::Ordering::Release);
+    let was_scheduled = std::mem::replace(&mut pending.check_scheduled, true);
+    drop(pending);
+    if !was_scheduled {
+        schedule_pending_event_check();
+    }
 }
 
 pub(crate) fn put_js_value_in_pending_queue(observer: observer::Observer, value: JsValue) {
-    enqueue_pending_call(observer, vec![value]);
+    enqueue_pending_call(observer, PendingArgs::One(SafeJsValue(value)));
 }
 
 fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
@@ -3193,39 +3244,29 @@ fn put_event_in_pending_queue(ob: observer::Observer, event: DiffEvent) {
     }
 }
 
-fn throw_err_if_not_called(event_counter: usize) {
-    let e = GLOBAL_PENDING_EVENTS.lock().unwrap();
-    let call_counter = e.call_counter;
-    drop(e);
-    if call_counter < event_counter {
-        console_error!("[LORO_INTERNAL_ERROR] Event not called");
-    }
-}
-
-static IS_CALLING: AtomicBool = AtomicBool::new(false);
-
 #[wasm_bindgen]
 pub fn callPendingEvents() {
-    if IS_CALLING.load(std::sync::atomic::Ordering::Relaxed) {
+    if !HAS_PENDING_EVENTS.load(atomic::Ordering::Acquire)
+        || IS_CALLING.swap(true, atomic::Ordering::Acquire)
+    {
         return;
     }
-    IS_CALLING.store(true, std::sync::atomic::Ordering::Relaxed);
+
     loop {
-        let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
-        let front = e.vec.pop_front();
-        drop(e);
-        if let Some(PendingCall { observer, args }) = front {
-            if let Err(e) = observer.call_with_args(&args) {
-                throw_error_after_micro_task(e);
-            }
-        } else {
-            let mut e = GLOBAL_PENDING_EVENTS.lock().unwrap();
-            if !e.vec.is_empty() {
-                continue;
-            }
-            e.call_counter = e.event_counter;
-            IS_CALLING.store(false, std::sync::atomic::Ordering::Relaxed);
-            break;
+        let mut pending = GLOBAL_PENDING_EVENTS.lock().unwrap();
+        let Some(PendingCall { observer, args }) = pending.queue.pop_front() else {
+            HAS_PENDING_EVENTS.store(false, atomic::Ordering::Release);
+            IS_CALLING.store(false, atomic::Ordering::Release);
+            return;
+        };
+        drop(pending);
+        let result = match args {
+            PendingArgs::None => observer.call0(),
+            PendingArgs::One(arg) => observer.call1(&arg.0),
+            PendingArgs::Three([a, b, c]) => observer.call3(&a.0, &b.0, &c.0),
+        };
+        if let Err(error) = result {
+            throw_error_after_micro_task(error);
         }
     }
 }
@@ -3508,8 +3549,9 @@ impl LoroText {
     /// text.insert(0, "Hello");
     /// ```
     pub fn insert(&mut self, index: usize, content: JsStrArg) -> JsResult<()> {
-        let content = js_str_to_string_checked(content)?;
-        self.handler.insert(index, &content, PosType::Utf16)?;
+        with_js_str_checked(content, |content| {
+            self.handler.insert(index, content, PosType::Utf16)
+        })??;
         Ok(())
     }
 
@@ -3562,11 +3604,8 @@ impl LoroText {
     /// text.splice(2, 3, "llo"); // "llo"
     /// ```
     pub fn splice(&mut self, pos: usize, len: usize, s: JsStrArg) -> JsResult<String> {
-        let s = js_str_to_string_checked(s)?;
-        match self.handler.splice(pos, len, &s, PosType::Utf16) {
-            Ok(x) => Ok(x),
-            Err(x) => Err(x.into()),
-        }
+        with_js_str_checked(s, |s| self.handler.splice(pos, len, s, PosType::Utf16))?
+            .map_err(Into::into)
     }
 
     /// Insert some string at utf-8 index.
@@ -3581,8 +3620,7 @@ impl LoroText {
     /// ```
     #[wasm_bindgen(js_name = "insertUtf8")]
     pub fn insert_utf8(&mut self, index: usize, content: JsStrArg) -> JsResult<()> {
-        let content = js_str_to_string_checked(content)?;
-        self.handler.insert_utf8(index, &content)?;
+        with_js_str_checked(content, |content| self.handler.insert_utf8(index, content))??;
         Ok(())
     }
 
@@ -6581,7 +6619,7 @@ impl UndoManager {
                         closure.as_ref().unchecked_ref::<js_sys::Function>().clone(),
                     );
                     drop_handler.borrow_mut().replace(closure);
-                    enqueue_pending_call(observer, vec![]);
+                    enqueue_pending_call(observer, PendingArgs::None);
 
                     UndoItemMeta::new()
                 })));
@@ -6627,7 +6665,10 @@ impl UndoManager {
                     .unwrap();
                     let meta_js: JsValue = meta.into();
                     let counter_range_js: JsValue = counter_range.into();
-                    enqueue_pending_call(on_pop.clone(), vec![is_undo, meta_js, counter_range_js]);
+                    enqueue_pending_call(
+                        on_pop.clone(),
+                        PendingArgs::Three([is_undo, meta_js, counter_range_js].map(SafeJsValue)),
+                    );
                 })));
         } else {
             self.undo.lock().set_on_pop(None);
@@ -7743,8 +7784,10 @@ interface LoroMovableList {
 export type Side = -1 | 0 | 1;
 export type JsonOpID = `${number}@${PeerID}`;
 export type JsonContainerID =  `🦜:${ContainerID}` ;
+export type JsonBinary = `🦜:binary:${string}`;
 export type JsonValue  =
   | JsonContainerID
+  | JsonBinary
   | string
   | number
   | boolean

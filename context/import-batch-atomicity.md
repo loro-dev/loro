@@ -215,6 +215,14 @@ with one `ImportBlobOutcome` per input blob:
   found before anything is applied, but the weaker guarantee of the nested scope below
   (a legacy blob that fails mid-decode keeps its prefix) applies here too.
 
+The borrowed and owned in-memory batch entry points need only the mode and
+change count to sort FastUpdates. Their metadata pass still decodes every
+update block in an isolated arena so malformed operation bodies fail at the
+same stage. Small update bodies reuse that arena for up to 64 KiB of input,
+and the arena is dropped before applying any updates. The sort-key pass
+does not create a peer or draw a random peer ID. The loop retains the per-blob limits, checksum checks, rollback
+boundaries and import order; loaders still supply their metadata separately.
+
 In `loro-crdt`, `importBatchDetailed` returns plain objects (`{ type: "imported" |
 "failed" | "rolledBack" }`, errors as the strings `import` throws) and is in the
 `decorateMethods` allowlist of `index.ts`, because the closing checkout emits events.

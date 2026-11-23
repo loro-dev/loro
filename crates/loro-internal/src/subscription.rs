@@ -32,6 +32,7 @@ impl LoroDoc {
 struct ObserverInner {
     subscriber_set: SubscriberSet<Option<ContainerIdx>, Subscriber>,
     queue: Arc<Mutex<VecDeque<DocDiff>>>,
+    has_container_subs: std::sync::atomic::AtomicBool,
 }
 
 impl Default for ObserverInner {
@@ -39,6 +40,7 @@ impl Default for ObserverInner {
         Self {
             subscriber_set: SubscriberSet::new(),
             queue: Arc::new(Mutex::new(VecDeque::new())),
+            has_container_subs: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -65,6 +67,9 @@ impl Observer {
     pub fn subscribe(&self, id: &ContainerID, callback: Subscriber) -> Subscription {
         let idx = self.arena.register_container(id);
         let inner = &self.inner;
+        inner
+            .has_container_subs
+            .store(true, std::sync::atomic::Ordering::Release);
         let (sub, enable) = inner.subscriber_set.insert(Some(idx), callback);
         enable();
         sub
@@ -94,18 +99,26 @@ impl Observer {
     /// A subscriber that panics does not stop the others; its panic is put in `panic`.
     fn emit_inner(&self, doc_diff: DocDiff, panic: &mut DeferredPanic) -> bool {
         let inner = &self.inner;
+        if inner.subscriber_set.is_empty_fast() {
+            return true;
+        }
+        let has_container_subs = inner
+            .has_container_subs
+            .load(std::sync::atomic::Ordering::Acquire);
         let mut container_events_map: FxHashMap<ContainerIdx, SmallVec<[&ContainerDiff; 1]>> =
             Default::default();
-        for container_diff in doc_diff.diff.iter() {
-            self.arena
-                .with_ancestors(container_diff.idx, |ancestor, _| {
-                    if inner.subscriber_set.may_include(&Some(ancestor)) {
-                        container_events_map
-                            .entry(ancestor)
-                            .or_default()
-                            .push(container_diff);
-                    }
-                });
+        if has_container_subs {
+            for container_diff in doc_diff.diff.iter() {
+                self.arena
+                    .with_ancestors(container_diff.idx, |ancestor, _| {
+                        if inner.subscriber_set.may_include(&Some(ancestor)) {
+                            container_events_map
+                                .entry(ancestor)
+                                .or_default()
+                                .push(container_diff);
+                        }
+                    });
+            }
         }
 
         {
@@ -140,7 +153,7 @@ impl Observer {
             });
         }
 
-        let events: Vec<_> = doc_diff.diff.iter().collect();
+        let events: SmallVec<[&ContainerDiff; 4]> = doc_diff.diff.iter().collect();
         panic.run(|| {
             inner
                 .subscriber_set

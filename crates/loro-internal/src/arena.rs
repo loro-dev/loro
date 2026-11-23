@@ -471,7 +471,51 @@ impl SharedArena {
     }
 
     pub fn register_container(&self, id: &ContainerID) -> ContainerIdx {
-        self.containers_write().register_container(id)
+        let mut guard = self.inner.containers.write();
+        let before = guard.container_idx_to_id.len();
+        let idx = guard.register_container(id);
+        if guard.container_idx_to_id.len() != before {
+            self.mark_stats_dirty();
+        }
+        idx
+    }
+
+    /// Resolve every id in one lock. A read lock is enough when they are already
+    /// registered. A miss takes one write lock for the whole slice, which also
+    /// marks document stats dirty once.
+    ///
+    /// Indices of containers registered by a later failed import are kept.
+    /// Call this only after the block header and container ids have decoded.
+    pub fn register_containers(
+        &self,
+        ids: &[ContainerID],
+    ) -> smallvec::SmallVec<[ContainerIdx; 16]> {
+        let mut idxs = smallvec::SmallVec::with_capacity(ids.len());
+        {
+            let guard = self.inner.containers.read();
+            let mut all_hit = true;
+            for id in ids {
+                if let Some(idx) = guard.container_id_to_idx.get(id).copied() {
+                    idxs.push(idx);
+                } else {
+                    all_hit = false;
+                    break;
+                }
+            }
+            if all_hit {
+                return idxs;
+            }
+        }
+        idxs.clear();
+        let mut guard = self.inner.containers.write();
+        let before = guard.container_idx_to_id.len();
+        for id in ids {
+            idxs.push(guard.register_container(id));
+        }
+        if guard.container_idx_to_id.len() != before {
+            self.mark_stats_dirty();
+        }
+        idxs
     }
 
     pub fn get_container_id(&self, idx: ContainerIdx) -> Option<ContainerID> {

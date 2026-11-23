@@ -1,0 +1,420 @@
+{
+  "hot_and_followup": {
+    "hot/text": {
+      "pr1314": {
+        "edit_ns": 35.919,
+        "undo_ns": 0.0,
+        "total_ns": 35.919
+      },
+      "v2": {
+        "edit_ns": 25.98,
+        "undo_ns": 0.0,
+        "total_ns": 25.98
+      },
+      "prestack": {
+        "edit_ns": 33.425,
+        "undo_ns": 0.0,
+        "total_ns": 33.425
+      }
+    },
+    "hot/map": {
+      "pr1314": {
+        "edit_ns": 3.593,
+        "undo_ns": 0.0,
+        "total_ns": 3.593
+      },
+      "v2": {
+        "edit_ns": 2.721,
+        "undo_ns": 0.0,
+        "total_ns": 2.721
+      },
+      "prestack": {
+        "edit_ns": 3.248,
+        "undo_ns": 0.0,
+        "total_ns": 3.248
+      }
+    },
+    "hot/undo": {
+      "pr1314": {
+        "edit_ns": 74.136,
+        "undo_ns": 0.0,
+        "total_ns": 74.136
+      },
+      "v2": {
+        "edit_ns": 61.627,
+        "undo_ns": 0.0,
+        "total_ns": 61.627
+      },
+      "prestack": {
+        "edit_ns": 64.715,
+        "undo_ns": 0.0,
+        "total_ns": 64.715
+      }
+    },
+    "hot/jsonpath": {
+      "pr1314": {
+        "edit_ns": 391.925,
+        "undo_ns": 0.0,
+        "total_ns": 391.925
+      },
+      "v2": {
+        "edit_ns": 402.017,
+        "undo_ns": 0.0,
+        "total_ns": 402.017
+      },
+      "prestack": {
+        "edit_ns": 406.519,
+        "undo_ns": 0.0,
+        "total_ns": 406.519
+      }
+    },
+    "hot/pending": {
+      "pr1314": {
+        "edit_ns": 468.163,
+        "undo_ns": 0.0,
+        "total_ns": 468.163
+      },
+      "v2": {
+        "edit_ns": 461.377,
+        "undo_ns": 0.0,
+        "total_ns": 461.377
+      },
+      "prestack": {
+        "edit_ns": 450.474,
+        "undo_ns": 0.0,
+        "total_ns": 450.474
+      }
+    },
+    "hot/root_lookup": {
+      "pr1314": {
+        "edit_ns": 16.56,
+        "undo_ns": 0.0,
+        "total_ns": 16.56
+      },
+      "v2": {
+        "edit_ns": 11.379,
+        "undo_ns": 0.0,
+        "total_ns": 11.379
+      },
+      "prestack": {
+        "edit_ns": 13.308,
+        "undo_ns": 0.0,
+        "total_ns": 13.308
+      }
+    },
+    "hot/child_lookup": {
+      "pr1314": {
+        "edit_ns": 17.493,
+        "undo_ns": 0.0,
+        "total_ns": 17.493
+      },
+      "v2": {
+        "edit_ns": 16.435,
+        "undo_ns": 0.0,
+        "total_ns": 16.435
+      },
+      "prestack": {
+        "edit_ns": 15.697,
+        "undo_ns": 0.0,
+        "total_ns": 15.697
+      }
+    },
+    "hot/map_large_batches": {
+      "pr1314": {
+        "edit_ns": 62.787,
+        "undo_ns": 0.0,
+        "total_ns": 62.787
+      },
+      "v2": {
+        "edit_ns": 63.187,
+        "undo_ns": 0.0,
+        "total_ns": 63.187
+      },
+      "prestack": {
+        "edit_ns": 63.324,
+        "undo_ns": 0.0,
+        "total_ns": 63.324
+      }
+    },
+    "followup/batched": {
+      "pr1314": {
+        "edit_ns": 10.101,
+        "undo_ns": 0.081,
+        "total_ns": 10.188
+      },
+      "v2": {
+        "edit_ns": 9.758,
+        "undo_ns": 0.081,
+        "total_ns": 9.838
+      },
+      "prestack": {
+        "edit_ns": 8.646,
+        "undo_ns": 0.24,
+        "total_ns": 8.89
+      }
+    },
+    "followup/grouped": {
+      "pr1314": {
+        "edit_ns": 79.31,
+        "undo_ns": 1.178,
+        "total_ns": 80.484
+      },
+      "v2": {
+        "edit_ns": 61.749,
+        "undo_ns": 0.076,
+        "total_ns": 61.826
+      },
+      "prestack": {
+        "edit_ns": 64.961,
+        "undo_ns": 0.216,
+        "total_ns": 65.199
+      }
+    }
+  },
+  "grouped": {
+    "contiguous/20000": {
+      "prestack": {
+        "edit_ns": 65.456,
+        "undo_ns": 0.187,
+        "redo_ns": 0.24,
+        "total_ns": 65.878
+      },
+      "pr1314": {
+        "edit_ns": 78.558,
+        "undo_ns": 1.13,
+        "redo_ns": 0.11,
+        "total_ns": 79.8
+      },
+      "v2": {
+        "edit_ns": 61.545,
+        "undo_ns": 0.056,
+        "redo_ns": 0.126,
+        "total_ns": 61.728
+      }
+    },
+    "map_tail/20000": {
+      "prestack": {
+        "edit_ns": 65.603,
+        "undo_ns": 0.202,
+        "redo_ns": 0.249,
+        "total_ns": 66.054
+      },
+      "pr1314": {
+        "edit_ns": 78.494,
+        "undo_ns": 5.326,
+        "redo_ns": 0.124,
+        "total_ns": 83.914
+      },
+      "v2": {
+        "edit_ns": 61.997,
+        "undo_ns": 0.085,
+        "redo_ns": 0.132,
+        "total_ns": 62.216
+      }
+    },
+    "two_texts/20000": {
+      "prestack": {
+        "edit_ns": 104.76,
+        "undo_ns": 203.753,
+        "redo_ns": 195.478,
+        "total_ns": 504.628
+      },
+      "pr1314": {
+        "edit_ns": 184.432,
+        "undo_ns": 157.277,
+        "redo_ns": 0.296,
+        "total_ns": 341.907
+      },
+      "v2": {
+        "edit_ns": 173.37,
+        "undo_ns": 158.36,
+        "redo_ns": 0.285,
+        "total_ns": 331.864
+      }
+    },
+    "list/20000": {
+      "prestack": {
+        "edit_ns": 75.994,
+        "undo_ns": 17.216,
+        "redo_ns": 24.214,
+        "total_ns": 117.514
+      },
+      "pr1314": {
+        "edit_ns": 127.731,
+        "undo_ns": 76.097,
+        "redo_ns": 40.405,
+        "total_ns": 243.737
+      },
+      "v2": {
+        "edit_ns": 73.712,
+        "undo_ns": 54.337,
+        "redo_ns": 18.822,
+        "total_ns": 146.639
+      }
+    },
+    "delete/20000": {
+      "prestack": {
+        "edit_ns": 484.37,
+        "undo_ns": 52.34,
+        "redo_ns": 0.197,
+        "total_ns": 537.057
+      },
+      "pr1314": {
+        "edit_ns": 538.423,
+        "undo_ns": 19.864,
+        "redo_ns": 0.118,
+        "total_ns": 558.767
+      },
+      "v2": {
+        "edit_ns": 526.831,
+        "undo_ns": 19.697,
+        "redo_ns": 0.116,
+        "total_ns": 546.408
+      }
+    },
+    "separated/20000": {
+      "prestack": {
+        "edit_ns": 74.0,
+        "undo_ns": 228.824,
+        "redo_ns": 154.509,
+        "total_ns": 457.136
+      },
+      "pr1314": {
+        "edit_ns": 87.212,
+        "undo_ns": 149.48,
+        "redo_ns": 80.989,
+        "total_ns": 317.54
+      },
+      "v2": {
+        "edit_ns": 71.889,
+        "undo_ns": 150.093,
+        "redo_ns": 81.05,
+        "total_ns": 302.863
+      }
+    }
+  },
+  "scalars": {
+    "list/0": {
+      "prestack": {
+        "elapsed_ns": 5.717
+      },
+      "pr1314": {
+        "elapsed_ns": 5.402
+      },
+      "v2": {
+        "elapsed_ns": 5.08
+      }
+    },
+    "list/1": {
+      "prestack": {
+        "elapsed_ns": 10.144
+      },
+      "pr1314": {
+        "elapsed_ns": 9.834
+      },
+      "v2": {
+        "elapsed_ns": 9.492
+      }
+    },
+    "list/8": {
+      "prestack": {
+        "elapsed_ns": 35.097
+      },
+      "pr1314": {
+        "elapsed_ns": 36.984
+      },
+      "v2": {
+        "elapsed_ns": 35.97
+      }
+    },
+    "list/128": {
+      "prestack": {
+        "elapsed_ns": 330.238
+      },
+      "pr1314": {
+        "elapsed_ns": 334.849
+      },
+      "v2": {
+        "elapsed_ns": 335.439
+      }
+    },
+    "movable/0": {
+      "prestack": {
+        "elapsed_ns": 5.812
+      },
+      "pr1314": {
+        "elapsed_ns": 5.272
+      },
+      "v2": {
+        "elapsed_ns": 5.228
+      }
+    },
+    "movable/1": {
+      "prestack": {
+        "elapsed_ns": 10.489
+      },
+      "pr1314": {
+        "elapsed_ns": 10.351
+      },
+      "v2": {
+        "elapsed_ns": 10.024
+      }
+    },
+    "movable/8": {
+      "prestack": {
+        "elapsed_ns": 33.095
+      },
+      "pr1314": {
+        "elapsed_ns": 34.33
+      },
+      "v2": {
+        "elapsed_ns": 33.512
+      }
+    },
+    "movable/128": {
+      "prestack": {
+        "elapsed_ns": 558.731
+      },
+      "pr1314": {
+        "elapsed_ns": 572.274
+      },
+      "v2": {
+        "elapsed_ns": 576.011
+      }
+    }
+  },
+  "extra": {
+    "undo_budget": {
+      "pr1314": {
+        "elapsed_ns": 342.309
+      },
+      "v2": {
+        "elapsed_ns": 17.075
+      }
+    },
+    "snapshot_map_get": {
+      "pr1314": {
+        "elapsed_ns": 781.793
+      },
+      "v2": {
+        "elapsed_ns": 4.753
+      }
+    },
+    "snapshot_jsonpath": {
+      "pr1314": {
+        "elapsed_ns": 206.51
+      },
+      "v2": {
+        "elapsed_ns": 192.429
+      }
+    },
+    "map_for_each_scalar": {
+      "pr1314": {
+        "elapsed_ns": 63.657
+      },
+      "v2": {
+        "elapsed_ns": 61.521
+      }
+    }
+  }
+}

@@ -70,6 +70,12 @@ impl ImportedValues {
                     // so the decoded id cannot safely be compared with that string.
                     loro_common::ContainerID::try_from_loro_value_string(string).is_some()
                 }
+                (LoroValue::String(string), LoroValue::Binary(bytes))
+                | (LoroValue::Binary(bytes), LoroValue::String(string)) => {
+                    // A `🦜:binary:<base64>` string decodes to `Binary` in JSON updates.
+                    loro_common::try_decode_loro_binary_string(string)
+                        .is_some_and(|decoded| decoded.as_slice() == bytes.as_slice())
+                }
                 (LoroValue::Binary(bytes), LoroValue::List(list))
                 | (LoroValue::List(list), LoroValue::Binary(bytes)) => {
                     bytes.len() == list.len()
@@ -1270,6 +1276,28 @@ mod json_lossy_value_tests {
     }
 
     #[test]
+    fn binary_marker_strings_match_only_identical_bytes_under_json_lossy() {
+        let bytes = LoroValue::from(vec![1u8, 2]);
+        let marker = LoroValue::from("🦜:binary:AQI=");
+        assert_lossy_pair(&marker, &bytes, true);
+        assert!(!ImportedValues::Exact.eq(&marker, &bytes));
+        assert_lossy_pair(&marker, &LoroValue::from(vec![1u8, 3]), false);
+        assert_lossy_pair(
+            &LoroValue::from("🦜:binary:"),
+            &LoroValue::from(Vec::<u8>::new()),
+            true,
+        );
+        for bad in [
+            "plain",
+            "🦜:binary:bad!",
+            "🦜:binary:AQ==",
+            "🦜:cid:0@0:Map",
+        ] {
+            assert_lossy_pair(&LoroValue::from(bad), &bytes, false);
+        }
+    }
+
+    #[test]
     fn unknown_payload_bypass_still_compares_props_and_containers() {
         use crate::{
             arena::SharedArena,
@@ -1433,7 +1461,7 @@ mod two_arena_tests {
         }
         let bytes = forged.encode_all(oplog.vv(), oplog.frontiers());
         let local = crate::OpLog::new(Default::default());
-        local.change_store.import_all(bytes).unwrap();
+        let _ = local.change_store.import_all(bytes).unwrap();
         let arena = SharedArena::new();
         let incoming = text_change(&arena, &"a".repeat(40));
         let err = local

@@ -1,6 +1,6 @@
 # Imports That Reuse Local Op Ids
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-18.
 
 An import skips the part of each change the doc already has by version vector and
 applies the rest on top of the local history. When two clients shared a peer id
@@ -246,15 +246,23 @@ is per atom range, not per change:
   rather than rounding them. The tolerance covers history relayed through JS
   parsing native JSON; it does not change that exporter's existing limitation.
 - **Ambiguous payload kinds.** A valid `🦜:cid:` string becomes a Container in
-  JSON (`LoroValueVisitor::visit_str`). JSON peer compression can then reinterpret
-  the string's peer as an index, so a marker-string versus Container pair is
-  accepted without comparing the encoded id. Two Containers or two strings still
-  must match. Unknown-op payloads (`FutureInnerContent::Unknown`) are not
-  compared in `JsonLossy`: they may carry nested LoroValues or arena references
-  whose meaning this version cannot establish. The op's prop and container still
-  must match. `Exact` compares the payload. This retains the prior JSON bypass
-  for that opaque kind; a later binary relay of it is accepted only when the
-  caller opts into `JsonLossy`.
+  JSON, and a valid `🦜:binary:<base64>` string becomes `Binary`
+  (`LoroValueVisitor::visit_str`, `LORO_BINARY_PREFIX`). Current JSON update
+  exports serialize `LoroValue::Binary` (including mergeable container markers
+  and nested binary leaves) as `🦜:binary:<base64>`, so JSON-relayed binary
+  values round-trip as `Binary` and pass default `Exact` binary `import` without
+  needing `JsonLossy` (while `ToJson` / `LoroValue::Serialize` still writes plain
+  byte lists `[...]`). Under `JsonLossy`, legacy byte-list JSON relays still match
+  `Binary`, and a `🦜:binary:<base64>` string matches `Binary` when the decoded
+  bytes are equal. JSON peer compression can reinterpret a `🦜:cid:` string's peer
+  as an index, so a marker-string versus Container pair is accepted without
+  comparing the encoded id. Two Containers or two strings still must match.
+  Unknown-op payloads (`FutureInnerContent::Unknown`) are not compared in
+  `JsonLossy`: they may carry nested LoroValues or arena references whose meaning
+  this version cannot establish. The op's prop and container still must match.
+  `Exact` compares the payload. This retains the prior JSON bypass for that opaque
+  kind; a later binary relay of it is accepted only when the caller opts into
+  `JsonLossy`.
 - **Counter ops** carry tagged `OwnedValue::F64`/`I64` values in JSON
   (`encoding/json_schema.rs::decode_op`), both decoded to `Counter(f64)`.
   Finite increments therefore remain comparable numerically, including integral
