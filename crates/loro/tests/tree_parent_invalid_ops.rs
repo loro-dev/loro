@@ -51,6 +51,7 @@ fn tree_op(counter: u32, content: Value) -> Value {
 
 /// The shapes of an op naming a parent that exists in no history.
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::enum_variant_names)]
 enum Shape {
     /// Peer 1 extends its own head: the import fast path (`Linear`).
     CreateSamePeer,
@@ -228,7 +229,7 @@ fn assert_rejected(v: &Victim, result: Result<loro::ImportStatus, LoroError>, be
     );
     before.assert_unchanged(v);
     if v.doc.is_detached() {
-        v.doc.attach();
+        v.doc.try_attach().unwrap();
     }
     assert_usable(&v.doc);
 }
@@ -562,7 +563,7 @@ fn moves_to_root_and_into_deleted_nodes_are_accepted() {
     tree.delete(a).unwrap();
     doc.commit();
     // A node moved under a deleted parent keeps its current semantics.
-    let moved_into_deleted = tree.mov(c, a);
+    let _moved_into_deleted = tree.mov(c, a);
     doc.commit();
     assert_accepted_everywhere(&doc, true);
 }
@@ -724,4 +725,204 @@ fn parent_before_a_shallow_root_is_accepted_and_an_unknown_one_is_rejected() {
     assert_eq!(doc.oplog_frontiers(), last);
     doc.get_tree("tree").create(root).unwrap();
     doc.commit();
+}
+
+/// Builds before loro-dev/loro#468 made `apply_diff` (and so undo) re-create a node
+/// that the doc had never seen with the diff's own `TreeID`, by a `Create` whose op id
+/// is not that id. The encoding stores it as a `Move` of a target with no `Create` in
+/// history. A node is therefore also known through any earlier `Create`/`Move` on it,
+/// not only through the op that has its id.
+///
+/// No subscriber: the event of such a `Move` panics on its own, before and after the
+/// parent check (its metadata container has no known parent).
+fn legacy_reused_target_doc() -> LoroDoc {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(7).unwrap();
+    // Peer 2 brings back node `5@99`, whose original `Create` it never had.
+    let revive = forged(
+        vec!["2", "99"],
+        "0@0",
+        0,
+        vec![],
+        vec![tree_op(
+            0,
+            json!({"type": "move", "target": "5@1", "parent": null,
+                   "fractional_index": "80"}),
+        )],
+    );
+    doc.import_json_updates(revive).unwrap();
+    // A later change of peer 2 creates a child under it.
+    let child = forged(
+        vec!["2", "99"],
+        "1@0",
+        1,
+        vec!["0@0"],
+        vec![tree_op(
+            1,
+            json!({"type": "create", "target": "1@0", "parent": "5@1",
+                   "fractional_index": "80"}),
+        )],
+    );
+    doc.import_json_updates(child).unwrap();
+    assert_eq!(
+        doc.get_tree("tree").parent(TreeID::new(2, 1)),
+        Some(TreeParentId::Node(TreeID::new(99, 5)))
+    );
+    doc
+}
+
+/// Imports `from` into fresh docs by updates, snapshot, JSON, a batch, and detached,
+/// without subscribers, and checks they equal `from`.
+fn assert_accepted_unsubscribed(from: &LoroDoc) {
+    let updates = from
+        .export(ExportMode::updates(&VersionVector::default()))
+        .unwrap();
+    let snapshot = from.export(ExportMode::Snapshot).unwrap();
+    let json = from
+        .export_json_updates(&VersionVector::default(), &from.oplog_vv())
+        .unwrap();
+    let fresh = |peer| {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(peer).unwrap();
+        doc
+    };
+    let check = |doc: &LoroDoc| {
+        assert_eq!(
+            doc.get_tree("tree").get_value(),
+            from.get_tree("tree").get_value()
+        )
+    };
+    for blob in [&updates, &snapshot] {
+        let doc = fresh(77);
+        doc.import(blob).unwrap();
+        check(&doc);
+        let doc = fresh(78);
+        doc.get_tree("other").create(None).unwrap();
+        doc.commit();
+        doc.import(blob).unwrap();
+        check(&doc);
+        let doc = fresh(79);
+        doc.detach();
+        doc.import(blob).unwrap();
+        doc.try_checkout_to_latest().unwrap();
+        check(&doc);
+    }
+    let doc = fresh(80);
+    doc.import_json_updates(json).unwrap();
+    check(&doc);
+    let doc = fresh(81);
+    doc.import_batch(std::slice::from_ref(&updates)).unwrap();
+    check(&doc);
+    // One op at a time, in reverse: everything waits as pending until the first.
+    let doc = fresh(82);
+    let mut parts = Vec::new();
+    for (&peer, &end) in from.oplog_vv().iter() {
+        for c in 0..end {
+            parts.push(
+                from.export(ExportMode::updates_in_range(vec![loro::IdSpan::new(
+                    peer,
+                    c,
+                    c + 1,
+                )]))
+                .unwrap(),
+            );
+        }
+    }
+    for part in parts.iter().rev() {
+        doc.import(part).unwrap();
+    }
+    check(&doc);
+}
+
+#[test]
+fn parent_known_only_through_an_earlier_op_on_it_is_accepted() {
+    let doc = legacy_reused_target_doc();
+    assert_accepted_unsubscribed(&doc);
+    // A third peer, which has the history, moves a node under it and creates one.
+    let editor = LoroDoc::new();
+    editor.set_peer_id(8).unwrap();
+    editor
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let tree = editor.get_tree("tree");
+    let n = tree.create(TreeID::new(99, 5)).unwrap();
+    tree.mov(TreeID::new(2, 1), n).unwrap();
+    editor.commit();
+    assert_accepted_unsubscribed(&editor);
+    doc.import(&editor.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
+    assert_eq!(doc.get_deep_value(), editor.get_deep_value());
+}
+
+/// An op on the parent that the naming op cannot see does not make it valid.
+#[test]
+fn parent_known_only_through_a_concurrent_op_on_it_is_rejected() {
+    let doc = legacy_reused_target_doc();
+    // Peer 3, concurrent to all of peer 2, names `5@99` as its parent.
+    let hostile = forged(
+        vec!["3", "99"],
+        "0@0",
+        0,
+        vec![],
+        vec![tree_op(
+            0,
+            json!({"type": "create", "target": "0@0", "parent": "5@1",
+                   "fractional_index": "80"}),
+        )],
+    );
+    let before = doc.get_deep_value();
+    let vv = doc.oplog_vv();
+    let err = doc.import_json_updates(hostile).unwrap_err();
+    assert!(matches!(err, LoroError::DecodeError(_)), "{err:?}");
+    assert_eq!(doc.get_deep_value(), before);
+    assert_eq!(doc.oplog_vv(), vv);
+    doc.get_tree("tree").create(None).unwrap();
+    doc.commit();
+}
+
+/// Undo, redo and `revert_to` bring deleted nodes back with ops whose ids are not the
+/// nodes' ids (`TreeHandler::revive_for_apply_diff`). Changes under the revived nodes,
+/// and under their revived children, are honest on every peer.
+#[test]
+fn parents_revived_by_undo_redo_and_revert_are_accepted() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let mut undo = UndoManager::new(&doc);
+    let tree = doc.get_tree("tree");
+    let a = tree.create(None).unwrap();
+    let b = tree.create(a).unwrap();
+    let c = tree.create(b).unwrap();
+    doc.commit();
+    let kept = doc.state_frontiers();
+    tree.delete(a).unwrap();
+    doc.commit();
+    assert!(undo.undo().unwrap());
+    assert!(undo.redo().unwrap());
+    assert!(undo.undo().unwrap());
+    tree.create(c).unwrap();
+    doc.commit();
+    tree.delete(a).unwrap();
+    doc.commit();
+    doc.revert_to(&kept).unwrap();
+    doc.commit();
+    assert!(tree.contains(c));
+
+    // Another peer that has only the exported history writes under them.
+    let other = LoroDoc::new();
+    other.set_peer_id(2).unwrap();
+    other
+        .import(
+            &doc.export(ExportMode::updates(&VersionVector::default()))
+                .unwrap(),
+        )
+        .unwrap();
+    other.get_tree("tree").create(b).unwrap();
+    other.get_tree("tree").mov(a, c).unwrap_err();
+    other.get_tree("tree").create(c).unwrap();
+    other.commit();
+    assert_accepted_everywhere(&doc, true);
+    assert_accepted_everywhere(&other, true);
+    doc.import(&other.export(ExportMode::updates(&doc.oplog_vv())).unwrap())
+        .unwrap();
+    assert_eq!(doc.get_deep_value(), other.get_deep_value());
 }

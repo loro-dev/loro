@@ -425,7 +425,7 @@ impl OpLog {
         self.register_container_and_parent_link(&change);
         let (update, stored_ts) = if let Some(rollback) = self.import_rollback.as_mut() {
             let mut prev_op: Option<&crate::op::Op> = None;
-            // Nodes created by an earlier op of this change, by the op that has their id.
+            // Nodes an earlier op of this change creates or moves.
             let mut created_in_change: FxHashSet<(ContainerIdx, TreeID)> = FxHashSet::default();
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
@@ -442,9 +442,7 @@ impl OpLog {
                         }
                     }
                     if let InnerContent::Tree(tree_op) = &op.content {
-                        if matches!(&**tree_op, TreeOp::Create { target, .. }
-                            if target.peer == change.id.peer && target.counter == op.counter)
-                        {
+                        if matches!(&**tree_op, TreeOp::Create { .. } | TreeOp::Move { .. }) {
                             created_in_change.insert((op.container, tree_op.target()));
                         }
                     }
@@ -1796,7 +1794,9 @@ impl OpLog {
             if parent.is_none() {
                 self.check_history_parsable()?;
             }
-            if !self.is_visible_tree_parent(&r, parent)? {
+            if !self.is_visible_tree_parent(&r, parent)?
+                && !self.is_visible_tree_parent_by_target(&r)?
+            {
                 return Err(LoroError::DecodeError(
                     format!(
                         "Tree op {} names parent {}, which is not in the tree's causal history",
@@ -1847,6 +1847,44 @@ impl OpLog {
             return Ok(false);
         };
         Ok(self.dag.try_ensure_vv_for(&node)?.includes_id(parent.id))
+    }
+
+    /// Whether a `Create`/`Move` on node `r.parent` in the same tree is in the causal
+    /// history of `r.op_id`. Covers nodes whose `Create` with their id is not in this
+    /// doc's history: builds before loro-dev/loro#468 let `apply_diff` and undo
+    /// re-create a node they had never seen under the diff's id, by an op with another
+    /// id. Only reached when the lookup by id fails, so a valid import does not pay for
+    /// the tree op index this builds on first use.
+    fn is_visible_tree_parent_by_target(&self, r: &TreeParentRef) -> Result<bool, LoroError> {
+        let candidates: Vec<ID> = self.with_history_cache(|h| {
+            let mark = h.ensure_importing_caches_exist();
+            h.get_tree(&r.container, mark)
+                .map(|group| {
+                    group
+                        .ops()
+                        .iter()
+                        .filter(|(_, info)| {
+                            info.value.target() == r.parent
+                                && matches!(
+                                    &*info.value,
+                                    TreeOp::Create { .. } | TreeOp::Move { .. }
+                                )
+                        })
+                        .map(|(idlp, info)| ID::new(idlp.peer, info.counter))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+        let Some(node) = self.dag.try_get(r.op_id)? else {
+            return Ok(false);
+        };
+        let vv = self.dag.try_ensure_vv_for(&node)?;
+        Ok(candidates.into_iter().any(|id| {
+            (id.peer == r.op_id.peer && id.counter < r.op_id.counter) || vv.includes_id(id)
+        }))
     }
 
     /// Reject the text `StyleEnd` ops inserted since the open import rollback scope
