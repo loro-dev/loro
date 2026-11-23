@@ -1673,7 +1673,7 @@ dependencies = [
  "loom",
  "loro-common 1.19.0",
  "loro-delta 1.19.0",
- "loro-internal 1.19.0",
+ "loro-internal 1.19.1",
  "loro-kv-store 1.19.0",
  "pretty_assertions",
  "rand 0.8.5",
@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "loro-internal"
-version = "1.19.0"
+version = "1.19.1"
 dependencies = [
  "append-only-bytes",
  "arbitrary",
@@ -2018,7 +2018,7 @@ dependencies = [
  "js-sys",
  "loro-common 1.19.0",
  "loro-delta 1.19.0",
- "loro-internal 1.19.0",
+ "loro-internal 1.19.1",
  "loro-rle 1.6.0",
  "parking_lot",
  "serde",
