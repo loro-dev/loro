@@ -406,7 +406,6 @@ impl ContainerState for RichtextState {
         let mut style_starts: FxHashMap<Arc<StyleOp>, Pos> = FxHashMap::default();
         let mut entity_index = 0;
         let mut event_index = 0;
-        let mut new_style_deltas: Vec<TextDiff> = Vec::new();
         for span in richtext.iter() {
             match span {
                 loro_delta::DeltaItem::Retain { len, .. } => {
@@ -569,7 +568,10 @@ impl ContainerState for RichtextState {
                                         }
 
                                         delta.chop();
-                                        new_style_deltas.push(delta);
+                                        // Compose in anchor order with the removals: an
+                                        // annotation snapshots the range's styles, so a
+                                        // style removed after it must win.
+                                        style_delta.compose(&delta);
                                     }
                                 }
                             }
@@ -581,9 +583,6 @@ impl ContainerState for RichtextState {
             }
         }
 
-        for s in new_style_deltas {
-            style_delta.compose(&s);
-        }
         // self.check_consistency_between_content_and_style_ranges();
         ans.compose(&style_delta);
         Diff::Text(ans)
