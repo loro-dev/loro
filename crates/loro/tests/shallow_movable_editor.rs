@@ -43,7 +43,10 @@ fn shallow_checkout_keeps_editor_distinct_from_mover() -> LoroResult<()> {
     let full_list = full.get_movable_list("list");
     let shallow_list = shallow.get_movable_list("list");
 
-    assert_eq!(shallow_list.get_value().to_json_value(), json!(["tail", "written-by-b"]));
+    assert_eq!(
+        shallow_list.get_value().to_json_value(),
+        json!(["tail", "written-by-b"])
+    );
     assert_eq!(shallow_list.get_value(), full_list.get_value());
     assert_eq!(full_list.get_last_editor_at(1), Some(2));
     assert_eq!(shallow_list.get_last_mover_at(1), Some(1));
