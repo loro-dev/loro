@@ -44,3 +44,22 @@ fn import_batch_matches_sequential_import_for_undo() {
         assert!(undo.can_undo(), "batched = {batched}");
     }
 }
+
+#[test]
+fn import_batch_keeps_redo_stack() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let mut undo = UndoManager::new(&doc);
+    doc.get_map("local").insert("value", 1).unwrap();
+    doc.commit();
+    assert!(undo.undo().unwrap());
+    assert!(undo.can_redo());
+
+    doc.import_batch(&[remote_update(2, "S"), remote_update(3, "T")])
+        .unwrap();
+
+    assert!(undo.can_redo());
+    assert!(undo.redo().unwrap());
+    assert!(doc.get_map("local").get("value").is_some());
+    assert_eq!(doc.get_text("text").len_unicode(), 2);
+}
