@@ -823,7 +823,7 @@ enum RemappedHost {
 }
 
 /// One step moves U inside `k` and hides `k`; the next deletes the host. Undo
-/// recreates the host under a new id (the undo manager remaps it), and a
+/// recreates a list host under a new id (a tree host comes back with its own) (the undo manager remaps it), and a
 /// remote peer fills the new host's `k`. Undoing the first step writes `k`'s
 /// marker on the new host, where U is not: it would create U. The check used
 /// to look into the old hidden `k`, accept the move, and undo returned
@@ -907,7 +907,21 @@ fn undo_into_a_host_the_undo_manager_recreated_is_rejected() {
                 )
                 .unwrap();
             }
-            assert_rejected_atomically(&doc, |_| undo.undo());
+            match host {
+                // Undo moves a deleted tree node back with its own id, so the
+                // host is not recreated: `k` keeps its hidden state, U included,
+                // and the step applies (context/tree-events.md).
+                RemappedHost::TreeMeta => {
+                    assert!(undo.undo().unwrap());
+                    doc.commit();
+                    let replay = LoroDoc::new();
+                    replay
+                        .import(&doc.export(loro::ExportMode::all_updates()).unwrap())
+                        .unwrap();
+                    assert_eq!(replay.get_deep_value(), doc.get_deep_value());
+                }
+                _ => assert_rejected_atomically(&doc, |_| undo.undo()),
+            }
         }
     }
 }

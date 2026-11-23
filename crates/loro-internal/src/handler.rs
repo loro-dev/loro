@@ -1450,6 +1450,7 @@ impl Handler {
         diff: Diff,
         container_remap: &mut FxHashMap<ContainerID, ContainerID>,
         full_state_targets: &mut FxHashSet<ContainerID>,
+        revived_full_state: &mut FxHashSet<ContainerID>,
     ) -> LoroResult<()> {
         // In this method we will not clone the values of the containers if
         // they are remapped. It's the caller's duty to do so
@@ -1583,14 +1584,25 @@ impl Handler {
                                 // If it's alive, we should move it back instead of creating new one.
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;
                             } else {
-                                let new_target = x.__internal__next_tree_id();
-                                if x.create_at_with_target_for_apply_diff(
-                                    parent, position, new_target,
-                                )? {
-                                    container_remap.insert(
-                                        target.associated_meta_container(),
-                                        new_target.associated_meta_container(),
-                                    );
+                                if !x.is_node_unexist(&target) {
+                                    // The node was deleted: bring it back so it keeps its id,
+                                    // metadata and children (loro-dev/loro#1212).
+                                    if x.revive_for_apply_diff(parent, position, target)? {
+                                        // It still holds its metadata, and the batch's
+                                        // entry for it is a full state: align, don't append.
+                                        revived_full_state
+                                            .insert(target.associated_meta_container());
+                                    }
+                                } else {
+                                    let new_target = x.__internal__next_tree_id();
+                                    if x.create_at_with_target_for_apply_diff(
+                                        parent, position, new_target,
+                                    )? {
+                                        container_remap.insert(
+                                            target.associated_meta_container(),
+                                            new_target.associated_meta_container(),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1608,14 +1620,25 @@ impl Handler {
                             // determine if the target is deleted
                             if x.is_node_unexist(&target) || x.is_node_deleted(&target)? {
                                 // create the target node, we should use the new target id
-                                let new_target = x.__internal__next_tree_id();
-                                if x.create_at_with_target_for_apply_diff(
-                                    parent, position, new_target,
-                                )? {
-                                    container_remap.insert(
-                                        target.associated_meta_container(),
-                                        new_target.associated_meta_container(),
-                                    );
+                                if !x.is_node_unexist(&target) {
+                                    // The node was deleted: bring it back so it keeps its id,
+                                    // metadata and children (loro-dev/loro#1212).
+                                    if x.revive_for_apply_diff(parent, position, target)? {
+                                        // It still holds its metadata, and the batch's
+                                        // entry for it is a full state: align, don't append.
+                                        revived_full_state
+                                            .insert(target.associated_meta_container());
+                                    }
+                                } else {
+                                    let new_target = x.__internal__next_tree_id();
+                                    if x.create_at_with_target_for_apply_diff(
+                                        parent, position, new_target,
+                                    )? {
+                                        container_remap.insert(
+                                            target.associated_meta_container(),
+                                            new_target.associated_meta_container(),
+                                        );
+                                    }
                                 }
                             } else {
                                 x.move_at_with_target_for_apply_diff(parent, position, target)?;

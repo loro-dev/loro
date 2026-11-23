@@ -2763,6 +2763,11 @@ impl LoroDoc {
         // of aligned containers that were kept.
         let mut full_state_targets: FxHashSet<ContainerID> = FxHashSet::default();
         let mut applied: FxHashSet<ContainerID> = FxHashSet::default();
+        // The metadata maps of tree nodes this batch moved back from the deleted
+        // tree, and the kept children found aligning them. Their entries are full
+        // states in any batch, since the batch made the node with a `Create`
+        // (see context/tree-events.md, "Undo brings deleted nodes back").
+        let mut revived_full_state: FxHashSet<ContainerID> = FxHashSet::default();
         for (mut id, diff) in diff.into_iter() {
             let batch_id = id.clone();
             let mut remapped = false;
@@ -2771,10 +2776,10 @@ impl LoroDoc {
                 id = rid.clone();
             }
 
-            let is_full_state = align_revived_mergeable && full_state_targets.remove(&id);
-            if align_revived_mergeable {
-                applied.insert(id.clone());
-            }
+            let from_revival = revived_full_state.remove(&id);
+            let is_full_state =
+                from_revival || (align_revived_mergeable && full_state_targets.remove(&id));
+            applied.insert(id.clone());
 
             if matches!(&id, ContainerID::Normal { .. }) && self.arena.id_to_idx(&id).is_none() {
                 // Not in arena does not imply non-existent; consult state/kv and register lazily
@@ -2787,7 +2792,9 @@ impl LoroDoc {
                 self.state.lock().ensure_container(&id);
             }
 
-            if skip_unreachable && !is_full_state {
+            // A revived node's metadata can be deleted again later in the same
+            // batch, so it is checked like any other container.
+            if skip_unreachable && (!is_full_state || from_revival) {
                 let mut state = self.state.lock();
                 // A remapped target is normally recreated by this batch and is
                 // applied even before it is attached. An earlier undo may have
@@ -2820,7 +2827,11 @@ impl LoroDoc {
                 match planned {
                     // The plan aligned this entry against the same container
                     Some(p) if p.target == id => {
-                        full_state_targets.extend(p.kept);
+                        if from_revival {
+                            revived_full_state.extend(p.kept);
+                        } else {
+                            full_state_targets.extend(p.kept);
+                        }
                         match p.edit {
                             Some(edit) => edit,
                             None => continue,
@@ -2831,16 +2842,18 @@ impl LoroDoc {
                         // or a mergeable child of a container this batch
                         // recreated: new and empty, which the plan checked as such
                         debug_assert!(
-                            plan.fresh.contains(&batch_id) || !diff_has_unknown_value(&diff),
+                            from_revival
+                                || plan.fresh.contains(&batch_id)
+                                || !diff_has_unknown_value(&diff),
                             "{batch_id} holds an unknown container and was not planned"
                         );
                         let current = self.state.lock().container_full_diff(h.container_idx());
-                        match crate::handler::align_full_state(
-                            &h,
-                            &diff,
-                            current,
-                            &mut full_state_targets,
-                        ) {
+                        let kept = if from_revival {
+                            &mut revived_full_state
+                        } else {
+                            &mut full_state_targets
+                        };
+                        match crate::handler::align_full_state(&h, &diff, current, kept) {
                             Some(diff) => diff,
                             None => continue,
                         }
@@ -2859,7 +2872,12 @@ impl LoroDoc {
                 };
                 movable.apply(list, diff, container_remap, element_remap)
             } else {
-                h.apply_diff(diff, container_remap, &mut full_state_targets)
+                h.apply_diff(
+                    diff,
+                    container_remap,
+                    &mut full_state_targets,
+                    &mut revived_full_state,
+                )
             };
             // Fault injection after real operations exercises rollback.
             #[cfg(test)]
@@ -2870,6 +2888,26 @@ impl LoroDoc {
                     "the unknown container check missed {e:?} in {batch_id}"
                 );
                 ans = Err(e);
+            }
+        }
+
+        // A revived node's metadata, or a child of it, with no entry in the batch is empty.
+        for id in revived_full_state {
+            if applied.contains(&id) {
+                continue;
+            }
+            let Some(h) = self.get_handler(id.clone()) else {
+                continue;
+            };
+            let mut state = self.state.lock();
+            // Deleted again later in the batch: nothing to clear.
+            let is_empty =
+                !state.get_reachable(&id) || state.is_container_state_empty(h.container_idx());
+            drop(state);
+            if !is_empty {
+                if let Err(e) = h.clear() {
+                    ans = Err(e);
+                }
             }
         }
 
@@ -4245,7 +4283,9 @@ impl LoroDoc {
         );
 
         if &from_frontiers == frontiers {
-            self.set_detached(frontiers != &self.oplog_frontiers());
+            // Already there: keep the attached/detached mode. A detached doc at
+            // the latest version stays detached, as it does when it gets there
+            // from another version; `checkout_to_latest` attaches (loro-dev/loro#1048).
             return Ok(());
         }
 

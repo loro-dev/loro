@@ -531,6 +531,70 @@ impl TreeHandler {
     }
 
     /// For undo/redo, Specify the TreeID of the created node
+    /// Brings a deleted node back under `parent` with a move, so undo, redo and
+    /// `revert_to` keep the node's id, metadata and children (see
+    /// `context/tree-events.md`, "Undo brings deleted nodes back"). The event
+    /// is a `Create` for the node and every node below it. Returns `false` and
+    /// does nothing when `parent` is deleted.
+    pub(crate) fn revive_for_apply_diff(
+        &self,
+        parent: TreeParentId,
+        position: FractionalIndex,
+        target: TreeID,
+    ) -> LoroResult<bool> {
+        let MaybeDetached::Attached(a) = &self.inner else {
+            unreachable!();
+        };
+        if let Some(p) = parent.tree_id() {
+            if self.is_node_deleted(&p)? {
+                return Ok(false);
+            }
+        }
+        let index = self
+            .get_index_by_fractional_index(
+                &parent,
+                &NodePosition {
+                    position: position.clone(),
+                    idlp: self.next_idlp(),
+                },
+            )
+            .unwrap_or(0);
+        let mut items = vec![TreeDiffItem {
+            target,
+            action: TreeExternalDiff::Create {
+                parent,
+                index,
+                position: position.clone(),
+            },
+        }];
+        a.with_state(|state| {
+            state
+                .as_tree_state()
+                .unwrap()
+                .push_subtree_creation(target, &mut items)
+        });
+        // The nodes keep their metadata, so the event carries it, as an import's does.
+        let metas: Vec<_> = items
+            .iter()
+            .map(|item| item.target.associated_meta_container())
+            .collect();
+        let inner = self.inner.try_attached_state()?;
+        let contents = inner.with_doc_state(|state| state.full_states_below(metas));
+        a.with_txn(|txn| {
+            txn.apply_local_op(
+                inner.container_idx,
+                crate::op::RawOpContent::Tree(Arc::new(TreeOp::Move {
+                    target,
+                    parent: parent.tree_id(),
+                    position: position.clone(),
+                })),
+                EventHint::TreeRevive { items, contents },
+                &inner.doc,
+            )
+        })?;
+        Ok(true)
+    }
+
     pub(crate) fn move_at_with_target_for_apply_diff(
         &self,
         parent: TreeParentId,
