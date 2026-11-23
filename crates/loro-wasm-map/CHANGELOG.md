@@ -1,5 +1,56 @@
 # loro-crdt-map
 
+## 1.19.0
+
+### Minor Changes
+
+- b6d455a: Add per-document memory budgets, memory statistics, explicit reclamation and `tryCommit()`, plus UndoManager byte limits. Bound caches and demote cold state while preserving exact hard-quota checks and atomic rollback of rejected imports. Reduce retained memory with compact internal layouts and page-cached state statistics. Native Rust supports file-backed history and state spilling, shared immutable spill files, checked reads and reportable storage errors; forks inherit independent memory policies.
+- 2c2d0f7: Add process-wide and WASM-instance-wide memory budgets, statistics and cross-document reclamation through `setGlobalMemoryBudget`, `getGlobalMemoryBudget`, `globalMemoryStats`, `reclaimGlobalMemory` and `tryReclaimGlobalToBudget`. Track WASM live heap and linear memory, report retained pages through `wasmLinearMemoryExceeded`, and check admission before large WASM input allocations. Incremental native accounting and reclamation backoff keep routine commits inexpensive.
+- 3e3eb6f: Improve snapshot and export speed, reduce peak import/export memory, and stream WASM `toJSON()` and large batch imports. Add `freeHistoryCache()`, `freeDiffCalculator()`, and `compactChangeStore()` for explicit cache reclamation.
+
+### Patch Changes
+
+- 34d3b60: `checkout` to the version a detached doc is already at keeps it detached, even when that version is the latest.
+- 94c61a0: Replay concurrent text branches with larger peer IDs first, including branches that become ready during replay, to avoid peer-ID-dependent quadratic import work.
+- 7c9a2a0: Keep UndoManager undo/redo history across multi-blob `importBatch`. Its events change `by` from `"checkout"` to `"import"`, while preserving the existing `origin: "checkout"` contract.
+- 5273c7a: Refuse an import whose op lengths disagree with the ops' content, instead of panicking or importing a history the document can't export again (#1293).
+- 4184569: **JSON updates format change for binary values.** `exportJsonUpdates` (and `get_uncommitted_ops_as_json` / `redactJsonUpdates` output) now encodes `Uint8Array` / `Binary` values, including mergeable container markers and binary values nested in lists and maps, as the string `"🦜:binary:<base64>"` (canonical RFC 4648 Base64 with padding) instead of an array of numbers. Binary values now survive an `exportJsonUpdates` → `importJsonUpdates` round trip, so documents synced via JSON updates no longer fail with `UsedOpID` when they later import binary updates that overlap the same operation IDs.
+
+  Compatibility when mixing versions:
+
+  - **New reader, old data:** `importJsonUpdates` still accepts JSON updates written by earlier versions, where binary values are arrays of numbers, and also accepts raw `Uint8Array` instances in JavaScript `JsonSchema` objects.
+  - **Old reader, new data:** `loro-crdt` / `loro` 1.18 and earlier reject JSON updates that contain `"🦜:binary:..."` values with an `Invalid container id` error; the whole import fails and the document is left unchanged. `loro.js` 0.4.1 and earlier import such a value as a plain string. Upgrade every peer that exchanges JSON updates before relying on binary values in them, or keep syncing through the binary `export` / `import` formats, which are unchanged.
+  - **Reserved prefix:** when JSON updates or a `LoroValue` are deserialized from JSON, a string that starts with `"🦜:binary:"` is now read as a binary value, and is rejected if the rest is not valid Base64. As with the existing `"🦜:"` container id prefix, do not store application strings that begin with this prefix if they go through JSON updates.
+
+- 25ff7a4: Speed up local map/text edits, block encode/decode, linear list diffs, and quiet causal update imports: skip unchanged map writes under the transaction state lock, batch block container registration with single-pass update block decoding, defer `RichtextTracker` allocation on linear diffs, and apply quiet linear causal imports directly to `DocState`.
+- 519780f: Reduce repeated transaction bookkeeping allocation costs, share document ownership
+  between related container handlers, and defer materialization of single text
+  insertion inverses until undo needs them.
+
+  Coalesce continuous text insertion runs within transactions and undo groups.
+  Mixed text replacement inverses fall back to checkout to preserve their ordering
+  relative to later remote edits.
+
+  Avoid rescanning already-deleted delta fragments and cloning temporary diff
+  batches during grouped undo/redo, including groups editing multiple containers
+  and lists. Create shared document
+  ownership lazily during traversal so empty and scalar-only lists do not allocate
+  an unnecessary shared owner.
+
+- 65e9751: Keep the requested frontier as the shallow snapshot root when it is a critical version. When another peer wrote both before and after it (for example two peers taking turns), the root used to retreat far below it, often to near the start of the history, so the snapshot kept history it did not need.
+- 519780f: Reduce work per local update and bound event checks during synchronous edits. Speed up short text edits and imports while preserving the existing update and snapshot formats.
+
+  Reduce single-operation encoding allocations and speed up concurrent text and list imports.
+
+  Avoid parsing cold frontier change blocks during snapshot import and transaction creation, and cut peak WASM heap usage during concurrent text/list merges.
+
+- 6d62244: Keep a tree's `enableFractionalIndex(jitter)` / `disableFractionalIndex()` setting when a snapshot is imported into the document and in `fork()` / `forkAt()`. Snapshot import used to reset it to jitter 0, while update import kept it (#1288).
+- 9f2da82: Seed a tree's fractional-index jitter from the peer id. Every peer used to draw the same jitter bytes after `enableFractionalIndex(n)` on a fresh tree, so jitter never separated concurrent inserts at the same position (#1289).
+- d57528f: Reject imported updates with a tree create or move whose parent node, or a tree delete whose target node, is not in the op's causal history. Such a malformed update used to be applied without the parent check; with a subscriber the event computation then panicked and trapped the WASM instance, leaving the document unusable. `import` and `importJsonUpdates` now throw a decode error and leave the document unchanged. Updates that name a parent the importing document merely has not received yet are unaffected: the parent only has to be in the op's own history, so every peer decides the same way. A parent re-created by `applyDiff` or undo in a build before 1.0.0-beta.5, which has no create op with its id, is still accepted.
+- 0c627ec: Undo and redo text, list, map, counter, tree and movable-list edits from inverses recorded at commit, avoiding history-cache construction for supported steps. Preserve remote edits, checkpoint transforms and existing undo/redo behavior, and trim finite undo byte limits in one pass. Count recorded inverses, including the values they keep, toward `max_undo_bytes`, `undo_bytes` and the open transaction's `uncommitted_txn_bytes`.
+- c7d01bf: Undo and redo bring a deleted tree node back with its own id, data and children instead of creating a new node.
+- 33a3b56: Fix `UndoManager.undo()` failing with "Index out of bound" after importing a remote change that re-creates a local tree node in the import's event (#1310). The node's metadata is re-sent in full in that event, and undo treated it as a remote edit.
+
 ## 1.18.0
 
 ### Minor Changes
