@@ -652,6 +652,20 @@ module tests cover literal oversized values, both bounds, nonminimal zero and
 minus one, and a truncated varint. `read_usize`, raw-tree counters and other
 integer fields are separate paths and are unchanged by this fix.
 
+## Op lengths must match their content
+
+Verified against code 2026-11-18. A change block gives each op a `len` column,
+and `block_encode.rs::decode_block` advances the op counter by it. The op's
+content is decoded separately (`decode_op`), so the two can disagree in a
+damaged block whose checksum still matches. A text insert of 11 characters
+with `len` 4 overlapped the next op's counters and panicked in the diff
+calculator. With `len` 3 it was imported, and the doc could not export a
+readable copy of itself (loro-dev/loro#1293). `decode_block` now requires
+`content.atom_len() == len` for every op. A list insert whose values are
+patched in after the block's value buffer is filled is checked after the
+patch. `visit_text_insert_block` (the known-history reader) already had the
+text check. Test: `cargo test -p loro --test import_text_insert_length`.
+
 ## Validation Shortcuts
 
 - Binary malformed input or rollback: `cargo test -p loro-internal import_atomicity`

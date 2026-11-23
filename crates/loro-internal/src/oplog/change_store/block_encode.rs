@@ -1019,7 +1019,8 @@ fn decode_block_from_doc(
     let peer = header.peer;
     // Pending list slices cannot be merged until `take_pending_values` fills
     // them (#1197). Push unmerged, patch, then coalesce.
-    let mut pending_patches: smallvec::SmallVec<[(usize, usize); 8]> = smallvec::SmallVec::new();
+    let mut pending_patches: smallvec::SmallVec<[(usize, usize, u32); 8]> =
+        smallvec::SmallVec::new();
     for op in op_iter {
         let EncodedOp {
             container_index,
@@ -1049,6 +1050,14 @@ fn decode_block_from_doc(
             ID::new(peer, counter),
         )?;
 
+        // The op's counters come from `len`, so its content must be exactly that
+        // long. Otherwise its counters overlap the ops after it, or skip ones
+        // no op holds (loro-dev/loro#1293). A list insert whose values arrive
+        // later is checked when they are patched in.
+        if buffers.pending_insert_count() == pending_before && content.atom_len() != len as usize {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
+
         let c_idx = *c_idxs
             .get(container_index as usize)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
@@ -1065,7 +1074,7 @@ fn decode_block_from_doc(
         let op_index = decoded_ops.len();
         decoded_ops.push(op);
         if buffers.pending_insert_count() != pending_before {
-            pending_patches.push((change_index, op_index));
+            pending_patches.push((change_index, op_index, len));
         }
         counter = counter
             .checked_add(len as Counter)
@@ -1079,10 +1088,13 @@ fn decode_block_from_doc(
         }
     }
     if let Some((from, to)) = buffers.take_pending_values() {
-        for (change_index, op_index) in pending_patches {
+        for (change_index, op_index, len) in pending_patches {
             match &mut changes[change_index].ops.vec_mut()[op_index].content {
                 InnerContent::List(InnerListOp::Insert { slice, .. }) => {
                     slice.replace_buffer(&from, &to);
+                    if slice.len() != len as usize {
+                        return Err(LoroError::DecodeDataCorruptionError);
+                    }
                 }
                 _ => unreachable!("pending insert was not a list insert"),
             }
@@ -1329,11 +1341,15 @@ mod test {
                 assert_eq!(encoded.header[length_offset], 2);
                 encoded.header.to_mut()[length_offset] = 1;
             } else {
-                // decode_block uses the actual string length for the text op,
-                // while the cold reader requires it to equal the encoded length.
+                // A text op whose encoded length differs from its text is
+                // corrupt for both readers (loro-dev/loro#1293).
                 let mut ops: EncodedOps = serde_columnar::from_bytes(&encoded.ops).unwrap();
                 ops.ops[0].len = 1;
                 encoded.ops = Cow::Owned(serde_columnar::to_vec(&ops).unwrap());
+                let bytes = postcard::to_allocvec(&encoded).unwrap();
+                assert!(visit_text_insert_block(&bytes, |_, _, _, _, _, _| Ok(())).is_err());
+                assert!(decode_block(&bytes, &SharedArena::new(), None).is_err());
+                continue;
             }
             let bytes = postcard::to_allocvec(&encoded).unwrap();
             assert!(visit_text_insert_block(&bytes, |_, _, _, _, _, _| Ok(())).is_err());

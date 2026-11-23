@@ -926,6 +926,7 @@ impl DocState {
         // Suppose A is revived and B is A's child, and B also needs to be revived; therefore,
         // we should process each level alternately.
 
+        let by_import = diff.by == EventTriggerKind::Import;
         self.register_meta_parents_of_created_tree_nodes(&diffs);
         // We need to ensure diff is processed in order
         diffs.sort_by_cached_key(|diff| self.arena.get_depth(diff.idx));
@@ -966,13 +967,22 @@ impl DocState {
                     if is_recording {
                         let state = self.store.get_or_create_mut(diff.idx);
                         let extern_diff = state.to_diff(&self.doc);
+                        // Like `revive_without_diff`: a kept container's full state is
+                        // not a change, and neither is what it holds.
+                        let is_kept = kept.contains(&idx);
                         trigger_on_new_container(
                             &extern_diff,
                             |cid| {
                                 to_revive_in_next_layer.insert(cid);
+                                if is_kept {
+                                    kept.insert(cid);
+                                }
                             },
                             &self.arena,
                         );
+                        if is_kept {
+                            diff.kept = Some(KeptChange::Unchanged);
+                        }
                         diff.diff = extern_diff.into();
                     }
                 }
@@ -1021,6 +1031,16 @@ impl DocState {
                                 };
                                 let arena = &self.arena;
                                 let changes_only = self.record_changes_only;
+                                // An import's tree `Create` names a node's metadata map,
+                                // whose id is the node's and whose state outlives the node
+                                // being deleted, or deleted and re-created by the import's
+                                // diff (loro-dev/loro#1310). A node new to the import has no
+                                // state yet, or its own diff, which is then the change.
+                                // Checkout diffs (revert, undo) are applied as new ops that
+                                // re-create the node under a new id, which needs the full
+                                // state, so they keep it.
+                                let creates_tree_meta =
+                                    by_import && matches!(external_diff, Diff::Tree(_));
                                 trigger_on_new_container(
                                     &external_diff,
                                     |cid| {
@@ -1037,7 +1057,7 @@ impl DocState {
                                         } else {
                                             // A container that keeps its id re-activates a
                                             // mergeable child at its deterministic cid.
-                                            is_mergeable(arena, cid)
+                                            creates_tree_meta || is_mergeable(arena, cid)
                                         };
                                         if keeps_state {
                                             kept.insert(cid);
@@ -1728,6 +1748,37 @@ impl DocState {
 
     pub(crate) fn is_container_state_empty(&mut self, idx: ContainerIdx) -> bool {
         self.store.get_or_create_mut(idx).is_state_empty()
+    }
+
+    /// The full state of each container in `roots`, and of the containers they hold,
+    /// parents first, skipping empty ones. For the local event of a tree node moved
+    /// back from the deleted tree (`TreeHandler::revive_for_apply_diff`).
+    pub(crate) fn full_states_below(
+        &mut self,
+        roots: impl IntoIterator<Item = ContainerID>,
+    ) -> Vec<(ContainerIdx, Diff)> {
+        let mut stack: Vec<ContainerIdx> = roots
+            .into_iter()
+            .map(|id| self.arena.register_container(&id))
+            .collect();
+        stack.reverse();
+        let mut seen = FxHashSet::default();
+        let mut ans = Vec::new();
+        while let Some(idx) = stack.pop() {
+            if !seen.insert(idx) {
+                continue;
+            }
+            let state = self.store.get_or_create_mut(idx);
+            if state.is_state_empty() {
+                continue;
+            }
+            let diff = state.to_diff(&self.doc);
+            let mut children = Vec::new();
+            trigger_on_new_container(&diff, |c| children.push(c), &self.arena);
+            stack.extend(children.into_iter().rev());
+            ans.push((idx, diff));
+        }
+        ans
     }
 
     /// Revives a container that has no diff of its own in this batch: its event is its full
