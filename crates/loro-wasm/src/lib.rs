@@ -302,6 +302,12 @@ thread_local! {
 /// It is the responsibility of the user to manage the storage, loading, and synchronization
 /// of the bytes exported by Loro in a manner suitable for their specific environment.
 ///
+/// Container handles (`getText()`, `map.get()`, an attached `new LoroText()` and so
+/// on) keep the document alive. `free()` releases the document's memory only once
+/// those handles are freed too, or once the garbage collector finalizes them, which
+/// waits for the current task to yield. In a synchronous loop that creates and drops
+/// many documents, free the handles first. See "Things to know" in the package README.
+///
 /// @example
 /// ```ts
 /// import { LoroDoc } from "loro-crdt"
