@@ -31,11 +31,15 @@ fn check(peers: &[u64], shared_prefix: bool) {
         .collect();
     let mut order: Vec<_> = (0..peers.len()).collect();
     order.sort_unstable_by_key(|&i| peers[i]);
-    let expected = order
-        .iter()
-        .map(|&i| ["a", "b", "c"][i].repeat(N))
-        .collect::<String>()
-        + if shared_prefix { "s" } else { "" };
+    let mut expected = String::new();
+    for &i in &order {
+        expected.push_str(&["a", "b", "c"][i].repeat(N));
+        // The independent third branch is concurrent with the seed itself;
+        // the seed's smaller peer puts its whole subtree before that branch.
+        if shared_prefix && i == 1 {
+            expected.push('s');
+        }
+    }
     for (i, doc) in docs.iter().enumerate() {
         for offset in 1..peers.len() {
             REPLAY_SCAN_STEPS.with(|c| c.set(0));

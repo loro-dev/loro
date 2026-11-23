@@ -391,8 +391,8 @@ impl<T: DagNode, D: Dag<Node = T>> Iterator for DagCausalIter<'_, D> {
             keys.into_iter().for_each(|k| {
                 self.succ.remove(&k);
             });
-            while let Some(id) = heap.pop() {
-                self.stack.push(id.1 .0)
+            while let Some((_, std::cmp::Reverse(id))) = heap.pop() {
+                self.stack.push(id)
             }
 
             return Some(IterReturn {
