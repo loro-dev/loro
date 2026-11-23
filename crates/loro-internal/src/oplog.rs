@@ -21,6 +21,7 @@ use crate::change::{get_sys_timestamp, Change, Lamport, Timestamp};
 use crate::configure::Configure;
 use crate::container::idx::ContainerIdx;
 use crate::container::list::list_op;
+use crate::container::tree::tree_op::TreeOp;
 use crate::dag::{Dag, DagUtils, MeetAsBase};
 use crate::diff_calc::DiffMode;
 use crate::encoding::decode_oplog;
@@ -34,7 +35,7 @@ use crate::state::DocState;
 use crate::version::{Frontiers, ImVersionVector, VersionVector};
 use crate::LoroError;
 use change_store::{BlockOpRef, ChangeStoreRollback};
-use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan};
+use loro_common::{ContainerType, HasIdSpan, IdLp, IdSpan, TreeID};
 use rle::{HasLength, RleVec, Sliceable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -82,6 +83,25 @@ pub(crate) struct ImportRollback {
     /// previous op of the same change, not validated yet
     /// (`OpLog::validate_style_end_anchors_in_import_scope`).
     style_end_refs: Vec<StyleEndRef>,
+    /// Tree `Create`/`Move` ops inserted in this scope that name a parent node, and
+    /// `Delete` ops, not validated yet
+    /// (`OpLog::validate_tree_parent_refs_in_import_scope`).
+    tree_parent_refs: Vec<TreeParentRef>,
+}
+
+struct TreeParentRef {
+    container: ContainerIdx,
+    op_id: ID,
+    /// The parent a `Create`/`Move` names, or the target of a `Delete`.
+    parent: TreeID,
+    is_delete: bool,
+}
+
+/// The op that has a tree node's id, and the tree it is in.
+#[derive(Clone, Copy)]
+struct ResolvedTreeParent {
+    id: ID,
+    container: ContainerIdx,
 }
 
 struct StyleEndRef {
@@ -186,9 +206,29 @@ pub(crate) fn state_apply_can_reject(ty: ContainerType) -> bool {
     )
 }
 
-/// Detached imports do not apply state. Only Move/Set element validation and
-/// style end anchor validation can reject after adding history; an enclosing
-/// batch still owns its full scope.
+/// The node a tree op needs to exist: the parent a `Create`/`Move` names (`None` for
+/// the root and the deleted root), or the target of a `Delete` (with `true`).
+fn tree_op_node_ref(content: &InnerContent) -> Option<(TreeID, bool)> {
+    match content {
+        InnerContent::Tree(op) => match &**op {
+            TreeOp::Create {
+                parent: Some(parent),
+                ..
+            }
+            | TreeOp::Move {
+                parent: Some(parent),
+                ..
+            } if !parent.is_deleted_root() => Some((*parent, false)),
+            TreeOp::Delete { target } => Some((*target, true)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Detached imports do not apply state. Only Move/Set element validation, tree
+/// parent validation and style end anchor validation can reject after adding
+/// history; an enclosing batch still owns its full scope.
 pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
     if detached {
         match op.container.get_type() {
@@ -202,6 +242,7 @@ pub(super) fn import_op_can_reject(op: &crate::op::Op, detached: bool) -> bool {
                 op.content,
                 InnerContent::List(list_op::InnerListOp::StyleEnd)
             ),
+            ContainerType::Tree => tree_op_node_ref(&op.content).is_some(),
             _ => false,
         }
     } else {
@@ -388,8 +429,31 @@ impl OpLog {
         self.register_container_and_parent_link(&change);
         let (update, stored_ts) = if let Some(rollback) = self.import_rollback.as_mut() {
             let mut prev_op: Option<&crate::op::Op> = None;
+            // Nodes an earlier op of this change creates or moves.
+            let mut created_in_change: FxHashSet<(ContainerIdx, TreeID)> = FxHashSet::default();
             for op in change.ops.iter() {
                 let prev = prev_op.replace(op);
+                if !from_local && op.container.get_type() == ContainerType::Tree {
+                    // Honest peers create a node before they use it as a parent or
+                    // delete it, so a node created earlier in the same change needs no
+                    // history lookup.
+                    if let Some((parent, is_delete)) = tree_op_node_ref(&op.content) {
+                        if !created_in_change.contains(&(op.container, parent)) {
+                            rollback.tree_parent_refs.push(TreeParentRef {
+                                container: op.container,
+                                op_id: ID::new(change.id.peer, op.counter),
+                                parent,
+                                is_delete,
+                            });
+                        }
+                    }
+                    if let InnerContent::Tree(tree_op) = &op.content {
+                        if matches!(&**tree_op, TreeOp::Create { .. } | TreeOp::Move { .. }) {
+                            created_in_change.insert((op.container, tree_op.target()));
+                        }
+                    }
+                    continue;
+                }
                 if op.container.get_type() == ContainerType::Text
                     && matches!(
                         op.content,
@@ -480,6 +544,7 @@ impl OpLog {
             pending: Default::default(),
             movable_list_refs: Vec::new(),
             style_end_refs: Vec::new(),
+            tree_parent_refs: Vec::new(),
         });
     }
 
@@ -1702,11 +1767,136 @@ impl OpLog {
     }
 
     /// Run every op reference check of the open import rollback scope:
-    /// [`Self::validate_style_end_anchors_in_import_scope`] and
-    /// [`Self::validate_movable_list_elem_refs_in_import_scope`].
+    /// [`Self::validate_style_end_anchors_in_import_scope`],
+    /// [`Self::validate_movable_list_elem_refs_in_import_scope`] and
+    /// [`Self::validate_tree_parent_refs_in_import_scope`].
     pub(crate) fn validate_op_refs_in_import_scope(&mut self) -> Result<(), LoroError> {
         self.validate_style_end_anchors_in_import_scope()?;
-        self.validate_movable_list_elem_refs_in_import_scope()
+        self.validate_movable_list_elem_refs_in_import_scope()?;
+        self.validate_tree_parent_refs_in_import_scope()
+    }
+
+    /// Reject the tree `Create`/`Move` ops inserted since the open import rollback scope
+    /// began whose parent node was not created within the op's causal history, and the
+    /// `Delete` ops whose target was not.
+    ///
+    /// Honest peers only create under, or move into, nodes they can see, and a node's id
+    /// is the id of the op that created it. The state applies imported ops on the fast
+    /// path without checking the parent, and the tree diff code assumes every parent
+    /// exists, so an op naming an unknown parent used to panic while the doc held its
+    /// locks. The rule looks only at the op's own causal history, never at the importing
+    /// doc's current state, so every peer decides the same way on every import path.
+    /// See `context/tree-parent-validation.md`.
+    pub(crate) fn validate_tree_parent_refs_in_import_scope(&mut self) -> Result<(), LoroError> {
+        let Some(rollback) = self.import_rollback.as_mut() else {
+            return Ok(());
+        };
+        let refs = std::mem::take(&mut rollback.tree_parent_refs);
+        // What a parent id resolves to does not depend on the op that names it.
+        let mut parents: FxHashMap<TreeID, Option<ResolvedTreeParent>> = FxHashMap::default();
+        for r in refs {
+            let parent = *parents
+                .entry(r.parent)
+                .or_insert_with(|| self.resolve_tree_parent(r.parent));
+            if parent.is_none() {
+                self.check_history_parsable()?;
+            }
+            if !self.is_visible_tree_parent(&r, parent)?
+                && !self.is_visible_tree_parent_by_target(&r)?
+            {
+                let role = if r.is_delete {
+                    "deletes node"
+                } else {
+                    "names parent"
+                };
+                return Err(LoroError::DecodeError(
+                    format!(
+                        "Tree op {} {role} {}, which is not in the tree's causal history",
+                        r.op_id, r.parent
+                    )
+                    .into_boxed_str(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// The op that has the id of tree node `parent`, if it is an op on that node.
+    fn resolve_tree_parent(&self, parent: TreeID) -> Option<ResolvedTreeParent> {
+        let id = parent.id();
+        let op = self.get_op_that_includes(id)?;
+        let InnerContent::Tree(tree_op) = &op.content else {
+            return None;
+        };
+        (tree_op.target() == parent).then_some(ResolvedTreeParent {
+            id,
+            container: op.container,
+        })
+    }
+
+    fn is_visible_tree_parent(
+        &self,
+        r: &TreeParentRef,
+        parent: Option<ResolvedTreeParent>,
+    ) -> Result<bool, LoroError> {
+        let Some(parent) = parent else {
+            // History before a shallow root is trimmed; the root state still knows every
+            // node that existed then, deleted ones included.
+            return Ok(!self.dag.shallow_since_vv().is_empty()
+                && self
+                    .with_history_cache(|h| h.shallow_root_has_tree_node(r.container, r.parent)));
+        };
+        if parent.container != r.container {
+            return Ok(false);
+        }
+        // Earlier ops of the op's own DAG node are by the same peer, so the node's
+        // start version covers every other peer's part of its causal history.
+        if parent.id.peer == r.op_id.peer && parent.id.counter < r.op_id.counter {
+            return Ok(true);
+        }
+        let Some(node) = self.dag.try_get(r.op_id)? else {
+            return Ok(false);
+        };
+        Ok(self.dag.try_ensure_vv_for(&node)?.includes_id(parent.id))
+    }
+
+    /// Whether a `Create`/`Move` on node `r.parent` in the same tree is in the causal
+    /// history of `r.op_id`. Covers nodes whose `Create` with their id is not in this
+    /// doc's history: builds before loro-dev/loro#468 let `apply_diff` and undo
+    /// re-create a node they had never seen under the diff's id, by an op with another
+    /// id. Only reached when the lookup by id fails, so a valid import does not pay for
+    /// the tree op index this builds on first use.
+    fn is_visible_tree_parent_by_target(&self, r: &TreeParentRef) -> Result<bool, LoroError> {
+        let candidates: Vec<ID> = self.with_history_cache(|h| {
+            let mark = h.ensure_importing_caches_exist();
+            h.get_tree(&r.container, mark)
+                .map(|group| {
+                    group
+                        .ops()
+                        .iter()
+                        .filter(|(_, info)| {
+                            info.value.target() == r.parent
+                                && matches!(
+                                    &*info.value,
+                                    TreeOp::Create { .. } | TreeOp::Move { .. }
+                                )
+                        })
+                        .map(|(idlp, info)| ID::new(idlp.peer, info.counter))
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        if candidates.is_empty() {
+            return Ok(false);
+        }
+        let Some(node) = self.dag.try_get(r.op_id)? else {
+            return Ok(false);
+        };
+        let vv = self.dag.try_ensure_vv_for(&node)?;
+        Ok(candidates.into_iter().any(|id| {
+            (id.peer == r.op_id.peer && id.counter < r.op_id.counter) || vv.includes_id(id)
+        }))
     }
 
     /// Reject the text `StyleEnd` ops inserted since the open import rollback scope

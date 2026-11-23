@@ -57,7 +57,9 @@ pub(crate) use list_state::ListState;
 pub(crate) use map_state::MapState;
 pub(crate) use richtext_state::{redact_dead_style_values, RichtextState};
 pub(crate) use tree_state::FiIfNotConfigured;
-pub(crate) use tree_state::{FractionalIndexGenResult, NodePosition, TreeState};
+pub(crate) use tree_state::{
+    FractionalIndexGenResult, FractionalIndexSetting, NodePosition, TreeState,
+};
 pub use tree_state::{TreeNode, TreeNodeWithChildren, TreeParentId};
 
 use self::{container_store::ContainerWrapper, unknown_state::UnknownState};
@@ -1734,6 +1736,26 @@ impl DocState {
     {
         let state = self.store.get_or_create_mut(idx);
         f(state)
+    }
+
+    /// Fractional-index settings of decoded trees that differ from the default.
+    /// They live in the tree states, so code that replaces those states (snapshot
+    /// import, fork) reapplies them with [`Self::set_tree_fractional_index_settings`].
+    pub(crate) fn tree_fractional_index_settings(
+        &self,
+    ) -> Vec<(ContainerIdx, FractionalIndexSetting)> {
+        self.store.tree_fractional_index_settings()
+    }
+
+    pub(crate) fn set_tree_fractional_index_settings(
+        &mut self,
+        settings: &[(ContainerIdx, FractionalIndexSetting)],
+    ) {
+        for &(idx, setting) in settings {
+            if let State::TreeState(tree) = self.store.get_or_create_mut(idx) {
+                tree.set_fractional_index_setting(setting);
+            }
+        }
     }
 
     pub(crate) fn set_record_changes_only(&mut self, on: bool) {

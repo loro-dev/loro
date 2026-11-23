@@ -1,6 +1,6 @@
 # Dead Container Cache
 
-Verified against code 2026-11-18.
+Verified against code 2026-11-23.
 
 `DocState::is_deleted` (`crates/loro-internal/src/state/dead_containers_cache.rs`)
 answers whether a container is unreachable from a root: it walks the arena
@@ -40,10 +40,13 @@ walk and assert that no cached entry on the chain contradicts the result.
 - `DocState::apply_diff` clears both sets when the direction mode is
   `Checkout` (moving backwards can revive anything) or the diff comes from a
   checkout (`EventTriggerKind::Checkout`). The latter covers forward
-  checkouts (`attach`, `checkout_to_latest`, `checkout` to a newer version,
-  and `import_batch`'s reattach), whose direction mode is `Import`, `Linear`,
-  or `ImportGreaterUpdates`. The only checkout triggered as `Import` is the
-  snapshot import into an empty document, whose state is new.
+  checkouts (`attach`, `checkout_to_latest`, `checkout` to a newer version),
+  whose direction mode is `Import`, `Linear`, or `ImportGreaterUpdates`.
+  `_checkout_without_emitting_with_event` also explicitly clears both sets
+  before applying state, including `import_batch`'s reattach: its public event
+  is `Import` to preserve undo/redo history, with origin still `"checkout"`
+  for compatibility. Snapshot
+  imports into an empty document also use `Import`.
 - `DocState::apply_diff` in any other mode clears `revivable` when the batch
   touches a Tree or MovableList container.
 - `DocState::apply_local_op` clears `revivable` before a tree `Move`. A local

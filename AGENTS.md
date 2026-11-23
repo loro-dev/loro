@@ -49,11 +49,17 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Movable-list `Move`/`Set` import validation, and why a move of a deleted element
   is applied rather than rejected:
   [context/movable-list-op-validation.md](context/movable-list-op-validation.md).
+- Tree `Create`/`Move` parent and `Delete` target validation on import (the op's
+  causal history, lookup by id then by target, why a fast-path orphan crashed
+  event conversion):
+  [context/tree-parent-validation.md](context/tree-parent-validation.md).
 - Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
   root-whitelisted latest state):
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
 - Rich-text insert positions next to style anchors, the insert cursor cache,
   and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
+- Why a checkout across one big text op is linear (coalesced leaf updates in the
+  text tracker): [context/large-text-linear-time.md](context/large-text-linear-time.md).
 - Text delta UTF-8 chunks and B-tree batch insertion order:
   [context/text-delta-chunking.md](context/text-delta-chunking.md).
 - Tree diff cache transitions and why their lamport window comes from the two

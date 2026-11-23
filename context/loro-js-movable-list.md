@@ -1,6 +1,6 @@
 # loro.js MovableList: Rust-Compatible Model
 
-Verified against code 2026-10-17.
+Verified against code 2026-11-23 (importBatch event labels; model last checked 2026-10-17).
 
 `loro-js/` must converge with the Rust implementation and read and write its
 encoding. This article states the Rust MovableList semantics that loro.js must
@@ -320,8 +320,11 @@ loro.js, not specific to MovableList:
   were all set and deleted again in that range; Rust lists those keys as
   deleted. It happens under List, Map and MovableList parents alike (also on
   `main`). The suite skips such map entries when it compares `diff()`.
-- Event labels: multi-blob `importBatch` is `by: "checkout"` in Rust, and
-  checkout events carry origin `"checkout"` only in Rust. Rust's
+- Event labels: checkout events carry origin `"checkout"` only in Rust.
+  Multi-blob `importBatch` matches on both engines (`by: "import"`,
+  `origin: "checkout"`); loro.js sets that origin only in its batch event
+  emitter, leaving single imports unchanged. The harness does not normalize
+  batch labels. Rust's
   `oplogVersion()` also counts the pending transaction.
 
 Differences in form, not in effect:
