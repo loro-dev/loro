@@ -11,6 +11,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-32-bit:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    strategy:
+      matrix:
+        target: [i686-unknown-linux-musl, i686-pc-windows-msvc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo check -p loro-internal --locked --target ${{ matrix.target }}
+
   loro-js:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
