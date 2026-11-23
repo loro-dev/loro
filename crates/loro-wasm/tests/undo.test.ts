@@ -8,11 +8,11 @@ describe("undo", () => {
     (redo) => {
       const doc = new LoroDoc();
       doc.setPeerId(1);
-      const undo = new UndoManager(doc);
+      const undo = new UndoManager(doc, {});
       doc.getMap("local").set("value", 1);
       doc.commit();
       if (redo) expect(undo.undo()).toBe(true);
-      const events: { by: string; origin: string }[] = [];
+      const events: { by: string; origin?: string }[] = [];
       doc.subscribe((event) => events.push(event));
       const blobs = [2, 3].map((peer) => {
         const remote = new LoroDoc();
