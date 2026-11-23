@@ -1831,6 +1831,7 @@ fn build_local_inverse(
     };
     let mut map_values_after = FxHashMap::default();
     let mut movable: Vec<crate::undo::movable_list::RecordedInverse> = Vec::new();
+    let mut movable_at: FxHashMap<loro_common::ContainerID, usize> = FxHashMap::default();
     #[allow(unused_mut)]
     let mut counter_ops: Vec<(loro_common::ContainerID, f64)> = Vec::new();
     let mut inverses =
@@ -1873,7 +1874,7 @@ fn build_local_inverse(
             }
             // One op per movable list, so its snapshots are those of the span's
             // two ends; or only inserts, whose final places are read below.
-            RecordedOp::Movable(record) => match movable.iter_mut().find(|r| r.cid == record.cid) {
+            RecordedOp::Movable(record) => match movable_at.get(&record.cid).map(|&i| &mut movable[i]) {
                 Some(r) if r.is_insert_only() && record.is_insert_only() => {
                     r.merge_inserts(&record)
                 }
@@ -1883,7 +1884,10 @@ fn build_local_inverse(
                     }
                 }
                 Some(_) => return None,
-                None => movable.push(record),
+                None => {
+                    movable_at.insert(record.cid.clone(), movable.len());
+                    movable.push(record);
+                }
             },
             #[cfg(feature = "counter")]
             RecordedOp::Counter {
