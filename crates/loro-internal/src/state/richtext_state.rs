@@ -131,6 +131,18 @@ impl RichtextState {
         self.state.get_mut().get_char_by_event_index(pos)
     }
 
+    /// The text chunks in order. They share the state's buffers, so nothing is copied.
+    pub(crate) fn text_chunks(&mut self) -> Vec<StringSlice> {
+        self.state
+            .get_mut()
+            .iter_chunk()
+            .filter_map(|span| match span {
+                RichtextStateChunk::Text(text_chunk) => Some(text_chunk.bytes().clone().into()),
+                RichtextStateChunk::Style { .. } => None,
+            })
+            .collect()
+    }
+
     pub(crate) fn iter(&mut self, mut callback: impl FnMut(&str) -> bool) {
         for span in self.state.get_mut().iter_chunk() {
             match span {
