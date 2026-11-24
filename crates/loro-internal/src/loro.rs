@@ -7730,8 +7730,24 @@ pub fn has_global_wasm_linear_limit() -> bool {
     }
 }
 
+/// Returns `true` when running on `wasm32` with any global hard allocation ceiling
+/// (`max_heap_bytes` or `max_wasm_linear_bytes`) so large JS allocations can preflight
+/// before crossing into WASM linear memory.
+#[inline]
+pub fn has_global_wasm_alloc_limit() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        global_budget_flags() & BUDGET_FLAG_MAX_DOC != 0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 /// Checks whether allocating `needed_bytes` on the WASM heap would exceed
-/// `GlobalMemoryBudget::max_wasm_linear_bytes`, reclaiming idle docs first when possible.
+/// `GlobalMemoryBudget::max_heap_bytes` or `GlobalMemoryBudget::max_wasm_linear_bytes`,
+/// reclaiming idle docs first according to configured watermarks and `SoftBackoff`.
 pub fn preflight_wasm_linear_alloc(needed_bytes: u64) -> LoroResult<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -7740,32 +7756,56 @@ pub fn preflight_wasm_linear_alloc(needed_bytes: u64) -> LoroResult<()> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let pool = global_pool();
-        let Some(max_lin) = pool.budget.lock().max_wasm_linear_bytes else {
-            return Ok(());
-        };
-        let mut used = tracked_allocated_heap_bytes();
-        let target_50 = max_lin.saturating_mul(50) / 100;
-        let projected = used.saturating_add(needed_bytes);
-        if projected > max_lin {
-            let after = pool.reclaim_for_watermark_used(target_50, None, false, true);
-            used = after;
-            if used <= target_50 {
-                pool.record_soft_sweep_result(true, used);
-            }
-        } else if projected > max_lin.saturating_mul(80) / 100
-            && !pool.soft_reclaim_backed_off(projected)
-        {
-            let after = pool.reclaim_for_watermark_used(target_50, None, false, false);
-            pool.record_soft_sweep_result(after <= target_50, after);
-            used = after;
-        }
-        let projected = used.saturating_add(needed_bytes);
-        if projected > max_lin {
-            return Err(make_global_budget_err(projected, max_lin));
-        }
-        Ok(())
+        preflight_wasm_alloc_in_pool(global_pool(), needed_bytes, true)
     }
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn preflight_wasm_alloc_in_pool(
+    pool: &GlobalMemoryPool,
+    needed_bytes: u64,
+    include_wasm_linear: bool,
+) -> LoroResult<()> {
+    let budget = pool.budget.lock().clone();
+    let wasm_limit = if include_wasm_linear {
+        budget.max_wasm_linear_bytes
+    } else {
+        None
+    };
+    let hard_cap = match (budget.max_heap_bytes, wasm_limit) {
+        (Some(h), Some(w)) => Some(h.min(w)),
+        (Some(h), None) => Some(h),
+        (None, Some(w)) => Some(w),
+        (None, None) => None,
+    };
+    let Some(cap) = hard_cap else {
+        return Ok(());
+    };
+    let mut used = pool.current_heap_or_estimated_used();
+    let high = budget.effective_high_watermark().unwrap_or(cap).min(cap);
+    let target = budget.effective_target_watermark().unwrap_or(high);
+    let head_target = target.min(cap.saturating_sub(needed_bytes));
+    let projected = used.saturating_add(needed_bytes);
+    if projected > cap {
+        #[cfg(test)]
+        GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+        let after = pool.reclaim_for_watermark_used(head_target, None, false, true);
+        used = after;
+        if used <= head_target {
+            pool.record_soft_sweep_result(true, used);
+        }
+    } else if projected > high && !pool.soft_reclaim_backed_off(projected) {
+        #[cfg(test)]
+        GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+        let after = pool.reclaim_for_watermark_used(head_target, None, false, false);
+        pool.record_soft_sweep_result(after <= head_target, after);
+        used = after;
+    }
+    let projected = used.saturating_add(needed_bytes);
+    if projected > cap {
+        return Err(make_global_budget_err(projected, cap));
+    }
+    Ok(())
 }
 
 /// Runs full global reclamation and checks whether global usage now satisfies
@@ -9550,5 +9590,66 @@ mod reclamation_work_tests {
             .commit()
             .expect("small commit after rejection should succeed");
         assert_eq!(doc.get_text("t").to_string(), "hello!");
+    }
+
+    /// `preflight_wasm_alloc_in_pool` enforces `max_heap_bytes` even without
+    /// `max_wasm_linear_bytes`, respects configured watermarks + `SoftBackoff`
+    /// under soft pressure, and bypasses backoff to rescue idle docs before
+    /// rejecting with `GlobalBudget`.
+    #[test]
+    fn wasm_alloc_preflight_honors_max_heap_watermarks_backoff_and_hard_rescue() {
+        let pool = GlobalMemoryPool::new();
+        let idle_irred = LoroDoc::new_auto_commit();
+        idle_irred.set_peer_id(101).unwrap();
+        idle_irred
+            .get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(7, 64 * 1024).into()),
+            )
+            .unwrap();
+        idle_irred.commit_then_renew();
+        let _ = idle_irred.reclaim_memory();
+        let irred_bytes = idle_irred.memory_stats().total_bytes as u64;
+
+        pool.register(idle_irred.pool_doc_id, Arc::downgrade(&idle_irred.inner));
+        let _ = pool.estimated_docs_total(None);
+        pool.total_cached_doc_bytes.store(irred_bytes, Relaxed);
+
+        // Configure ONLY `max_heap_bytes` + custom watermarks (no `max_wasm_linear_bytes`).
+        let cap = irred_bytes + 512 * 1024;
+        let custom_high = irred_bytes + 32 * 1024;
+        let custom_target = irred_bytes / 2;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            max_heap_bytes: Some(cap),
+            high_watermark_bytes: Some(custom_high),
+            target_watermark_bytes: Some(custom_target),
+            ..Default::default()
+        };
+
+        let sweeps = || GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.get());
+        let start = sweeps();
+
+        // Below custom high watermark -> 0 sweeps.
+        preflight_wasm_alloc_in_pool(&pool, 16 * 1024, true).unwrap();
+        assert_eq!(sweeps() - start, 0);
+
+        // Cross custom high watermark (still <= cap) -> sweeps once, then backs off.
+        for _ in 0..20 {
+            preflight_wasm_alloc_in_pool(&pool, 64 * 1024, true).unwrap();
+        }
+        assert_eq!(
+            sweeps() - start,
+            1,
+            "soft wasm alloc preflight should sweep once and back off"
+        );
+
+        // Exceed `max_heap_bytes` -> bypasses backoff and rejects with `GlobalBudget`.
+        let err = preflight_wasm_alloc_in_pool(&pool, 600 * 1024, true).unwrap_err();
+        assert_eq!(sweeps() - start, 2, "hard preflight must bypass backoff");
+        assert_eq!(
+            err.memory_limit_info().map(|i| i.kind),
+            Some(MemoryLimitKind::GlobalBudget)
+        );
     }
 }

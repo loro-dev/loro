@@ -558,7 +558,7 @@ const STREAMING_BATCH_BYTES_THRESHOLD: usize = 256 * 1024;
 
 fn js_str_to_string_checked(arg: JsStrArg) -> JsResult<String> {
     let val: JsValue = arg.into();
-    if loro_internal::loro::has_global_wasm_linear_limit() {
+    if loro_internal::loro::has_global_wasm_alloc_limit() {
         if !val.is_string() {
             return Err(JsError::new("Expected a string").into());
         }
