@@ -119,7 +119,7 @@ pub(crate) struct InnerStore {
     /// no longer implies `store` contains every entry in `kv`, so `load_all()`
     /// must re-scan `kv` instead of short-circuiting.
     evicted_since_full_load: bool,
-    /// Clock hand for two-pass cold state demotion (`demote_cold_states`).
+    /// Clock hand for three-pass cold state demotion (`demote_cold_states`).
     demote_clock_hand: usize,
     /// Whether `self.arena` already has a KV parent resolver pointing at `self.kv`.
     parent_resolver_installed: bool,
