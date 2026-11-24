@@ -829,6 +829,9 @@ pub(super) fn visit_text_insert_block(
     let mut change_index = 0;
     for op in ops {
         let op = op?;
+        if op.len == 0 {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
         let cid = cids
             .get(op.container_index as usize)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
@@ -949,17 +952,20 @@ fn decode_block_from_doc(
     let mut value_reader = ValueReader::new(doc.values.as_ref());
     let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(doc.ops.as_ref())?;
     let op_iter = encoded_ops_iters.ops;
-    let encoded_delete_id_starts: EncodedDeleteStartIds = if doc.delete_start_ids.is_empty() {
-        EncodedDeleteStartIds {
-            delete_start_ids: Vec::new(),
-        }
+    // Read delete ids lazily, like the ops: a run-length column can declare far
+    // more entries than its bytes, and only the delete ops consume them.
+    let mut del_iter = if doc.delete_start_ids.is_empty() {
+        None
     } else {
-        serde_columnar::from_bytes(doc.delete_start_ids.as_ref())?
-    };
-    let mut del_iter = encoded_delete_id_starts
-        .delete_start_ids
-        .into_iter()
-        .map(Ok);
+        Some(
+            serde_columnar::iter_from_bytes::<EncodedDeleteStartIds>(
+                doc.delete_start_ids.as_ref(),
+            )?
+            .delete_start_ids,
+        )
+    }
+    .into_iter()
+    .flatten();
     for i in 0..n_changes {
         let commit_msg: Option<Arc<str>> = {
             let len = *commit_msg_lens
@@ -1028,6 +1034,12 @@ fn decode_block_from_doc(
             value_type,
             len,
         } = op?;
+        // Every op takes at least one counter. A zero-length op would not
+        // advance the counter, so the run-length op columns could repeat it
+        // without limit.
+        if len == 0 {
+            return Err(LoroError::DecodeDataCorruptionError);
+        }
         let value = Value::decode(
             ValueKind::from_u8(value_type),
             &mut value_reader,
@@ -1079,13 +1091,21 @@ fn decode_block_from_doc(
         counter = counter
             .checked_add(len as Counter)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
-        let next_counter = header
+        // The ops must cover each change's counter range exactly: an op may not
+        // run past the end of its change. With the zero-length check above,
+        // this bounds the number of decoded ops by the block's counter range.
+        let change_end = *header
             .counters
             .get(change_index + 1)
             .ok_or(LoroError::DecodeDataCorruptionError)?;
-        if counter >= *next_counter {
-            change_index += 1;
+        match counter.cmp(&change_end) {
+            std::cmp::Ordering::Less => {}
+            std::cmp::Ordering::Equal => change_index += 1,
+            std::cmp::Ordering::Greater => return Err(LoroError::DecodeDataCorruptionError),
         }
+    }
+    if change_index != changes.len() {
+        return Err(LoroError::DecodeDataCorruptionError);
     }
     if let Some((from, to)) = buffers.take_pending_values() {
         for (change_index, op_index, len) in pending_patches {
@@ -1351,9 +1371,11 @@ mod test {
                 assert!(decode_block(&bytes, &SharedArena::new(), None).is_err());
                 continue;
             }
+            // An op that runs past the end of its change is corrupt for both
+            // readers too.
             let bytes = postcard::to_allocvec(&encoded).unwrap();
             assert!(visit_text_insert_block(&bytes, |_, _, _, _, _, _| Ok(())).is_err());
-            assert!(decode_block(&bytes, &SharedArena::new(), None).is_ok());
+            assert!(decode_block(&bytes, &SharedArena::new(), None).is_err());
 
             let store = crate::oplog::ChangeStore::new_for_test();
             let id = ID::new(1, 0);
@@ -1372,9 +1394,10 @@ mod test {
             if crosses_change_boundary {
                 assert_eq!(visits, 1);
             }
+            // The cold reader records nothing; the normal parser decides.
             assert!(store.corrupt_block_error().is_ok());
-            assert!(store.get_change(id).is_some());
-            assert!(store.corrupt_block_error().is_ok());
+            assert!(store.get_change(id).is_none());
+            assert!(store.corrupt_block_error().is_err());
         }
     }
 
@@ -1527,6 +1550,170 @@ mod test {
         let third = LoroDoc::new();
         third.import(&again).unwrap();
         assert_eq!(third.get_deep_value(), value);
+    }
+
+    /// The block holding peer 1's change at `counter`.
+    fn change_block(doc: &LoroDoc, counter: Counter) -> Vec<u8> {
+        let oplog = doc.oplog().lock();
+        let change = oplog
+            .change_store()
+            .get_change(ID::new(1, counter))
+            .unwrap();
+        encode_block(std::slice::from_ref(&*change), &oplog.arena)
+    }
+
+    /// `bytes` with its op column (and delete id column, if given) replaced.
+    fn replace_ops(
+        bytes: &[u8],
+        ops: Vec<EncodedOp>,
+        delete_start_ids: Option<Vec<EncodedDeleteStartId>>,
+    ) -> Vec<u8> {
+        let mut block: EncodedBlock<'_> = postcard::from_bytes(bytes).unwrap();
+        block.ops = Cow::Owned(serde_columnar::to_vec(&EncodedOps { ops }).unwrap());
+        if let Some(delete_start_ids) = delete_start_ids {
+            block.delete_start_ids = Cow::Owned(
+                serde_columnar::to_vec(&EncodedDeleteStartIds { delete_start_ids }).unwrap(),
+            );
+        }
+        postcard::to_allocvec(&block).unwrap()
+    }
+
+    /// A block holding one change of peer 1 at counter 1: a map deletion, or a
+    /// one-character text deletion.
+    fn deletion_block(text: bool) -> Vec<u8> {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.set_change_merge_interval(-1);
+        if text {
+            doc.get_text("t").insert_unicode(0, "a").unwrap();
+            doc.commit_then_renew();
+            doc.get_text("t").delete_unicode(0, 1).unwrap();
+        } else {
+            doc.get_map("m").insert("k", 1).unwrap();
+            doc.commit_then_renew();
+            doc.get_map("m").delete("k").unwrap();
+        }
+        doc.commit_then_renew();
+        change_block(&doc, 1)
+    }
+
+    /// The block's ops, and its delete ids, decoded as columns.
+    fn op_columns(bytes: &[u8]) -> (Vec<EncodedOp>, Vec<EncodedDeleteStartId>) {
+        let block: EncodedBlock<'_> = postcard::from_bytes(bytes).unwrap();
+        let ops: EncodedOps = serde_columnar::from_bytes(&block.ops).unwrap();
+        let delete_start_ids = if block.delete_start_ids.is_empty() {
+            Vec::new()
+        } else {
+            serde_columnar::from_bytes::<EncodedDeleteStartIds>(&block.delete_start_ids)
+                .unwrap()
+                .delete_start_ids
+        };
+        (ops.ops, delete_start_ids)
+    }
+
+    /// Run-length columns can declare many identical ops in a few bytes. An op
+    /// of length zero takes no counter, so the block's counter range would not
+    /// bound how many of them are decoded. Such ops must be refused.
+    #[test]
+    fn zero_length_ops_are_rejected() {
+        const N: usize = 1_000_000;
+        for text in [false, true] {
+            let bytes = deletion_block(text);
+            assert!(decode_block(&bytes, &SharedArena::new(), None).is_ok());
+            let (ops, delete_start_ids) = op_columns(&bytes);
+            assert_eq!(ops.len(), 1);
+            let mut op = ops[0].clone();
+            op.len = 0;
+            let delete_start_ids = text.then(|| {
+                let mut id = delete_start_ids[0].clone();
+                id.len = 0;
+                vec![id; N]
+            });
+            let crafted = replace_ops(&bytes, vec![op; N], delete_start_ids);
+            assert!(crafted.len() < 200, "{}", crafted.len());
+            assert!(decode_block(&crafted, &SharedArena::new(), None).is_err());
+            assert!(visit_text_insert_block(&crafted, |_, _, _, _, _, _| Ok(())).is_err());
+        }
+    }
+
+    /// The ops of a block must cover its counter range exactly: no more, so a
+    /// long run of ops is refused at the end of the range, and no less.
+    #[test]
+    fn ops_must_cover_the_block_counter_range() {
+        // More ops than the range holds.
+        let bytes = deletion_block(false);
+        let (ops, _) = op_columns(&bytes);
+        let crafted = replace_ops(&bytes, vec![ops[0].clone(); 1_000_000], None);
+        assert!(decode_block(&crafted, &SharedArena::new(), None).is_err());
+
+        // Fewer ops than the range holds.
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_map("m").insert("a", 1).unwrap();
+        doc.get_map("m").insert("b", 2).unwrap();
+        doc.commit_then_renew();
+        let bytes = change_block(&doc, 0);
+        assert!(decode_block(&bytes, &SharedArena::new(), None).is_ok());
+        let (ops, _) = op_columns(&bytes);
+        assert_eq!(ops.len(), 2);
+        let crafted = replace_ops(&bytes, ops[..1].to_vec(), None);
+        assert!(decode_block(&crafted, &SharedArena::new(), None).is_err());
+    }
+
+    /// An update whose block holds zero-length ops is refused by import and by
+    /// `decode_import_blob_meta`, including by a doc that holds the change it
+    /// depends on. That doc stays usable and can be dropped.
+    #[test]
+    fn import_refuses_update_with_zero_length_ops() {
+        for text in [false, true] {
+            let source = LoroDoc::new_auto_commit();
+            source.set_peer_id(1).unwrap();
+            if text {
+                source.get_text("t").insert_unicode(0, "a").unwrap();
+            } else {
+                source.get_map("m").insert("k", 1).unwrap();
+            }
+            source.commit_then_renew();
+            let base = source.export(ExportMode::all_updates()).unwrap();
+            let vv = source.oplog_vv();
+            if text {
+                source.get_text("t").delete_unicode(0, 1).unwrap();
+            } else {
+                source.get_map("m").delete("k").unwrap();
+            }
+            source.commit_then_renew();
+            let update = source.export(ExportMode::updates(&vv)).unwrap();
+
+            // Header, then one length-prefixed block.
+            let mut body = &update[22..];
+            let len = leb128::read::unsigned(&mut body).unwrap() as usize;
+            assert_eq!(body.len(), len);
+            let (ops, delete_start_ids) = op_columns(body);
+            let mut op = ops[0].clone();
+            op.len = 0;
+            let delete_start_ids = text.then(|| {
+                let mut id = delete_start_ids[0].clone();
+                id.len = 0;
+                vec![id; 1_000_000]
+            });
+            let block = replace_ops(body, vec![op; 1_000_000], delete_start_ids);
+            let mut crafted = update[..22].to_vec();
+            leb128::write::unsigned(&mut crafted, block.len() as u64).unwrap();
+            crafted.extend_from_slice(&block);
+            let sum = xxhash_rust::xxh32::xxh32(&crafted[20..], u32::from_le_bytes(*b"LORO"));
+            crafted[16..20].copy_from_slice(&sum.to_le_bytes());
+
+            assert!(LoroDoc::decode_import_blob_meta(&crafted, true).is_err());
+            assert!(LoroDoc::new().import(&crafted).is_err());
+            let doc = LoroDoc::new_auto_commit();
+            doc.import(&base).unwrap();
+            let value = doc.get_deep_value();
+            assert!(doc.import(&crafted).is_err());
+            assert_eq!(doc.get_deep_value(), value);
+            doc.import(&update).unwrap();
+            assert_eq!(doc.get_deep_value(), source.get_deep_value());
+            drop(doc);
+        }
     }
 
     fn diagnose(doc: &LoroDoc) {
