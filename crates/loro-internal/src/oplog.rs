@@ -764,7 +764,12 @@ impl OpLog {
         if self.import_rollback.is_none() && !self.dag.has_pending_txn() {
             self.change_store
                 .flush_and_compact(self.dag.vv(), self.dag.frontiers());
+            self.change_store.compact_parsed_blocks();
         }
+    }
+
+    pub(crate) fn evict_flushed_history_cache(&self) {
+        self.change_store.evict_flushed_cached_blocks();
     }
 
     pub(crate) fn set_max_pending_bytes(&mut self, max: Option<usize>) {

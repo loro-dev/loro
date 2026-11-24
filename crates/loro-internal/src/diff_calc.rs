@@ -54,16 +54,22 @@ use super::{
     oplog::{OpLog, ReplayBase},
 };
 
+#[derive(Debug)]
+struct CachedContainerCalc {
+    /// `(depth, calculator)` — `None` depth means it needs to be recalculated.
+    inner: (Option<NonZeroU32>, ContainerDiffCalculator),
+    last_used_tick: u64,
+}
+
 /// Calculate the diff between two versions. given [OpLog][super::oplog::OpLog]
 /// and [AppState][super::state::AppState].
 ///
 /// TODO: persist diffCalculator and skip processed version
 #[derive(Debug)]
 pub struct DiffCalculator {
-    /// ContainerIdx -> (depth, calculator)
-    ///
-    /// if depth is None, we need to calculate it again
-    calculators: FxHashMap<ContainerIdx, (Option<NonZeroU32>, ContainerDiffCalculator)>,
+    /// ContainerIdx -> cached container diff calculator with depth and LRU tick
+    calculators: FxHashMap<ContainerIdx, CachedContainerCalc>,
+    access_tick: u64,
     retain_mode: DiffCalculatorRetainMode,
 }
 
@@ -141,12 +147,19 @@ impl DiffCalculator {
     pub fn new(persist: bool) -> Self {
         Self {
             calculators: Default::default(),
+            access_tick: 0,
             retain_mode: if persist {
                 DiffCalculatorRetainMode::Persist
             } else {
                 DiffCalculatorRetainMode::Once { used: false }
             },
         }
+    }
+
+    #[inline]
+    fn next_access_tick(&mut self) -> u64 {
+        self.access_tick = self.access_tick.saturating_add(1);
+        self.access_tick
     }
 
     /// The containers touched by the ranges this calculator has computed diffs for.
@@ -156,39 +169,43 @@ impl DiffCalculator {
 
     #[allow(unused)]
     pub(crate) fn get_calc(&self, container: ContainerIdx) -> Option<&ContainerDiffCalculator> {
-        self.calculators.get(&container).map(|(_, c)| c)
+        self.calculators.get(&container).map(|entry| &entry.inner.1)
     }
 
     pub(crate) fn estimated_bytes(&self) -> usize {
         let map_table_bytes = self.calculators.capacity()
             * (std::mem::size_of::<ContainerIdx>()
-                + std::mem::size_of::<(Option<NonZeroU32>, ContainerDiffCalculator)>()
+                + std::mem::size_of::<CachedContainerCalc>()
                 + 8);
         let calc_bytes: usize = self
             .calculators
             .values()
-            .map(|(_, c)| c.estimated_bytes())
+            .map(|entry| entry.inner.1.estimated_bytes())
             .sum();
         std::mem::size_of::<Self>()
             .saturating_add(map_table_bytes)
             .saturating_add(calc_bytes)
     }
 
-    /// Evict cached per-container diff calculators down to `keep_hot` entries.
+    /// Evict cold cached per-container diff calculators down to `keep_hot` entries,
+    /// retaining the most recently used entries (LRU, tie-breaking by smaller size).
     pub(crate) fn reclaim_cold_caches(&mut self, keep_hot: usize) -> usize {
         let before = self.estimated_bytes();
         if self.calculators.len() > keep_hot {
             if keep_hot == 0 {
                 self.calculators.clear();
             } else {
-                let mut by_size: Vec<(ContainerIdx, usize)> = self
+                let mut by_recency: Vec<(ContainerIdx, u64, usize)> = self
                     .calculators
                     .iter()
-                    .map(|(&idx, (_, c))| (idx, c.estimated_bytes()))
+                    .map(|(&idx, entry)| {
+                        (idx, entry.last_used_tick, entry.inner.1.estimated_bytes())
+                    })
                     .collect();
-                // Keep the `keep_hot` smallest entries and drop the largest trackers first.
-                by_size.sort_by_key(|(idx, bytes)| (*bytes, *idx));
-                for (idx, _) in by_size.into_iter().skip(keep_hot) {
+                // Keep the `keep_hot` most recently used trackers; break ties by smaller size.
+                by_recency
+                    .sort_by_key(|(idx, tick, bytes)| (std::cmp::Reverse(*tick), *bytes, *idx));
+                for (idx, _, _) in by_recency.into_iter().skip(keep_hot) {
                     self.calculators.remove(&idx);
                 }
             }
@@ -414,18 +431,20 @@ impl DiffCalculator {
         // we need to iterate from parents to children. i.e. from smaller depth to larger depth.
         let mut new_containers = FxHashSet::default();
         let mut container_id_to_depth = FxHashMap::default();
+        let round_tick = self.next_access_tick();
         let mut all: Vec<(Option<NonZeroU32>, ContainerIdx)> = if let Some(set) = affected_set {
             // only visit the affected containers
             set.into_iter()
                 .map(|x| {
-                    let (depth, _) = self.calculators.get_mut(&x).unwrap();
-                    (*depth, x)
+                    let entry = self.calculators.get_mut(&x).unwrap();
+                    entry.last_used_tick = round_tick;
+                    (entry.inner.0, x)
                 })
                 .collect()
         } else {
             self.calculators
                 .iter_mut()
-                .map(|(x, (depth, _))| (*depth, *x))
+                .map(|(x, entry)| (entry.inner.0, *x))
                 .collect()
         };
         let mut ans = FxHashMap::default();
@@ -444,34 +463,40 @@ impl DiffCalculator {
                 if ans.contains_key(&container_idx) {
                     continue;
                 }
-                let (depth, calc) = self.calculators.get_mut(&container_idx).unwrap();
-                if depth.is_none() {
+                let entry = self.calculators.get_mut(&container_idx).unwrap();
+                if entry.inner.0.is_none() {
                     let d = oplog.arena.get_depth(container_idx);
-                    if d != *depth {
-                        *depth = d;
-                        all.push((*depth, container_idx));
+                    if d != entry.inner.0 {
+                        entry.inner.0 = d;
+                        all.push((entry.inner.0, container_idx));
                         continue;
                     }
                 }
+                let depth = entry.inner.0;
                 let id = oplog.arena.idx_to_id(container_idx).unwrap();
                 let bring_back = new_containers.remove(&id);
 
                 info_span!("CalcDiff", ?id).in_scope(|| {
-                    let (diff, diff_mode) = calc.calculate_diff(container_idx, oplog, info, |c| {
-                        new_containers.insert(c.clone());
-                        container_id_to_depth
-                            .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
-                        oplog.arena.register_container(c);
-                    });
-                    calc.finish_this_round();
+                    let (diff, diff_mode) =
+                        entry
+                            .inner
+                            .1
+                            .calculate_diff(container_idx, oplog, info, |c| {
+                                new_containers.insert(c.clone());
+                                container_id_to_depth
+                                    .insert(c.clone(), depth.and_then(|d| d.checked_add(1)));
+                                oplog.arena.register_container(c);
+                            });
+                    entry.inner.1.finish_this_round();
                     if is_once {
-                        calc.release_transient_memory(container_idx);
+                        entry.inner.1.release_transient_memory(container_idx);
                     }
                     if !diff.is_empty() || bring_back {
+                        entry.last_used_tick = round_tick;
                         ans.insert(
                             container_idx,
                             (
-                                *depth,
+                                depth,
                                 InternalContainerDiff {
                                     idx: container_idx,
                                     bring_back,
@@ -522,39 +547,39 @@ impl DiffCalculator {
         idx: ContainerIdx,
         depth: Option<NonZeroU32>,
     ) -> &mut (Option<NonZeroU32>, ContainerDiffCalculator) {
-        self.calculators
-            .entry(idx)
-            .or_insert_with(|| match idx.get_type() {
-                crate::ContainerType::Text => (
-                    depth,
-                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::new()),
-                ),
-                crate::ContainerType::Map => (
-                    depth,
-                    ContainerDiffCalculator::Map(MapDiffCalculator::new(idx)),
-                ),
-                crate::ContainerType::List => (
-                    depth,
-                    ContainerDiffCalculator::List(ListDiffCalculator::default()),
-                ),
-                crate::ContainerType::Tree => (
-                    depth,
-                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx)),
-                ),
-                crate::ContainerType::Unknown(_) => (
-                    depth,
-                    ContainerDiffCalculator::Unknown(unknown::UnknownDiffCalculator),
-                ),
-                crate::ContainerType::MovableList => (
-                    depth,
-                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(idx)),
-                ),
+        let tick = self.next_access_tick();
+        let entry = self.calculators.entry(idx).or_insert_with(|| {
+            let calc = match idx.get_type() {
+                crate::ContainerType::Text => {
+                    ContainerDiffCalculator::Richtext(RichtextDiffCalculator::new())
+                }
+                crate::ContainerType::Map => {
+                    ContainerDiffCalculator::Map(MapDiffCalculator::new(idx))
+                }
+                crate::ContainerType::List => {
+                    ContainerDiffCalculator::List(ListDiffCalculator::default())
+                }
+                crate::ContainerType::Tree => {
+                    ContainerDiffCalculator::Tree(TreeDiffCalculator::new(idx))
+                }
+                crate::ContainerType::Unknown(_) => {
+                    ContainerDiffCalculator::Unknown(unknown::UnknownDiffCalculator)
+                }
+                crate::ContainerType::MovableList => {
+                    ContainerDiffCalculator::MovableList(MovableListDiffCalculator::new(idx))
+                }
                 #[cfg(feature = "counter")]
-                crate::ContainerType::Counter => (
-                    depth,
-                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(idx)),
-                ),
-            })
+                crate::ContainerType::Counter => {
+                    ContainerDiffCalculator::Counter(CounterDiffCalculator::new(idx))
+                }
+            };
+            CachedContainerCalc {
+                inner: (depth, calc),
+                last_used_tick: tick,
+            }
+        });
+        entry.last_used_tick = tick;
+        &mut entry.inner
     }
 }
 
@@ -2975,6 +3000,75 @@ fn persisted_walk_does_not_duplicate_style_entries() {
     };
     let ids = text.tracked_style_ids();
     assert_eq!(ids.len(), marks, "duplicate style entries: {ids:?}");
+}
+
+#[test]
+fn reclaim_cold_caches_keeps_most_recently_used_large_tracker() {
+    use crate::{cursor::PosType, handler::HandlerTrait, LoroDoc};
+
+    let doc = LoroDoc::new_auto_commit();
+    doc.set_peer_id(1).unwrap();
+
+    // Populate 4 tiny cold maps first.
+    let mut cold_idxs = Vec::new();
+    for i in 0..4 {
+        let m = doc.get_map(format!("cold_{i}"));
+        m.insert("k", i as i64).unwrap();
+        cold_idxs.push(m.idx());
+    }
+    doc.commit_then_renew();
+    let v_after_cold = doc.oplog_frontiers();
+
+    // Populate a much larger hot text container later.
+    let hot = doc.get_text("hot_big");
+    let hot_idx = hot.idx();
+    for i in 0..50 {
+        hot.insert(0, &format!("chunk_{i:04}_abcdefghij"), PosType::Unicode)
+            .unwrap();
+        doc.commit_then_renew();
+    }
+    let v_after_hot = doc.oplog_frontiers();
+
+    let oplog = doc.oplog().lock();
+    let vv = |f: &Frontiers| oplog.dag.frontiers_to_vv(f).unwrap();
+    let empty_f = Frontiers::default();
+    let empty_vv = VersionVector::default();
+
+    let mut calc = DiffCalculator::new(true);
+    // Round 1: diff cold maps.
+    calc.calc_diff_internal(
+        &oplog,
+        &empty_vv,
+        &empty_f,
+        &vv(&v_after_cold),
+        &v_after_cold,
+        None,
+    );
+    // Round 2: diff hot text (more recent and much larger).
+    calc.calc_diff_internal(
+        &oplog,
+        &vv(&v_after_cold),
+        &v_after_cold,
+        &vv(&v_after_hot),
+        &v_after_hot,
+        None,
+    );
+    assert_eq!(calc.calculators.len(), 5);
+    let hot_bytes = calc.get_calc(hot_idx).unwrap().estimated_bytes();
+    let max_cold_bytes = cold_idxs
+        .iter()
+        .map(|idx| calc.get_calc(*idx).unwrap().estimated_bytes())
+        .max()
+        .unwrap();
+    assert!(hot_bytes > max_cold_bytes);
+
+    // Keeping 2 hot trackers must keep the large recently-used text tracker and evict cold maps.
+    let _ = calc.reclaim_cold_caches(2);
+    assert_eq!(calc.calculators.len(), 2);
+    assert!(
+        calc.get_calc(hot_idx).is_some(),
+        "reclaim_cold_caches must keep the most recently used tracker even when it is the largest"
+    );
 }
 
 #[cfg(test)]

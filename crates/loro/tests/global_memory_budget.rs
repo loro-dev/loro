@@ -619,3 +619,125 @@ fn global_estimate_stays_exact_after_reads_edits_undo_drops_and_policy_switches(
     handle.join().unwrap();
     check(&docs, "after another thread's edit");
 }
+
+#[test]
+fn global_preflight_backoff_and_hard_rescue_on_import_and_batch() {
+    let (_lock, _reset) = lock_and_reset();
+
+    // Build all remote blobs before installing the tight global budget so `peer`
+    // does not add unrelated live-doc bytes to the global heap pool.
+    let peer = LoroDoc::new();
+    peer.set_peer_id(30).unwrap();
+    let mut blobs = Vec::with_capacity(30);
+    for i in 0..30 {
+        let from = peer.oplog_vv();
+        peer.get_map("active").insert("step", i as i64).unwrap();
+        peer.commit();
+        blobs.push(peer.export(ExportMode::updates(&from)).unwrap());
+    }
+    let from = peer.oplog_vv();
+    peer.get_map("active").insert("step", 30i64).unwrap();
+    peer.commit();
+    let extra = peer.export(ExportMode::updates(&from)).unwrap();
+
+    let from = peer.oplog_vv();
+    peer.get_map("active").insert("step", 31i64).unwrap();
+    peer.commit();
+    let extra2 = peer.export(ExportMode::updates(&from)).unwrap();
+    drop(peer);
+
+    // Build an idle doc with irreducible data plus 16 non-RLE cold texts so
+    // materializing them deterministically inflates `state_bytes` well past `max_heap`.
+    let pattern: String = (0..12 * 1024)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+    let (idle_src, _) = populate_doc_with_cold_kv(1, 4, 4096);
+    for i in 0..16 {
+        idle_src
+            .get_text(format!("cold_{i}"))
+            .insert(0, &pattern)
+            .unwrap();
+    }
+    idle_src.commit();
+    let snap = idle_src.export(ExportMode::Snapshot).unwrap();
+    drop(idle_src);
+
+    let idle_doc = LoroDoc::new();
+    idle_doc.set_peer_id(10).unwrap();
+    idle_doc.import(&snap).unwrap();
+    let idle_expected = idle_doc.get_deep_value().to_json_value();
+    let _ = idle_doc.reclaim_memory();
+
+    let active = LoroDoc::new();
+    active.set_peer_id(20).unwrap();
+    active.get_map("active").insert("init", 1i64).unwrap();
+    active.commit();
+    let _ = active.reclaim_memory();
+
+    let base_global =
+        (idle_doc.memory_stats().total_bytes + active.memory_stats().total_bytes) as u64;
+    let high = (base_global / 2).max(1024);
+    let target = (base_global / 3).max(512);
+    let max_heap = base_global + 128 * 1024;
+    set_global_memory_budget(GlobalMemoryBudget {
+        high_watermark_bytes: Some(high),
+        target_watermark_bytes: Some(target),
+        max_heap_bytes: Some(max_heap),
+        ..Default::default()
+    });
+
+    // Import 30 small updates across `import_batch` + `import_batch_detailed` while
+    // `soft_backoff` arms in `(high, max_heap)`.
+    let half = 15;
+    active.import_batch(&blobs[..half]).unwrap();
+    let detail = active.import_batch_detailed(&blobs[half..]).unwrap();
+    assert!(detail.rollback_error.is_none());
+
+    // Now bloat `idle_doc` past `max_heap` while `soft_backoff` is armed, and import
+    // into `active`: hard rescue must bypass soft_backoff and demote `idle_doc`
+    // rather than falsely failing with `GlobalBudget`.
+    for i in 0..16 {
+        assert_eq!(
+            idle_doc.get_text(format!("cold_{i}")).len_unicode(),
+            12 * 1024
+        );
+    }
+    assert!(global_memory_stats().docs_estimated_bytes > max_heap);
+
+    active
+        .import(&extra)
+        .expect("import must hard-rescue idle doc past global soft_backoff");
+    assert!(global_memory_stats().docs_estimated_bytes <= max_heap);
+
+    // Same hard rescue via `import_batch` while bloated past `max_heap`.
+    for i in 0..16 {
+        assert_eq!(
+            idle_doc.get_text(format!("cold_{i}")).len_unicode(),
+            12 * 1024
+        );
+    }
+    assert!(global_memory_stats().docs_estimated_bytes > max_heap);
+    active
+        .import_batch(&[extra2])
+        .expect("import_batch must hard-rescue idle doc past global soft_backoff");
+    assert!(global_memory_stats().docs_estimated_bytes <= max_heap);
+
+    assert_eq!(idle_doc.get_deep_value().to_json_value(), idle_expected);
+    assert_eq!(
+        active.get_map("active").get_deep_value().to_json_value()["step"],
+        31
+    );
+
+    // A genuinely oversized update still gets rejected cleanly with `GlobalBudget`.
+    let big_peer = LoroDoc::new();
+    big_peer.set_peer_id(31).unwrap();
+    big_peer
+        .get_map("active")
+        .insert("huge", "q".repeat((max_heap as usize) + 64 * 1024))
+        .unwrap();
+    big_peer.commit();
+    let huge = big_peer.export(ExportMode::all_updates()).unwrap();
+    drop(big_peer);
+    let err = active.import(&huge).unwrap_err();
+    assert_global_limit_err(&err);
+}
