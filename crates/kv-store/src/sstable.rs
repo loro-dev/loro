@@ -1053,6 +1053,7 @@ pub struct SsTableIter<'a> {
     iter: SsTableIterInner,
     next_block_idx: usize,
     back_block_idx: isize,
+    cache_reads: bool,
 }
 
 impl Debug for SsTableIter<'_> {
@@ -1071,7 +1072,26 @@ impl<'a> SsTableIter<'a> {
     }
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
-        let read_block = |idx| table.read_block_cached(idx);
+        Self::new_scan_with_cache(table, start, end, true)
+    }
+
+    pub fn new_scan_uncached(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
+        Self::new_scan_with_cache(table, start, end, false)
+    }
+
+    fn new_scan_with_cache(
+        table: &'a SsTable,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+        cache_reads: bool,
+    ) -> Self {
+        let read_block = |idx| {
+            if cache_reads {
+                table.read_block_cached(idx)
+            } else {
+                table.read_block(idx)
+            }
+        };
         let (table_idx, mut iter, excluded) = match start {
             Bound::Included(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start included");
@@ -1151,6 +1171,7 @@ impl<'a> SsTableIter<'a> {
                 },
                 next_block_idx: table_idx,
                 back_block_idx: end_idx as isize,
+                cache_reads,
             }
         } else {
             debug_assert!(end_idx == table_idx);
@@ -1159,6 +1180,7 @@ impl<'a> SsTableIter<'a> {
                 iter: SsTableIterInner::Same(iter),
                 next_block_idx: table_idx,
                 back_block_idx: end_idx as isize,
+                cache_reads,
             }
         };
         // the current iter may be empty, but has next iter. we need to skip the empty iter
@@ -1240,12 +1262,20 @@ impl<'a> SsTableIter<'a> {
             if this.next_block_idx == this.back_block_idx as usize && !this.iter.is_same() {
                 this.iter.convert_back_as_same();
             } else if this.next_block_idx < this.table.meta.len() {
-                let block = this.table.read_block_cached(this.next_block_idx);
+                let block = this.read_block(this.next_block_idx);
                 this.iter.reset_front(BlockIter::new(block));
                 this.skip_next_empty();
             } else {
                 unreachable!()
             }
+        }
+    }
+
+    fn read_block(&self, block_idx: usize) -> Arc<Block> {
+        if self.cache_reads {
+            self.table.read_block_cached(block_idx)
+        } else {
+            self.table.read_block(block_idx)
         }
     }
 
@@ -1261,7 +1291,7 @@ impl<'a> SsTableIter<'a> {
         if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
             self.iter.convert_back_as_same();
         } else if self.next_block_idx < self.table.meta.len() {
-            let block = self.table.read_block_cached(self.next_block_idx);
+            let block = self.read_block(self.next_block_idx);
             self.iter.reset_front(BlockIter::new(block));
             self.skip_next_empty();
         } else {
@@ -1280,7 +1310,7 @@ impl<'a> SsTableIter<'a> {
             if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
                 self.iter.convert_front_as_same();
             } else if self.back_block_idx > 0 {
-                let block = self.table.read_block_cached(self.back_block_idx as usize);
+                let block = self.read_block(self.back_block_idx as usize);
                 self.iter.reset_back(BlockIter::new(block));
                 self.skip_next_back_empty();
             }

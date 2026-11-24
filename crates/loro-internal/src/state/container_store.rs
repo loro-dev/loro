@@ -14,6 +14,9 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 pub(crate) use container_wrapper::ContainerWrapper;
+pub(crate) use inner_store::DemoteResult;
+#[cfg(test)]
+pub(crate) use inner_store::{cold_state_demotions_for_test, reset_cold_state_demotions_for_test};
 
 mod container_wrapper;
 mod inner_store;
@@ -472,12 +475,22 @@ impl ContainerStore {
         self.store.install_kv_backend(prepared.main);
     }
 
+    pub(crate) fn advance_access_epoch(&mut self) {
+        self.store.advance_access_epoch();
+    }
+
+    pub(crate) fn take_had_refaults(&mut self) -> bool {
+        self.store.take_had_refaults()
+    }
+
     pub(crate) fn demote_cold_states(
         &mut self,
         target_state_bytes: usize,
         pinned: &FxHashSet<ContainerIdx>,
-    ) -> usize {
-        self.store.demote_cold_states(target_state_bytes, pinned)
+        hard_or_force: bool,
+    ) -> DemoteResult {
+        self.store
+            .demote_cold_states(target_state_bytes, pinned, hard_or_force)
     }
 
     pub(crate) fn reclaim_auxiliary_caches(&mut self) -> usize {

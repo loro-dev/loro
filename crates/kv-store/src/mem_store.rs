@@ -98,6 +98,7 @@ impl MemKvStore {
     pub const DEFAULT_BLOCK_SIZE: usize = 4 * 1024;
     const EXPORT_ENTRY_OVERHEAD: usize = 8;
     const MEM_ENTRY_OVERHEAD: usize = 64;
+    const MAX_SS_TABLES: usize = 6;
 
     pub fn new(config: MemKvConfig) -> Self {
         Self {
@@ -158,8 +159,69 @@ impl MemKvStore {
     }
 
     pub fn flush(&mut self) {
-        if !self.mem_table.is_empty() || self.ss_table.len() > 1 {
-            let _ = self.export_all();
+        if !self.mem_table.is_empty() {
+            // Preserve tombstones whenever older SSTables exist so deletions
+            // still shadow stale values without rewriting the full table.
+            let include_none = self.should_encode_none || !self.ss_table.is_empty();
+            let mut builder =
+                SsTableBuilder::new(self.block_size, self.compression_type, include_none);
+            let mem_table = std::mem::take(&mut self.mem_table);
+            self.mem_table_bytes = 0;
+            for (k, v) in mem_table {
+                builder.add(k, v);
+            }
+            if !builder.is_empty() {
+                self.ss_table
+                    .push(builder.build_with_cache(self.block_cache.clone()));
+            }
+        }
+        self.maybe_compact_sstables();
+    }
+
+    fn maybe_compact_sstables(&mut self) {
+        while self.ss_table.len() > 1 {
+            let mut ratio_start = None;
+            let mut suffix_bytes = 0usize;
+            for i in (0..self.ss_table.len() - 1).rev() {
+                suffix_bytes = suffix_bytes.saturating_add(self.ss_table[i + 1].data_size());
+                if suffix_bytes >= self.ss_table[i].data_size() / 2 {
+                    ratio_start = Some(i);
+                }
+            }
+            let count_start =
+                (self.ss_table.len() > Self::MAX_SS_TABLES).then_some(Self::MAX_SS_TABLES - 1);
+            let start = match (ratio_start, count_start) {
+                (Some(r), Some(c)) => r.min(c),
+                (Some(r), None) => r,
+                (None, Some(c)) => c,
+                (None, None) => break,
+            };
+            self.compact_sstables_from(start);
+        }
+    }
+
+    fn compact_sstables_from(&mut self, start: usize) {
+        debug_assert!(start + 1 < self.ss_table.len());
+        // Drop tombstones when compacting all the way to the oldest table (start == 0)
+        // unless `should_encode_none` requires retaining them.
+        let include_none = self.should_encode_none || start > 0;
+        let mut builder = SsTableBuilder::new(self.block_size, self.compression_type, include_none);
+        let iter = MergeIterator::new(
+            self.ss_table[start..]
+                .iter()
+                .rev()
+                .map(|table| {
+                    SsTableIter::new_scan_uncached(table, Bound::Unbounded, Bound::Unbounded)
+                })
+                .collect(),
+        );
+        for (k, v) in iter {
+            builder.add(k, v);
+        }
+        self.ss_table.truncate(start);
+        if !builder.is_empty() {
+            self.ss_table
+                .push(builder.build_with_cache(self.block_cache.clone()));
         }
     }
 
@@ -281,6 +343,11 @@ impl MemKvStore {
         self.block_cache.used_bytes() as u64
     }
 
+    #[cfg(test)]
+    pub(crate) fn ss_table_count(&self) -> usize {
+        self.ss_table.len()
+    }
+
     /// The number of valid keys in the mem table and sstable, it's expensive to call
     pub fn len(&self) -> usize {
         // TODO: PERF
@@ -355,7 +422,9 @@ impl MemKvStore {
                 self.ss_table
                     .iter()
                     .rev()
-                    .map(|table| SsTableIter::new_scan(table, Bound::Unbounded, Bound::Unbounded))
+                    .map(|table| {
+                        SsTableIter::new_scan_uncached(table, Bound::Unbounded, Bound::Unbounded)
+                    })
                     .collect(),
             ),
             false,
@@ -1048,6 +1117,106 @@ mod tests {
             assert_eq!(target.ss_table[0].meta_len(), 1);
             assert_eq!(target.len(), 6);
         }
+    }
+
+    #[test]
+    fn incremental_flush_keeps_base_table_and_bounds_sstable_count() {
+        let mut store = MemKvStore::new(
+            MemKvConfig::default()
+                .compression_type(CompressionType::None)
+                .should_encode_none(false),
+        );
+        for i in 0..200_u32 {
+            let k = format!("base-{i:04}");
+            let v = vec![(i % 251) as u8; 256];
+            store.set(k.as_bytes(), Bytes::from(v));
+        }
+        store.flush();
+        assert_eq!(store.ss_table_count(), 1);
+        let base_table_id = store.ss_table[0].data_size();
+
+        // A small delta flush must push an L0 table instead of rewriting the large base table.
+        store.set(b"delta-0", Bytes::from_static(b"v0"));
+        store.flush();
+        assert_eq!(store.ss_table_count(), 2);
+        assert_eq!(store.ss_table[0].data_size(), base_table_id);
+
+        // Many small flushes stay bounded at <= MAX_SS_TABLES.
+        for i in 1..25_u32 {
+            store.set(
+                format!("delta-{i:02}").as_bytes(),
+                Bytes::from_static(b"vx"),
+            );
+            store.flush();
+            assert!(
+                store.ss_table_count() <= MemKvStore::MAX_SS_TABLES,
+                "ss_table_count={} exceeded MAX_SS_TABLES",
+                store.ss_table_count()
+            );
+        }
+        assert_eq!(
+            store.cached_block_bytes(),
+            0,
+            "compaction during flush should not pollute block_cache"
+        );
+        // The large base table remained untouched.
+        assert_eq!(store.ss_table[0].data_size(), base_table_id);
+        assert_eq!(store.get(b"delta-24").as_deref(), Some(b"vx".as_slice()));
+        assert_eq!(store.len(), 225);
+
+        let exported = store.export_all();
+        assert_eq!(store.ss_table_count(), 1);
+        let mut reloaded = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        reloaded.import_all(exported).unwrap();
+        assert_eq!(reloaded.len(), 225);
+        assert_eq!(reloaded.get(b"delta-0").as_deref(), Some(b"v0".as_slice()));
+    }
+
+    #[test]
+    fn incremental_flush_tombstones_shadow_base_and_empty_tombstone_flush_skips_empty_sst() {
+        let mut store = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        // Flushing only a tombstone into an empty store must not push an empty SSTable.
+        store.remove(b"never-existed");
+        store.flush();
+        assert_eq!(store.ss_table_count(), 0);
+        assert!(store.is_empty());
+
+        store.set(b"a", Bytes::from_static(b"base-a"));
+        store.set(b"b", Bytes::from_static(b"base-b"));
+        store.flush();
+        assert_eq!(store.ss_table_count(), 1);
+
+        // Remove `a` and overwrite `b` in L0 without rewriting the base SSTable.
+        store.remove(b"a");
+        store.set(b"b", Bytes::from_static(b"new-b"));
+        store.flush();
+        assert_eq!(store.get(b"a"), None);
+        assert!(!store.contains_key(b"a"));
+        assert_eq!(store.get(b"b").as_deref(), Some(b"new-b".as_slice()));
+
+        let fwd: Vec<_> = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .collect();
+        let rev: Vec<_> = store
+            .scan(std::ops::Bound::Unbounded, std::ops::Bound::Unbounded)
+            .rev()
+            .collect();
+        assert_eq!(
+            fwd,
+            vec![(Bytes::from_static(b"b"), Bytes::from_static(b"new-b"))]
+        );
+        assert_eq!(rev, fwd);
+
+        let cloned = store.clone();
+        assert_eq!(cloned.get(b"a"), None);
+        assert_eq!(cloned.get(b"b").as_deref(), Some(b"new-b".as_slice()));
+
+        let exported = store.export_all();
+        let mut reloaded = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        reloaded.import_all(exported).unwrap();
+        assert_eq!(reloaded.get(b"a"), None);
+        assert_eq!(reloaded.get(b"b").as_deref(), Some(b"new-b".as_slice()));
+        assert_eq!(reloaded.len(), 1);
     }
 
     fn new_store() -> MemKvStore {
