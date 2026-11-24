@@ -369,21 +369,29 @@ backoff.
   - Hard admission (`check_global_budget_with_active`) and hard-limit rescue
     (`is_over_global_hard_limit`) never stay blocked by `soft_backoff`.
 - **Stage 1 cache-rebuild thrash detection (`SoftBackoff::backed_off_with_cache`)**:
-  - Both per-doc (`LoroDocInner::soft_backoff`) and global (`GlobalMemoryPool::soft_backoff`)
-    track the pre-sweep footprint and cleared Stage 1 cache bytes (`block_cache +
-    value_cache + change_cache + history_cache + diff_calc`). If the workload
-    immediately rebuilds `>= 50%` of those cleared cache bytes within
-    `CACHE_REBUILD_THRASH_WINDOW` (`4`) watermark checks without genuine
-    non-cache growth (`used <= pre_sweep + max(pre_sweep/8, 256 KiB)`),
-    `SoftBackoff` arms at the rebuilt footprint so repeated `import ->
-    get_deep_value()` loops do not clear and re-decompress `block_cache` on every
-    step (while still running a periodic probe after `SOFT_BACKOFF_MAX_SKIPS = 64`
-    checks to reclaim once reads stop).
+  - Both per-doc (`LoroDocInner::soft_backoff`) and global (`GlobalMemoryPool::soft_backoff`,
+    covering `enforce_global_watermarks_for_active`, `preflight_global_watermark_for_import`,
+    and `preflight_wasm_linear_alloc`) record the pre-sweep footprint and cleared Stage 1
+    cache bytes (`block_cache + value_cache + change_cache + history_cache + diff_calc`, or
+    `global_block_cache` on global preflights).
+  - Detection operates **between consecutive soft sweeps** without a fixed check-count expiry
+    window: whenever the next crossing above the high watermark has rebuilt `>= 50%` of the
+    last sweep's cleared cache bytes while both total usage (`used <= pre_sweep +
+    max(pre_sweep/8, 256 KiB)`) and non-cache usage (`cur_non_cache <= pre_non_cache +
+    max(pre_non_cache/8, 256 KiB)`) show no genuine non-cache growth, `SoftBackoff` arms at
+    the rebuilt footprint regardless of how many below-high checks occurred in between (so
+    both every-op reads and sparse periodic reads like every 6 or 20 imports stop clearing
+    and re-decompressing `block_cache` on every read).
+  - Genuine non-cache growth bypasses cache-rebuild backoff and triggers an immediate sweep;
+    hard-limit rescues and explicit `reclaim_memory()` / `reclaim_global_memory(None)` /
+    budget setters reset `SoftBackoff`; and the periodic probe after `SOFT_BACKOFF_MAX_SKIPS`
+    (`64`) checks still reclaims `block_cache` once reads stop.
 - Tests: `a_failed_global_soft_sweep_backs_off_until_usage_grows`,
   `preflight_respects_soft_backoff_and_rescues_before_global_oom`,
   `import_preflight_without_buffer_alloc_bypasses_backoff_when_projected_exceeds_cap`,
   `batch_import_runs_single_global_preflight`,
-  `stage1_block_cache_rebuild_thrashing_enters_soft_backoff` (`loro.rs`), and
+  `stage1_block_cache_rebuild_thrashing_enters_soft_backoff`,
+  `stage1_sparse_periodic_reads_thrash_backoff_and_global_consistency` (`loro.rs`), and
   `global_preflight_backoff_and_hard_rescue_on_import_and_batch`
   (`crates/loro/tests/global_memory_budget.rs`).
 

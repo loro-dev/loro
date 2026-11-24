@@ -6748,7 +6748,7 @@ struct GlobalMemoryPool {
 }
 
 /// Skips soft sweeps that recently failed to reach their target or triggered
-/// immediate Stage 1 cache-rebuild thrashing: one global
+/// Stage 1 cache-rebuild thrashing between consecutive sweeps: one global
 /// (`GlobalMemoryPool::soft_backoff`) and one per document
 /// (`LoroDocInner::soft_backoff`, used by `enforce_watermarks_with_budget_locked`).
 #[derive(Debug)]
@@ -6762,8 +6762,6 @@ pub(crate) struct SoftBackoff {
     last_pre_sweep_bytes: std::sync::atomic::AtomicU64,
     /// Stage 1 cache bytes cleared by the last soft sweep, or 0.
     last_cleared_cache_bytes: std::sync::atomic::AtomicU64,
-    /// Watermark checks elapsed since the last soft sweep.
-    checks_since_sweep: std::sync::atomic::AtomicU32,
 }
 
 impl SoftBackoff {
@@ -6773,7 +6771,6 @@ impl SoftBackoff {
             skips: std::sync::atomic::AtomicU32::new(0),
             last_pre_sweep_bytes: std::sync::atomic::AtomicU64::new(0),
             last_cleared_cache_bytes: std::sync::atomic::AtomicU64::new(0),
-            checks_since_sweep: std::sync::atomic::AtomicU32::new(0),
         }
     }
 
@@ -6781,6 +6778,7 @@ impl SoftBackoff {
     /// watermark: the previous sweep could not get below its target, usage has
     /// not grown meaningfully since, and fewer than [`SOFT_BACKOFF_MAX_SKIPS`]
     /// checks were skipped.
+    #[cfg(test)]
     fn backed_off(&self, used: u64) -> bool {
         let floor = self.floor.load(Relaxed);
         if floor == 0 {
@@ -6791,17 +6789,15 @@ impl SoftBackoff {
             && self.skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
     }
 
-    /// Like [`Self::backed_off`], and also detects Stage 1 cache-rebuild
-    /// thrashing where a recent soft sweep cleared `last_cleared_cache_bytes`
-    /// (e.g. `block_cache_bytes`) and the workload immediately rebuilt at least
-    /// half of it within [`CACHE_REBUILD_THRASH_WINDOW`] checks without genuine
-    /// non-cache growth.
+    /// Detects both stalled-floor backoff and Stage 1 cache-rebuild thrashing
+    /// between consecutive soft sweeps: if the last soft sweep cleared
+    /// `last_cleared_cache_bytes` (e.g. `block_cache_bytes`) and the next
+    /// crossing above the high watermark has rebuilt at least half of those
+    /// cache bytes without genuine non-cache growth (regardless of how many
+    /// below-high checks occurred in between), arms `SoftBackoff` at the
+    /// rebuilt footprint so periodic reads do not clear and re-decompress
+    /// caches on every read.
     fn backed_off_with_cache(&self, used: u64, cur_cache: u64) -> bool {
-        let checks = if self.last_cleared_cache_bytes.load(Relaxed) != 0 {
-            self.checks_since_sweep.fetch_add(1, Relaxed)
-        } else {
-            u32::MAX
-        };
         let floor = self.floor.load(Relaxed);
         if floor != 0 {
             let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
@@ -6811,19 +6807,20 @@ impl SoftBackoff {
         }
         let cleared_cache = self.last_cleared_cache_bytes.load(Relaxed);
         if cleared_cache > 0 {
-            if checks < CACHE_REBUILD_THRASH_WINDOW {
-                let pre_sweep = self.last_pre_sweep_bytes.load(Relaxed);
-                let pre_growth =
-                    (pre_sweep / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
-                if cur_cache >= cleared_cache / 2 && used <= pre_sweep.saturating_add(pre_growth) {
-                    self.skips.store(1, Relaxed);
-                    self.floor.store(used.max(pre_sweep).max(1), Relaxed);
-                    self.last_cleared_cache_bytes.store(0, Relaxed);
-                    return true;
-                }
-            } else {
+            let pre_sweep = self.last_pre_sweep_bytes.load(Relaxed);
+            let pre_growth = (pre_sweep / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+            let pre_non_cache = pre_sweep.saturating_sub(cleared_cache);
+            let cur_non_cache = used.saturating_sub(cur_cache);
+            let non_cache_growth =
+                (pre_non_cache / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+            if cur_cache >= cleared_cache / 2
+                && used <= pre_sweep.saturating_add(pre_growth)
+                && cur_non_cache <= pre_non_cache.saturating_add(non_cache_growth)
+            {
+                self.skips.store(1, Relaxed);
+                self.floor.store(used.max(pre_sweep).max(1), Relaxed);
                 self.last_cleared_cache_bytes.store(0, Relaxed);
-                self.last_pre_sweep_bytes.store(0, Relaxed);
+                return true;
             }
         }
         false
@@ -6832,12 +6829,6 @@ impl SoftBackoff {
     fn note_check_below_high(&self, clear_floor: bool) {
         if clear_floor && self.floor.load(Relaxed) != 0 {
             self.floor.store(0, Relaxed);
-        }
-        if self.last_cleared_cache_bytes.load(Relaxed) != 0
-            && self.checks_since_sweep.fetch_add(1, Relaxed) >= CACHE_REBUILD_THRASH_WINDOW
-        {
-            self.last_cleared_cache_bytes.store(0, Relaxed);
-            self.last_pre_sweep_bytes.store(0, Relaxed);
         }
     }
 
@@ -6852,7 +6843,6 @@ impl SoftBackoff {
         pre_sweep: u64,
         cleared_cache: u64,
     ) {
-        self.checks_since_sweep.store(0, Relaxed);
         self.last_pre_sweep_bytes.store(pre_sweep, Relaxed);
         self.last_cleared_cache_bytes.store(cleared_cache, Relaxed);
         if reached_target {
@@ -6874,7 +6864,6 @@ impl SoftBackoff {
             self.last_pre_sweep_bytes.store(0, Relaxed);
         }
         self.skips.store(0, Relaxed);
-        self.checks_since_sweep.store(0, Relaxed);
     }
 }
 
@@ -6895,9 +6884,6 @@ const SOFT_BACKOFF_MIN_GROWTH: u64 = 256 * 1024;
 /// ... or after this many skipped checks, so documents that became idle in the
 /// meantime are still reclaimed without growth.
 const SOFT_BACKOFF_MAX_SKIPS: u32 = 64;
-/// Number of watermark checks after a soft sweep within which rebuilding >=50%
-/// of cleared Stage 1 caches is classified as cache-rebuild thrashing.
-const CACHE_REBUILD_THRASH_WINDOW: u32 = 4;
 
 impl GlobalMemoryPool {
     fn new() -> Self {
@@ -6918,6 +6904,7 @@ impl GlobalMemoryPool {
     /// checks were skipped. Each sweep runs Stage 1 (including a full KV flush
     /// and arena copy) on the active document, so repeating one that cannot
     /// succeed made every commit pay for it. Hard admission does not use this.
+    #[cfg(test)]
     fn soft_reclaim_backed_off(&self, used: u64) -> bool {
         self.soft_backoff.backed_off(used)
     }
@@ -7755,7 +7742,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
     pool.global_block_cache
         .set_max_bytes(budget.effective_block_cache_bytes());
     *pool.budget.lock() = budget;
-    pool.record_soft_sweep_result(true, 0);
+    pool.soft_backoff.reset();
     GLOBAL_BUDGET_FLAGS.store(flags, Release);
 
     let live = pool.snapshot_live_docs();
@@ -7838,6 +7825,9 @@ pub fn reclaim_global_memory(target_bytes: Option<u64>) -> u64 {
         None => (0, true),
     };
     let after = pool.reclaim_idle_docs_to_target(&live, None, target, force_full, force_full);
+    if force_full {
+        pool.soft_backoff.reset();
+    }
     before.saturating_sub(after)
 }
 
@@ -7905,12 +7895,21 @@ fn preflight_wasm_linear_alloc_in_pool(
         if used <= head_target {
             pool.record_soft_sweep_result(true, used);
         }
-    } else if projected > high && !pool.soft_reclaim_backed_off(projected) {
-        #[cfg(test)]
-        GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
-        let after = pool.reclaim_for_watermark_used(head_target, None, false, false);
-        pool.record_soft_sweep_result(after <= head_target, after);
-        used = after;
+    } else if projected > high {
+        let pre_cache = pool.global_block_cache.local_used_bytes() as u64;
+        if !pool
+            .soft_backoff
+            .backed_off_with_cache(projected, pre_cache)
+        {
+            #[cfg(test)]
+            GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+            let after = pool.reclaim_for_watermark_used(head_target, None, false, false);
+            let cleared_cache =
+                pre_cache.saturating_sub(pool.global_block_cache.local_used_bytes() as u64);
+            pool.soft_backoff
+                .record_with_cache(after <= head_target, after, used, cleared_cache);
+            used = after;
+        }
     }
     let projected = used.saturating_add(needed_bytes);
     if projected > max_lin {
@@ -8300,12 +8299,25 @@ impl LoroDoc {
                 if used <= head_target {
                     pool.record_soft_sweep_result(true, used);
                 }
-            } else if projected > high.min(cap) && !pool.soft_reclaim_backed_off(projected) {
-                #[cfg(test)]
-                GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
-                let after = pool.reclaim_for_watermark_used(head_target, exclude, false, false);
-                pool.record_soft_sweep_result(after <= head_target, after);
-                used = after;
+            } else if projected > high.min(cap) {
+                let pre_cache = pool.global_block_cache.local_used_bytes() as u64;
+                if !pool
+                    .soft_backoff
+                    .backed_off_with_cache(projected, pre_cache)
+                {
+                    #[cfg(test)]
+                    GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+                    let after = pool.reclaim_for_watermark_used(head_target, exclude, false, false);
+                    let cleared_cache =
+                        pre_cache.saturating_sub(pool.global_block_cache.local_used_bytes() as u64);
+                    pool.soft_backoff.record_with_cache(
+                        after <= head_target,
+                        after,
+                        used,
+                        cleared_cache,
+                    );
+                    used = after;
+                }
             }
             if include_buffer_alloc {
                 let projected = used.saturating_add(len_u64);
@@ -8774,21 +8786,21 @@ impl LoroDoc {
                         }
                     }
                 }
-                if !force_full {
-                    if over_doc_hard_after_stage1 || defer_history_compaction {
-                        self.soft_backoff.reset();
-                    } else {
-                        let refault_stalled = demote_res.had_refaults || had_refaults_before_stage2;
-                        let reached_target = left <= target_limit
-                            && !refault_stalled
-                            && !demote_res.blocked_by_protection;
-                        self.soft_backoff.record_with_cache(
-                            reached_target,
-                            left as u64,
-                            stats.total_bytes as u64,
-                            cleared_cache,
-                        );
-                    }
+                if force_full {
+                    self.soft_backoff.reset();
+                } else if over_doc_hard_after_stage1 || defer_history_compaction {
+                    self.soft_backoff.reset();
+                } else {
+                    let refault_stalled = demote_res.had_refaults || had_refaults_before_stage2;
+                    let reached_target = left <= target_limit
+                        && !refault_stalled
+                        && !demote_res.blocked_by_protection;
+                    self.soft_backoff.record_with_cache(
+                        reached_target,
+                        left as u64,
+                        stats.total_bytes as u64,
+                        cleared_cache,
+                    );
                 }
             }
         }
@@ -9891,6 +9903,175 @@ mod reclamation_work_tests {
             doc.memory_stats().block_cache_bytes < (warm_full - cold_base) / 2,
             "periodic probe should reclaim block_cache once reads stop: {:?}",
             doc.memory_stats()
+        );
+    }
+
+    /// Periodic reads spaced further apart (`read_every = 6` and `read_every = 20`)
+    /// must still be detected as Stage 1 cache-rebuild thrashing between consecutive
+    /// sweeps (regardless of how many below-high checks elapsed in between), while:
+    /// - stopping reads still reclaims memory back near target via the periodic probe,
+    /// - genuine non-cache growth triggers an immediate sweep, and
+    /// - the global watermark path (`enforce_global_watermarks_for_active`) behaves consistently.
+    #[test]
+    fn stage1_sparse_periodic_reads_thrash_backoff_and_global_consistency() {
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(1).unwrap();
+        let val = pseudo_random_ascii(42, 256);
+        for i in 0..2000 {
+            peer.get_map(format!("m{i}"))
+                .insert("v", LoroValue::String(val.clone().into()))
+                .unwrap();
+        }
+        peer.commit_then_renew();
+        let snap = peer.export(ExportMode::Snapshot).unwrap();
+
+        let run_sparse_case = |read_every: usize, n: usize, max_expected_sweeps: usize| {
+            let p = peer.fork();
+            p.set_peer_id(10 + read_every as u64).unwrap();
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(20 + read_every as u64).unwrap();
+            doc.import(&snap).unwrap();
+            let _ = doc.get_deep_value();
+            let full = doc.memory_stats().total_bytes;
+            let high = full / 2;
+            let target = full / 4;
+            doc.set_memory_budget(MemoryBudget {
+                high_watermark_bytes: Some(high),
+                target_watermark_bytes: Some(target),
+                ..Default::default()
+            });
+
+            let stage1_before = DOC_STAGE1_PASSES.with(|c| c.get());
+            for i in 0..n {
+                let vv = p.oplog_vv();
+                p.get_map("m0")
+                    .insert("tick", LoroValue::I64(i as i64))
+                    .unwrap();
+                p.commit_then_renew();
+                let update = p.export(ExportMode::updates(&vv)).unwrap();
+                doc.import(&update).unwrap();
+                if i % read_every == 0 {
+                    let _ = doc.get_deep_value();
+                }
+            }
+            let passes = DOC_STAGE1_PASSES.with(|c| c.get()) - stage1_before;
+            let read_count = n.div_ceil(read_every);
+            assert!(
+                passes <= max_expected_sweeps,
+                "read_every={read_every}, n={n} ({read_count} reads): expected <= {max_expected_sweeps} Stage 1 sweeps, got {passes}"
+            );
+
+            // Once reads stop, within SOFT_BACKOFF_MAX_SKIPS + 6 imports the periodic probe
+            // clears block_cache and total_bytes drops back below `high` near `target`.
+            for i in n..n + (SOFT_BACKOFF_MAX_SKIPS as usize) + 6 {
+                let vv = p.oplog_vv();
+                p.get_map("m0")
+                    .insert("tick", LoroValue::I64(i as i64))
+                    .unwrap();
+                p.commit_then_renew();
+                let update = p.export(ExportMode::updates(&vv)).unwrap();
+                doc.import(&update).unwrap();
+            }
+            let stats = doc.memory_stats();
+            assert!(
+                stats.block_cache_bytes < 16 * 1024 && stats.total_bytes <= high,
+                "read_every={read_every}: expected memory to drop below high ({high}) after reads stop, got {stats:?}"
+            );
+            (p, doc, high)
+        };
+
+        // read_every=6, n=600 (100 reads): previously 100 sweeps, now ~10 sweeps.
+        let _ = run_sparse_case(6, 600, 16);
+        // read_every=20, n=600 (30 reads): previously 30 sweeps, now ~8 sweeps.
+        let (p_grow, doc_grow, _high) = run_sparse_case(20, 600, 12);
+
+        // Genuine non-cache growth (> SOFT_BACKOFF_MIN_GROWTH) must still sweep immediately
+        // even when block_cache is also rebuilt.
+        let _ = doc_grow.get_deep_value();
+        let stage1_before_growth = DOC_STAGE1_PASSES.with(|c| c.get());
+        let vv = p_grow.oplog_vv();
+        p_grow
+            .get_map("big_new")
+            .insert(
+                "blob",
+                LoroValue::String(pseudo_random_ascii(777, 384 * 1024).into()),
+            )
+            .unwrap();
+        p_grow.commit_then_renew();
+        let big_update = p_grow.export(ExportMode::updates(&vv)).unwrap();
+        doc_grow.import(&big_update).unwrap();
+        assert_eq!(
+            DOC_STAGE1_PASSES.with(|c| c.get()) - stage1_before_growth,
+            1,
+            "genuine non-cache growth must trigger an immediate sweep"
+        );
+
+        // Global watermark path consistency (`enforce_global_watermarks_for_active`):
+        // sparse periodic reads (`read_every = 6`) on a private GlobalMemoryPool.
+        let pool = GlobalMemoryPool::new();
+        let g_peer = peer.fork();
+        g_peer.set_peer_id(88).unwrap();
+        let g_doc = LoroDoc::new_auto_commit();
+        g_doc.set_peer_id(89).unwrap();
+        g_doc.import(&snap).unwrap();
+        g_doc
+            .kv_block_cache
+            .set_parent(Some(&pool.global_block_cache));
+        pool.register(g_doc.pool_doc_id, Arc::downgrade(&g_doc.inner));
+        let _ = g_doc.get_deep_value();
+        let g_full =
+            (g_doc.memory_stats().total_bytes + pool.global_block_cache.used_bytes()) as u64;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            high_watermark_bytes: Some(g_full / 2),
+            target_watermark_bytes: Some(g_full / 4),
+            ..Default::default()
+        };
+
+        let check_global = |doc: &LoroDoc| {
+            let oplog = doc.oplog.lock();
+            let mut state = doc.state.lock();
+            let stats = doc.memory_stats_locked(&oplog, &state, 0);
+            doc.cached_doc_bytes.store(0, Relaxed);
+            pool.total_cached_doc_bytes.store(0, Relaxed);
+            pool.enforce_global_watermarks_for_active(doc, &oplog, &mut state, 0, &stats);
+        };
+
+        let global_before = ACTIVE_FALLBACK_PASSES.with(|c| c.get());
+        for i in 0..300 {
+            let vv = g_peer.oplog_vv();
+            g_peer
+                .get_map("m0")
+                .insert("tick", LoroValue::I64(i as i64))
+                .unwrap();
+            g_peer.commit_then_renew();
+            let update = g_peer.export(ExportMode::updates(&vv)).unwrap();
+            g_doc.import(&update).unwrap();
+            check_global(&g_doc);
+            if i % 6 == 0 {
+                let _ = g_doc.get_deep_value();
+            }
+        }
+        let global_passes = ACTIVE_FALLBACK_PASSES.with(|c| c.get()) - global_before;
+        assert!(
+            global_passes <= 10,
+            "global path read_every=6, n=300 (50 reads): expected <= 10 fallback sweeps, got {global_passes}"
+        );
+
+        for i in 300..300 + (SOFT_BACKOFF_MAX_SKIPS as usize) + 6 {
+            let vv = g_peer.oplog_vv();
+            g_peer
+                .get_map("m0")
+                .insert("tick", LoroValue::I64(i as i64))
+                .unwrap();
+            g_peer.commit_then_renew();
+            let update = g_peer.export(ExportMode::updates(&vv)).unwrap();
+            g_doc.import(&update).unwrap();
+            check_global(&g_doc);
+        }
+        assert!(
+            pool.global_block_cache.used_bytes() < 16 * 1024,
+            "global path should reclaim global_block_cache once reads stop, got {}",
+            pool.global_block_cache.used_bytes()
         );
     }
 
