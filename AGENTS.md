@@ -126,6 +126,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 
 ## Commands
 
+- Release preparation, component versions and tag exclusions:
+  [context/release-preparation.md](context/release-preparation.md).
 - JS deps: `pnpm install --frozen-lockfile`.
 - Rust build/check/format/lint: `cargo build`, `cargo check -p loro-internal`,
   `cargo fmt --all`, `pnpm check`.
