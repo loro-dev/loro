@@ -428,6 +428,12 @@ impl<T> LoroMutex<T> {
         self.holder.load(Ordering::SeqCst) == crate::sync::thread_mark()
     }
 
+    /// Whether a thread panicked while holding the lock. Every later
+    /// [`Self::lock`] of a poisoned lock panics.
+    pub(crate) fn is_poisoned(&self) -> bool {
+        self.lock.is_poisoned()
+    }
+
     /// Returns whether the mutex appears locked at this instant.
     ///
     /// This is implemented via `try_lock().is_err()` and is intended only for

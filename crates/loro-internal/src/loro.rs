@@ -6359,6 +6359,33 @@ mod test {
         assert!(msg.contains("poisoned LoroMutex"), "{msg}");
     }
 
+    /// A doc whose op log lock a panic poisoned can still be dropped, also while
+    /// the thread unwinds, where a second panic would abort the process.
+    #[test]
+    fn dropping_a_doc_with_a_poisoned_lock_does_not_panic() {
+        for unwinding in [false, true] {
+            let doc = LoroDoc::new_auto_commit();
+            // A pending edit, so the implicit commit on drop has work to do.
+            doc.get_text("text")
+                .insert(0, "a", PosType::Unicode)
+                .unwrap();
+            let oplog = doc.oplog.clone();
+            let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                let _guard = oplog.lock();
+                panic!("poison oplog");
+            }));
+            assert!(oplog.is_poisoned());
+            let result = std::panic::catch_unwind(AssertUnwindSafe(move || {
+                let doc = doc;
+                if unwinding {
+                    panic!("unwinding");
+                }
+                drop(doc);
+            }));
+            assert_eq!(result.is_err(), unwinding);
+        }
+    }
+
     #[test]
     fn repeated_independent_scalar_root_imports_scan_history_once() {
         let base = LoroDoc::new_auto_commit();

@@ -1,6 +1,6 @@
 # User Callbacks That Panic
 
-Verified against code 2026-10-16.
+Verified against code 2026-11-23.
 
 Subscribers, pre-commit callbacks, and local-update callbacks are user code. A
 panic in one of them reaches the caller of the Loro method that ran it. It must
@@ -46,8 +46,9 @@ callback re-enter the doc in the middle of the commit.
 A panic inside Loro (a bug) while it holds the op log or state lock still
 poisons that lock, and `LoroMutex` turns every later lock into a panic.
 `with_barrier` keeps the txn lock clean and re-raises the original panic, not the
-poisoned-lock panic of its cleanup. Dropping a doc with a poisoned lock still
-panics (`LoroDoc::drop` → `implicit_commit_then_stop`).
+poisoned-lock panic of its cleanup. `LoroDoc::drop` skips its implicit commit
+when the txn, op log or state lock is poisoned, so such a doc can be dropped,
+also while unwinding (`dropping_a_doc_with_a_poisoned_lock_does_not_panic`).
 
 ## Tests
 
