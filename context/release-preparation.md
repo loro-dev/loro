@@ -3,8 +3,10 @@
 Verified against code 2026-11-24 (functional baseline `4c6daa2f`).
 
 The public Loro API version and an internal crate's package version can differ.
-`crates/loro-internal/VERSION` supplies `LORO_VERSION`; it tracks the public API
-release, not necessarily `crates/loro-internal/Cargo.toml`'s package version.
+`crates/loro-internal/VERSION` supplies Rust's `LORO_VERSION` constant; it tracks
+the public API release, not necessarily `crates/loro-internal/Cargo.toml`'s
+package version. The WASM `LORO_VERSION()` function instead reports its own
+`CARGO_PKG_VERSION` in `crates/loro-wasm/src/lib.rs`.
 
 For the 1.19.1 candidate, publish `loro` and `loro-kv-store` 1.19.1, and
 `loro-internal` 1.19.2. Internal 1.19.1 was already published for the native
