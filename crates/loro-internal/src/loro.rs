@@ -4267,6 +4267,10 @@ impl LoroDoc {
                 origin,
                 triggered_by,
             )?;
+            // State is now at the latest version of the op log, so mark the doc
+            // attached before emitting events. Subscribers (such as UndoManager)
+            // observe the attached state during checkout_to_latest() / attach().
+            self.set_detached(false);
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             // Snapshot replay is part of a larger atomic import. Its events
             // must stay queued until pending replay / batch validation succeeds.
@@ -4277,7 +4281,6 @@ impl LoroDoc {
                 this.renew_peer_id();
             }
 
-            self.set_detached(false);
             Ok(())
         })
     }
