@@ -5155,12 +5155,15 @@ impl MapHandler {
     }
 
     pub fn get_last_editor(&self, key: &str) -> Option<PeerID> {
+        self.get_last_edit_id(key).map(|id| id.peer)
+    }
+
+    pub fn get_last_edit_id(&self, key: &str) -> Option<IdLp> {
         match &self.inner {
             MaybeDetached::Detached(_) => None,
-            MaybeDetached::Attached(a) => a.with_state(|state| {
-                let m = state.as_map_state().unwrap();
-                m.get_last_edit_peer(key)
-            }),
+            MaybeDetached::Attached(a) => {
+                a.with_state(|state| state.as_map_state().unwrap().get_last_edit_id(key))
+            }
         }
     }
 }

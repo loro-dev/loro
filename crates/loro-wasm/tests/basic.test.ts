@@ -325,6 +325,35 @@ it("handlers should still be usable after doc is dropped", () => {
   expect(map.toJSON()).toStrictEqual({ k: 8 });
 });
 
+it("finds the change that last wrote a map key at the checked-out version", () => {
+  const doc = new LoroDoc();
+  doc.setPeerId(7);
+  const map = doc.getMap("settings");
+  expect(map.getLastEditId("theme")).toBeUndefined();
+  const detached = new LoroMap();
+  detached.set("theme", "light");
+  expect(detached.getLastEditId("theme")).toBeUndefined();
+
+  map.set("theme", "light");
+  doc.commit({ message: "initial theme" });
+  const first = doc.frontiers();
+  map.set("other", 1);
+  map.set("theme", "dark");
+  doc.commit({ message: "dark mode" });
+
+  const replica = new LoroDoc();
+  replica.import(doc.export({ mode: "snapshot" }));
+  const settings = replica.getMap("settings");
+  const id = settings.getLastEditId("theme")!;
+  expect(id).toEqual({ peer: "7", lamport: 2 });
+  expect(replica.getChangeAtLamport(id.peer, id.lamport)?.message).toBe("dark mode");
+  replica.checkout(first);
+  expect(settings.getLastEditId("theme")).toEqual({ peer: "7", lamport: 0 });
+
+  map.delete("theme");
+  expect(map.getLastEditId("theme")).toEqual({ peer: "7", lamport: 3 });
+});
+
 it("get change with given lamport", () => {
   const doc1 = new LoroDoc();
   doc1.setPeerId(1);

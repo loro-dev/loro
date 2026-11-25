@@ -287,6 +287,14 @@ export class LoroMap<
     return this._entries.get(key)?.writer.peer.toString();
   }
 
+  /** The winning write at this version, including a retained deletion. */
+  getLastEditId(key: string): { peer: string; lamport: number } | undefined {
+    if (this._doc === undefined) return undefined;
+    this._ensureHydrated();
+    const writer = this._entries.get(key)?.writer;
+    return writer && { peer: writer.peer.toString(), lamport: writer.lamport };
+  }
+
   toJSON(): Record<string, unknown> {
     return Object.fromEntries(
       this.keys().map((key) => [key, runtimeValueToJson(this._entries.get(key)!.value!)]),

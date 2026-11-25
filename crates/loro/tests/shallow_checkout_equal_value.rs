@@ -286,6 +286,11 @@ fn checkout_reports_root_time_winner_of_equal_value() {
             replica.checkout(&root).unwrap();
             let ctx = format!("pad={pad} {name}");
             assert_eq!(
+                replica.get_map("map").get_last_edit_id("x"),
+                Some(loro::IdLp::new(1, 0)),
+                "{ctx}"
+            );
+            assert_eq!(
                 replica.get_map("map").get_last_editor("x"),
                 Some(1),
                 "{ctx}"

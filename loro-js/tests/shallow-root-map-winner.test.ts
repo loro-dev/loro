@@ -156,8 +156,10 @@ describe("shallow checkout of a value rewritten after the root", () => {
       shallow.checkout(root);
       expect(shallow.toJSON()).toEqual({ map: { a: 1, z: 0 } });
       expect(shallow.getMap("map").getLastEditor("a")).toBe("1");
+      expect(shallow.getMap("map").getLastEditId("a")).toEqual({ peer: "1", lamport: 0 });
       shallow.checkout(latest);
       expect(shallow.toJSON()).toEqual({ map: { a: 2, z: 0 } });
+      expect(shallow.getMap("map").getLastEditId("a")).toEqual({ peer: "1", lamport: 2 });
     }
   });
 
