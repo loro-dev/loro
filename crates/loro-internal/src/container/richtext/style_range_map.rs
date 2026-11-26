@@ -110,6 +110,11 @@ impl StyleValue {
     pub fn get(&self) -> Option<&Arc<StyleOp>> {
         self.set.last()
     }
+
+    /// Every style op of this key that covers the range, oldest first.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Arc<StyleOp>> + '_ {
+        self.set.iter()
+    }
 }
 
 impl Default for StyleRangeMap {
@@ -186,6 +191,16 @@ impl StyleRangeMap {
         } else {
             None
         }
+    }
+
+    /// The styles covering the element at entity `index`.
+    pub(crate) fn styles_at(&self, index: usize) -> &Styles {
+        if !self.has_style {
+            return &EMPTY_STYLES;
+        }
+
+        let cursor = self.tree.query::<LengthFinder>(&index).unwrap().cursor;
+        &self.tree.get_elem(cursor.leaf).unwrap().styles
     }
 
     pub(crate) fn range_contains_key(&self, range: Range<usize>, key: &StyleKey) -> bool {

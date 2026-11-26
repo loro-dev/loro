@@ -77,7 +77,8 @@ over graceful degradation.
   Which tree diff modes carry raw ops, and how tree events are built for each:
   [../../context/tree-events.md](../../context/tree-events.md).
 - `src/container/richtext/`: text state with style anchors. Where local inserts
-  go next to anchors, the insert cursor cache, and delete `start_id`s:
+  go next to anchors (styles from the displayed neighbours), the insert cursor
+  cache, and delete `start_id`s:
   [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).
   `tracker/`: one big op is one rope leaf but many id-to-cursor fragments; keep
   checkout linear in its length:

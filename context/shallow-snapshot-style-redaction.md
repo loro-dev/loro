@@ -34,11 +34,15 @@ a content-redaction mechanism).
    entity indexes and every style anchor counts as one element. Removing an
    anchor from the root state would shift the positions of every retained-tail
    and future op and corrupt replay.
-2. **Pairs with expand type `Both` are never redacted.** An empty both-expand
-   pair still captures future inserts (`find_best_insert_pos` walks past the
-   start anchor and stops before the end anchor), so its value is live data:
-   nulling it would make a shallow replica render differently from full-history
-   replicas — a convergence violation. For After/None/Before, insertion can
+2. **Pairs with expand type `Both` are never redacted.** An insert op whose
+   entity position lies inside an empty both-expand pair takes its style, so
+   its value is live data: nulling it would make a shallow replica render
+   differently from full-history replicas — a convergence violation. Since
+   loro-dev/loro#1240 local typing follows the displayed neighbours and no
+   longer lands inside such a pair, but clients before that fix do
+   (`find_best_insert_pos` walks past the start anchor and stops before the end
+   anchor), and their ops must render the same everywhere
+   (`shallow_snapshot_keeps_live_both_expand_style_value` forges one). For After/None/Before, insertion can
    never land inside an empty pair, so the value is unobservable.
 3. **Why "dead at the root" is permanent.** The only way text can appear inside
    an empty non-both pair is an insert concurrent with the range deletion. Such
