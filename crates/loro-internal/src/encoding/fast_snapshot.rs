@@ -600,7 +600,9 @@ mod tests {
 
     /// A shallow root used to keep a slice of the whole import input, so the op
     /// log and state sections stayed allocated after their stores were rewritten
-    /// (an edit and `reclaim_memory`), uncounted by the statistics.
+    /// (enough new data + `reclaim_memory` to trigger base SSTable compaction),
+    /// uncounted by the statistics. Incremental L0 flushes intentionally keep
+    /// small delta tables separate from the base snapshot slice until compacted.
     #[test]
     fn rewritten_stores_release_the_snapshot_input_buffer() {
         let (src, middle) = doc_with_history();
@@ -618,12 +620,29 @@ mod tests {
                 assert_eq!(doc.get_deep_value(), src.get_deep_value());
                 let map = doc.get_map("m");
                 for i in 0..200 {
-                    map.insert(&format!("k{i}"), "changed").unwrap();
+                    let mut v = String::new();
+                    for j in 0..8 {
+                        v.push_str(&format!(
+                            "{i:04}_{j}_{:016x}_",
+                            ((i * 8 + j) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                        ));
+                    }
+                    map.insert(&format!("k{i}"), v).unwrap();
+                    doc.commit_then_renew();
                 }
-                doc.get_text("t")
-                    .insert(0, "new", crate::cursor::PosType::Unicode)
-                    .unwrap();
-                doc.commit_then_renew();
+                let text = doc.get_text("t");
+                for i in 0..80 {
+                    let mut chunk = String::new();
+                    for j in 0..8 {
+                        chunk.push_str(&format!(
+                            "{i:03}_{j}_{:08x}_",
+                            ((i * 8 + j) as u32).wrapping_mul(2654435761)
+                        ));
+                    }
+                    text.insert(0, &chunk, crate::cursor::PosType::Unicode)
+                        .unwrap();
+                    doc.commit_then_renew();
+                }
                 let _ = doc.reclaim_memory();
             });
             assert!(released, "{name}: the input buffer is still allocated");

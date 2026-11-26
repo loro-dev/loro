@@ -7,6 +7,11 @@ use std::sync::{Arc, Weak};
 use std::{borrow::Cow, io::Write, sync::atomic::Ordering};
 
 use container_store::ContainerStore;
+pub(crate) use container_store::DemoteResult;
+#[cfg(test)]
+pub(crate) use container_store::{
+    cold_state_demotions_for_test, reset_cold_state_demotions_for_test,
+};
 use dead_containers_cache::DeadContainersCache;
 use enum_as_inner::EnumAsInner;
 use enum_dispatch::enum_dispatch;
@@ -902,6 +907,7 @@ impl DocState {
             self.dead_containers_cache.clear_revivable();
         }
         self.pre_txn(diff.origin.clone(), diff.by);
+        self.store.advance_access_epoch();
 
         // # Revival
         //
@@ -1409,6 +1415,7 @@ impl DocState {
 
     pub(crate) fn start_txn(&mut self, origin: InternalString, trigger: EventTriggerKind) {
         self.pre_txn(origin, trigger);
+        self.store.advance_access_epoch();
         self.in_txn = true;
     }
 
@@ -1643,6 +1650,7 @@ impl DocState {
         origin: InternalString,
     ) -> LoroResult<()> {
         self.pre_txn(Default::default(), EventTriggerKind::Import);
+        self.store.advance_access_epoch();
         if need_to_register_parent {
             for state in self.store.iter_and_decode_all() {
                 let idx = state.container_idx();
@@ -3147,18 +3155,30 @@ impl DocState {
         self.store.install_kv_backend(prepared);
     }
 
+    #[inline]
+    pub(crate) fn advance_access_epoch(&mut self) {
+        self.store.advance_access_epoch();
+    }
+
+    #[inline]
+    pub(crate) fn take_had_refaults(&mut self) -> bool {
+        self.store.take_had_refaults()
+    }
+
     pub(crate) fn demote_cold_states(
         &mut self,
         target_state_bytes: usize,
         extra_pinned: &FxHashSet<ContainerIdx>,
-    ) -> usize {
+        hard_or_force: bool,
+    ) -> DemoteResult {
         if !self.in_txn || self.changed_idx_in_txn.is_empty() {
             return self
                 .store
-                .demote_cold_states(target_state_bytes, extra_pinned);
+                .demote_cold_states(target_state_bytes, extra_pinned, hard_or_force);
         }
         let pinned = self.changed_idx_in_txn.to_pinned_set(extra_pinned);
-        self.store.demote_cold_states(target_state_bytes, &pinned)
+        self.store
+            .demote_cold_states(target_state_bytes, &pinned, hard_or_force)
     }
 }
 

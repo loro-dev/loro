@@ -370,7 +370,10 @@ pub type OnPush = Box<
 pub type OnPop = Box<dyn Fn(UndoOrRedo, CounterSpan, UndoItemMeta) + Send + Sync>;
 
 pub(crate) struct UndoManagerInner {
-    next_counter: Option<Counter>,
+    /// End counter of the current peer's last processed op in the oplog.
+    /// Kept valid across checkouts and peer changes so the next local edit or
+    /// undo group always starts from the exact current counter.
+    next_counter: Counter,
     undo_stack: Stack,
     redo_stack: Stack,
     processing_undo: bool,
@@ -1494,7 +1497,7 @@ thread_local! {
 impl UndoManagerInner {
     fn new(last_counter: Counter) -> Self {
         Self {
-            next_counter: Some(last_counter),
+            next_counter: last_counter,
             undo_stack: Default::default(),
             redo_stack: Default::default(),
             processing_undo: false,
@@ -1532,16 +1535,11 @@ impl UndoManagerInner {
         event: Option<DiffEvent>,
         now: Option<Timestamp>,
     ) {
-        let previous_counter = this.borrow().next_counter;
+        let previous = this.borrow().next_counter;
 
-        if Some(latest_counter) == previous_counter {
+        if latest_counter == previous {
             return;
         }
-
-        let Some(previous) = previous_counter else {
-            this.borrow_mut().next_counter = Some(latest_counter);
-            return;
-        };
 
         let span = CounterSpan::new(previous, latest_counter);
         // Usable only if it covers exactly the ops of this checkpoint.
@@ -1574,7 +1572,7 @@ impl UndoManagerInner {
                         inverse.as_ref(),
                         this.group.as_ref(),
                     ) {
-                        this.next_counter = Some(latest_counter);
+                        this.next_counter = latest_counter;
                         this.redo_stack.clear();
                         this.trim_undo_stack();
                         return;
@@ -1602,16 +1600,12 @@ impl UndoManagerInner {
         let elapsed = now - this.last_undo_time;
         let in_merge_interval = (0..this.merge_interval_in_ms).contains(&elapsed);
 
-        // If group is active, but there is nothing in the group, don't merge
-        // If the group is active and it's not the first push in the group, merge
-        let group_should_merge = this.group.is_some()
-            && match (
-                previous_counter,
-                this.group.as_ref().map(|g| g.start_counter),
-            ) {
-                (Some(previous), Some(active)) => previous != active,
-                _ => true,
-            };
+        // If group is active, but there is nothing in the group, don't merge.
+        // If the group is active and it's not the first push in the group, merge.
+        let group_should_merge = this
+            .group
+            .as_ref()
+            .is_some_and(|g| previous != g.start_counter);
 
         let should_merge = !this.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
 
@@ -1635,7 +1629,7 @@ impl UndoManagerInner {
             this.last_undo_time = now;
         }
 
-        this.next_counter = Some(latest_counter);
+        this.next_counter = latest_counter;
         this.redo_stack.clear();
         this.trim_undo_stack();
     }
@@ -1750,6 +1744,7 @@ impl UndoManager {
         let peer = Arc::new(AtomicU64::new(doc.peer_id()));
         let peer_clone = peer.clone();
         let peer_clone2 = peer.clone();
+        let doc_weak = Arc::downgrade(&doc.inner);
         let inner = Arc::new(ReentrantMutex::new(RefCell::new({
             let mut u = UndoManagerInner::new(get_counter_end(doc, doc.peer_id()));
             if let Some(max_bytes) = doc.memory_budget().max_undo_bytes {
@@ -1802,7 +1797,7 @@ impl UndoManager {
                         let mut inner = lock.borrow_mut();
                         let remap = remap_containers_local.lock();
                         inner.compose_remote_event(event.events, &remap);
-                        inner.next_counter = Some(id.counter + 1);
+                        inner.next_counter = id.counter + 1;
                     } else {
                         UndoManagerInner::record_checkpoint(&lock, id.counter + 1, Some(event));
                     }
@@ -1839,6 +1834,10 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Checkout => {
+                let next_counter = doc_weak.upgrade().map(|doc| {
+                    let peer = peer_clone.load(std::sync::atomic::Ordering::Relaxed);
+                    doc.oplog.lock().vv().get(&peer).cloned().unwrap_or(0)
+                });
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 if lock.borrow().paused {
                     return;
@@ -1846,7 +1845,10 @@ impl UndoManager {
                 let mut inner = lock.borrow_mut();
                 inner.undo_stack.clear();
                 inner.redo_stack.clear();
-                inner.next_counter = None;
+                inner.group = None;
+                if let Some(next_counter) = next_counter {
+                    inner.next_counter = next_counter;
+                }
             }
         }));
 
@@ -1855,7 +1857,7 @@ impl UndoManager {
             let mut inner = lock.borrow_mut();
             inner.undo_stack.clear();
             inner.redo_stack.clear();
-            inner.next_counter = Some(id.counter);
+            inner.next_counter = id.counter;
             if inner.group.is_some() {
                 // The stacks were cleared, so an active group starts over from
                 // the new peer's counter, like a group started now.
@@ -1922,6 +1924,10 @@ impl UndoManager {
     }
 
     pub fn group_start(&self) -> LoroResult<()> {
+        if !self.doc.can_edit() {
+            return Err(LoroError::EditWhenDetached);
+        }
+
         let lock = self.lock_inner();
         let mut inner = lock.borrow_mut();
 
@@ -1929,10 +1935,7 @@ impl UndoManager {
             return Err(LoroError::UndoGroupAlreadyStarted);
         }
 
-        inner.group =
-            Some(UndoGroup::new(inner.next_counter.ok_or_else(|| {
-                LoroError::Unknown("UndoManager is not ready".into())
-            })?));
+        inner.group = Some(UndoGroup::new(inner.next_counter));
 
         Ok(())
     }
@@ -2210,7 +2213,7 @@ impl UndoManager {
                     opposite_inverse,
                 );
                 inner.trim_undo_stack();
-                inner.next_counter = Some(new_counter);
+                inner.next_counter = new_counter;
                 executed = true;
             }
         }
@@ -2503,7 +2506,7 @@ mod merge_timer_tests {
     fn noncontiguous_span_starts_a_new_merge_window() {
         let inner = manager();
         record(&inner, 1, 100_000);
-        inner.borrow_mut().next_counter = Some(2);
+        inner.borrow_mut().next_counter = 2;
         record(&inner, 3, 100_300);
         assert_eq!(inner.borrow().last_undo_time, 100_300);
         record(&inner, 4, 100_600);

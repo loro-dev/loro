@@ -13,16 +13,37 @@ use crate::{
 };
 use bytes::Bytes;
 use loro_common::{ContainerID, ContainerType, LoroResult, LoroValue};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{collections::VecDeque, sync::Arc};
 
 use super::ContainerWrapper;
 
 const PAGE_SIZE: usize = 64;
+const REFAULT_WINDOW_EPOCHS: u64 = 4;
+const REFAULT_COOLDOWN_EPOCHS: u64 = 16;
+const MAX_REFAULT_TRACKED: usize = 512;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct DemoteResult {
+    pub reclaimed_bytes: usize,
+    pub blocked_by_protection: bool,
+    pub had_refaults: bool,
+}
 
 #[cfg(test)]
 thread_local! {
     static PAGE_STATS_RECOMPUTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static COLD_STATE_DEMOTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn cold_state_demotions_for_test() -> usize {
+    COLD_STATE_DEMOTIONS.with(|n| n.get())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_cold_state_demotions_for_test() {
+    COLD_STATE_DEMOTIONS.with(|n| n.set(0));
 }
 
 #[derive(Debug)]
@@ -98,13 +119,25 @@ pub(crate) struct InnerStore {
     /// no longer implies `store` contains every entry in `kv`, so `load_all()`
     /// must re-scan `kv` instead of short-circuiting.
     evicted_since_full_load: bool,
-    /// Clock hand for two-pass cold state demotion (`demote_cold_states`).
+    /// Clock hand for three-pass cold state demotion (`demote_cold_states`).
     demote_clock_hand: usize,
     /// Whether `self.arena` already has a KV parent resolver pointing at `self.kv`.
     parent_resolver_installed: bool,
     /// Stack of active created-container journals so nested rollback scopes
     /// can roll back independently or merge into an enclosing scope on success.
     created_journal_stack: Vec<Vec<ContainerIdx>>,
+    /// Monotonic counter incremented per actual `demote_cold_states` sweep.
+    demote_epoch: u64,
+    /// Monotonic counter bumped across transactions / diff applications / direct imports.
+    access_epoch: u64,
+    /// Bounded recent soft-demotion history (`ContainerIdx -> demote_epoch`).
+    recently_demoted: FxHashMap<ContainerIdx, u64>,
+    recently_demoted_order: VecDeque<(ContainerIdx, u64)>,
+    /// Bounded cooldown set (`ContainerIdx -> protected_until_demote_epoch`) for refaulting containers.
+    refault_protected: FxHashMap<ContainerIdx, u64>,
+    refault_protected_order: VecDeque<(ContainerIdx, u64)>,
+    /// Whether any container re-materialized within `REFAULT_WINDOW_EPOCHS` since the last sweep.
+    refaults_since_last_sweep: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,16 +315,102 @@ impl InnerStore {
             })
     }
 
+    pub(crate) fn advance_access_epoch(&mut self) {
+        self.access_epoch = self.access_epoch.saturating_add(1).max(1);
+    }
+
+    pub(crate) fn take_had_refaults(&mut self) -> bool {
+        std::mem::take(&mut self.refaults_since_last_sweep)
+    }
+
+    fn record_recently_demoted(&mut self, idx: ContainerIdx, epoch: u64) {
+        if let Some(existing) = self.recently_demoted.get_mut(&idx) {
+            *existing = epoch;
+        } else {
+            while self.recently_demoted.len() >= MAX_REFAULT_TRACKED {
+                let Some((old_idx, old_epoch)) = self.recently_demoted_order.pop_front() else {
+                    break;
+                };
+                if self.recently_demoted.get(&old_idx).copied() == Some(old_epoch) {
+                    self.recently_demoted.remove(&old_idx);
+                }
+            }
+            self.recently_demoted.insert(idx, epoch);
+        }
+        self.recently_demoted_order.push_back((idx, epoch));
+        if self.recently_demoted_order.len() > MAX_REFAULT_TRACKED * 2 {
+            let map = &self.recently_demoted;
+            self.recently_demoted_order
+                .retain(|(i, e)| map.get(i).copied() == Some(*e));
+        }
+    }
+
+    fn mark_refault_protected(&mut self, idx: ContainerIdx, until_epoch: u64) {
+        if let Some(existing) = self.refault_protected.get_mut(&idx) {
+            *existing = (*existing).max(until_epoch);
+            let updated = *existing;
+            self.refault_protected_order.push_back((idx, updated));
+        } else {
+            while self.refault_protected.len() >= MAX_REFAULT_TRACKED {
+                let Some((old_idx, old_until)) = self.refault_protected_order.pop_front() else {
+                    break;
+                };
+                if self.refault_protected.get(&old_idx).copied() == Some(old_until) {
+                    self.refault_protected.remove(&old_idx);
+                }
+            }
+            self.refault_protected.insert(idx, until_epoch);
+            self.refault_protected_order.push_back((idx, until_epoch));
+        }
+        if self.refault_protected_order.len() > MAX_REFAULT_TRACKED * 2 {
+            let map = &self.refault_protected;
+            self.refault_protected_order
+                .retain(|(i, u)| map.get(i).copied() == Some(*u));
+        }
+    }
+
+    fn note_state_loaded_from_kv(&mut self, idx: ContainerIdx) {
+        if let Some(evicted_epoch) = self.recently_demoted.remove(&idx) {
+            if self.demote_epoch.saturating_sub(evicted_epoch) <= REFAULT_WINDOW_EPOCHS {
+                let until = self.demote_epoch.saturating_add(REFAULT_COOLDOWN_EPOCHS);
+                self.mark_refault_protected(idx, until);
+                self.refaults_since_last_sweep = true;
+            }
+        }
+    }
+
+    #[inline]
+    fn is_refault_protected_in(
+        refault_protected: &FxHashMap<ContainerIdx, u64>,
+        demote_epoch: u64,
+        idx: ContainerIdx,
+    ) -> bool {
+        refault_protected
+            .get(&idx)
+            .is_some_and(|&until| demote_epoch <= until)
+    }
+
+    fn prune_expired_refault_state(&mut self) {
+        let epoch = self.demote_epoch;
+        self.refault_protected.retain(|_, until| epoch <= *until);
+        self.recently_demoted
+            .retain(|_, evicted| epoch.saturating_sub(*evicted) <= REFAULT_WINDOW_EPOCHS);
+    }
+
     pub(super) fn get_or_insert_with(
         &mut self,
         idx: ContainerIdx,
         f: impl FnOnce() -> ContainerWrapper,
     ) -> &mut ContainerWrapper {
+        let mut loaded_from_kv = false;
         if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             let container = match self.kv.get(&key) {
-                Some(bytes) => ContainerWrapper::new_from_bytes(bytes),
+                Some(bytes) => {
+                    loaded_from_kv = true;
+                    ContainerWrapper::new_from_bytes(bytes)
+                }
                 None => {
                     if let Some(journal) = self.created_journal_stack.last_mut() {
                         journal.push(idx);
@@ -301,8 +420,14 @@ impl InnerStore {
             };
             Self::insert_entry(&mut self.pages, &mut self.live_pages, idx, container);
         }
+        if loaded_from_kv {
+            self.note_state_loaded_from_kv(idx);
+        }
 
-        self.get_entry_mut(idx).unwrap()
+        let epoch = self.access_epoch;
+        let entry = self.get_entry_mut(idx).unwrap();
+        entry.set_last_access_epoch(epoch);
+        entry
     }
 
     pub(super) fn ensure_container(
@@ -319,6 +444,7 @@ impl InnerStore {
         if let Some(v) = self.kv.get(&key) {
             let c = ContainerWrapper::new_from_bytes(v);
             Self::insert_entry(&mut self.pages, &mut self.live_pages, idx, c);
+            self.note_state_loaded_from_kv(idx);
             return;
         }
 
@@ -362,6 +488,8 @@ impl InnerStore {
                 .arena
                 .get_container_id(idx)
                 .is_none_or(|id| self.kv.get(&id.to_bytes()).is_none()));
+            self.recently_demoted.remove(&idx);
+            self.refault_protected.remove(&idx);
             if let Some(mut removed) =
                 Self::take_slot_in(&mut self.pages, &mut self.live_pages, Self::slot(idx))
             {
@@ -376,16 +504,24 @@ impl InnerStore {
     }
 
     pub(crate) fn get_mut(&mut self, idx: ContainerIdx) -> Option<&mut ContainerWrapper> {
+        let mut loaded_from_kv = false;
         if self.get_entry_mut(idx).is_none() {
             let id = self.arena.get_container_id(idx).unwrap();
             let key = id.to_bytes();
             if let Some(v) = self.kv.get(&key) {
                 let c = ContainerWrapper::new_from_bytes(v);
                 Self::insert_entry(&mut self.pages, &mut self.live_pages, idx, c);
+                loaded_from_kv = true;
             }
         }
+        if loaded_from_kv {
+            self.note_state_loaded_from_kv(idx);
+        }
 
-        self.get_entry_mut(idx)
+        let epoch = self.access_epoch;
+        let entry = self.get_entry_mut(idx)?;
+        entry.set_last_access_epoch(epoch);
+        Some(entry)
     }
 
     pub(crate) fn with_container_for_read<R>(
@@ -394,16 +530,25 @@ impl InnerStore {
         f: impl FnOnce(&mut ContainerWrapper) -> R,
     ) -> Option<R> {
         let (page_idx, offset) = Self::page_and_offset(Self::slot(idx));
+        let epoch = self.access_epoch;
         if let Some(page) = self.pages.get_mut(page_idx).and_then(Option::as_mut) {
             if let Some(entry) = page.slots.get_mut(offset).and_then(Option::as_mut) {
                 debug_assert_eq!(entry.kind(), idx.get_type());
+                let was_materialized = entry.is_materialized_state();
                 let was_fully_materialized = entry.is_fully_materialized_state();
                 let ans = f(entry);
-                if !was_fully_materialized && entry.is_materialized_state() {
+                let now_materialized = entry.is_materialized_state();
+                if !was_fully_materialized && now_materialized {
                     page.cached_state_bytes.set(None);
+                }
+                if now_materialized {
+                    entry.set_last_access_epoch(epoch);
                 }
                 if entry.needs_value_cache_tracking() && !entry.try_mark_value_cache_hit() {
                     self.track_value_cache(idx);
+                }
+                if !was_materialized && now_materialized {
+                    self.note_state_loaded_from_kv(idx);
                 }
                 return Some(ans);
             }
@@ -415,7 +560,14 @@ impl InnerStore {
             let mut container = ContainerWrapper::new_from_bytes(v);
             let ans = f(&mut container);
             if container.has_cached_value() {
+                let now_materialized = container.is_materialized_state();
+                if now_materialized {
+                    container.set_last_access_epoch(epoch);
+                }
                 Self::insert_entry(&mut self.pages, &mut self.live_pages, idx, container);
+                if now_materialized {
+                    self.note_state_loaded_from_kv(idx);
+                }
                 self.track_value_cache(idx);
             }
             return Some(ans);
@@ -842,6 +994,13 @@ impl InnerStore {
         self.value_cache_bytes = 0;
         self.evicted_since_full_load = false;
         self.demote_clock_hand = 0;
+        self.demote_epoch = 0;
+        self.access_epoch = 1;
+        self.recently_demoted.clear();
+        self.recently_demoted_order.clear();
+        self.refault_protected.clear();
+        self.refault_protected_order.clear();
+        self.refaults_since_last_sweep = false;
         self.load_state = LoadState::Lazy;
         Ok(fr)
     }
@@ -869,6 +1028,13 @@ impl InnerStore {
         self.value_cache_bytes = 0;
         self.evicted_since_full_load = false;
         self.demote_clock_hand = 0;
+        self.demote_epoch = 0;
+        self.access_epoch = 1;
+        self.recently_demoted.clear();
+        self.recently_demoted_order.clear();
+        self.refault_protected.clear();
+        self.refault_protected_order.clear();
+        self.refaults_since_last_sweep = false;
         self.load_state = LoadState::Lazy;
         Ok(())
     }
@@ -973,6 +1139,13 @@ impl InnerStore {
             demote_clock_hand: 0,
             parent_resolver_installed: false,
             created_journal_stack: Vec::new(),
+            demote_epoch: 0,
+            access_epoch: 1,
+            recently_demoted: FxHashMap::default(),
+            recently_demoted_order: VecDeque::new(),
+            refault_protected: FxHashMap::default(),
+            refault_protected_order: VecDeque::new(),
+            refaults_since_last_sweep: false,
         }
     }
 
@@ -1041,6 +1214,13 @@ impl InnerStore {
             demote_clock_hand: 0,
             parent_resolver_installed: false,
             created_journal_stack: Vec::new(),
+            demote_epoch: 0,
+            access_epoch: 1,
+            recently_demoted: FxHashMap::default(),
+            recently_demoted_order: VecDeque::new(),
+            refault_protected: FxHashMap::default(),
+            refault_protected_order: VecDeque::new(),
+            refaults_since_last_sweep: false,
         }
     }
 
@@ -1085,18 +1265,39 @@ impl InnerStore {
         freed
     }
 
-    /// Demote cold materialized container states to `self.kv` using a two-pass
-    /// clock sweep until materialized state bytes drop to `target_state_bytes`.
+    /// Demote cold materialized container states to `self.kv` until
+    /// materialized state bytes drop to `target_state_bytes`.
+    ///
+    /// In soft watermark mode (`hard_or_force == false`), this uses three passes:
+    /// - Pass 0: give referenced or current-epoch containers a second chance and
+    ///   skip refault-protected hot containers.
+    /// - Pass 1: demote older-epoch containers first without evicting containers
+    ///   touched in the current operation epoch or refault-protected containers.
+    /// - Pass 2: if still above `target_state_bytes`, demote remaining
+    ///   non-refault-protected containers (while keeping `refault_protected` hot
+    ///   containers pinned until cooldown expires).
+    ///
+    /// In hard/forced mode (`hard_or_force == true`), refault and current-epoch
+    /// protections are bypassed so `reclaim_memory()` and hard limits stay
+    /// deterministic.
     pub(crate) fn demote_cold_states(
         &mut self,
         target_state_bytes: usize,
         pinned: &FxHashSet<ContainerIdx>,
-    ) -> usize {
+        hard_or_force: bool,
+    ) -> DemoteResult {
+        let had_refaults = self.take_had_refaults();
         let mut cur_bytes = self.estimated_state_bytes();
         if cur_bytes <= target_state_bytes || self.live_pages == 0 {
-            return 0;
+            return DemoteResult {
+                reclaimed_bytes: 0,
+                blocked_by_protection: false,
+                had_refaults,
+            };
         }
 
+        self.demote_epoch = self.demote_epoch.saturating_add(1);
+        self.prune_expired_refault_state();
         self.ensure_parent_resolver_installed();
         let journal_set: FxHashSet<ContainerIdx> = self
             .created_journal_stack
@@ -1104,11 +1305,16 @@ impl InnerStore {
             .flat_map(|v| v.iter().copied())
             .collect();
         let total_slots = self.pages.len() * PAGE_SIZE;
+        let current_epoch = self.access_epoch;
+        let max_passes = if hard_or_force { 2 } else { 3 };
         let mut reclaimed = 0usize;
+        let mut blocked_by_protection = false;
         let mut updates: Vec<(Bytes, Bytes)> = Vec::new();
+        let mut demoted_idxs: Vec<ContainerIdx> = Vec::new();
+        let mut refreshed_hot_idxs: Vec<ContainerIdx> = Vec::new();
         let deleted = self.config.deleted_root_containers.lock();
 
-        for pass in 0..2 {
+        for pass in 0..max_passes {
             let start_hand = self.demote_clock_hand % total_slots;
             let mut step = 0usize;
             while step < total_slots {
@@ -1147,7 +1353,32 @@ impl InnerStore {
                 if pinned.contains(&idx) || journal_set.contains(&idx) || c.is_state_empty() {
                     continue;
                 }
-                if pass == 0 && c.take_state_referenced() {
+                if !hard_or_force {
+                    if Self::is_refault_protected_in(
+                        &self.refault_protected,
+                        self.demote_epoch,
+                        idx,
+                    ) {
+                        if pass == 0 && c.last_access_epoch() >= current_epoch {
+                            refreshed_hot_idxs.push(idx);
+                        }
+                        if pass == max_passes - 1 {
+                            blocked_by_protection = true;
+                        }
+                        continue;
+                    }
+                    if pass == 0 {
+                        if c.last_access_epoch() >= current_epoch {
+                            let _ = c.take_state_referenced();
+                            continue;
+                        }
+                        if c.take_state_referenced() {
+                            continue;
+                        }
+                    } else if pass == 1 && c.last_access_epoch() >= current_epoch {
+                        continue;
+                    }
+                } else if pass == 0 && c.take_state_referenced() {
                     continue;
                 }
                 let Some(cid) = self.arena.get_container_id(idx) else {
@@ -1172,6 +1403,9 @@ impl InnerStore {
                         .value_cache_bytes
                         .saturating_sub(old.take_accounted_value_cache_bytes());
                 }
+                demoted_idxs.push(idx);
+                #[cfg(test)]
+                COLD_STATE_DEMOTIONS.with(|n| n.set(n.get() + 1));
                 let page_overhead_after = self.pages[page_idx]
                     .as_deref()
                     .map_or(0, StorePage::overhead_bytes);
@@ -1187,12 +1421,31 @@ impl InnerStore {
             }
         }
         drop(deleted);
+        if !hard_or_force {
+            let epoch = self.demote_epoch;
+            let extended_until = epoch.saturating_add(REFAULT_COOLDOWN_EPOCHS);
+            for idx in refreshed_hot_idxs {
+                self.mark_refault_protected(idx, extended_until);
+            }
+            for idx in demoted_idxs {
+                self.record_recently_demoted(idx, epoch);
+            }
+        } else {
+            for idx in demoted_idxs {
+                self.recently_demoted.remove(&idx);
+                self.refault_protected.remove(&idx);
+            }
+        }
         self.compact_trailing_empty_pages();
 
         if !updates.is_empty() {
             self.kv.set_all(updates);
         }
-        reclaimed
+        DemoteResult {
+            reclaimed_bytes: reclaimed,
+            blocked_by_protection,
+            had_refaults,
+        }
     }
 
     pub(crate) fn fork(&mut self, arena: SharedArena, config: &Configure) -> InnerStore {
@@ -1307,7 +1560,7 @@ mod tests {
                     let mut state = doc.app_state().lock();
                     let store = &mut state.store.store;
                     store.demote_clock_hand = hand;
-                    store.demote_cold_states(0, &Default::default());
+                    store.demote_cold_states(0, &Default::default(), true);
                     assert!(
                         store
                             .iter_entries()

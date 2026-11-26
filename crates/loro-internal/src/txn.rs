@@ -749,6 +749,7 @@ impl Transaction {
                             state.abort_txn();
                             state.clear_local_rollback_stack();
                             drop(state);
+                            doc.cleanup_rollback_transient_caches(&budget_err);
                             doc.refresh_cached_doc_bytes_unlocked();
                             return Err(budget_err);
                         }

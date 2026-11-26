@@ -613,6 +613,7 @@ impl LoroDoc {
                 "budget rollback scope must be intact"
             );
             self.rollback_transaction_scope_inner(txn, scope)?;
+            self.cleanup_rollback_transient_caches(&err);
             self.refresh_cached_doc_bytes_unlocked();
             txn.doc_budget_limit = None;
             if self.has_max_doc_bytes() {
@@ -911,7 +912,7 @@ impl LoroDoc {
         origin: InternalString,
         values: ImportedValues,
     ) -> Result<ImportStatus, LoroError> {
-        let result = self.import_without_emitting_input(input, origin, values);
+        let result = self.import_without_emitting_input(input, origin, values, true);
         // The import rollback scope has closed, so history compaction is now
         // safe even for budgets that configure only soft watermarks.
         self.enforce_memory_watermarks_with_txn_bytes(0, false);
@@ -924,12 +925,18 @@ impl LoroDoc {
         input: ImportInput<'_>,
         origin: InternalString,
         values: ImportedValues,
+        preflight_global: bool,
     ) -> Result<ImportStatus, LoroError> {
         ensure_cov::notify_cov("loro_internal::import");
         self.touch_access_tick();
-        match &input {
-            ImportInput::Slice(bytes) => self.check_import_blob_limit(bytes.len())?,
-            ImportInput::Bytes(bytes) => self.check_import_blob_limit(bytes.len())?,
+        let len = match &input {
+            ImportInput::Slice(bytes) => bytes.len(),
+            ImportInput::Bytes(bytes) => bytes.len(),
+        };
+        if preflight_global {
+            self.check_import_blob_limit(len)?;
+        } else {
+            self.check_import_blob_size_only(len)?;
         }
         match input {
             ImportInput::Slice(bytes) => {
@@ -2499,6 +2506,11 @@ impl LoroDoc {
                 self.end_apply_diff_scope(scope);
             } else {
                 self.rollback_apply_diff_scope(scope)?;
+                if let Err(err) = &result {
+                    if err.is_memory_limit_exceeded() {
+                        self.cleanup_rollback_transient_caches(err);
+                    }
+                }
             }
         }
         if global_budget_flags() != 0 {
@@ -2564,6 +2576,41 @@ impl LoroDoc {
             txn.end_rollback_scope(scope);
         }
         self.state.lock().end_local_rollback(scope);
+    }
+
+    pub(crate) fn cleanup_rollback_transient_caches(&self, err: &LoroError) {
+        let max_doc_bytes = self.memory_budget.lock().max_doc_bytes;
+        let oplog = self.oplog.lock();
+        let mut state = self.state.lock();
+        state.evict_value_cache_to_bytes(0);
+        state.reclaim_auxiliary_caches();
+        if !self.kv_block_cache.is_delegating_to_parent() {
+            self.kv_block_cache.clear();
+        } else if err
+            .memory_limit_info()
+            .is_some_and(|info| info.kind == MemoryLimitKind::GlobalBudget)
+        {
+            global_pool().global_block_cache.clear();
+        }
+        oplog.compact_history();
+        oplog.with_history_cache(|h| h.free_all());
+        self.diff_calculator.lock().reclaim_cold_caches(0);
+
+        let is_global_err = err
+            .memory_limit_info()
+            .is_some_and(|info| info.kind == MemoryLimitKind::GlobalBudget);
+        let over_doc_limit = max_doc_bytes
+            .is_some_and(|limit| self.memory_stats_locked(&oplog, &state, 0).total_bytes > limit);
+        if over_doc_limit || is_global_err {
+            oplog.evict_flushed_history_cache();
+        }
+        if (over_doc_limit || is_global_err) && state.state_estimated_bytes() > 0 {
+            let demote_res = state.demote_cold_states(0, &Default::default(), true);
+            if demote_res.reclaimed_bytes > 0 {
+                state.flush_kv();
+            }
+            oplog.flush_kv();
+        }
     }
 
     pub(crate) fn rollback_transaction_scope(
@@ -3525,7 +3572,7 @@ impl LoroDoc {
             .iter()
             .enumerate()
             .map(|(index, blob)| {
-                self.check_import_blob_limit(blob.len())?;
+                self.check_import_blob_size_only(blob.len())?;
                 let meta = BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Slice(blob.as_slice())))
             })
@@ -3556,7 +3603,7 @@ impl LoroDoc {
             .into_iter()
             .enumerate()
             .map(|(index, blob)| {
-                self.check_import_blob_limit(blob.len())?;
+                self.check_import_blob_size_only(blob.len())?;
                 let meta =
                     BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)?;
                 Ok((index, meta, BatchBlobSource::Bytes(blob)))
@@ -3680,7 +3727,7 @@ impl LoroDoc {
         let mut blobs = Vec::with_capacity(bytes.len());
         for (index, blob) in bytes.iter().enumerate() {
             match self
-                .check_import_blob_limit(blob.len())
+                .check_import_blob_size_only(blob.len())
                 .and_then(|()| BatchBlobSortKey::decode(&ImportInput::Slice(blob), &mut scratch))
             {
                 Ok(meta) => {
@@ -3739,7 +3786,7 @@ impl LoroDoc {
                     continue;
                 }
             };
-            match self.check_import_blob_limit(blob.len()).and_then(|()| {
+            match self.check_import_blob_size_only(blob.len()).and_then(|()| {
                 BatchBlobSortKey::decode(&ImportInput::Bytes(blob.clone()), &mut scratch)
             }) {
                 Ok(meta) => {
@@ -3934,6 +3981,19 @@ impl LoroDoc {
         // owns that cleanup and the blob loop runs inside `catch_unwind` so it also
         // runs before a panic is re-raised.
         self.touch_access_tick();
+        let max_blob_len = blobs
+            .iter()
+            .map(|(_, _, src)| match src {
+                BatchBlobSource::Slice(s) => s.len(),
+                BatchBlobSource::Bytes(b) => b.len(),
+                BatchBlobSource::Loader(_) => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        // `include_buffer_alloc == false` only runs best-effort global watermark
+        // reclamation (never returns `Err`); ignore the result so `txn` cannot
+        // be dropped without renewing auto-commit.
+        let _ = self.preflight_global_watermark_for_import(max_blob_len, false);
         let was_attached = !self.is_detached();
         let linear_before = wasm_linear_memory_bytes();
         let has_doc_budget = self.has_max_doc_bytes();
@@ -4021,7 +4081,7 @@ impl LoroDoc {
                     // succeeds. Its state is part of the batch's rollback scope.
                     let result = loaded.and_then(|input| match input {
                         ImportInput::Slice(data) => {
-                            guard.doc.check_import_blob_limit(data.len())?;
+                            guard.doc.check_import_blob_size_only(data.len())?;
                             parse_header_and_body(data, true).and_then(|parsed| {
                                 guard.doc.init_snapshot_preserving_pending(
                                     parsed.mode,
@@ -4032,7 +4092,7 @@ impl LoroDoc {
                             })
                         }
                         ImportInput::Bytes(data) => {
-                            guard.doc.check_import_blob_limit(data.len())?;
+                            guard.doc.check_import_blob_size_only(data.len())?;
                             parse_header_and_body_bytes(data, true).and_then(|parsed| {
                                 guard.doc.init_snapshot_preserving_pending_bytes(
                                     parsed.mode,
@@ -4059,9 +4119,12 @@ impl LoroDoc {
                     result
                 } else {
                     loaded.and_then(|input| {
-                        guard
-                            .doc
-                            .import_without_emitting_input(input, Default::default(), values)
+                        guard.doc.import_without_emitting_input(
+                            input,
+                            Default::default(),
+                            values,
+                            false,
+                        )
                     })
                 };
                 if let Ok(s) = &result {
@@ -4204,6 +4267,10 @@ impl LoroDoc {
                 origin,
                 triggered_by,
             )?;
+            // State is now at the latest version of the op log, so mark the doc
+            // attached before emitting events. Subscribers (such as UndoManager)
+            // observe the attached state during checkout_to_latest() / attach().
+            self.set_detached(false);
             // We don't need to shrink frontiers because oplog's frontiers are already shrinked.
             // Snapshot replay is part of a larger atomic import. Its events
             // must stay queued until pending replay / batch validation succeeds.
@@ -4214,7 +4281,6 @@ impl LoroDoc {
                 this.renew_peer_id();
             }
 
-            self.set_detached(false);
             Ok(())
         })
     }
@@ -6684,15 +6750,21 @@ struct GlobalMemoryPool {
     soft_backoff: SoftBackoff,
 }
 
-/// Skips soft sweeps that recently failed to reach their target: one global
+/// Skips soft sweeps that recently failed to reach their target or triggered
+/// Stage 1 cache-rebuild thrashing between consecutive sweeps: one global
 /// (`GlobalMemoryPool::soft_backoff`) and one per document
 /// (`LoroDocInner::soft_backoff`, used by `enforce_watermarks_with_budget_locked`).
 #[derive(Debug)]
 pub(crate) struct SoftBackoff {
-    /// Usage left by the last sweep that could not reach its target, or 0.
+    /// Usage left by the last sweep that could not reach its target (or the
+    /// rebuilt footprint after detecting cache-rebuild thrashing), or 0.
     floor: std::sync::atomic::AtomicU64,
     /// Sweeps skipped since `floor` was set.
     skips: std::sync::atomic::AtomicU32,
+    /// Total bytes observed just before the last soft sweep, or 0.
+    last_pre_sweep_bytes: std::sync::atomic::AtomicU64,
+    /// Stage 1 cache bytes cleared by the last soft sweep, or 0.
+    last_cleared_cache_bytes: std::sync::atomic::AtomicU64,
 }
 
 impl SoftBackoff {
@@ -6700,6 +6772,8 @@ impl SoftBackoff {
         Self {
             floor: std::sync::atomic::AtomicU64::new(0),
             skips: std::sync::atomic::AtomicU32::new(0),
+            last_pre_sweep_bytes: std::sync::atomic::AtomicU64::new(0),
+            last_cleared_cache_bytes: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -6707,6 +6781,7 @@ impl SoftBackoff {
     /// watermark: the previous sweep could not get below its target, usage has
     /// not grown meaningfully since, and fewer than [`SOFT_BACKOFF_MAX_SKIPS`]
     /// checks were skipped.
+    #[cfg(test)]
     fn backed_off(&self, used: u64) -> bool {
         let floor = self.floor.load(Relaxed);
         if floor == 0 {
@@ -6717,9 +6792,66 @@ impl SoftBackoff {
             && self.skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS
     }
 
+    /// Detects both stalled-floor backoff and Stage 1 cache-rebuild thrashing
+    /// between consecutive soft sweeps: if the last soft sweep cleared
+    /// `last_cleared_cache_bytes` (e.g. `block_cache_bytes`) and the next
+    /// crossing above the high watermark has rebuilt at least half of those
+    /// cache bytes without genuine non-cache growth (regardless of how many
+    /// below-high checks occurred in between), arms `SoftBackoff` at the
+    /// rebuilt footprint so periodic reads do not clear and re-decompress
+    /// caches on every read.
+    fn backed_off_with_cache(&self, used: u64, cur_cache: u64) -> bool {
+        let floor = self.floor.load(Relaxed);
+        if floor != 0 {
+            let growth = (floor / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+            if used <= floor.saturating_add(growth) {
+                return self.skips.fetch_add(1, Relaxed) < SOFT_BACKOFF_MAX_SKIPS;
+            }
+        }
+        let cleared_cache = self.last_cleared_cache_bytes.load(Relaxed);
+        if cleared_cache > 0 {
+            let pre_sweep = self.last_pre_sweep_bytes.load(Relaxed);
+            let pre_growth = (pre_sweep / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+            let pre_non_cache = pre_sweep.saturating_sub(cleared_cache);
+            let cur_non_cache = used.saturating_sub(cur_cache);
+            let non_cache_growth =
+                (pre_non_cache / SOFT_BACKOFF_GROWTH_DIVISOR).max(SOFT_BACKOFF_MIN_GROWTH);
+            if cur_cache >= cleared_cache / 2
+                && used <= pre_sweep.saturating_add(pre_growth)
+                && cur_non_cache <= pre_non_cache.saturating_add(non_cache_growth)
+            {
+                self.skips.store(1, Relaxed);
+                self.floor.store(used.max(pre_sweep).max(1), Relaxed);
+                self.last_cleared_cache_bytes.store(0, Relaxed);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn note_check_below_high(&self, clear_floor: bool) {
+        if clear_floor && self.floor.load(Relaxed) != 0 {
+            self.floor.store(0, Relaxed);
+        }
+    }
+
     fn record(&self, reached_target: bool, used: u64) {
+        self.record_with_cache(reached_target, used, 0, 0);
+    }
+
+    fn record_with_cache(
+        &self,
+        reached_target: bool,
+        used: u64,
+        pre_sweep: u64,
+        cleared_cache: u64,
+    ) {
+        self.last_pre_sweep_bytes.store(pre_sweep, Relaxed);
+        self.last_cleared_cache_bytes.store(cleared_cache, Relaxed);
         if reached_target {
-            self.reset();
+            if self.floor.load(Relaxed) != 0 {
+                self.floor.store(0, Relaxed);
+            }
         } else {
             self.skips.store(0, Relaxed);
             self.floor.store(used.max(1), Relaxed);
@@ -6730,7 +6862,22 @@ impl SoftBackoff {
         if self.floor.load(Relaxed) != 0 {
             self.floor.store(0, Relaxed);
         }
+        if self.last_cleared_cache_bytes.load(Relaxed) != 0 {
+            self.last_cleared_cache_bytes.store(0, Relaxed);
+            self.last_pre_sweep_bytes.store(0, Relaxed);
+        }
+        self.skips.store(0, Relaxed);
     }
+}
+
+#[inline]
+fn stage1_cache_bytes(stats: &DocMemoryStats) -> u64 {
+    stats
+        .block_cache_bytes
+        .saturating_add(stats.value_cache_bytes)
+        .saturating_add(stats.change_cache_bytes)
+        .saturating_add(stats.history_cache_bytes)
+        .saturating_add(stats.diff_calc_bytes) as u64
 }
 
 /// A failed soft sweep is retried once usage grows by this fraction of what it
@@ -6760,6 +6907,7 @@ impl GlobalMemoryPool {
     /// checks were skipped. Each sweep runs Stage 1 (including a full KV flush
     /// and arena copy) on the active document, so repeating one that cannot
     /// succeed made every commit pay for it. Hard admission does not use this.
+    #[cfg(test)]
     fn soft_reclaim_backed_off(&self, used: u64) -> bool {
         self.soft_backoff.backed_off(used)
     }
@@ -6914,6 +7062,7 @@ impl GlobalMemoryPool {
         exclude_doc_id: Option<u64>,
         target_bytes: u64,
         force_full: bool,
+        hard_demote: bool,
     ) -> u64 {
         let mut cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
@@ -6947,7 +7096,7 @@ impl GlobalMemoryPool {
             if !force_full && cur_used <= target_bytes {
                 break;
             }
-            if try_reclaim_idle_doc(doc, false, 0, false) {
+            if try_reclaim_idle_doc(doc, false, 0, false, false) {
                 stage1_done.insert(doc.pool_doc_id);
             }
             cur_used = if heap_tracker_active() {
@@ -6962,6 +7111,7 @@ impl GlobalMemoryPool {
         }
 
         // Pass 2 (Stage 2): demote cold materialized containers to compressed KV stores (LRU first).
+        let allow_hard_demote = force_full || hard_demote;
         for doc in &candidates {
             if !force_full && cur_used <= target_bytes {
                 break;
@@ -6971,7 +7121,13 @@ impl GlobalMemoryPool {
             } else {
                 usize::try_from(cur_used.saturating_sub(target_bytes)).unwrap_or(usize::MAX)
             };
-            let _ = try_reclaim_idle_doc(doc, true, need, stage1_done.contains(&doc.pool_doc_id));
+            let _ = try_reclaim_idle_doc(
+                doc,
+                true,
+                need,
+                stage1_done.contains(&doc.pool_doc_id),
+                allow_hard_demote,
+            );
             cur_used = if heap_tracker_active() {
                 tracked_allocated_heap_bytes()
             } else {
@@ -6988,11 +7144,36 @@ impl GlobalMemoryPool {
         exclude_doc_id: Option<u64>,
         force_full: bool,
     ) {
+        let _ =
+            self.reclaim_for_watermark_used(target_bytes, exclude_doc_id, force_full, force_full);
+    }
+
+    fn reclaim_for_watermark_used(
+        &self,
+        target_bytes: u64,
+        exclude_doc_id: Option<u64>,
+        force_full: bool,
+        hard_demote: bool,
+    ) -> u64 {
         if !heap_tracker_active() {
             let _ = self.estimated_docs_total(None);
         }
         let live = self.snapshot_live_docs();
-        let _ = self.reclaim_idle_docs_to_target(&live, exclude_doc_id, target_bytes, force_full);
+        self.reclaim_idle_docs_to_target(
+            &live,
+            exclude_doc_id,
+            target_bytes,
+            force_full,
+            hard_demote,
+        )
+    }
+
+    fn is_over_global_hard_limit(budget: &GlobalMemoryBudget, used: u64) -> bool {
+        budget.max_heap_bytes.is_some_and(|max| used > max)
+            || (cfg!(target_arch = "wasm32")
+                && budget.max_wasm_linear_bytes.is_some_and(|max_lin| {
+                    !linear_budget_satisfied(wasm_linear_memory_bytes(), max_lin, used)
+                }))
     }
 
     fn enforce_global_watermarks_for_active(
@@ -7001,8 +7182,9 @@ impl GlobalMemoryPool {
         oplog: &OpLog,
         state: &mut DocState,
         uncommitted_txn_bytes: usize,
-        active_bytes: usize,
+        active_stats: &DocMemoryStats,
     ) {
+        let active_bytes = active_stats.total_bytes;
         self.update_cached_doc_bytes(active_doc, active_bytes, None);
         let budget = self.budget.lock().clone();
         let Some(high) = budget.effective_high_watermark() else {
@@ -7017,8 +7199,11 @@ impl GlobalMemoryPool {
         };
         let wasm_pressure = cfg!(target_arch = "wasm32")
             && budget.wasm_heap_pressure(wasm_linear_memory_bytes(), initial_used);
-        if initial_used <= high && !wasm_pressure {
-            self.record_soft_sweep_result(true, initial_used);
+        let over_global_hard = Self::is_over_global_hard_limit(&budget, initial_used);
+        let mut had_state_refaults = false;
+        if initial_used <= high && !wasm_pressure && !over_global_hard {
+            had_state_refaults = state.take_had_refaults();
+            self.soft_backoff.note_check_below_high(!had_state_refaults);
             return;
         }
 
@@ -7027,10 +7212,16 @@ impl GlobalMemoryPool {
         } else {
             target
         };
-        if initial_used <= effective_target && !wasm_pressure {
+        if initial_used <= effective_target && !wasm_pressure && !over_global_hard {
             return;
         }
-        if self.soft_reclaim_backed_off(initial_used) {
+        let pre_cache = (self.global_block_cache.local_used_bytes() as u64)
+            .saturating_add(stage1_cache_bytes(active_stats));
+        if !over_global_hard
+            && self
+                .soft_backoff
+                .backed_off_with_cache(initial_used, pre_cache)
+        {
             return;
         }
 
@@ -7040,9 +7231,21 @@ impl GlobalMemoryPool {
             Some(active_doc.pool_doc_id),
             effective_target,
             false,
+            over_global_hard,
         );
-        if cur_used <= effective_target {
-            self.record_soft_sweep_result(true, cur_used);
+        if cur_used <= effective_target && !Self::is_over_global_hard_limit(&budget, cur_used) {
+            if oplog.has_import_rollback() || over_global_hard {
+                self.soft_backoff.reset();
+            } else {
+                let post_cache = (self.global_block_cache.local_used_bytes() as u64)
+                    .saturating_add(stage1_cache_bytes(active_stats));
+                self.soft_backoff.record_with_cache(
+                    true,
+                    cur_used,
+                    initial_used,
+                    pre_cache.saturating_sub(post_cache),
+                );
+            }
             return;
         }
 
@@ -7050,39 +7253,91 @@ impl GlobalMemoryPool {
         #[cfg(test)]
         ACTIVE_FALLBACK_PASSES.with(|n| n.set(n.get() + 1));
         state.evict_value_cache_to_bytes(0);
+        if over_global_hard && !active_doc.kv_block_cache.is_delegating_to_parent() {
+            active_doc.kv_block_cache.clear();
+        }
         state.reclaim_auxiliary_caches();
         oplog.compact_history();
+        if over_global_hard && (oplog.has_import_rollback() || oplog.dag.has_pending_txn()) {
+            oplog.evict_flushed_history_cache();
+        }
         oplog.flush_kv();
         oplog.with_history_cache(|h| h.free_all());
         oplog.arena.shrink_spare_capacity();
         active_doc.diff_calculator.lock().reclaim_cold_caches(0);
         let _ = shrink_undo_managers_inner(active_doc);
 
-        let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        let stats_after_stage1 =
+            active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+        let cleared_cache = pre_cache.saturating_sub(
+            (self.global_block_cache.local_used_bytes() as u64)
+                .saturating_add(stage1_cache_bytes(&stats_after_stage1)),
+        );
         cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
             self.cached_estimated_total()
         };
-        if cur_used <= effective_target {
-            self.record_soft_sweep_result(true, cur_used);
+        if cur_used <= effective_target && !Self::is_over_global_hard_limit(&budget, cur_used) {
+            if oplog.has_import_rollback() || over_global_hard {
+                self.soft_backoff.reset();
+            } else {
+                self.soft_backoff
+                    .record_with_cache(true, cur_used, initial_used, cleared_cache);
+            }
             return;
         }
 
+        had_state_refaults |= state.take_had_refaults();
+        let over_global_hard_after_stage1 = Self::is_over_global_hard_limit(&budget, cur_used);
+        let state_before_demote = state.state_estimated_bytes();
         let need = usize::try_from(cur_used.saturating_sub(effective_target)).unwrap_or(usize::MAX);
-        let target_state_bytes = state
-            .state_estimated_bytes()
-            .saturating_sub(need.saturating_mul(3) / 2);
-        state.demote_cold_states(target_state_bytes, &Default::default());
-        state.flush_kv();
-        oplog.flush_kv();
+        let target_state_bytes = state_before_demote.saturating_sub(need);
+        let mut demote_res = state.demote_cold_states(
+            target_state_bytes,
+            &Default::default(),
+            over_global_hard_after_stage1,
+        );
+        if demote_res.reclaimed_bytes > 0 {
+            state.flush_kv();
+        }
         let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
         cur_used = if heap_tracker_active() {
             tracked_allocated_heap_bytes()
         } else {
             self.cached_estimated_total()
         };
-        self.record_soft_sweep_result(cur_used <= effective_target, cur_used);
+        if over_global_hard_after_stage1
+            && Self::is_over_global_hard_limit(&budget, cur_used)
+            && state.state_estimated_bytes() > 0
+            && target_state_bytes > 0
+            && (demote_res.reclaimed_bytes > 0 || target_state_bytes >= state_before_demote)
+        {
+            demote_res = state.demote_cold_states(0, &Default::default(), true);
+            if demote_res.reclaimed_bytes > 0 {
+                state.flush_kv();
+            }
+            let _ = active_doc.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+            cur_used = if heap_tracker_active() {
+                tracked_allocated_heap_bytes()
+            } else {
+                self.cached_estimated_total()
+            };
+        }
+        if over_global_hard_after_stage1 || oplog.has_import_rollback() {
+            self.soft_backoff.reset();
+        } else {
+            let refault_stalled = demote_res.had_refaults || had_state_refaults;
+            let reached_target = cur_used <= effective_target
+                && !refault_stalled
+                && !demote_res.blocked_by_protection;
+            self.soft_backoff.record_with_cache(
+                reached_target,
+                cur_used,
+                initial_used,
+                cleared_cache,
+            );
+        }
     }
 
     fn check_global_budget_with_active(
@@ -7417,6 +7672,8 @@ thread_local! {
     static ACTIVE_FALLBACK_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DIRTY_REFRESHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static DOC_STAGE1_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GLOBAL_PREFLIGHT_SWEEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GLOBAL_PREFLIGHT_ENTRY_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn try_reclaim_idle_doc(
@@ -7424,6 +7681,7 @@ fn try_reclaim_idle_doc(
     stage2: bool,
     target_reduction_bytes: usize,
     stage1_completed: bool,
+    hard_demote: bool,
 ) -> bool {
     let Some(txn_guard) = doc.txn.try_lock() else {
         return false;
@@ -7470,9 +7728,8 @@ fn try_reclaim_idle_doc(
             let demote_budget = target_reduction_bytes.saturating_mul(3) / 2;
             cur_state_bytes.saturating_sub(demote_budget)
         };
-        state.demote_cold_states(target_state_bytes, &Default::default());
+        state.demote_cold_states(target_state_bytes, &Default::default(), hard_demote);
         state.flush_kv();
-        oplog.flush_kv();
     }
 
     let _ = compute_doc_stats_locked_inner(doc, &oplog, &state, 0, true);
@@ -7488,7 +7745,7 @@ pub fn set_global_memory_budget(budget: GlobalMemoryBudget) {
     pool.global_block_cache
         .set_max_bytes(budget.effective_block_cache_bytes());
     *pool.budget.lock() = budget;
-    pool.record_soft_sweep_result(true, 0);
+    pool.soft_backoff.reset();
     GLOBAL_BUDGET_FLAGS.store(flags, Release);
 
     let live = pool.snapshot_live_docs();
@@ -7570,7 +7827,10 @@ pub fn reclaim_global_memory(target_bytes: Option<u64>) -> u64 {
         Some(t) => (t, false),
         None => (0, true),
     };
-    let after = pool.reclaim_idle_docs_to_target(&live, None, target, force_full);
+    let after = pool.reclaim_idle_docs_to_target(&live, None, target, force_full, force_full);
+    if force_full {
+        pool.soft_backoff.reset();
+    }
     before.saturating_sub(after)
 }
 
@@ -7591,7 +7851,13 @@ pub fn has_global_wasm_linear_limit() -> bool {
 }
 
 /// Checks whether allocating `needed_bytes` on the WASM heap would exceed
-/// `GlobalMemoryBudget::max_wasm_linear_bytes`, reclaiming idle docs first when possible.
+/// `GlobalMemoryBudget::max_wasm_linear_bytes`, reclaiming idle docs first
+/// according to configured watermarks and `SoftBackoff`.
+///
+/// Only enforces `max_wasm_linear_bytes` (not `max_heap_bytes`) so moderate
+/// edits whose 3x worst-case UTF-8 preflight exceeds `max_heap_bytes` still
+/// remain eligible for exact `try_commit` admission and atomic rollback while
+/// catastrophic multi-MiB strings are blocked before trapping linear memory.
 pub fn preflight_wasm_linear_alloc(needed_bytes: u64) -> LoroResult<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -7600,21 +7866,59 @@ pub fn preflight_wasm_linear_alloc(needed_bytes: u64) -> LoroResult<()> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let pool = global_pool();
-        let Some(max_lin) = pool.budget.lock().max_wasm_linear_bytes else {
-            return Ok(());
-        };
-        let mut used = tracked_allocated_heap_bytes();
-        if used.saturating_add(needed_bytes) > max_lin.saturating_mul(80) / 100 {
-            pool.reclaim_for_watermark(max_lin.saturating_mul(50) / 100, None, false);
-            used = tracked_allocated_heap_bytes();
-        }
-        let projected = used.saturating_add(needed_bytes);
-        if projected > max_lin {
-            return Err(make_global_budget_err(projected, max_lin));
-        }
-        Ok(())
+        preflight_wasm_linear_alloc_in_pool(global_pool(), needed_bytes)
     }
+}
+
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+fn preflight_wasm_linear_alloc_in_pool(
+    pool: &GlobalMemoryPool,
+    needed_bytes: u64,
+) -> LoroResult<()> {
+    let budget = pool.budget.lock().clone();
+    let Some(max_lin) = budget.max_wasm_linear_bytes else {
+        return Ok(());
+    };
+    let mut used = pool.current_heap_or_estimated_used();
+    let high = budget
+        .high_watermark_bytes
+        .unwrap_or_else(|| max_lin.saturating_mul(80) / 100)
+        .min(max_lin);
+    let target = budget
+        .target_watermark_bytes
+        .unwrap_or_else(|| max_lin.saturating_mul(65) / 100)
+        .min(high);
+    let head_target = target.min(max_lin.saturating_sub(needed_bytes));
+    let projected = used.saturating_add(needed_bytes);
+    if projected > max_lin {
+        #[cfg(test)]
+        GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+        let after = pool.reclaim_for_watermark_used(head_target, None, false, true);
+        used = after;
+        if used <= head_target {
+            pool.record_soft_sweep_result(true, used);
+        }
+    } else if projected > high {
+        let pre_cache = pool.global_block_cache.local_used_bytes() as u64;
+        if !pool
+            .soft_backoff
+            .backed_off_with_cache(projected, pre_cache)
+        {
+            #[cfg(test)]
+            GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+            let after = pool.reclaim_for_watermark_used(head_target, None, false, false);
+            let cleared_cache =
+                pre_cache.saturating_sub(pool.global_block_cache.local_used_bytes() as u64);
+            pool.soft_backoff
+                .record_with_cache(after <= head_target, after, used, cleared_cache);
+            used = after;
+        }
+    }
+    let projected = used.saturating_add(needed_bytes);
+    if projected > max_lin {
+        return Err(make_global_budget_err(projected, max_lin));
+    }
+    Ok(())
 }
 
 /// Runs full global reclamation and checks whether global usage now satisfies
@@ -7896,7 +8200,7 @@ impl LoroDoc {
         self.preflight_import_bytes(len, true)
     }
 
-    fn preflight_import_bytes(&self, len: usize, include_buffer_alloc: bool) -> LoroResult<()> {
+    fn check_import_blob_size_only(&self, len: usize) -> LoroResult<()> {
         if !self.has_max_import_blob_bytes() {
             return Ok(());
         }
@@ -7939,38 +8243,105 @@ impl LoroDoc {
                 if len_u64 > cap {
                     return Err(make_global_budget_err(len_u64, cap));
                 }
-                let mut used = pool.current_heap_or_estimated_used();
-                let high = budget.effective_high_watermark().unwrap_or(cap);
-                let target = budget.effective_target_watermark().unwrap_or(high);
-                let head_target = target.min(cap.saturating_sub(len_u64));
-                if used.saturating_add(len_u64) > high.min(cap) {
-                    let exclude = if self.txn.is_held_by_current_thread()
-                        || self.oplog.is_locked()
-                        || self.state.is_locked()
-                    {
-                        Some(self.pool_doc_id)
-                    } else {
-                        None
-                    };
-                    pool.reclaim_for_watermark(head_target, exclude, false);
-                    used = pool.current_heap_or_estimated_used();
+            }
+        }
+        Ok(())
+    }
+
+    fn preflight_global_watermark_for_import(
+        &self,
+        len: usize,
+        include_buffer_alloc: bool,
+    ) -> LoroResult<()> {
+        #[cfg(test)]
+        GLOBAL_PREFLIGHT_ENTRY_CALLS.with(|n| n.set(n.get() + 1));
+        if global_budget_flags() & BUDGET_FLAG_MAX_IMPORT_BLOB == 0 {
+            return Ok(());
+        }
+        self.preflight_global_watermark_for_import_in_pool(global_pool(), len, include_buffer_alloc)
+    }
+
+    fn preflight_global_watermark_for_import_in_pool(
+        &self,
+        pool: &GlobalMemoryPool,
+        len: usize,
+        include_buffer_alloc: bool,
+    ) -> LoroResult<()> {
+        let budget = pool.budget.lock().clone();
+        let wasm_limit = if cfg!(target_arch = "wasm32") {
+            budget.max_wasm_linear_bytes
+        } else {
+            None
+        };
+        let hard_cap = match (budget.max_heap_bytes, wasm_limit) {
+            (Some(h), Some(w)) => Some(h.min(w)),
+            (Some(h), None) => Some(h),
+            (None, Some(w)) => Some(w),
+            (None, None) => None,
+        };
+        if let Some(cap) = hard_cap {
+            let len_u64 = len as u64;
+            let mut used = pool.current_heap_or_estimated_used();
+            let high = budget.effective_high_watermark().unwrap_or(cap);
+            let target = budget.effective_target_watermark().unwrap_or(high);
+            let head_target = target.min(cap.saturating_sub(len_u64));
+            let exclude = if self.txn.is_held_by_current_thread()
+                || self.oplog.is_locked()
+                || self.state.is_locked()
+            {
+                Some(self.pool_doc_id)
+            } else {
+                None
+            };
+            let projected = used.saturating_add(len_u64);
+            if projected > cap {
+                #[cfg(test)]
+                GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+                let after = pool.reclaim_for_watermark_used(head_target, exclude, false, true);
+                used = after;
+                if used <= head_target {
+                    pool.record_soft_sweep_result(true, used);
                 }
-                if include_buffer_alloc {
-                    let projected = used.saturating_add(len_u64);
-                    if let Some(max_heap) = budget.max_heap_bytes {
-                        if projected > max_heap {
-                            return Err(make_global_budget_err(projected, max_heap));
-                        }
+            } else if projected > high.min(cap) {
+                let pre_cache = pool.global_block_cache.local_used_bytes() as u64;
+                if !pool
+                    .soft_backoff
+                    .backed_off_with_cache(projected, pre_cache)
+                {
+                    #[cfg(test)]
+                    GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.set(n.get() + 1));
+                    let after = pool.reclaim_for_watermark_used(head_target, exclude, false, false);
+                    let cleared_cache =
+                        pre_cache.saturating_sub(pool.global_block_cache.local_used_bytes() as u64);
+                    pool.soft_backoff.record_with_cache(
+                        after <= head_target,
+                        after,
+                        used,
+                        cleared_cache,
+                    );
+                    used = after;
+                }
+            }
+            if include_buffer_alloc {
+                let projected = used.saturating_add(len_u64);
+                if let Some(max_heap) = budget.max_heap_bytes {
+                    if projected > max_heap {
+                        return Err(make_global_budget_err(projected, max_heap));
                     }
-                    if let Some(max_lin) = wasm_limit {
-                        if projected > max_lin {
-                            return Err(make_global_budget_err(projected, max_lin));
-                        }
+                }
+                if let Some(max_lin) = wasm_limit {
+                    if projected > max_lin {
+                        return Err(make_global_budget_err(projected, max_lin));
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn preflight_import_bytes(&self, len: usize, include_buffer_alloc: bool) -> LoroResult<()> {
+        self.check_import_blob_size_only(len)?;
+        self.preflight_global_watermark_for_import(len, include_buffer_alloc)
     }
 
     fn check_import_json_limit(&self, json: &JsonSchema) -> LoroResult<()> {
@@ -8292,68 +8663,147 @@ impl LoroDoc {
 
         if let Some(high) = high {
             let stats = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
-            if stats.total_bytes <= high && !force_full {
-                self.soft_backoff.reset();
-            } else if !force_full && self.soft_backoff.backed_off(stats.total_bytes as u64) {
-                // The last sweep could not reach the target and usage has barely
-                // grown: skip Stage 1's history compaction and full KV flush (with a
-                // spill directory, a rewrite of the whole table) on every commit.
+            let pre_cache = stage1_cache_bytes(&stats);
+            let over_doc_hard = !force_full
+                && budget
+                    .max_doc_bytes
+                    .is_some_and(|max| stats.total_bytes > max);
+            let hard_rescue = force_full || over_doc_hard;
+            if stats.total_bytes <= high && !hard_rescue {
+                self.soft_backoff
+                    .note_check_below_high(!state.take_had_refaults());
+            } else if !hard_rescue
+                && self
+                    .soft_backoff
+                    .backed_off_with_cache(stats.total_bytes as u64, pre_cache)
+            {
+                // The last sweep either could not reach its target or cleared Stage 1
+                // caches that were immediately rebuilt, and usage has not grown
+                // meaningfully since: skip redundant Stage 1/2 work on every commit.
             } else {
                 #[cfg(test)]
                 DOC_STAGE1_PASSES.with(|n| n.set(n.get() + 1));
+                let defer_history_compaction = oplog.has_import_rollback();
                 // Stage 1: Reclaim caches and soft buffers before touching materialized states.
-                state.evict_value_cache_to_bytes(if force_full {
+                state.evict_value_cache_to_bytes(if hard_rescue {
                     0
                 } else {
                     budget.max_decoded_value_cache_bytes.unwrap_or(0)
                 });
-                if (force_full || budget.max_kv_block_cache_bytes.is_none())
+                if (hard_rescue || budget.max_kv_block_cache_bytes.is_none())
                     && !self.kv_block_cache.is_delegating_to_parent()
                 {
                     self.kv_block_cache.clear();
                 }
                 state.reclaim_auxiliary_caches();
                 oplog.compact_history();
+                if hard_rescue && (defer_history_compaction || oplog.dag.has_pending_txn()) {
+                    oplog.evict_flushed_history_cache();
+                }
+                let mut oplog_flushed = false;
                 #[cfg(not(target_arch = "wasm32"))]
-                if force_full || budget.spill_dir.is_some() {
+                if hard_rescue || budget.spill_dir.is_some() {
                     oplog.flush_kv();
+                    oplog_flushed = true;
                 }
                 #[cfg(target_arch = "wasm32")]
-                if force_full {
+                if hard_rescue {
                     oplog.flush_kv();
+                    oplog_flushed = true;
                 }
                 oplog.with_history_cache(|h| h.free_all());
-                if force_full {
+                if hard_rescue {
                     oplog.arena.shrink_spare_capacity();
                 }
                 self.diff_calculator
                     .lock()
-                    .reclaim_cold_caches(if force_full { 0 } else { 4 });
+                    .reclaim_cold_caches(if hard_rescue { 0 } else { 4 });
                 let _ = self.shrink_undo_managers();
 
                 let target_limit = target.unwrap_or(high);
                 let stats_after_stage1 =
                     self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
+                let cleared_cache =
+                    pre_cache.saturating_sub(stage1_cache_bytes(&stats_after_stage1));
                 let mut left = stats_after_stage1.total_bytes;
-                if stats_after_stage1.total_bytes > target_limit || force_full {
+                let had_refaults_before_stage2 = state.take_had_refaults();
+                let mut demote_res = crate::state::DemoteResult::default();
+                let over_doc_hard_after_stage1 = !force_full
+                    && budget
+                        .max_doc_bytes
+                        .is_some_and(|max| stats_after_stage1.total_bytes > max);
+                let state_before_demote = state.state_estimated_bytes();
+                // If an open transaction cannot fit under `max_doc_bytes` even if
+                // every materialized state dropped to 0, skip futile Stage 2
+                // demotion before `admit_transaction_commit` rejects & rolls back.
+                let commit_unrescuable_by_demote = uncommitted_txn_bytes > 0
+                    && over_doc_hard_after_stage1
+                    && budget.max_doc_bytes.is_some_and(|max| {
+                        stats_after_stage1
+                            .total_bytes
+                            .saturating_sub(state_before_demote)
+                            > max
+                    });
+                let need_stage2 = !commit_unrescuable_by_demote
+                    && (stats_after_stage1.total_bytes > target_limit
+                        || force_full
+                        || over_doc_hard_after_stage1);
+                let stage2_hard = force_full || over_doc_hard_after_stage1;
+                if need_stage2 {
                     // Stage 2: Demote cold materialized container states and compress KV memtables.
                     let need = stats_after_stage1.total_bytes.saturating_sub(target_limit);
                     let target_state_bytes = if force_full {
                         0
                     } else {
-                        state.state_estimated_bytes().saturating_sub(need)
+                        state_before_demote.saturating_sub(need)
                     };
-                    state.demote_cold_states(target_state_bytes, &Default::default());
-                    state.flush_kv();
-                    oplog.flush_kv();
+                    demote_res = state.demote_cold_states(
+                        target_state_bytes,
+                        &Default::default(),
+                        stage2_hard,
+                    );
+                    if force_full || demote_res.reclaimed_bytes > 0 {
+                        state.flush_kv();
+                    }
+                    if !oplog_flushed {
+                        oplog.flush_kv();
+                    }
                     if !force_full {
                         left = self
                             .memory_stats_locked(oplog, state, uncommitted_txn_bytes)
                             .total_bytes;
+                        if over_doc_hard_after_stage1
+                            && budget.max_doc_bytes.is_some_and(|max| left > max)
+                            && state.state_estimated_bytes() > 0
+                            && target_state_bytes > 0
+                            && (demote_res.reclaimed_bytes > 0
+                                || target_state_bytes >= state_before_demote)
+                        {
+                            demote_res = state.demote_cold_states(0, &Default::default(), true);
+                            if demote_res.reclaimed_bytes > 0 {
+                                state.flush_kv();
+                            }
+                            left = self
+                                .memory_stats_locked(oplog, state, uncommitted_txn_bytes)
+                                .total_bytes;
+                        }
                     }
                 }
-                if !force_full {
-                    self.soft_backoff.record(left <= target_limit, left as u64);
+                if force_full {
+                    self.soft_backoff.reset();
+                } else if over_doc_hard_after_stage1 || defer_history_compaction {
+                    self.soft_backoff.reset();
+                } else {
+                    let refault_stalled = demote_res.had_refaults || had_refaults_before_stage2;
+                    let reached_target = left <= target_limit
+                        && !refault_stalled
+                        && !demote_res.blocked_by_protection;
+                    self.soft_backoff.record_with_cache(
+                        reached_target,
+                        left as u64,
+                        stats.total_bytes as u64,
+                        cleared_cache,
+                    );
                 }
             }
         }
@@ -8365,7 +8815,7 @@ impl LoroDoc {
                 oplog,
                 state,
                 uncommitted_txn_bytes,
-                active_stats.total_bytes,
+                &active_stats,
             );
         } else if global_budget_flags() != 0 {
             let _ = self.memory_stats_locked(oplog, state, uncommitted_txn_bytes);
@@ -8515,7 +8965,7 @@ mod reclamation_work_tests {
         doc.commit_then_renew();
         let pool = GlobalMemoryPool::new();
         IDLE_STAGE1_PASSES.with(|n| n.set(0));
-        pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true);
+        pool.reclaim_idle_docs_to_target(&[RegistryRef::from_doc(&doc)], None, 0, true, true);
         IDLE_STAGE1_PASSES.with(|n| assert_eq!(n.get(), 1));
         assert_eq!(doc.get_map("map").get("value").unwrap(), LoroValue::I64(1));
     }
@@ -8670,12 +9120,12 @@ mod reclamation_work_tests {
             doc.commit_then_renew();
             let oplog = doc.oplog.lock();
             let mut state = doc.state.lock();
-            let bytes = doc.memory_stats_locked(&oplog, &state, 0).total_bytes;
+            let stats = doc.memory_stats_locked(&oplog, &state, 0);
             // `cached_doc_bytes` is shared with the process-wide pool; start this
             // private pool's total from the active document alone.
             doc.cached_doc_bytes.store(0, Relaxed);
             pool.total_cached_doc_bytes.store(0, Relaxed);
-            pool.enforce_global_watermarks_for_active(&doc, &oplog, &mut state, 0, bytes);
+            pool.enforce_global_watermarks_for_active(&doc, &oplog, &mut state, 0, &stats);
         };
         let passes = || ACTIVE_FALLBACK_PASSES.with(|n| n.get());
         let start = passes();
@@ -8737,5 +9187,1007 @@ mod reclamation_work_tests {
         drop(guard);
         drop(held);
         assert_eq!(Arc::strong_count(&doc.inner), before);
+    }
+
+    /// Hot containers repeatedly touched across small imports must not ping-pong
+    /// out to KV and immediately re-materialize on every operation, even with
+    /// tight high/target watermarks. Explicit `reclaim_memory()` (`force_full`)
+    /// still bypasses refault protection and demotes all states cleanly.
+    #[test]
+    fn hot_container_anti_thrashing_blocks_ping_pong_and_allows_force_full() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(2).unwrap();
+
+        // Populate a hot Text (~64 KiB) and hot Map (~16 KiB) plus cold padding
+        // containers that stay idle after setup.
+        let base_text = "h".repeat(64 * 1024);
+        peer.get_text("hot_text")
+            .insert(0, &base_text, crate::cursor::PosType::Unicode)
+            .unwrap();
+        peer.get_map("hot_map")
+            .insert("payload", LoroValue::String("m".repeat(16 * 1024).into()))
+            .unwrap();
+        for i in 0..8 {
+            peer.get_map(format!("cold_pad_{i}"))
+                .insert("k", LoroValue::String("c".repeat(4096).into()))
+                .unwrap();
+        }
+        peer.commit_then_renew();
+        let init_snapshot = peer.export(ExportMode::Snapshot).unwrap();
+        doc.import(&init_snapshot).unwrap();
+        // Materialize hot containers and keep them active.
+        assert_eq!(doc.get_text("hot_text").len_unicode(), 64 * 1024);
+        assert!(doc.get_map("hot_map").get("payload").is_some());
+
+        // Tight watermarks: high (50 KiB) < hot_text + hot_map (~80 KiB),
+        // target (20 KiB) even lower. Without hot protection + refault cooldown,
+        // every small import re-materializes hot_text > high, demotes it in the
+        // same sweep <= target, resets backoff, and ping-pongs 100/100 times.
+        doc.set_memory_budget(MemoryBudget {
+            high_watermark_bytes: Some(50 * 1024),
+            target_watermark_bytes: Some(20 * 1024),
+            ..Default::default()
+        });
+
+        crate::state::reset_cold_state_demotions_for_test();
+        let passes = || DOC_STAGE1_PASSES.with(|n| n.get());
+        let start_passes = passes();
+
+        for i in 0..100usize {
+            let from = peer.oplog_vv();
+            let hot_text = peer.get_text("hot_text");
+            let pos = hot_text.len_unicode();
+            hot_text
+                .insert(
+                    pos,
+                    &format!("{i:04}-update;"),
+                    crate::cursor::PosType::Unicode,
+                )
+                .unwrap();
+            peer.get_map("hot_map")
+                .insert("tick", LoroValue::I64(i as i64))
+                .unwrap();
+            peer.commit_then_renew();
+            let update = peer.export(ExportMode::updates(&from)).unwrap();
+            doc.import(&update).unwrap();
+        }
+
+        let demotions = crate::state::cold_state_demotions_for_test();
+        let sweeps = passes() - start_passes;
+        assert!(
+            demotions <= 12,
+            "hot container thrashing detected across 100 imports: {demotions} demotions in {sweeps} sweeps"
+        );
+        assert!(
+            sweeps <= 12,
+            "expected soft backoff after protected hot containers prevented hitting target; got {sweeps} sweeps"
+        );
+        assert_eq!(doc.get_deep_value(), peer.get_deep_value());
+
+        // Forced `reclaim_memory()` bypasses refault/epoch protection completely.
+        let _ = doc.reclaim_memory();
+        assert_eq!(doc.memory_stats().state_bytes, 0);
+        assert_eq!(doc.get_deep_value(), peer.get_deep_value());
+    }
+
+    fn pseudo_random_ascii(seed: u64, len: usize) -> String {
+        let mut x = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut out = String::with_capacity(len);
+        for _ in 0..len {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            out.push((b'a' + (x % 26) as u8) as char);
+        }
+        out
+    }
+
+    /// Global import preflight consults `SoftBackoff` under soft pressure
+    /// (`used + len <= cap`) so irreducible idle documents inside `(high, max_heap]`
+    /// do not trigger full global sweeps on every import, while hard admission
+    /// (`include_buffer_alloc && used + len > cap`) bypasses backoff and rescues
+    /// reclaimable idle docs before returning `GlobalBudget`.
+    #[test]
+    fn preflight_respects_soft_backoff_and_rescues_before_global_oom() {
+        let pool = GlobalMemoryPool::new();
+        // `idle_irreducible` holds > 48 KiB of incompressible KV data that cannot
+        // shrink below target.
+        let idle_irreducible = LoroDoc::new_auto_commit();
+        idle_irreducible.set_peer_id(10).unwrap();
+        idle_irreducible
+            .get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(1, 64 * 1024).into()),
+            )
+            .unwrap();
+        idle_irreducible.commit_then_renew();
+        let _ = idle_irreducible.reclaim_memory();
+        let irred_bytes = idle_irreducible.memory_stats().total_bytes as u64;
+        assert!(irred_bytes >= 48 * 1024);
+
+        pool.register(
+            idle_irreducible.pool_doc_id,
+            Arc::downgrade(&idle_irreducible.inner),
+        );
+        // Flush dirty doc bookkeeping to the global pool first, then seed our
+        // isolated pool's cached total.
+        let _ = pool.estimated_docs_total(None);
+        pool.total_cached_doc_bytes.store(irred_bytes, Relaxed);
+
+        let active_doc = LoroDoc::new_auto_commit();
+        active_doc.set_peer_id(11).unwrap();
+        pool.register(active_doc.pool_doc_id, Arc::downgrade(&active_doc.inner));
+        let _ = pool.estimated_docs_total(None);
+        pool.total_cached_doc_bytes.store(irred_bytes, Relaxed);
+
+        let soft_cap = irred_bytes + 512 * 1024;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            max_heap_bytes: Some(soft_cap),
+            high_watermark_bytes: Some(irred_bytes / 2),
+            target_watermark_bytes: Some(irred_bytes / 4),
+            ..Default::default()
+        };
+
+        let sweeps = || GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.get());
+        let start = sweeps();
+        for _ in 0..50 {
+            active_doc
+                .preflight_global_watermark_for_import_in_pool(&pool, 1024, false)
+                .unwrap();
+        }
+        assert_eq!(
+            sweeps() - start,
+            1,
+            "50 soft-pressure preflights should sweep once and back off"
+        );
+
+        // Add a second idle doc holding plenty of reclaimable materialized container
+        // state (~96 KiB), within backoff growth margin (max(floor/8, 256 KiB)).
+        let idle_reclaimable = LoroDoc::new_auto_commit();
+        idle_reclaimable.set_peer_id(12).unwrap();
+        for i in 0..8 {
+            idle_reclaimable
+                .get_map(format!("cold_{i}"))
+                .insert(
+                    "v",
+                    LoroValue::String(pseudo_random_ascii(100 + i as u64, 12 * 1024).into()),
+                )
+                .unwrap();
+        }
+        idle_reclaimable.commit_then_renew();
+        let cold_state_bytes = idle_reclaimable.memory_stats().state_bytes;
+        assert!(cold_state_bytes > 64 * 1024);
+        pool.register(
+            idle_reclaimable.pool_doc_id,
+            Arc::downgrade(&idle_reclaimable.inner),
+        );
+        let _ = pool.estimated_docs_total(None);
+
+        let with_reclaimable = irred_bytes + idle_reclaimable.memory_stats().total_bytes as u64;
+        pool.total_cached_doc_bytes.store(with_reclaimable, Relaxed);
+        let tight_cap = with_reclaimable + 4 * 1024;
+        pool.budget.lock().max_heap_bytes = Some(tight_cap);
+        assert!(
+            pool.soft_reclaim_backed_off(with_reclaimable + 16 * 1024),
+            "soft backoff must still be armed before testing hard bypass"
+        );
+
+        // Hard buffer preflight (`include_buffer_alloc == true && projected > cap`)
+        // must bypass backoff and sweep `idle_reclaimable` down to `state_bytes == 0`.
+        let before_rescue = sweeps();
+        let _ = active_doc.preflight_global_watermark_for_import_in_pool(&pool, 16 * 1024, true);
+        assert_eq!(
+            sweeps() - before_rescue,
+            1,
+            "hard preflight must bypass backoff"
+        );
+        assert_eq!(
+            idle_reclaimable.memory_stats().state_bytes,
+            0,
+            "hard preflight rescue must demote idle doc cold states"
+        );
+
+        // Even with hard rescue, an actually impossible buffer size still fails cleanly.
+        let err = active_doc
+            .preflight_global_watermark_for_import_in_pool(&pool, tight_cap as usize, true)
+            .unwrap_err();
+        assert_eq!(
+            err.memory_limit_info().map(|i| i.kind),
+            Some(MemoryLimitKind::GlobalBudget)
+        );
+    }
+
+    /// `import_batch*` and `import_batch_detailed*` must run global preflight once
+    /// per batch (not once during metadata decoding AND again for every blob).
+    #[test]
+    fn batch_import_runs_single_global_preflight() {
+        let src = LoroDoc::new_auto_commit();
+        src.set_peer_id(1).unwrap();
+        let mut blobs_vec: Vec<Vec<u8>> = Vec::with_capacity(25);
+        for i in 0..25 {
+            let from = src.oplog_vv();
+            src.get_map("m")
+                .insert(&format!("k{i}"), LoroValue::I64(i as i64))
+                .unwrap();
+            src.commit_then_renew();
+            blobs_vec.push(src.export(ExportMode::updates(&from)).unwrap());
+        }
+        let blobs_bytes: Vec<bytes::Bytes> =
+            blobs_vec.iter().cloned().map(bytes::Bytes::from).collect();
+
+        let entries = || GLOBAL_PREFLIGHT_ENTRY_CALLS.with(|n| n.get());
+
+        let doc1 = LoroDoc::new_auto_commit();
+        let s = entries();
+        doc1.import_batch(&blobs_vec).unwrap();
+        assert_eq!(entries() - s, 1, "import_batch should preflight once");
+        assert_eq!(doc1.get_deep_value(), src.get_deep_value());
+
+        let doc2 = LoroDoc::new_auto_commit();
+        let s = entries();
+        doc2.import_batch_bytes(blobs_bytes.clone()).unwrap();
+        assert_eq!(entries() - s, 1, "import_batch_bytes should preflight once");
+        assert_eq!(doc2.get_deep_value(), src.get_deep_value());
+
+        let doc3 = LoroDoc::new_auto_commit();
+        let s = entries();
+        let detail = doc3.import_batch_detailed(&blobs_vec).unwrap();
+        assert!(detail.rollback_error.is_none());
+        assert_eq!(
+            entries() - s,
+            1,
+            "import_batch_detailed should preflight once"
+        );
+        assert_eq!(doc3.get_deep_value(), src.get_deep_value());
+
+        let doc4 = LoroDoc::new_auto_commit();
+        let s = entries();
+        let detail = doc4.import_batch_detailed_bytes(blobs_bytes).unwrap();
+        assert!(detail.rollback_error.is_none());
+        assert_eq!(
+            entries() - s,
+            1,
+            "import_batch_detailed_bytes should preflight once"
+        );
+        assert_eq!(doc4.get_deep_value(), src.get_deep_value());
+    }
+
+    /// Even when `soft_backoff` is armed below `max_doc_bytes` (so `floor + 256 KiB`
+    /// exceeds `max_doc_bytes`), crossing the hard limit on `try_commit`, `import`,
+    /// `import_batch`, or snapshot import must bypass `soft_backoff` and rescue
+    /// reclaimable caches/cold states instead of falsely failing with `DocBudget`.
+    #[test]
+    fn hard_limit_rescue_bypasses_soft_backoff_before_doc_oom() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(2, 48 * 1024).into()),
+            )
+            .unwrap();
+        for i in 0..16 {
+            doc.get_text(format!("cold_{i}"))
+                .insert(
+                    0,
+                    &pseudo_random_ascii(20 + i as u64, 8192),
+                    crate::cursor::PosType::Unicode,
+                )
+                .unwrap();
+        }
+        doc.commit_then_renew();
+        let _ = doc.reclaim_memory();
+        let reclaimed_base = doc.memory_stats().total_bytes;
+
+        // Materialize the 16 cold texts into RichtextState RAM.
+        for i in 0..16 {
+            assert_eq!(doc.get_text(format!("cold_{i}")).len_unicode(), 8192);
+        }
+        let bloated_before = doc.memory_stats().total_bytes;
+        assert!(
+            bloated_before > reclaimed_base + 128 * 1024,
+            "reclaimed={reclaimed_base}, bloated={bloated_before}"
+        );
+
+        let max_doc = reclaimed_base + 64 * 1024;
+        assert!(bloated_before > max_doc);
+        let _ = doc.reclaim_memory();
+
+        doc.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(max_doc),
+            high_watermark_bytes: Some(1024),
+            target_watermark_bytes: Some(512),
+            ..Default::default()
+        });
+
+        // Arm `soft_backoff` with a tiny commit (> high=1024, irreducible KV > target=512).
+        doc.get_map("tiny").insert("n", 1i64).unwrap();
+        doc.try_commit().unwrap();
+        assert!(doc
+            .inner
+            .soft_backoff
+            .backed_off(doc.memory_stats().total_bytes as u64 + 16 * 1024));
+
+        // Materialize all 16 cold texts into RAM while `soft_backoff` remains armed.
+        for i in 0..16 {
+            let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+        }
+        let bloated = doc.memory_stats().total_bytes;
+        assert!(
+            bloated > max_doc,
+            "reading cold containers pushed total ({bloated}) above max_doc ({max_doc}): stats={:?}",
+            doc.memory_stats()
+        );
+
+        doc.get_map("tiny").insert("n", 2i64).unwrap();
+        doc.try_commit()
+            .expect("try_commit must bypass soft_backoff and rescue cold caches/states");
+
+        // Same for `import` while backed off and holding bloated cold states:
+        for i in 0..16 {
+            let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+        }
+        assert!(doc.memory_stats().total_bytes > max_doc);
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(2).unwrap();
+        peer.get_map("tiny").insert("remote", 1i64).unwrap();
+        peer.commit_then_renew();
+        let u1 = peer
+            .export(ExportMode::updates(&Default::default()))
+            .unwrap();
+        doc.import(&u1)
+            .expect("import must bypass soft_backoff and rescue cold caches/states");
+
+        // Same for `import_batch`:
+        for i in 0..16 {
+            let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+        }
+        assert!(doc.memory_stats().total_bytes > max_doc);
+        let mut batch = Vec::new();
+        for step in 2..4 {
+            let from = peer.oplog_vv();
+            peer.get_map("tiny").insert("remote", step as i64).unwrap();
+            peer.commit_then_renew();
+            batch.push(peer.export(ExportMode::updates(&from)).unwrap());
+        }
+        doc.import_batch(&batch)
+            .expect("import_batch must bypass soft_backoff and rescue cold caches/states");
+
+        // Also test snapshot import (`init_snapshot_preserving_pending_with`) near `max_doc_bytes`.
+        let snap_bytes = doc.export(ExportMode::Snapshot).unwrap();
+        let fresh = LoroDoc::new_auto_commit();
+        fresh.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(max_doc),
+            high_watermark_bytes: Some(1024),
+            target_watermark_bytes: Some(512),
+            ..Default::default()
+        });
+        fresh
+            .import(&snap_bytes)
+            .expect("snapshot import must rescue caches to fit max_doc_bytes");
+        assert_eq!(fresh.get_deep_value(), doc.get_deep_value());
+    }
+
+    /// Calling `enforce_watermarks_locked` while `oplog.has_import_rollback()` is true
+    /// defers `oplog.compact_history()` and must NOT arm `soft_backoff`, so the
+    /// post-rollback sweep compacts `mem_parsed_kv` right after the scope closes.
+    #[test]
+    fn import_rollback_does_not_starve_post_import_compact_history() {
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(1).unwrap();
+        doc.get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(3, 32 * 1024).into()),
+            )
+            .unwrap();
+        doc.commit_then_renew();
+        let _ = doc.reclaim_memory();
+        let base_bytes = doc.memory_stats().total_bytes;
+
+        // Place `high` slightly above `base_bytes` so `set_memory_budget` does not
+        // pre-arm `soft_backoff`. Then importing 24 KiB crosses `high` inside the
+        // `import_rollback` scope (where `compact_history()` is skipped and irreducible
+        // data keeps usage > `target`): the in-import sweep must NOT arm `soft_backoff`,
+        // allowing the post-rollback sweep to compact history right away.
+        let high = base_bytes + 4 * 1024;
+        let target = base_bytes / 2;
+        doc.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(4 * 1024 * 1024),
+            high_watermark_bytes: Some(high),
+            target_watermark_bytes: Some(target),
+            ..Default::default()
+        });
+        assert!(!doc.inner.soft_backoff.backed_off(base_bytes as u64));
+
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(2).unwrap();
+        let from = peer.oplog_vv();
+        peer.get_map("stream")
+            .insert(
+                "k0",
+                LoroValue::String(pseudo_random_ascii(50, 24 * 1024).into()),
+            )
+            .unwrap();
+        peer.commit_then_renew();
+        let update = peer.export(ExportMode::updates(&from)).unwrap();
+        doc.import(&update).unwrap();
+
+        let after_import = doc.memory_stats();
+        let _ = doc.reclaim_memory();
+        let after_explicit = doc.memory_stats();
+        assert_eq!(
+            after_import.change_cache_bytes, after_explicit.change_cache_bytes,
+            "post-rollback sweep must compact history completely after single import"
+        );
+
+        // Same invariant across `import_batch` after clearing backoff via a fresh doc.
+        let doc2 = LoroDoc::new_auto_commit();
+        doc2.set_peer_id(10).unwrap();
+        doc2.get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(4, 32 * 1024).into()),
+            )
+            .unwrap();
+        doc2.commit_then_renew();
+        let _ = doc2.reclaim_memory();
+        let base2 = doc2.memory_stats().total_bytes;
+        doc2.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(4 * 1024 * 1024),
+            high_watermark_bytes: Some(base2 + 4 * 1024),
+            target_watermark_bytes: Some(base2 / 2),
+            ..Default::default()
+        });
+        let mut batch = Vec::new();
+        for step in 1..=3 {
+            let from = peer.oplog_vv();
+            peer.get_map("stream")
+                .insert(
+                    &format!("b{step}"),
+                    LoroValue::String(pseudo_random_ascii(60 + step as u64, 12 * 1024).into()),
+                )
+                .unwrap();
+            peer.commit_then_renew();
+            batch.push(peer.export(ExportMode::updates(&from)).unwrap());
+        }
+        doc2.import_batch(&batch).unwrap();
+        let after_batch = doc2.memory_stats();
+        let _ = doc2.reclaim_memory();
+        let after_batch_explicit = doc2.memory_stats();
+        assert_eq!(
+            after_batch.change_cache_bytes, after_batch_explicit.change_cache_bytes,
+            "post-rollback sweep must compact history completely after import_batch"
+        );
+    }
+
+    /// A budget-rejected `try_commit` or manual `Transaction::commit()` rolls back via
+    /// `rollback_transaction_scope_inner` (using `DiffCalculator`, which loads history into
+    /// `change_cache_bytes` and `block_cache_bytes`). Transient rollback caches must be
+    /// cleaned up so the document is not bloated above before-commit size and subsequent
+    /// smaller commits succeed.
+    #[test]
+    fn rejected_commit_cleans_up_diff_calc_transient_caches() {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        // Build multiple flushed history blocks across separate commits on a small text
+        // plus an auxiliary map so rolling back a rejected commit forces DiffCalculator
+        // to load cold history blocks, while a valid small follow-up commit still fits.
+        for i in 0..24 {
+            let mut txn = doc.txn().unwrap();
+            doc.get_map("m")
+                .insert_with_txn(
+                    &mut txn,
+                    "k",
+                    LoroValue::String(pseudo_random_ascii(200 + i as u64, 1024).into()),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+        let mut init_t = doc.txn().unwrap();
+        doc.get_text("t")
+            .insert_with_txn(&mut init_t, 0, "hello", crate::cursor::PosType::Unicode)
+            .unwrap();
+        init_t.commit().unwrap();
+
+        let _ = doc.reclaim_memory();
+        let before = doc.memory_stats();
+        assert_eq!(before.block_cache_bytes, 0);
+
+        let max_doc = before.total_bytes + 8 * 1024;
+        doc.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(max_doc),
+            ..Default::default()
+        });
+
+        let mut txn = doc.txn().unwrap();
+        doc.get_text("t")
+            .insert_with_txn(
+                &mut txn,
+                0,
+                &pseudo_random_ascii(999, 64 * 1024),
+                crate::cursor::PosType::Unicode,
+            )
+            .unwrap();
+        let err = txn.commit().unwrap_err();
+        assert_eq!(
+            err.memory_limit_info().map(|i| i.kind),
+            Some(MemoryLimitKind::DocBudget)
+        );
+        assert_eq!(doc.get_text("t").to_string(), "hello");
+
+        let after_reject = doc.memory_stats();
+        assert_eq!(after_reject.block_cache_bytes, 0);
+        assert_eq!(after_reject.value_cache_bytes, 0);
+        assert_eq!(after_reject.history_cache_bytes, 0);
+        assert!(
+            after_reject.change_cache_bytes <= before.change_cache_bytes,
+            "rejected commit leaked parsed change cache: before={}, after={}",
+            before.change_cache_bytes,
+            after_reject.change_cache_bytes
+        );
+        assert!(
+            after_reject.total_bytes <= max_doc,
+            "rejected commit left doc bloated ({}) > max_doc ({max_doc}): before={before:?}, after={after_reject:?}",
+            after_reject.total_bytes
+        );
+
+        // Subsequent small commit fits cleanly without transient bloat blocking it.
+        let mut small_txn = doc.txn().unwrap();
+        doc.get_text("t")
+            .insert_with_txn(&mut small_txn, 5, "!", crate::cursor::PosType::Unicode)
+            .unwrap();
+        small_txn
+            .commit()
+            .expect("small commit after rejection should succeed");
+        assert_eq!(doc.get_text("t").to_string(), "hello!");
+    }
+
+    /// `preflight_wasm_linear_alloc_in_pool` guards `max_wasm_linear_bytes`
+    /// without rejecting moderate edits against `max_heap_bytes`, respects
+    /// configured watermarks + `SoftBackoff` under soft pressure, and bypasses
+    /// backoff to rescue idle docs before rejecting with `GlobalBudget`.
+    #[test]
+    fn wasm_linear_preflight_honors_watermarks_backoff_and_hard_rescue() {
+        let pool = GlobalMemoryPool::new();
+        let idle_irred = LoroDoc::new_auto_commit();
+        idle_irred.set_peer_id(101).unwrap();
+        idle_irred
+            .get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(7, 64 * 1024).into()),
+            )
+            .unwrap();
+        idle_irred.commit_then_renew();
+        let _ = idle_irred.reclaim_memory();
+        let irred_bytes = idle_irred.memory_stats().total_bytes as u64;
+
+        pool.register(idle_irred.pool_doc_id, Arc::downgrade(&idle_irred.inner));
+        let _ = pool.estimated_docs_total(None);
+        pool.total_cached_doc_bytes.store(irred_bytes, Relaxed);
+
+        // Configure `max_wasm_linear_bytes` > `max_heap_bytes` + custom watermarks:
+        // moderate allocations exceeding `max_heap_bytes` remain eligible for `try_commit`
+        // rollback, while exceeding `max_wasm_linear_bytes` rejects pre-malloc.
+        let max_heap = irred_bytes + 128 * 1024;
+        let max_lin = irred_bytes + 512 * 1024;
+        let custom_high = irred_bytes + 32 * 1024;
+        let custom_target = irred_bytes / 2;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            max_heap_bytes: Some(max_heap),
+            max_wasm_linear_bytes: Some(max_lin),
+            high_watermark_bytes: Some(custom_high),
+            target_watermark_bytes: Some(custom_target),
+            ..Default::default()
+        };
+
+        let sweeps = || GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.get());
+        let start = sweeps();
+
+        // Below custom high watermark -> 0 sweeps.
+        preflight_wasm_linear_alloc_in_pool(&pool, 16 * 1024).unwrap();
+        assert_eq!(sweeps() - start, 0);
+
+        // Cross custom high watermark (and even `max_heap`, while still <= `max_lin`) ->
+        // sweeps once, backs off, and does not reject pre-malloc.
+        for _ in 0..20 {
+            preflight_wasm_linear_alloc_in_pool(&pool, 192 * 1024).unwrap();
+        }
+        assert_eq!(
+            sweeps() - start,
+            1,
+            "soft wasm linear preflight should sweep once and back off"
+        );
+
+        // Exceed `max_wasm_linear_bytes` -> bypasses backoff and rejects with `GlobalBudget`.
+        let err = preflight_wasm_linear_alloc_in_pool(&pool, 600 * 1024).unwrap_err();
+        assert_eq!(sweeps() - start, 2, "hard preflight must bypass backoff");
+        assert_eq!(
+            err.memory_limit_info().map(|i| i.kind),
+            Some(MemoryLimitKind::GlobalBudget)
+        );
+    }
+
+    /// Stage 1 cache-rebuild thrashing (clear `block_cache` on import, immediately
+    /// rebuild via `get_deep_value()`, repeat) must be detected by `SoftBackoff`
+    /// even when the rebuilt `block_cache` exceeds `floor + growth` or when Stage 1
+    /// briefly pushed usage below `target`.
+    #[test]
+    fn stage1_block_cache_rebuild_thrashing_enters_soft_backoff() {
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(1).unwrap();
+        let val = pseudo_random_ascii(42, 256);
+        for i in 0..2000 {
+            peer.get_map(format!("m{i}"))
+                .insert("v", LoroValue::String(val.clone().into()))
+                .unwrap();
+        }
+        peer.commit_then_renew();
+        let snap = peer.export(ExportMode::Snapshot).unwrap();
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(2).unwrap();
+        doc.import(&snap).unwrap();
+        let _ = doc.get_deep_value();
+        let full = doc.memory_stats().total_bytes;
+        assert!(
+            doc.memory_stats().block_cache_bytes > 0,
+            "expected get_deep_value() to populate block_cache"
+        );
+
+        doc.set_memory_budget(MemoryBudget {
+            high_watermark_bytes: Some(full / 2),
+            target_watermark_bytes: Some(full / 4),
+            ..Default::default()
+        });
+
+        let stage1_before = DOC_STAGE1_PASSES.with(|n| n.get());
+        for i in 0..100 {
+            let vv = peer.oplog_vv();
+            peer.get_map("m0")
+                .insert("k", LoroValue::I64(i as i64))
+                .unwrap();
+            peer.commit_then_renew();
+            let update = peer.export(ExportMode::updates(&vv)).unwrap();
+            doc.import(&update).unwrap();
+            let _ = doc.get_deep_value();
+        }
+        let stage1_passes = DOC_STAGE1_PASSES.with(|n| n.get()) - stage1_before;
+        assert!(
+            stage1_passes <= 10,
+            "expected cache-rebuild backoff to bound Stage 1 sweeps over 100 import+read rounds, got {stage1_passes}"
+        );
+        assert_eq!(doc.get_map("m0").get("k"), Some(LoroValue::I64(99)));
+
+        // Also test Case 2 where Stage 1 drops below `target` (`reached_target == true`),
+        // then `get_deep_value()` immediately rebuilds `block_cache` above `high`.
+        let _ = doc.reclaim_memory();
+        let cold_base = doc.memory_stats().total_bytes;
+        let _ = doc.get_deep_value();
+        let warm_full = doc.memory_stats().total_bytes;
+        assert!(warm_full > cold_base + 64 * 1024);
+        doc.set_memory_budget(MemoryBudget {
+            high_watermark_bytes: Some(cold_base + (warm_full - cold_base) / 2),
+            target_watermark_bytes: Some(cold_base + (warm_full - cold_base) / 4),
+            ..Default::default()
+        });
+        let stage1_case2_before = DOC_STAGE1_PASSES.with(|n| n.get());
+        for i in 100..200 {
+            let vv = peer.oplog_vv();
+            peer.get_map("m0")
+                .insert("k", LoroValue::I64(i as i64))
+                .unwrap();
+            peer.commit_then_renew();
+            let update = peer.export(ExportMode::updates(&vv)).unwrap();
+            doc.import(&update).unwrap();
+            let _ = doc.get_deep_value();
+        }
+        let stage1_case2_passes = DOC_STAGE1_PASSES.with(|n| n.get()) - stage1_case2_before;
+        assert!(
+            stage1_case2_passes <= 10,
+            "expected Case 2 (left <= target) cache-rebuild backoff to bound Stage 1 sweeps, got {stage1_case2_passes}"
+        );
+
+        // Once reads stop, the periodic probe after SOFT_BACKOFF_MAX_SKIPS still reclaims block_cache.
+        for i in 200..270 {
+            let vv = peer.oplog_vv();
+            peer.get_map("m0")
+                .insert("k", LoroValue::I64(i as i64))
+                .unwrap();
+            peer.commit_then_renew();
+            let update = peer.export(ExportMode::updates(&vv)).unwrap();
+            doc.import(&update).unwrap();
+        }
+        assert!(
+            doc.memory_stats().block_cache_bytes < (warm_full - cold_base) / 2,
+            "periodic probe should reclaim block_cache once reads stop: {:?}",
+            doc.memory_stats()
+        );
+    }
+
+    /// Periodic reads spaced further apart (`read_every = 6` and `read_every = 20`)
+    /// must still be detected as Stage 1 cache-rebuild thrashing between consecutive
+    /// sweeps (regardless of how many below-high checks elapsed in between), while:
+    /// - stopping reads still reclaims memory back near target via the periodic probe,
+    /// - genuine non-cache growth triggers an immediate sweep, and
+    /// - the global watermark path (`enforce_global_watermarks_for_active`) behaves consistently.
+    #[test]
+    fn stage1_sparse_periodic_reads_thrash_backoff_and_global_consistency() {
+        let peer = LoroDoc::new_auto_commit();
+        peer.set_peer_id(1).unwrap();
+        let val = pseudo_random_ascii(42, 256);
+        for i in 0..2000 {
+            peer.get_map(format!("m{i}"))
+                .insert("v", LoroValue::String(val.clone().into()))
+                .unwrap();
+        }
+        peer.commit_then_renew();
+        let snap = peer.export(ExportMode::Snapshot).unwrap();
+
+        let run_sparse_case = |read_every: usize, n: usize, max_expected_sweeps: usize| {
+            let p = peer.fork();
+            p.set_peer_id(10 + read_every as u64).unwrap();
+            let doc = LoroDoc::new_auto_commit();
+            doc.set_peer_id(20 + read_every as u64).unwrap();
+            doc.import(&snap).unwrap();
+            let _ = doc.get_deep_value();
+            let full = doc.memory_stats().total_bytes;
+            let high = full / 2;
+            let target = full / 4;
+            doc.set_memory_budget(MemoryBudget {
+                high_watermark_bytes: Some(high),
+                target_watermark_bytes: Some(target),
+                ..Default::default()
+            });
+
+            let stage1_before = DOC_STAGE1_PASSES.with(|c| c.get());
+            for i in 0..n {
+                let vv = p.oplog_vv();
+                p.get_map("m0")
+                    .insert("tick", LoroValue::I64(i as i64))
+                    .unwrap();
+                p.commit_then_renew();
+                let update = p.export(ExportMode::updates(&vv)).unwrap();
+                doc.import(&update).unwrap();
+                if i % read_every == 0 {
+                    let _ = doc.get_deep_value();
+                }
+            }
+            let passes = DOC_STAGE1_PASSES.with(|c| c.get()) - stage1_before;
+            let read_count = n.div_ceil(read_every);
+            assert!(
+                passes <= max_expected_sweeps,
+                "read_every={read_every}, n={n} ({read_count} reads): expected <= {max_expected_sweeps} Stage 1 sweeps, got {passes}"
+            );
+
+            // Once reads stop, within SOFT_BACKOFF_MAX_SKIPS + 6 imports the periodic probe
+            // clears block_cache and total_bytes drops back below `high` near `target`.
+            for i in n..n + (SOFT_BACKOFF_MAX_SKIPS as usize) + 6 {
+                let vv = p.oplog_vv();
+                p.get_map("m0")
+                    .insert("tick", LoroValue::I64(i as i64))
+                    .unwrap();
+                p.commit_then_renew();
+                let update = p.export(ExportMode::updates(&vv)).unwrap();
+                doc.import(&update).unwrap();
+            }
+            let stats = doc.memory_stats();
+            assert!(
+                stats.block_cache_bytes < 16 * 1024 && stats.total_bytes <= high,
+                "read_every={read_every}: expected memory to drop below high ({high}) after reads stop, got {stats:?}"
+            );
+            (p, doc, high)
+        };
+
+        // read_every=6, n=600 (100 reads): previously 100 sweeps, now ~10 sweeps.
+        let _ = run_sparse_case(6, 600, 16);
+        // read_every=20, n=600 (30 reads): previously 30 sweeps, now ~8 sweeps.
+        let (p_grow, doc_grow, _high) = run_sparse_case(20, 600, 12);
+
+        // Genuine non-cache growth (> SOFT_BACKOFF_MIN_GROWTH) must still sweep immediately
+        // even when block_cache is also rebuilt.
+        let _ = doc_grow.get_deep_value();
+        let stage1_before_growth = DOC_STAGE1_PASSES.with(|c| c.get());
+        let vv = p_grow.oplog_vv();
+        p_grow
+            .get_map("big_new")
+            .insert(
+                "blob",
+                LoroValue::String(pseudo_random_ascii(777, 384 * 1024).into()),
+            )
+            .unwrap();
+        p_grow.commit_then_renew();
+        let big_update = p_grow.export(ExportMode::updates(&vv)).unwrap();
+        doc_grow.import(&big_update).unwrap();
+        assert_eq!(
+            DOC_STAGE1_PASSES.with(|c| c.get()) - stage1_before_growth,
+            1,
+            "genuine non-cache growth must trigger an immediate sweep"
+        );
+
+        // Global watermark path consistency (`enforce_global_watermarks_for_active`):
+        // sparse periodic reads (`read_every = 6`) on a private GlobalMemoryPool.
+        let pool = GlobalMemoryPool::new();
+        let g_peer = peer.fork();
+        g_peer.set_peer_id(88).unwrap();
+        let g_doc = LoroDoc::new_auto_commit();
+        g_doc.set_peer_id(89).unwrap();
+        g_doc.import(&snap).unwrap();
+        g_doc
+            .kv_block_cache
+            .set_parent(Some(&pool.global_block_cache));
+        pool.register(g_doc.pool_doc_id, Arc::downgrade(&g_doc.inner));
+        let _ = g_doc.get_deep_value();
+        let g_full =
+            (g_doc.memory_stats().total_bytes + pool.global_block_cache.used_bytes()) as u64;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            high_watermark_bytes: Some(g_full / 2),
+            target_watermark_bytes: Some(g_full / 4),
+            ..Default::default()
+        };
+
+        let check_global = |doc: &LoroDoc| {
+            let oplog = doc.oplog.lock();
+            let mut state = doc.state.lock();
+            let stats = doc.memory_stats_locked(&oplog, &state, 0);
+            doc.cached_doc_bytes.store(0, Relaxed);
+            pool.total_cached_doc_bytes.store(0, Relaxed);
+            pool.enforce_global_watermarks_for_active(doc, &oplog, &mut state, 0, &stats);
+        };
+
+        let global_before = ACTIVE_FALLBACK_PASSES.with(|c| c.get());
+        for i in 0..300 {
+            let vv = g_peer.oplog_vv();
+            g_peer
+                .get_map("m0")
+                .insert("tick", LoroValue::I64(i as i64))
+                .unwrap();
+            g_peer.commit_then_renew();
+            let update = g_peer.export(ExportMode::updates(&vv)).unwrap();
+            g_doc.import(&update).unwrap();
+            check_global(&g_doc);
+            if i % 6 == 0 {
+                let _ = g_doc.get_deep_value();
+            }
+        }
+        let global_passes = ACTIVE_FALLBACK_PASSES.with(|c| c.get()) - global_before;
+        assert!(
+            global_passes <= 10,
+            "global path read_every=6, n=300 (50 reads): expected <= 10 fallback sweeps, got {global_passes}"
+        );
+
+        for i in 300..300 + (SOFT_BACKOFF_MAX_SKIPS as usize) + 6 {
+            let vv = g_peer.oplog_vv();
+            g_peer
+                .get_map("m0")
+                .insert("tick", LoroValue::I64(i as i64))
+                .unwrap();
+            g_peer.commit_then_renew();
+            let update = g_peer.export(ExportMode::updates(&vv)).unwrap();
+            g_doc.import(&update).unwrap();
+            check_global(&g_doc);
+        }
+        assert!(
+            pool.global_block_cache.used_bytes() < 16 * 1024,
+            "global path should reclaim global_block_cache once reads stop, got {}",
+            pool.global_block_cache.used_bytes()
+        );
+    }
+
+    /// `preflight_global_watermark_for_import_in_pool` must bypass `SoftBackoff`
+    /// and perform a hard rescue sweep whenever `projected > cap`, even when
+    /// `include_buffer_alloc == false` (normal `import` / `import_batch`), while
+    /// still deferring any `MemoryLimitExceeded` error to post-decode admission.
+    #[test]
+    fn import_preflight_without_buffer_alloc_bypasses_backoff_when_projected_exceeds_cap() {
+        let pool = GlobalMemoryPool::new();
+        let active = LoroDoc::new_auto_commit();
+        active.set_peer_id(1).unwrap();
+        let idle = LoroDoc::new_auto_commit();
+        idle.set_peer_id(2).unwrap();
+        idle.get_map("irred")
+            .insert(
+                "k",
+                LoroValue::String(pseudo_random_ascii(19, 64 * 1024).into()),
+            )
+            .unwrap();
+        idle.commit_then_renew();
+        let _ = idle.reclaim_memory();
+        let irred_bytes = idle.memory_stats().total_bytes as u64;
+
+        pool.register(active.pool_doc_id, Arc::downgrade(&active.inner));
+        pool.register(idle.pool_doc_id, Arc::downgrade(&idle.inner));
+        let _ = pool.estimated_docs_total(None);
+        pool.total_cached_doc_bytes.store(irred_bytes, Relaxed);
+
+        let cap = irred_bytes + 128 * 1024;
+        *pool.budget.lock() = GlobalMemoryBudget {
+            max_heap_bytes: Some(cap),
+            high_watermark_bytes: Some(irred_bytes + 16 * 1024),
+            target_watermark_bytes: Some(irred_bytes / 2),
+            ..Default::default()
+        };
+
+        let sweeps = || GLOBAL_PREFLIGHT_SWEEPS.with(|n| n.get());
+        let start = sweeps();
+
+        // Arm SoftBackoff with soft preflights (projected > high, <= cap).
+        for _ in 0..10 {
+            active
+                .preflight_global_watermark_for_import_in_pool(&pool, 32 * 1024, false)
+                .unwrap();
+        }
+        assert_eq!(sweeps() - start, 1, "soft preflight should arm SoftBackoff");
+
+        // Now projected > cap with include_buffer_alloc = false: must bypass
+        // SoftBackoff and run a hard rescue sweep without returning Err.
+        active
+            .preflight_global_watermark_for_import_in_pool(&pool, 200 * 1024, false)
+            .unwrap();
+        assert_eq!(
+            sweeps() - start,
+            2,
+            "projected > cap must trigger hard rescue even when include_buffer_alloc == false"
+        );
+    }
+
+    /// When an uncommitted transaction cannot fit under `max_doc_bytes` even if
+    /// all materialized container states dropped to 0, `enforce_watermarks`
+    /// skips futile Stage 2 cold-state demotion before rejecting & rolling back.
+    #[test]
+    fn unrescuable_try_commit_skips_futile_stage2_demotion_before_rollback() {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1).unwrap();
+        {
+            let mut txn = doc.txn().unwrap();
+            doc.get_map("cold")
+                .insert_with_txn(
+                    &mut txn,
+                    "k",
+                    LoroValue::String(pseudo_random_ascii(55, 8 * 1024).into()),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+        // Keep `cold` materialized in DocState and verify baseline fits easily.
+        let _ = doc.get_map("cold").get("k");
+        let before = doc.memory_stats();
+        assert!(before.state_bytes > 0);
+
+        let max_doc = before.total_bytes + 32 * 1024;
+        doc.set_memory_budget(MemoryBudget {
+            max_doc_bytes: Some(max_doc),
+            ..Default::default()
+        });
+
+        // Stage a huge uncommitted edit (> max_doc by itself) so Stage 2 demoting
+        // `cold` cannot possibly admit the transaction.
+        let mut txn = doc.txn().unwrap();
+        doc.get_text("big")
+            .insert_with_txn(
+                &mut txn,
+                0,
+                &pseudo_random_ascii(77, 128 * 1024),
+                crate::cursor::PosType::Unicode,
+            )
+            .unwrap();
+        let err = txn.commit().unwrap_err();
+        assert_eq!(
+            err.memory_limit_info().map(|i| i.kind),
+            Some(MemoryLimitKind::DocBudget)
+        );
+        // `cold` should still be materialized (not needlessly evicted before rollback),
+        // and the post-rollback doc remains within `max_doc`.
+        let after = doc.memory_stats();
+        assert!(
+            after.state_bytes > 0,
+            "futile Stage 2 should not evict cold state when uncommitted txn alone exceeds max_doc"
+        );
+        assert!(after.total_bytes <= max_doc);
+        assert_eq!(doc.get_text("big").to_string(), "");
     }
 }
