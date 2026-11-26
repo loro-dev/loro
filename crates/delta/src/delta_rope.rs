@@ -1,6 +1,6 @@
 use std::{fmt::Debug, ops::Range};
 
-use generic_btree::{rle::Sliceable, Cursor};
+use generic_btree::{rle::Sliceable, Cursor, LeafIndex};
 
 use crate::{
     delta_rope::rle_tree::LengthFinder,
@@ -239,49 +239,44 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     }
 
     pub fn transform(&self, other: &Self, left_prior: bool) -> Self {
-        let mut this_iter = self.iter_with_len();
-        let mut other_iter = other.iter_with_len();
+        let mut this_iter = CanonicalIter::new(self);
+        let mut other_iter = CanonicalIter::new(other);
         let mut transformed_delta = DeltaRope::new();
 
         while this_iter.peek().is_some() || other_iter.peek().is_some() {
-            if this_iter.peek_is_insert() && (left_prior || !other_iter.peek_is_insert()) {
-                let insert_length;
-                match this_iter.peek().unwrap() {
-                    DeltaItem::Replace { value, attr, .. } => {
-                        insert_length = value.rle_len();
-                        transformed_delta.push_insert(value.clone(), attr.clone());
-                    }
-                    DeltaItem::Retain { .. } => unreachable!(),
-                }
-                this_iter.next_with(insert_length).unwrap();
-            } else if other_iter.peek_is_insert() {
-                let insert_length = other_iter.peek_insert_length();
-                transformed_delta.push_retain(insert_length, Default::default());
-                other_iter.next_with(insert_length).unwrap();
-            } else {
-                // It's now either retains or deletes
-                let length = this_iter.peek_length().min(other_iter.peek_length());
-                let this_op_peek = this_iter.peek().cloned();
-                let other_op_peek = other_iter.peek().cloned();
-                let _ = this_iter.next_with(length);
-                let _ = other_iter.next_with(length);
-                if other_op_peek.map(|x| x.is_delete()).unwrap_or(false) {
-                    // It makes our deletes or retains redundant
-                    continue;
-                } else if this_op_peek
-                    .as_ref()
-                    .map(|x| x.is_delete())
-                    .unwrap_or(false)
+            match (this_iter.peek(), other_iter.peek()) {
+                (Some(CanonicalOp::Insert(value, attr)), other_op)
+                    if left_prior || !matches!(other_op, Some(CanonicalOp::Insert(..))) =>
                 {
-                    transformed_delta.push_delete(length);
-                } else {
-                    transformed_delta.push_retain(
-                        length,
-                        this_op_peek
-                            .map(|x| x.into_retain().unwrap().1)
-                            .unwrap_or_default(),
-                    );
-                    // FIXME: transform the attributes
+                    transformed_delta.push_insert((*value).clone(), (*attr).clone());
+                    this_iter.consume_insert();
+                }
+                (_, Some(CanonicalOp::Insert(value, _))) => {
+                    transformed_delta.push_retain(value.rle_len(), Default::default());
+                    other_iter.consume_insert();
+                }
+                (this_op, other_op) => {
+                    // It's now either retains or deletes
+                    let this_len = this_op.map_or(usize::MAX, CanonicalOp::non_insert_len);
+                    let other_len = other_op.map_or(usize::MAX, CanonicalOp::non_insert_len);
+                    let length = this_len.min(other_len);
+                    let other_is_delete = matches!(other_op, Some(CanonicalOp::Delete(_)));
+                    let this_is_delete = matches!(this_op, Some(CanonicalOp::Delete(_)));
+                    let this_retain_attr = match this_op {
+                        Some(CanonicalOp::Retain(_, attr)) => Some((*attr).clone()),
+                        _ => None,
+                    };
+                    this_iter.consume_len(length);
+                    other_iter.consume_len(length);
+                    if other_is_delete {
+                        // It makes our deletes or retains redundant
+                        continue;
+                    } else if this_is_delete {
+                        transformed_delta.push_delete(length);
+                    } else {
+                        transformed_delta.push_retain(length, this_retain_attr.unwrap_or_default());
+                        // FIXME: transform the attributes
+                    }
                 }
             }
         }
@@ -299,50 +294,164 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
     /// Transforms the position based on self
     pub fn transform_pos(&self, mut pos: usize, left_prior: bool) -> usize {
         let mut index = 0;
-        let mut iter = self.iter_with_len();
-        while iter.peek().is_some() {
-            if iter.peek_is_retain() {
-                let DeltaItem::Retain { len, attr: _ } = iter.next().unwrap() else {
-                    unreachable!()
-                };
-                index += len;
-                if index > pos || (index == pos && !left_prior) {
-                    return pos;
+        let mut iter = CanonicalIter::new(self);
+        while let Some(op) = iter.peek() {
+            match op {
+                CanonicalOp::Retain(len, _) => {
+                    let len = *len;
+                    iter.consume_len(len);
+                    index += len;
+                    if index > pos || (index == pos && !left_prior) {
+                        return pos;
+                    }
                 }
-            } else if iter.peek_is_insert() {
-                if index == pos && !left_prior {
-                    return pos;
-                }
+                CanonicalOp::Insert(value, _) => {
+                    if index == pos && !left_prior {
+                        return pos;
+                    }
 
-                let insert_len;
-                match iter.peek().unwrap() {
-                    DeltaItem::Replace { value, .. } => {
-                        insert_len = value.rle_len();
-                    }
-                    _ => {
-                        unreachable!()
-                    }
+                    let insert_len = value.rle_len();
+                    pos += insert_len;
+                    index += insert_len;
+                    iter.consume_insert();
                 }
-
-                pos += insert_len;
-                index += insert_len;
-                iter.next_with(insert_len).unwrap();
-            } else {
-                // Delete
-                match iter.next().unwrap() {
-                    DeltaItem::Replace { delete, .. } => {
-                        pos = pos.saturating_sub(delete);
-                        if pos < index {
-                            pos = index;
-                            return pos;
-                        }
+                CanonicalOp::Delete(delete) => {
+                    let delete = *delete;
+                    iter.consume_len(delete);
+                    pos = pos.saturating_sub(delete);
+                    if pos < index {
+                        pos = index;
+                        return pos;
                     }
-                    DeltaItem::Retain { .. } => unreachable!(),
                 }
             }
         }
 
         pos
+    }
+}
+
+enum CanonicalOp<'a, V, Attr> {
+    Insert(&'a V, &'a Attr),
+    Delete(usize),
+    Retain(usize, &'a Attr),
+}
+
+impl<V, Attr> CanonicalOp<'_, V, Attr> {
+    fn non_insert_len(&self) -> usize {
+        match self {
+            CanonicalOp::Delete(len) | CanonicalOp::Retain(len, _) => *len,
+            CanonicalOp::Insert(..) => unreachable!(),
+        }
+    }
+}
+
+/// Iterates a [`DeltaRope`] in canonical Quill Delta order: within each contiguous
+/// run of [`DeltaItem::Replace`] items (no [`DeltaItem::Retain`] between them), all
+/// inserts are yielded first in their original order, followed by the combined
+/// delete length.
+///
+/// This makes [`DeltaRope::transform`] and [`DeltaRope::transform_pos`] independent
+/// of how adjacent inserts and deletes are split or ordered across leaves (for
+/// example, `[Delete(1), Insert("s")]` vs `[Replace { value: "s", delete: 1 }]`).
+struct CanonicalIter<'a, V: DeltaValue, Attr: DeltaAttr> {
+    delta: &'a DeltaRope<V, Attr>,
+    cursor: Option<LeafIndex>,
+    pending_delete: usize,
+    current: Option<CanonicalOp<'a, V, Attr>>,
+}
+
+impl<'a, V: DeltaValue, Attr: DeltaAttr> CanonicalIter<'a, V, Attr> {
+    fn new(delta: &'a DeltaRope<V, Attr>) -> Self {
+        let mut iter = Self {
+            delta,
+            cursor: delta.tree.first_leaf(),
+            pending_delete: 0,
+            current: None,
+        };
+        iter.load_next();
+        iter
+    }
+
+    fn peek(&self) -> Option<&CanonicalOp<'a, V, Attr>> {
+        self.current.as_ref()
+    }
+
+    fn consume_insert(&mut self) {
+        debug_assert!(matches!(self.current, Some(CanonicalOp::Insert(..))));
+        self.load_next();
+    }
+
+    fn consume_len(&mut self, len: usize) {
+        match &mut self.current {
+            Some(CanonicalOp::Delete(d)) => {
+                debug_assert!(len <= *d);
+                *d -= len;
+                if *d == 0 {
+                    self.load_next();
+                }
+            }
+            Some(CanonicalOp::Retain(r, _)) => {
+                debug_assert!(len <= *r);
+                *r -= len;
+                if *r == 0 {
+                    self.load_next();
+                }
+            }
+            Some(CanonicalOp::Insert(..)) => unreachable!("use consume_insert for inserts"),
+            None => {}
+        }
+    }
+
+    fn load_next(&mut self) {
+        self.current = None;
+        while let Some(leaf) = self.cursor {
+            let elem = self.delta.tree.get_elem(leaf).unwrap();
+            match elem {
+                DeltaItem::Replace {
+                    value,
+                    attr,
+                    delete,
+                } => {
+                    self.pending_delete += *delete;
+                    self.cursor = self
+                        .delta
+                        .tree
+                        .next_elem(Cursor { leaf, offset: 0 })
+                        .map(|x| x.leaf);
+                    if value.rle_len() > 0 {
+                        self.current = Some(CanonicalOp::Insert(value, attr));
+                        return;
+                    }
+                }
+                DeltaItem::Retain { len, attr } => {
+                    if *len == 0 {
+                        self.cursor = self
+                            .delta
+                            .tree
+                            .next_elem(Cursor { leaf, offset: 0 })
+                            .map(|x| x.leaf);
+                        continue;
+                    }
+                    if self.pending_delete > 0 {
+                        let del = std::mem::take(&mut self.pending_delete);
+                        self.current = Some(CanonicalOp::Delete(del));
+                        return;
+                    }
+                    self.cursor = self
+                        .delta
+                        .tree
+                        .next_elem(Cursor { leaf, offset: 0 })
+                        .map(|x| x.leaf);
+                    self.current = Some(CanonicalOp::Retain(*len, attr));
+                    return;
+                }
+            }
+        }
+        if self.pending_delete > 0 {
+            let del = std::mem::take(&mut self.pending_delete);
+            self.current = Some(CanonicalOp::Delete(del));
+        }
     }
 }
 

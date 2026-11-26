@@ -450,3 +450,84 @@ fn retain_start_optimization_split() {
     a.compose(&b);
     assert_eq!(a, expected);
 }
+
+#[test]
+fn transform_and_transform_pos_are_invariant_to_delete_insert_ordering() {
+    let bold = HashMap::from([("bold".to_string(), true)]);
+    let italic = HashMap::from([("italic".to_string(), true)]);
+
+    // Two semantically identical deltas at a deleted boundary:
+    // 1) Replace { value: "s", delete: 1 } (insert before delete)
+    // 2) [Delete(1), Insert("s")] (delete before insert across two leaves)
+    let mut insert_then_delete: RichTextDelta = RichTextDelta::new();
+    insert_then_delete
+        .push_insert(TextChunk::try_from_str("s").unwrap(), bold.clone())
+        .push_delete(1);
+
+    let mut delete_then_insert: RichTextDelta = RichTextDelta::new();
+    delete_then_insert
+        .push_delete(1)
+        .push_insert(TextChunk::try_from_str("s").unwrap(), bold.clone());
+
+    let mut local_restore: RichTextDelta = RichTextDelta::new();
+    local_restore.push_retain(1, Default::default());
+    local_restore.push_insert(TextChunk::try_from_str("a").unwrap(), Default::default());
+
+    for left_prior in [false, true] {
+        assert_eq!(
+            local_restore.transform(&insert_then_delete, left_prior),
+            local_restore.transform(&delete_then_insert, left_prior),
+            "left_prior={left_prior}"
+        );
+        assert_eq!(
+            insert_then_delete.transform(&local_restore, left_prior),
+            delete_then_insert.transform(&local_restore, left_prior),
+            "reverse left_prior={left_prior}"
+        );
+        for pos in 0..=3 {
+            assert_eq!(
+                insert_then_delete.transform_pos(pos, left_prior),
+                delete_then_insert.transform_pos(pos, left_prior),
+                "pos={pos} left_prior={left_prior}"
+            );
+        }
+    }
+
+    // Multi-styled inserts with interleaved deletes must also match canonical order.
+    let mut interleaved: RichTextDelta = RichTextDelta::new();
+    interleaved
+        .push_insert(TextChunk::try_from_str("s").unwrap(), bold.clone())
+        .push_delete(1)
+        .push_insert(TextChunk::try_from_str("t").unwrap(), italic.clone());
+
+    let mut canonical: RichTextDelta = RichTextDelta::new();
+    canonical
+        .push_insert(TextChunk::try_from_str("s").unwrap(), bold)
+        .push_insert(TextChunk::try_from_str("t").unwrap(), italic)
+        .push_delete(1);
+
+    for left_prior in [false, true] {
+        assert_eq!(
+            local_restore.transform(&interleaved, left_prior),
+            local_restore.transform(&canonical, left_prior),
+            "multi-style left_prior={left_prior}"
+        );
+    }
+
+    // TP1 convergence check on "rb" with local_restore and delete_then_insert.
+    let mut base: RichTextDelta = RichTextDelta::new();
+    base.push_str_insert("rb");
+    let a_prime = local_restore.transform(&delete_then_insert, true);
+    let b_prime = delete_then_insert.transform(&local_restore, false);
+
+    let mut path_ab = base.clone();
+    path_ab.compose(&local_restore);
+    path_ab.compose(&b_prime);
+
+    let mut path_ba = base;
+    path_ba.compose(&delete_then_insert);
+    path_ba.compose(&a_prime);
+
+    assert_eq!(path_ab.try_to_string().unwrap(), "sab");
+    assert_eq!(path_ba.try_to_string().unwrap(), "sab");
+}
