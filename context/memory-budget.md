@@ -1,6 +1,6 @@
 # LoroDoc Bounded Memory Budget
 
-Verified against code 2026-11-16.
+Verified against code 2026-11-24.
 
 ## Overview
 
@@ -26,12 +26,22 @@ Verified against code 2026-11-16.
 - **`total_bytes`**: exact sum of the 12 RAM component fields above.
 - **`spilled_disk_bytes`**: out-of-core spilled bytes (0 when using in-memory stores; intentionally excluded from `total_bytes`).
 
-## Stage 1 & Stage 2 Soft Reclamation (Hysteresis & Clock Demotion)
+## Stage 1 & Stage 2 Soft Reclamation (Hysteresis, Clock Demotion & Anti-Thrashing)
 
 - `effective_high_watermark()` defaults to 85% of `max_doc_bytes`; `effective_target_watermark()` defaults to 70% of `max_doc_bytes`.
 - **Hysteresis**: when `total_bytes <= high`, commits skip soft reclamation (`enforce_watermarks_with_budget_locked`). Once `total_bytes > high`, reclamation aims down to `target`:
-  - **Stage 1**: evicts decoded value wrappers (`evict_value_cache_to_bytes`), caps/clears `kv_block_cache`, frees `DiffCalculator` cold container trackers (`reclaim_cold_caches`), calls `reclaim_auxiliary_caches()` on `DocState` containers (including `RichtextState::id_to_cursor_cache`), compacts `OpLog` history (`OpLog::compact_history`, skipped while `import_rollback` is active or `AppDag::has_pending_txn()` is true so `ChangeStore::flush_and_compact` never trips on uncommitted ops), frees `HistoryCache`, and trims registered `UndoManager`s.
-  - **Stage 2**: if `total_bytes > target`, `InnerStore::demote_cold_states` runs a two-pass clock sweep (clearing `state_referenced` on pass 0, encoding & dropping unreferenced non-empty, non-pinned containers into `self.kv` on pass 1) and flushes `state`/`oplog` KV memtables. Newly created containers recorded in `created_journal_stack` are pinned while inside a rollback scope; empty containers and cleared deleted roots are skipped so they do not bloat KV.
+  - **Stage 1**: evicts decoded value wrappers (`evict_value_cache_to_bytes`), caps/clears `kv_block_cache`, frees `DiffCalculator` cold container trackers by LRU recency (`reclaim_cold_caches`, retaining the most recently used `keep_hot` trackers rather than the smallest), calls `reclaim_auxiliary_caches()` on `DocState` containers (including `RichtextState::id_to_cursor_cache`), compacts `OpLog` history (`OpLog::compact_history`, which also calls `ChangeStore::compact_parsed_blocks()`; skipped while `import_rollback` is active or `AppDag::has_pending_txn()` is true so `ChangeStore::flush_and_compact` never trips on uncommitted ops), frees `HistoryCache`, and trims registered `UndoManager`s.
+  - **Stage 2**: if `total_bytes > target`, `InnerStore::demote_cold_states` encodes & drops non-empty, non-pinned materialized containers into `self.kv` and flushes KV memtables. Stage 2 skips redundant `oplog.flush_kv()` calls when Stage 1 already flushed `OpLog` and Stage 2 only mutated `DocState`. Newly created containers recorded in `created_journal_stack` are pinned while inside a rollback scope; empty containers and cleared deleted roots are skipped so they do not bloat KV.
+  - **Soft vs Hard Demotion & Refault (Anti-Thrashing) Protection (`inner_store.rs`, `container_wrapper.rs`)**:
+    - `InnerStore` tracks a monotonic `demote_epoch` (incremented once per actual `demote_cold_states` sweep, **not** per commit/op), current-op `access_epoch`, a bounded `recently_demoted` table (`ContainerIdx -> evicted_epoch`, FIFO cap `MAX_REFAULT_TRACKED = 512`), and a bounded `refault_protected` cooldown table (`ContainerIdx -> protected_until_epoch`, FIFO cap `512`).
+    - When a demoted container is re-materialized from `self.kv` within `REFAULT_WINDOW_EPOCHS` (`4` demote sweeps), it is marked refault-protected for `REFAULT_COOLDOWN_EPOCHS` (`16` sweeps) and sets a refault signal. If a refault-protected container is still accessed in the current `access_epoch` during a soft sweep, its cooldown refreshes so sustained hot traffic does not periodically age out into eviction cycles.
+    - **Known boundaries**:
+      - Because `REFAULT_WINDOW_EPOCHS = 4` counts *demote sweeps* rather than commits/wall time, a container re-loaded after 5+ unrelated demote sweeps is treated as a fresh load rather than a refault.
+      - Because `recently_demoted` and `refault_protected` are capped at `MAX_REFAULT_TRACKED = 512` entries (oldest evicted FIFO), workloads that simultaneously thrash `> 512` distinct hot containers in one cycle can overflow the tracking window (the 64-check `SoftBackoff` cap still bounds sweep frequency).
+      - A single hot container larger than `high_watermark_bytes` stays materialized in soft mode once protected (causing `SoftBackoff` to arm until genuine growth or the 64-check probe), whereas exceeding hard `max_doc_bytes` deliberately bypasses soft protection & hysteresis so hard admission remains exact.
+    - In **soft** mode (`hard_or_force = false`), `demote_cold_states` protects containers touched in the current `access_epoch` and active `refault_protected` containers across its three clock passes (second-chance clearing before evicting older unreferenced containers), returning `DemoteResult { reclaimed_bytes, blocked_by_protection, had_refaults }`. When protection/refaults prevent reaching `target`, `SoftBackoff` arms instead of resetting, stopping hot-container ping-pong.
+    - In **hard/force** mode (`hard_or_force = true`, used by `reclaim_memory()` and hard-limit rescue), refault and current-epoch protections are bypassed and `recently_demoted` / `refault_protected` are cleared once demoted so full/hard reclamation remains deterministic. Stage 2 re-evaluates hard-limit status **after** Stage 1 (`over_doc_hard_after_stage1` / `over_global_hard_after_stage1`) so transient cache spikes cleared by Stage 1 do not force hard eviction of hot containers.
+    - Tests: `hot_container_anti_thrashing_blocks_ping_pong_and_allows_force_full` (`loro.rs`) and `hot_container_anti_thrashing_preserves_data_and_reclaim_memory_still_demotes_all` (`crates/loro/tests/memory_budget.rs`).
 
 ## Runtime quota changes
 
@@ -43,7 +53,7 @@ An empty auto-commit transaction can adopt the new quota before its first edit.
 manual commits and `apply_diff` use the same captured quota. Existing nested
 batch scopes prevent a new budget scope from being inserted beneath them.
 Single and batch imports perform soft reclamation after closing import rollback
-scopes, including when only watermarks are configured. The two-pass cold-state
+scopes, including when only watermarks are configured. The cold-state
 sweep uses a fixed starting clock hand so advancing the hand never skips slots.
 Unbounded undo stacks skip byte estimation during trimming.
 
@@ -51,13 +61,18 @@ Unbounded undo stacks skip byte estimation during trimming.
 
 - **`ImportBlob` (`max_import_blob_bytes`)**: checked pre-decode across `import*`, `import_batch*`, `import_batch_detailed*` (isolated per-blob `Failed`), and `import_json_updates` (via a zero-allocation `CountingWriter`).
 - **`PendingPool` (`max_pending_bytes`)**: enforced incrementally during `PendingChanges::import_pending_change` with key/range deduplication; breaching it triggers mid-blob rollback in `OpLog`.
+- **Hard-limit rescue & deferred `compact_history()` recovery**:
+  - `enforce_watermarks_with_budget_locked` (`over_doc_hard`) and `GlobalMemoryPool::enforce_global_watermarks_for_active` (`over_global_hard`) **bypass `SoftBackoff`** whenever usage exceeds hard `max_doc_bytes`, `max_heap_bytes`, or WASM linear limits, escalating to `hard_or_force = true` before rejecting with `MemoryLimitExceeded`.
+  - When `import_rollback` or `AppDag::has_pending_txn()` prevents `OpLog::compact_history()`, hard rescue also calls `OpLog::evict_flushed_history_cache()` (`ChangeStore::evict_flushed_cached_blocks`) to drop read-only already-flushed blocks loaded by `DiffCalculator`, and `enforce_watermarks_with_budget_locked` resets (does not arm) `self.soft_backoff` so post-rollback sweeps still run `compact_history()`.
+  - Tests: `hard_limit_rescue_bypasses_soft_backoff_before_doc_oom`, `import_rollback_does_not_starve_post_import_compact_history` (`loro.rs`), and `hard_doc_budget_rescues_past_soft_backoff_on_commit_import_and_batch` (`crates/loro/tests/memory_budget.rs`).
 - **`DocBudget` (`max_doc_bytes`)**:
-  - **Remote imports & batches**: checked after `DocState` apply and watermark reclaim. Because `oplog.rollback_import(&mut state)` only reverts `OpLog`, callers (`import`, `BatchImportGuard::finish`, `init_snapshot_preserving_pending_with`) silently revert `DocState` first (`revert_state_silently` + `take_events()` + `remove_created(&created)`), then roll back `OpLog`, and reset `DiffCalculator`. When `has_doc_budget` is set, `BatchImportGuard::finish` defers `doc.emit_events()` until after the `DocBudget` check succeeds so subscribers never observe rolled-back batches.
+  - **Remote imports & batches**: checked after `DocState` apply and watermark reclaim. Because `oplog.rollback_import(&mut state)` only reverts `OpLog`, callers (`import`, `BatchImportGuard::finish`, `init_snapshot_preserving_pending_with`) silently revert `DocState` first (`undo_import` / `revert_state_silently` + `take_events()` + `remove_created(&created)`), then roll back `OpLog`, and reset `DiffCalculator`. When `has_doc_budget` is set, `BatchImportGuard::finish` defers `doc.emit_events()` until after the `DocBudget` check succeeds so subscribers never observe rolled-back batches.
   - **`UndoManager`**: `compose_remote_event` filters out diffs for containers unrelated to `affected_cids` (while preserving `Tree` events) to prevent remote churn on untouched containers from bloating undo stacks, and `set_max_undo_bytes` / `shrink_to_fit` evict oldest items FIFO.
   - **`try_commit` / `try_commit_with` vs infallible `commit`**:
     - `commit()` / `commit_with()` stay infallible (performing Stage 1/2 best-effort reclamation without failing).
     - `try_commit()`, `try_commit_with()`, manual `Transaction::commit()`, and `apply_diff` enforce `max_doc_bytes`. Local transactions under `max_doc_bytes` arm `budget_base_scope` on `Transaction` (`begin_budget_rollback_scope` with `ignore_thread = true`).
-    - On rollback (`finish_local_rollback`, `roll_back_scope`, `remove_created`), `LocalRollbackJournal` restores `SharedArena`'s `StrArena` to its checkpoint (`str_checkpoint`), `InnerStore::remove_created` truncates trailing empty slots and excess `Vec` capacity, `Transaction::roll_back_scope` shrinks/clears `event_hints`, and `rollback_transaction_scope_inner` frees transient `HistoryCache` entries so subsequent smaller commits remain unblocked.
+    - On rollback (`finish_local_rollback`, `roll_back_scope`, `remove_created`), `LocalRollbackJournal` restores `SharedArena`'s `StrArena` to its checkpoint (`str_checkpoint`), `InnerStore::remove_created` truncates trailing empty slots and excess `Vec` capacity, `Transaction::roll_back_scope` shrinks/clears `event_hints`, and `rollback_transaction_scope_inner` calls `cleanup_rollback_transient_caches` to clear transient `HistoryCache`, `value_cache`, `kv_block_cache`, container auxiliary caches, flushed history blocks, and cold states when over budget so `DiffCalculator` history loads on a rejected commit do not block subsequent smaller commits.
+    - **Hard-limit rejection tradeoff**: hard admission (`total_bytes > max_doc_bytes`) deliberately does not apply `SoftBackoff` hysteresis, so repeated caller loops that submit oversized `try_commit` transactions will run Stage 1 cleanup on each rejection. To avoid redundant Stage 2 work inside a single rejected commit, `enforce_watermarks_with_budget_locked` skips Stage 2 when `stats_after_stage1.total_bytes - state_bytes > max_doc_bytes` (demoting states cannot rescue the commit), avoids a second `demote_cold_states(0, ...)` pass when the first pass already targeted `0` or exhausted non-pinned states, and skips `state.flush_kv()` when `reclaimed_bytes == 0`. Tests: `rejected_commit_cleans_up_diff_calc_transient_caches`, `unrescuable_try_commit_skips_futile_stage2_demotion_before_rollback` (`loro.rs`), and `rejected_try_commit_cleans_transient_caches_so_later_commits_fit` (`crates/loro/tests/memory_budget.rs`).
 
 ## WASM / TypeScript Surface (`loro-crdt`)
 
@@ -74,7 +89,7 @@ Unbounded undo stacks skip byte estimation during trimming.
 - **WASM live heap + linear memory tracking & pre-malloc admission (`crates/loro-internal/src/memory.rs`, `crates/loro-wasm/src/lib.rs`)**:
   - `ReportingAlloc` wires `enable_global_heap_tracker()`, `record_global_alloc`, `record_global_dealloc`, and `record_global_realloc` with relaxed atomics (avoiding `crate::sync` Loom instrumentation), exposing live/peak Rust heap bytes alongside `wasm_linear_memory_bytes()` (`wasm32::memory_size(0) * 65536` in `u64` so 4 GiB never overflows 32-bit `usize`).
   - `LoroDoc::import`, `importBatch`, and `importBatchDetailed` read JS `Uint8Array.byteLength` and run `preflight_external_import_alloc` **before** `.to_vec()` allocates in WASM linear memory, proactively reclaiming idle docs and rejecting with `MemoryLimitKind::GlobalBudget` before V8's `wasm-max-mem-pages` / 4 GiB ceiling traps.
-  - Large JS strings (`>= 64 KiB` code units) passed to `LoroText` (`insert`, `insertUtf8`, `splice`, `update`, `updateByLine`) check `preflight_wasm_linear_alloc(code_units * 3)` before `wasm-bindgen` copies the string onto the WASM heap when `maxWasmLinearBytes` is configured, keeping moderate edits eligible for `tryCommit` rollback while blocking multi-MiB linear-memory traps early.
+  - Large JS strings (`>= 64 KiB` code units) passed to `LoroText` (`insert`, `insertUtf8`, `splice`, `update`, `updateByLine`) check `preflight_wasm_linear_alloc(code_units * 3)` before `wasm-bindgen` copies the string onto the WASM heap when `maxWasmLinearBytes` is configured (honoring configured watermarks and `SoftBackoff` under soft pressure, and rescuing before rejecting with `GlobalBudget`), keeping moderate edits eligible for `tryCommit` rollback while blocking multi-MiB linear-memory traps early.
   - Because `memory.grow` never shrinks on `wasm32`, `check_global_budget_with_active` compares `allocated_heap_bytes > max_heap_bytes`, and allows writes after `wasm_linear_memory_bytes` touched `max_wasm_linear_bytes` only if `lin_now <= linear_before` (0 new WASM pages) and live heap dropped `<= 70%` of `max_wasm_linear_bytes` after idle-doc reclamation.
 
 ## Undo accounting and checkpoints without container events
@@ -121,12 +136,13 @@ into a transaction that already accepted edits; the next transaction picks up
 new global hard admission. Local quota snapshots and global linear baselines are
 both retained across the stacked commit paths.
 
-## Structural Shrinkage & Native Out-of-Core Spilling
+## Structural Shrinkage, Incremental L0 Spilling & Native Out-of-Core Storage
 
 - **Lock-free unbudgeted fast paths (`LoroDocInner::budget_flags`)**: `LoroDoc::new()` injects `kv_block_cache` directly into `OpLog` / `DocState` without extra locking, and unbudgeted commits/imports short-circuit on `budget_flags` (`std::sync::atomic::AtomicU8`) before touching `memory_budget` or `txn` locks.
 - **Compact `Op` (`<= 40B` on 64-bit, `op.rs`, `op/content.rs`, `list_op.rs`)**: `InnerContent::Map(Arc<MapSet>)` and compact `InnerListOp` variants (`Insert { slice, pos: u32 }`, `Set(Arc<SetListOp>)`, `StyleStart(Arc<StyleOp>)`, `Delete(CompactDeleteSpan)`) cut parsed op size without changing wire encoding.
 - **Hybrid `ImVersionVector` (`version.rs`)**: Stores `<= 4` peers inline via `SmallVec<[(PeerID, Counter); 4]>` (`0` heap bytes) before promoting to `imbl::GenericHashMap` (`ImVvHeapMap`).
 - **Sparse 64-slot paged `InnerStore` & lazy `ListState` child index (`inner_store.rs`, `list_state.rs`)**: `InnerStore` groups slots into 64-entry `StorePage`s whose `slots` grow only up to the highest populated offset in that page and free empty `Box<StorePage>` entries on cold demotion, value eviction, or rollback (`remove_created`). `ListState::child_container_to_index` stays `None` for scalar-only lists. `StrArena::shrink_spare_capacity()` runs on forced full reclamation (`reclaim_memory`).
+- **Incremental L0 KV flush, size-tiered compaction & L0 Bloom filters (`kv-store/src/{mem_store.rs, file_store.rs, sstable.rs}`)**: `MemKvStore::flush()` writes only `mem_table` into a new L0 `SsTable` (retaining empty deletion tombstones whenever older SSTables exist) instead of calling `export_all()` to rewrite the entire store on every flush; callers of the public `loro-kv-store` `MemKvStore::flush()` / `FileKvStore::flush()` API may therefore retain multiple SSTables until `export_all()` or full compaction. `maybe_compact_sstables()` / `compact_sstables_from()` trigger bounded suffix compactions when `suffix_bytes >= table[i].data_size() / 2` or `ss_table.len() > MAX_SS_TABLES` (`6`), using `SsTableIter::new_scan_uncached` so compaction scans do not pollute `SharedBlockCache` (and stripping tombstones only when compacting from `start == 0` with `!should_encode_none`). To prevent multi-table point-read amplification (`get` / `contains_key`), L0/delta SSTables (tables above index `0`) attach an in-memory-only 10-bit/key `BloomFilter` (no wire format change, accounted in `SsTable::estimated_memory_bytes()`), keeping cold point reads across 6 interleaved tables near 1x (`bloom_filters_bound_point_read_amplification_across_interleaved_l0_tables`). `FileKvStore::flush()` calls `spill_tables()` on the newly appended/compacted SSTables (reusing already-spilled `.sst` files).
 - **Native out-of-core `FileKvStore` (`kv-store/src/file_store.rs`, `sstable.rs`, `MemoryBudget::spill_dir`)**: On `#[cfg(not(target_arch = "wasm32"))]`, `MemoryBudget::with_spill_dir(dir)` migrates both `OpLog` (`ChangeStore::replace_kv_backend`) and `DocState` (`ContainerStore::replace_kv_backend`, including `shallow_root_store`) onto `FileKvStore`. Flushed/imported/compacted SSTables write `.sst` backing files via `SpillFile` (positional reads served through `SharedBlockCache`, metadata-only `kv_bytes`, disk bytes tracked in `spilled_disk_bytes`, shared immutable `.sst` files on `Clone`/`fork()` (separate mutable buffers/cache, file removed after the last owner), Unix owner-only `0600` files, and automatic file unlinking after the last owner releases a superseded/dropped file). On `wasm32`, `spill_dir` is accepted on `MemoryBudget` as a no-op.
 
 ## Fork and shallow-root backend inheritance
@@ -324,28 +340,71 @@ even while commits succeeded. `wasm_linear_memory_exceeded()` (Rust) and the JS
 the ceiling, so an application can recreate the instance. `GlobalMemoryStats`
 gained no Rust field (it is not `#[non_exhaustive]`).
 
-## Global soft-sweep backoff
+## Global soft-sweep backoff & Preflight Batching
 
 `GlobalMemoryPool::enforce_global_watermarks_for_active` falls back to Stage 1
 and Stage 2 on the active document when idle documents cannot bring usage to the
-target. When even that fails (live state larger than the target), every commit
-used to repeat it, including `oplog.flush_kv()` (rewrites the whole KV table)
-and `arena.shrink_spare_capacity()` (copies the string arena). Now
-`record_soft_sweep_result` stores the usage left by a failed sweep, and
-`soft_reclaim_backed_off` skips later sweeps until usage exceeds that by
+target. When even that fails (live state or refault-protected containers exceed
+the target), `record_soft_sweep_result` stores the usage left by the failed sweep,
+and `soft_reclaim_backed_off` skips later soft sweeps until usage exceeds that by
 `max(floor / 8, 256 KiB)` or `SOFT_BACKOFF_MAX_SKIPS` (64) checks were skipped,
 so documents that become idle are still reclaimed without growth. Usage below
 the high watermark, a successful sweep, or `set_global_memory_budget` clears the
-backoff. Hard admission (`check_global_budget_with_active`) never reads it.
-Test: `a_failed_global_soft_sweep_backs_off_until_usage_grows`.
+backoff.
+
+- **Unified preflight backoff & single batch preflight (`loro.rs`)**:
+  - `preflight_global_watermark_for_import` (called by `preflight_import_bytes`) and
+    `preflight_wasm_linear_alloc` consult `pool.soft_backoff` for soft pressure
+    (`projected <= hard_cap`) and update `record_soft_sweep_result` after running.
+    Whenever `projected > cap` (both `include_buffer_alloc == true` pre-copy
+    preflights and `include_buffer_alloc == false` `import` / `import_batch`
+    preflights, as well as WASM linear ceiling preflights), they **bypass
+    `soft_backoff`** and run a hard-rescue sweep (`hard_demote = true`); only
+    pre-copy/linear-alloc preflights (`include_buffer_alloc == true` /
+    `max_wasm_linear_bytes`) return `GlobalBudget` before decode/copy.
+  - `import_batch*` / `import_blobs_as_batch` run the global preflight watermark
+    check at most **once** at batch entry (using total/max blob size) while
+    keeping O(1) `check_import_blob_size_only` checks inside the per-blob decode
+    and import loops.
+  - Hard admission (`check_global_budget_with_active`) and hard-limit rescue
+    (`is_over_global_hard_limit`) never stay blocked by `soft_backoff`.
+- **Stage 1 cache-rebuild thrash detection (`SoftBackoff::backed_off_with_cache`)**:
+  - Both per-doc (`LoroDocInner::soft_backoff`) and global (`GlobalMemoryPool::soft_backoff`,
+    covering `enforce_global_watermarks_for_active`, `preflight_global_watermark_for_import`,
+    and `preflight_wasm_linear_alloc`) record the pre-sweep footprint and cleared Stage 1
+    cache bytes (`block_cache + value_cache + change_cache + history_cache + diff_calc`, or
+    `global_block_cache` on global preflights).
+  - Detection operates **between consecutive soft sweeps** without a fixed check-count expiry
+    window: whenever the next crossing above the high watermark has rebuilt `>= 50%` of the
+    last sweep's cleared cache bytes while both total usage (`used <= pre_sweep +
+    max(pre_sweep/8, 256 KiB)`) and non-cache usage (`cur_non_cache <= pre_non_cache +
+    max(pre_non_cache/8, 256 KiB)`) show no genuine non-cache growth, `SoftBackoff` arms at
+    the rebuilt footprint regardless of how many below-high checks occurred in between (so
+    both every-op reads and sparse periodic reads like every 6 or 20 imports stop clearing
+    and re-decompressing `block_cache` on every read).
+  - Genuine non-cache growth bypasses cache-rebuild backoff and triggers an immediate sweep;
+    hard-limit rescues and explicit `reclaim_memory()` / `reclaim_global_memory(None)` /
+    budget setters reset `SoftBackoff`; and the periodic probe after `SOFT_BACKOFF_MAX_SKIPS`
+    (`64`) checks still reclaims `block_cache` once reads stop.
+- Tests: `a_failed_global_soft_sweep_backs_off_until_usage_grows`,
+  `preflight_respects_soft_backoff_and_rescues_before_global_oom`,
+  `import_preflight_without_buffer_alloc_bypasses_backoff_when_projected_exceeds_cap`,
+  `batch_import_runs_single_global_preflight`,
+  `stage1_block_cache_rebuild_thrashing_enters_soft_backoff`,
+  `stage1_sparse_periodic_reads_thrash_backoff_and_global_consistency` (`loro.rs`), and
+  `global_preflight_backoff_and_hard_rescue_on_import_and_batch`
+  (`crates/loro/tests/global_memory_budget.rs`).
 
 The per-document sweep (`enforce_watermarks_with_budget_locked`) uses the same
-`SoftBackoff` (`LoroDocInner::soft_backoff`): a sweep that ends above the target
-records the usage it left, and later commits skip Stage 1/2 until usage grows
+`SoftBackoff` (`LoroDocInner::soft_backoff`): a soft sweep that ends above the target
+(including when hot/refault-protected containers are kept materialized) records
+the usage it left, and later commits skip Stage 1/2 until usage grows
 by the same margin or 64 checks were skipped. Usage at or below the high
 watermark and `set_memory_budget` clear it; `reclaim_memory` (`force_full`)
-never backs off. Before, with a spill directory every such commit flushed the
-whole KV table. Test: `a_failed_document_soft_sweep_backs_off_until_usage_grows`.
+and hard-limit rescue (`total_bytes > max_doc_bytes`) never back off, and an
+active `import_rollback` scope resets backoff instead of starving the
+post-rollback `compact_history()`. Test:
+`a_failed_document_soft_sweep_backs_off_until_usage_grows`.
 
 ## Incremental native global estimate
 
@@ -406,8 +465,11 @@ now backs off).
 The state undo log and recorded UndoManager inverses are documented above and in
 [undo-log.md](undo-log.md). Remaining optimization and validation work:
 
-- File-backed KV flush still rewrites the full table; sweep backoff limits how
-  often it happens. Incremental levels and streaming merges remain future work.
+- File-backed KV flush now appends L0 SSTables incrementally and compacts
+  suffixes by size-tiered/count thresholds (`MAX_SS_TABLES = 6`), avoiding
+  full-table rewrites on routine flushes; full compaction/rewrite happens only
+  via `export_all` or when a suffix compaction reaches index `0`. Background
+  non-blocking compaction remains future work if needed.
 - WASM `insert`, `insertUtf8` and `splice` encode strings up to 42 UTF-16 code
   units in a 128-byte Rust stack buffer. Empty strings and single code units
   skip the encoding view entirely. Larger strings and environments

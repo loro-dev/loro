@@ -298,3 +298,9 @@ mod test {
     #[test]
     fn test() {}
 }
+
+// Test-only, per-thread work counter: no clock thresholds or production overhead.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REPLAY_SCAN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}

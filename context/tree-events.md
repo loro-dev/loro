@@ -66,8 +66,10 @@ map of every tree `Create` as kept (`KeptChange`, see
 the full state. The undo manager transforms its steps against the actual
 change (`ContainerDiff::change`), so the re-sent text no longer shifts a
 local step's positions (loro-dev/loro#1310). Checkout diffs that are
-applied as new ops (`revert_to`, undo) keep the full state, because
-applying a tree `Create` makes a node with a new id that needs it.
+applied as new ops (`revert_to`, undo) keep the full state: a `Create` there
+either makes a node this doc has never seen, which needs all of it, or moves
+a deleted node back, whose metadata is aligned with it (see "Undo brings
+deleted nodes back" below).
 
 ## Local events are different
 

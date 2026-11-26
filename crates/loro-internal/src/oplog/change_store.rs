@@ -1579,6 +1579,16 @@ impl ChangeStore {
         compact_parsed_blocks_in(&mut inner);
     }
 
+    /// Evicts cached blocks whose contents are already persisted identically in `external_kv`.
+    ///
+    /// Safe while an `import_rollback` scope or pending txn is active because any block with
+    /// unpersisted mutations clears `flushed` (`ChangesBlock::push_change`), and flushed blocks
+    /// are read-only snapshots of their KV entries that reload on demand.
+    pub(crate) fn evict_flushed_cached_blocks(&self) {
+        let mut inner = self.inner.lock();
+        inner.mem_parsed_kv.retain(|_, block| !block.flushed);
+    }
+
     fn overlapping_blocks_for_span(
         &self,
         span: IdSpan,

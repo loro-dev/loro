@@ -1,11 +1,16 @@
 # `import_batch` Atomicity and the Detached-Mode Invariant
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-23.
 
 `LoroDoc::import_batch` (`crates/loro-internal/src/loro.rs`) stops the auto-commit txn,
 keeps the txn mutex for the whole critical section, force-detaches with
 `set_detached(true)`, and reattaches with a **single**
-`_checkout_to_latest_without_commit` at the end. Usually every blob updates only the
+`_checkout_to_latest_without_commit_with_event` at the end, reporting
+`by: "import"` so UndoManager keeps its undo/redo stacks, while preserving the
+existing `origin: "checkout"` contract. Single-blob batches still use standalone
+import labels.
+The checkout clears the dead-container cache even on a forward transition: a
+query while state lags behind imported history can cache a live child as deleted. Usually every blob updates only the
 `OpLog`, so a batch of N blobs costs one state apply instead of N.
 
 For an attached document with no applied history and snapshot-compatible state,
@@ -115,7 +120,9 @@ regression on out-of-order batches, where every blob parks and is later unlocked
 Standalone detached imports do not apply state, so preflight uses
 `import_op_can_reject(op, true)`: only MovableList `Move`/`Set` element validation
 and Text `StyleEnd` anchor validation
-(`OpLog::validate_style_end_anchors_in_import_scope`, loro-dev/loro#1254) require a
+(`OpLog::validate_style_end_anchors_in_import_scope`, loro-dev/loro#1254) and Tree
+parent/delete-target validation (`OpLog::validate_tree_parent_refs_in_import_scope`,
+[tree-parent-validation.md](tree-parent-validation.md)) require a
 rollback scope. Text/List/Tree state validation still opens a scope
 when attached. An applied Text or scalar update can unlock a pre-existing bad
 MovableList pending change, so preflight includes pending `Move`/`Set` ops when

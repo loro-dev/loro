@@ -36,6 +36,10 @@ impl DeadContainersCache {
 }
 
 impl DocState {
+    pub(crate) fn clear_dead_container_cache(&mut self) {
+        self.dead_containers_cache.clear();
+    }
+
     /// Called when a failed import is rolled back. The import may have registered parent links
     /// that the arena rollback drops, and a deletion found through one of them while it ran
     /// (e.g. by a query on another thread) is not true of the kept history.
@@ -387,5 +391,52 @@ mod tests {
         doc.checkout_to_latest();
         assert_eq!(doc.state.lock().dead_cache_entry(idx), None);
         assert!(!child.is_deleted());
+    }
+
+    #[test]
+    fn batch_import_drops_deletions_cached_while_state_lags() {
+        use crate::{encoding::ExportMode, MapHandler};
+
+        let source = LoroDoc::new_auto_commit();
+        source.set_peer_id(1).unwrap();
+        let child = source
+            .get_map("m")
+            .insert_container("c", MapHandler::new_detached())
+            .unwrap();
+        source.commit_then_renew();
+        let first = source.export(ExportMode::all_updates()).unwrap();
+        let vv = source.oplog_vv();
+        child.insert("x", 1).unwrap();
+        source.commit_then_renew();
+        let second = source.export(ExportMode::updates(&vv)).unwrap();
+
+        let doc = LoroDoc::new_auto_commit();
+        doc.set_peer_id(2).unwrap();
+        let blobs = [first, second]
+            .into_iter()
+            .enumerate()
+            .map(|(i, blob)| {
+                let meta = LoroDoc::decode_import_blob_meta(&blob, false).unwrap();
+                let doc = &doc;
+                let child_id = child.id();
+                (meta, move || {
+                    if i == 1 {
+                        // The first blob registered the map parent, but the batch
+                        // has not applied it to state yet. This caches a final deletion.
+                        let child = doc.get_map(child_id);
+                        assert!(child.is_deleted());
+                        let idx = doc.state.lock().arena.id_to_idx(&child.id()).unwrap();
+                        assert_eq!(doc.state.lock().dead_cache_entry(idx), Some(true));
+                    }
+                    Ok(bytes::Bytes::from(blob))
+                })
+            })
+            .collect();
+        doc.import_batch_with_loaders(blobs, false).unwrap();
+        let child = doc.get_map(child.id());
+        let idx = doc.state.lock().arena.id_to_idx(&child.id()).unwrap();
+        assert_eq!(doc.state.lock().dead_cache_entry(idx), None);
+        assert!(!child.is_deleted());
+        child.insert("after", 2).unwrap();
     }
 }

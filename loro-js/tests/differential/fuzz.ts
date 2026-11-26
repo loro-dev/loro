@@ -700,19 +700,13 @@ export class FuzzRun {
       rust: exported("rust"),
       js: exported("js"),
     };
-    target.batchImport = action.mode === "batch";
-    let imported: unknown;
-    try {
-      imported = target.both(
-        `import from ${source.name} (${action.mode})`,
-        (doc, engine) =>
-          action.mode === "batch"
-            ? doc.importBatch(blobs[engine])
-            : doc.import(blobs[engine][0]!),
-      );
-    } finally {
-      target.batchImport = false;
-    }
+    const imported = target.both(
+      `import from ${source.name} (${action.mode})`,
+      (doc, engine) =>
+        action.mode === "batch"
+          ? doc.importBatch(blobs[engine])
+          : doc.import(blobs[engine][0]!),
+    );
     if (imported === undefined) {
       // Both rejected it, typically a change concurrent with a shallow root.
       // Rust keeps the blob's other changes; loro.js imports atomically. The

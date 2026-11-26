@@ -1,5 +1,12 @@
 # loro.js
 
+## 0.4.2
+
+### Patch Changes
+
+- 7c9a2a0: Match Rust's multi-blob `importBatch` event labels: keep `by: "import"` and emit `origin: "checkout"`. Single-blob batches continue to use ordinary import event labels.
+- 59154a8: Preserve binary values in JSON updates by encoding them as `"🦜:binary:<base64>"`, while continuing to accept legacy number-array JSON imports. This keeps JSON updates interoperable with `loro-crdt` 1.19 and prevents conflicts when JSON updates are followed by overlapping binary updates.
+
 ## 0.4.1
 
 ### Patch Changes
