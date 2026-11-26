@@ -889,3 +889,283 @@ fn boxed_op_payloads_in_history_are_counted() {
         "history payloads: {before} -> {after}"
     );
 }
+
+#[test]
+fn hot_container_anti_thrashing_preserves_data_and_reclaim_memory_still_demotes_all() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    // Use non-RLE-collapsing content so materialized `hot` holds substantial `state_bytes`.
+    let pattern: String = (0..4096)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+    let hot = doc.get_text("hot");
+    hot.insert(0, &pattern).unwrap();
+    let cold = doc.get_text("cold");
+    cold.insert(0, &pattern).unwrap();
+    doc.commit();
+
+    let shadow = LoroDoc::new();
+    shadow
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+
+    // First drop everything with hard reclaim, then load only `hot` to measure
+    // the warm single-container baseline (excluding transient block cache).
+    let _ = doc.reclaim_memory();
+    assert_eq!(doc.memory_stats().state_bytes, 0);
+
+    hot.insert(0, "w").unwrap();
+    doc.commit();
+    let stats_warm = doc.memory_stats();
+    let base_no_block_cache = stats_warm.total_bytes - stats_warm.block_cache_bytes;
+    assert!(stats_warm.state_bytes > 0);
+
+    // Trigger one soft watermark sweep so `hot` is evicted softly into `recently_demoted`.
+    doc.set_memory_budget(MemoryBudget {
+        max_doc_bytes: Some(8 * 1024 * 1024),
+        high_watermark_bytes: Some(base_no_block_cache.saturating_sub(4 * 1024)),
+        target_watermark_bytes: Some(base_no_block_cache / 2),
+        ..Default::default()
+    });
+    assert_eq!(
+        doc.memory_stats().state_bytes,
+        0,
+        "initial soft sweep with hot idle should demote `hot` into `recently_demoted`"
+    );
+
+    // Reload `hot` within the refault window -> `hot` gains refault protection.
+    hot.insert(0, "r").unwrap();
+    doc.try_commit().unwrap();
+    assert!(
+        doc.memory_stats().state_bytes > 0,
+        "`hot` must gain refault protection and stay warm"
+    );
+
+    for step in 0..8 {
+        hot.insert(0, &format!("{step}")).unwrap();
+        doc.try_commit().unwrap();
+        assert!(
+            doc.memory_stats().state_bytes > 0,
+            "hot container must not ping-pong evict on soft pressure (commit step {step})"
+        );
+
+        let peer = LoroDoc::new();
+        peer.set_peer_id(2).unwrap();
+        let before = peer.oplog_vv();
+        peer.get_text("hot").insert(0, "p").unwrap();
+        peer.commit();
+        let upd = peer.export(ExportMode::updates(&before)).unwrap();
+        doc.import(&upd).unwrap();
+        shadow.import(&upd).unwrap();
+        assert!(
+            doc.memory_stats().state_bytes > 0,
+            "hot container stayed warm after import step {step}"
+        );
+    }
+
+    // Check parity with local + remote edits.
+    shadow
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    assert_eq!(doc.get_deep_value(), shadow.get_deep_value());
+
+    // Explicit `reclaim_memory()` forces full demotion regardless of refault cooldown.
+    let _ = doc.reclaim_memory();
+    assert_eq!(doc.memory_stats().state_bytes, 0);
+    assert_eq!(doc.get_deep_value(), shadow.get_deep_value());
+}
+
+#[test]
+fn hard_doc_budget_rescues_past_soft_backoff_on_commit_import_and_batch() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    doc.get_map("irred")
+        .insert("k", "x".repeat(48 * 1024))
+        .unwrap();
+    for i in 0..16 {
+        doc.get_text(format!("cold_{i}"))
+            .insert(0, &"a".repeat(8 * 1024))
+            .unwrap();
+    }
+    doc.commit();
+    let _ = doc.reclaim_memory();
+    let reclaimed_base = doc.memory_stats().total_bytes;
+
+    // Inflate RAM by reading cold texts so we pick a reachable `max_doc_bytes` well
+    // below the un-reclaimed state/cache total (`< reclaimed + 256 KiB` margin).
+    for i in 0..16 {
+        assert_eq!(doc.get_text(format!("cold_{i}")).len_unicode(), 8 * 1024);
+    }
+    let bloated_before = doc.memory_stats().total_bytes;
+    let max_doc = reclaimed_base + 64 * 1024;
+    assert!(bloated_before > max_doc);
+    let _ = doc.reclaim_memory();
+
+    doc.set_memory_budget(MemoryBudget {
+        max_doc_bytes: Some(max_doc),
+        high_watermark_bytes: Some(1024),
+        target_watermark_bytes: Some(512),
+        ..Default::default()
+    });
+
+    // Arm soft_backoff below `max_doc`.
+    doc.get_map("tiny").insert("step", 1i64).unwrap();
+    doc.try_commit().unwrap();
+
+    // Inflate caches & states above `max_doc`, then verify `try_commit` rescues.
+    for i in 0..16 {
+        let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+    }
+    assert!(doc.memory_stats().total_bytes > max_doc);
+    doc.get_map("tiny").insert("step", 2i64).unwrap();
+    doc.try_commit()
+        .expect("try_commit must bypass soft_backoff and rescue cold state");
+    assert!(doc.memory_stats().total_bytes <= max_doc);
+
+    // Inflate again, then verify `import` rescues.
+    for i in 0..16 {
+        let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+    }
+    assert!(doc.memory_stats().total_bytes > max_doc);
+    let peer = LoroDoc::new();
+    peer.set_peer_id(2).unwrap();
+    peer.get_map("tiny").insert("remote", 1i64).unwrap();
+    peer.commit();
+    let u1 = peer.export(ExportMode::all_updates()).unwrap();
+    doc.import(&u1)
+        .expect("import must bypass soft_backoff and rescue cold state");
+    assert!(doc.memory_stats().total_bytes <= max_doc);
+
+    // Inflate again, then verify `import_batch` and `import_batch_detailed` rescue.
+    for i in 0..16 {
+        let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+    }
+    assert!(doc.memory_stats().total_bytes > max_doc);
+    let mut batch = Vec::new();
+    for step in 2..5 {
+        let from = peer.oplog_vv();
+        peer.get_map("tiny").insert("remote", step as i64).unwrap();
+        peer.commit();
+        batch.push(peer.export(ExportMode::updates(&from)).unwrap());
+    }
+    doc.import_batch(&batch)
+        .expect("import_batch must bypass soft_backoff and rescue cold state");
+    assert!(doc.memory_stats().total_bytes <= max_doc);
+
+    let from = peer.oplog_vv();
+    peer.get_map("tiny").insert("remote", 5i64).unwrap();
+    peer.commit();
+    let u5 = peer.export(ExportMode::updates(&from)).unwrap();
+    for i in 0..16 {
+        let _ = doc.get_text(format!("cold_{i}")).len_unicode();
+    }
+    assert!(doc.memory_stats().total_bytes > max_doc);
+    let detail = doc
+        .import_batch_detailed(&[u5])
+        .expect("import_batch_detailed must rescue cold state");
+    assert!(detail.rollback_error.is_none());
+    assert!(matches!(detail.blobs[0], ImportBlobOutcome::Imported(_)));
+}
+
+#[test]
+fn rejected_try_commit_cleans_transient_caches_so_later_commits_fit() {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    for i in 0..16 {
+        doc.get_text(format!("t_{i}"))
+            .insert(0, &"m".repeat(16 * 1024))
+            .unwrap();
+        doc.commit();
+    }
+    let _ = doc.reclaim_memory();
+    let base = doc.memory_stats().total_bytes;
+
+    let max_doc = base + 32 * 1024;
+    doc.set_memory_budget(MemoryBudget {
+        max_doc_bytes: Some(max_doc),
+        high_watermark_bytes: Some(max_doc * 85 / 100),
+        target_watermark_bytes: Some(max_doc * 70 / 100),
+        ..Default::default()
+    });
+
+    // Touch multiple cold texts to trigger history diffing + oversized commit payload.
+    doc.get_text("t_0").insert(0, "ok").unwrap();
+    doc.get_map("big")
+        .insert("blob", "z".repeat(256 * 1024))
+        .unwrap();
+    let err = doc.try_commit().unwrap_err();
+    assert_limit_err(&err, MemoryLimitKind::DocBudget);
+
+    let after_reject = doc.memory_stats();
+    assert!(
+        after_reject.total_bytes <= max_doc,
+        "post-rollback stats exceeded budget: total={} > max_doc={}: {:?}",
+        after_reject.total_bytes,
+        max_doc,
+        after_reject
+    );
+    assert!(doc.get_map("big").get("blob").is_none());
+
+    // Subsequent valid small commit must succeed without hitting stale cache bloat.
+    doc.get_map("small").insert("k", 1i64).unwrap();
+    doc.try_commit()
+        .expect("small valid commit must succeed after rejected commit cleanup");
+}
+
+#[test]
+fn hot_map_imports_do_not_ping_pong_when_stage1_clears_under_hard_limit() {
+    let src = LoroDoc::new();
+    src.set_peer_id(1).unwrap();
+    let map = src.get_map("hot_map");
+    let mut seed = 1u64;
+    for i in 0..1000 {
+        let mut val = String::with_capacity(96);
+        for _ in 0..96 {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            val.push((b'a' + ((seed >> 32) % 26) as u8) as char);
+        }
+        map.insert(&format!("k_{i:04}"), val).unwrap();
+    }
+    src.commit();
+    let snap = src.export(ExportMode::Snapshot).unwrap();
+
+    let mut updates = Vec::with_capacity(40);
+    for i in 0..40 {
+        let vv = src.oplog_vv();
+        map.insert(&format!("k_{:04}", i % 1000), format!("upd_{i}"))
+            .unwrap();
+        src.commit();
+        updates.push(src.export(ExportMode::updates(&vv)).unwrap());
+    }
+
+    let probe = LoroDoc::new();
+    probe.import(&snap).unwrap();
+    probe.import(&updates[0]).unwrap();
+    let hot_state = probe.memory_stats().state_bytes;
+    probe.reclaim_memory();
+    let reclaimed = probe.memory_stats().total_bytes;
+    // Choose `max_doc_bytes` so materialized state + kv fits below `max_doc` (in the
+    // soft (85%, 100%) band) while transient read/history caches before Stage 1 cross
+    // `max_doc`. Stage 1 clears caches back under `max_doc`, so Stage 2 must stay soft
+    // and keep the refault-protected hot map materialized across all 40 imports.
+    let max_doc = ((reclaimed + hot_state) as f64 / 0.90) as usize;
+
+    let doc = LoroDoc::new();
+    doc.import(&snap).unwrap();
+    doc.set_memory_budget(MemoryBudget::new().with_max_doc_bytes(max_doc));
+
+    let mut evictions = 0usize;
+    for u in &updates {
+        doc.import(u).unwrap();
+        if doc.memory_stats().state_bytes == 0 {
+            evictions += 1;
+        }
+    }
+    assert!(
+        evictions <= 2,
+        "hot map ping-pong evicted {evictions}/40 imports"
+    );
+    assert_eq!(doc.get_deep_value(), src.get_deep_value());
+}

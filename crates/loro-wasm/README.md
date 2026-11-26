@@ -171,6 +171,83 @@ test('sync example', () => {
 });
 ```
 
+# Things to know
+
+These come up often when people start using `loro-crdt`.
+
+## Events fire on commit
+
+`doc.subscribe` and container `subscribe` callbacks run when a transaction is
+committed: on `doc.commit()`, or implicitly on `export`, `import` and
+`checkout`. An edit you haven't committed sends no event, and
+`subscribeLocalUpdates` doesn't include it yet.
+
+## Text positions are UTF-16 indexes
+
+`LoroText.insert`, `delete`, `slice`, `charAt` and text events count UTF-16
+code units, the same as JS string indexes. Convert positions that come from
+UTF-8 or code point offsets first.
+
+## One peer ID per session
+
+Each `LoroDoc` starts with a random peer ID. If you call `setPeerId`, don't give
+the same ID to two sessions that can edit at the same time, and don't use a user
+ID: one user can have several tabs or devices open. Peers that share an ID send
+updates that look like duplicates, and the docs stop converging.
+
+## Concurrent `setContainer` on one map key keeps one child
+
+`setContainer` and `getOrCreateContainer` make a regular child whose ID comes
+from the operation that created it. When two peers create a child at the same
+key at the same time, one wins and the other child's content is hidden. If more
+than one peer can create the child, use `ensureMergeableMap`,
+`ensureMergeableText` or another `ensureMergeable*` method, and every peer gets
+the same child.
+
+## `checkout` makes the document read-only
+
+After `doc.checkout(frontiers)` the document is detached. It shows the old
+version, edits throw, and imports go into history without changing what you
+see. `doc.checkoutToLatest()` (or `attach()`) brings it back. To restore an old
+version as new edits, use `doc.revertTo(frontiers)`.
+
+## Container handles keep the document alive after `doc.free()`
+
+Every container object you get from a document (`doc.getText()`, `map.get()`,
+`list.insertContainer()` and so on) holds a reference to the document. A
+detached container (`new LoroText()`, `new LoroMap()`, ...) does too once you
+attach it with `setContainer` or `insertContainer`, because it keeps its
+attached copy (see `getAttached()`). `doc.free()` only frees the `LoroDoc`
+object. The document's memory goes once every handle is gone too, either from
+its own `free()` or from the garbage collector finalizing it.
+
+Finalizers run only after the current task yields to the event loop. Code that
+creates and drops many documents in one synchronous loop (a test suite, a batch
+job, a request handler that never awaits) keeps all of them in WASM memory
+until it yields, and WASM memory never shrinks. In loro-dev/loro#1312, 1,000
+documents with a 20,000-character text each grew WASM memory by about 44 MB
+when only `doc.free()` was called. Freeing the text handle too kept it flat.
+Free the handles first, or let the loop yield:
+
+```ts
+const doc = new LoroDoc();
+const text = doc.getText("text");
+text.insert(0, "hello");
+doc.commit();
+
+text.free();
+doc.free();
+```
+
+A handle still works after `doc.free()` while it's alive, since it keeps the
+document.
+
+## Undoing a deleted map key makes a new child container
+
+A child made with `setContainer` comes back under a new container ID when undo
+restores its key. One made with `ensureMergeable*` keeps its ID. See
+[Undo and map child identity](#undo-and-map-child-identity).
+
 # Blog
 
 - [Loro 1.0](https://loro.dev/blog/v1.0)

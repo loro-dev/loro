@@ -35,6 +35,8 @@ pub(crate) struct ContainerWrapper {
     state_referenced: bool,
     /// Exact contribution currently included in `InnerStore::value_cache_bytes`.
     accounted_value_cache_bytes: usize,
+    /// Monotonic store operation epoch of the last real state access/mutation.
+    last_access_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -232,6 +234,7 @@ impl ContainerWrapper {
             value_cache_referenced: false,
             state_referenced: true,
             accounted_value_cache_bytes: 0,
+            last_access_epoch: 0,
         }
     }
 
@@ -676,6 +679,7 @@ impl ContainerWrapper {
             value_cache_referenced: false,
             state_referenced: false,
             accounted_value_cache_bytes: 0,
+            last_access_epoch: 0,
         })
     }
 
@@ -779,6 +783,16 @@ impl ContainerWrapper {
 
     pub(super) fn take_state_referenced(&mut self) -> bool {
         std::mem::take(&mut self.state_referenced)
+    }
+
+    #[inline]
+    pub(super) fn last_access_epoch(&self) -> u64 {
+        self.last_access_epoch
+    }
+
+    #[inline]
+    pub(super) fn set_last_access_epoch(&mut self, epoch: u64) {
+        self.last_access_epoch = epoch;
     }
 
     pub(crate) fn estimated_state_bytes(&self) -> usize {

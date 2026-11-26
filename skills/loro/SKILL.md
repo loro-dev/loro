@@ -58,4 +58,5 @@ Use this skill to help users build applications with Loro. Start from the user's
 - Do not model editable text as plain strings when user intent requires merged edits.
 - Do not reuse peer IDs across concurrent sessions.
 - Do not confuse detached documents with detached containers.
+- Do not expect `doc.free()` alone to release a JS/WASM document: free its container handles too, or let the code yield so the garbage collector can (see `references/performance-and-tradeoffs.md`).
 - Do not persist cursor presence, hover state, or connection state inside the main document; use ephemeral state.

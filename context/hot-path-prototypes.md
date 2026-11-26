@@ -191,7 +191,8 @@ check. Debug builds compare the first search with a linear scan.
 
 To bound peak WASM linear memory during large concurrent text/list merges:
 
-- `FugueSpan` (`fugue_span.rs`) is 64 bytes (compile-time asserted): `diff_status`
+- `FugueSpan` (`fugue_span.rs`) is at most 64 bytes (compile-time asserted;
+  32-bit targets with smaller alignment may use fewer bytes): `diff_status`
   uses a 4-byte `OptionalStatus`, and `UNKNOWN_PEER_ID` spans store their
   revealed `(base_real_id, base_unknown_counter)` out of line in
   `CrdtRope::unknown_real_ids`, indexed by `FugueSpan::id.lamport`

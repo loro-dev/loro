@@ -180,6 +180,8 @@ impl CrdtRope {
             )
         };
         for entry in future() {
+            #[cfg(test)]
+            crate::container::richtext::REPLAY_SCAN_STEPS.with(|c| c.set(c.get() + 1));
             let other_leaf = entry.cursor().leaf;
             let other_elem = entry.elem;
             // tracing::info!("Visiting {}", &other_elem.id);

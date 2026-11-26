@@ -79,6 +79,9 @@ over graceful degradation.
 - `src/container/richtext/`: text state with style anchors. Where local inserts
   go next to anchors, the insert cursor cache, and delete `start_id`s:
   [../../context/richtext-insert-positions.md](../../context/richtext-insert-positions.md).
+  `tracker/`: one big op is one rope leaf but many id-to-cursor fragments; keep
+  checkout linear in its length:
+  [../../context/large-text-linear-time.md](../../context/large-text-linear-time.md).
 - `docs/diff_calc.md`: design notes for diff calculation.
 - `docs/critical-version-spec.md`: specification and proof skeleton for
   replay-base selection (Eg-walker-aligned terminology; defines critical
@@ -93,6 +96,9 @@ over graceful degradation.
 - Movable-list `Move`/`Set` element validation on import, plus change-store
   rollback records and KV block-range decoding:
   [../../context/movable-list-op-validation.md](../../context/movable-list-op-validation.md).
+- Tree `Create`/`Move` parent and `Delete` target validation on import
+  (`validate_tree_parent_refs_in_import_scope`):
+  [../../context/tree-parent-validation.md](../../context/tree-parent-validation.md).
 - Root container visibility after import/checkout (`materialize_touched_roots`):
   [../../context/root-container-visibility.md](../../context/root-container-visibility.md).
 - Imported changes that reuse local op ids are checked against local history
