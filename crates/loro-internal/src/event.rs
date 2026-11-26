@@ -371,6 +371,14 @@ impl DeltaAttr for TextMeta {
     fn attr_is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    fn transform(&mut self, other: &Self, left_prior: bool) {
+        if !left_prior {
+            for key in other.0.keys() {
+                self.0.remove(key);
+            }
+        }
+    }
 }
 
 /// Diff is the diff between two versions of a container.

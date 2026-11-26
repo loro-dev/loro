@@ -28,6 +28,9 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Undo without checkouts: inverses recorded at local commit, the rules they
   follow to match a checkout, fallbacks and the verification switch:
   [context/undo-log.md](context/undo-log.md).
+- Undo/redo of text styles next to collaborators' marks and concurrent inserts
+  (styles read from the state's style ops):
+  [context/undo-text-styles.md](context/undo-text-styles.md).
 - Encoding/import/export modes, current vs outdated formats, shallow snapshots:
   [context/internal-encoding.md](context/internal-encoding.md).
 - Mergeable container model, marker/cid rules, tests, and common pitfalls:

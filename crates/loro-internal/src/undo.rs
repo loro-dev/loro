@@ -25,6 +25,7 @@ mod atomicity_tests;
 pub(crate) mod movable_list;
 #[cfg(test)]
 mod split_span_tests;
+pub(crate) mod text_styles;
 
 /// A batch of diffs.
 ///
