@@ -1958,7 +1958,7 @@ dependencies = [
  "dev-utils",
  "ensure-cov",
  "loro-common 1.19.0",
- "lz4_flex",
+ "lz4rip",
  "once_cell",
  "quick_cache",
  "rand 0.8.5",
@@ -2080,7 +2080,43 @@ version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
 dependencies = [
- "twox-hash 2.1.2",
+ "twox-hash 2.1.5",
+]
+
+[[package]]
+name = "lz4rip"
+version = "0.12.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "645e62305e964859bc6deede7f65d38384c78410b6fae984a5ff3dfafa32ce55"
+dependencies = [
+ "lz4rip-core",
+ "lz4rip-decode",
+ "lz4rip-encode",
+ "twox-hash 2.1.5",
+]
+
+[[package]]
+name = "lz4rip-core"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "052afa89a977207a207f3e074b1518b0fb5767dab3274464fd1ee5fc7699a30b"
+
+[[package]]
+name = "lz4rip-decode"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b0652316d9108ecf75802ddc55f4174a836f2c93c3ab3b06ed009e211d9f9c7"
+dependencies = [
+ "lz4rip-core",
+]
+
+[[package]]
+name = "lz4rip-encode"
+version = "0.10.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff6d1b221814509df4735ac32847dc169e6a8b0375683e6c5bc8139c4dd620c2"
+dependencies = [
+ "lz4rip-core",
 ]
 
 [[package]]
@@ -3413,9 +3449,9 @@ dependencies = [
 
 [[package]]
 name = "twox-hash"
-version = "2.1.2"
+version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "typenum"

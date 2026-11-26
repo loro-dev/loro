@@ -20,7 +20,7 @@ loro-common = { path = "../loro-common", version = "1.19.0" }
 bytes = { workspace = true }
 rustc-hash = { workspace = true }
 once_cell = { workspace = true }
-lz4_flex = { version = "0.11" }
+lz4rip = "0.12.8"
 xxhash-rust = { workspace = true }
 ensure-cov = { workspace = true }
 tracing = { workspace = true }
