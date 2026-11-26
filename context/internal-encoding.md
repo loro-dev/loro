@@ -652,6 +652,41 @@ module tests cover literal oversized values, both bounds, nonminimal zero and
 minus one, and a truncated varint. `read_usize`, raw-tree counters and other
 integer fields are separate paths and are unchanged by this fix.
 
+## Run-length columns in change blocks
+
+Verified against code 2026-11-26. `serde_columnar` run-length columns
+(`Rle`, `DeltaRle`, `BoolRle`) let a few bytes declare a run of up to
+`MAX_RLE_COUNT` (10^9) rows. `serde_columnar::from_bytes` expands every column
+of a table in full before zipping them (and the zip silently drops the rows of
+the longer columns), so decoding a table from untrusted bytes this way
+allocates in proportion to the declared runs, not to the input.
+loro-dev/loro#1349: a 195-byte update grew a 1 GiB `Vec` of delete start ids,
+and a 207-byte update a 16 GiB position arena.
+
+Which columns in an `EncodedBlock` (`block_encode.rs`) are columnar:
+
+- `ops` (`EncodedOps`) and `delete_start_ids` (`EncodedDeleteStartIds`) are
+  read lazily with `serde_columnar::iter_from_bytes`, so only rows the op loop
+  consumes are decoded.
+- `positions` (`PositionArena`, `encoding/arena.rs`) is decoded by
+  `PositionArena::decode_columns`, which walks both columns of the generated
+  `IterablePositionDelta` in lockstep. Each `rest` row is a length-prefixed
+  byte string and takes at least one byte, so the row count is bounded by the
+  input length. The columns must end together. Snapshot tree state
+  (`tree_state.rs`) uses the same decoder through `PositionArena::decode`.
+- `cids` is **not** columnar despite `ContainerArena`'s derive: it is encoded
+  with `serde_columnar::to_vec(&Vec<EncodedContainer>)`, which serializes rows
+  through serde's `Vec` impl (a length, then four fields per row). Its row
+  count is bounded by the bytes, and serde caps the preallocation.
+
+When adding a columnar table to an import path, decode it lazily or walk its
+columns like `decode_columns`; do not call `serde_columnar::from_bytes` on it.
+`try_parse_to_positions` is still quadratic in the worst case: each position
+may copy a long prefix of the previous one. Snapshot container states
+(`EncodedTree`, `EncodedListIds`, `EncodedText`) still decode eagerly.
+Tests: `cargo test -p loro --test crafted_update_allocation` and
+`cargo test -p loro-internal --lib encoding::arena`.
+
 ## Op lengths must match their content
 
 Verified against code 2026-11-18. A change block gives each op a `len` column,
