@@ -1,6 +1,6 @@
 # Movable List `apply_diff` and Undo
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-26.
 
 `MovableListHandler::apply_delta`
 (`crates/loro-internal/src/handler/movable_list_apply_delta.rs`) turns a list
@@ -64,9 +64,17 @@ element or anchor in the former unlock/relock window. Stale-plan errors are
 returned as `LoroError`, without an `expect` or successful partial-undo log.
 
 A remotely revived original can coexist with its undo-created replacement.
-Several historical ids may therefore resolve to one current alias. Placement
-is classified per original entry; a missing move/set without an insertion
-value is skipped, never unwrapped or revived.
+On `EventTriggerKind::Import`, `movable_list::prune_revived_remaps` removes any
+revived original element id from `UndoManager::element_remap` (and any revived
+child container id from `container_remap`) once it is live again in the list
+(loro-dev/loro#1234). Without pruning, `remap()` would keep redirecting the
+revived original to its undo copy, causing a subsequent delete-undo of the
+revived original to treat the copy as still present (no-op) and causing
+move/redo anchors naming the original to target the copy instead.
+`EventTriggerKind::Checkout` (when not paused) also clears `element_remap`
+alongside the undo/redo stacks. Placement is still classified per original
+entry; a missing move/set without an insertion value is skipped, never
+unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
 diff path. The saved full-state source, adjusted for earlier spans of the same
 undo group, supplies aliases for the cloned elements after that replay. This

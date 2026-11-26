@@ -24,6 +24,62 @@ use super::DiffBatch;
 
 pub(crate) type ElementRemap = FxHashMap<CompactIdLp, CompactIdLp>;
 
+/// Drop remapped element ids (and any revived child container remaps) when a
+/// remote import brings the original element back to life in its MovableList.
+///
+/// Without this, `remap()` keeps following `original -> replacement` even after
+/// the original and replacement coexist as distinct live items, causing a later
+/// delete-undo of the revived original to see the replacement as still present
+/// (no-op) and causing move/redo anchors naming the original to target the copy
+/// instead (loro-dev/loro#1234).
+pub(crate) fn prune_revived_remaps(
+    doc: &crate::LoroDocInner,
+    events: &[&crate::event::ContainerDiff],
+    remapped: &mut ElementRemap,
+    containers: &mut FxHashMap<ContainerID, ContainerID>,
+) {
+    if remapped.is_empty() {
+        return;
+    }
+    let mut pending: Vec<crate::container::idx::ContainerIdx> = events
+        .iter()
+        .filter(|e| e.id.container_type() == loro_common::ContainerType::MovableList)
+        .map(|e| e.idx)
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let mut state = doc.state.lock();
+    while let Some(idx) = pending.pop() {
+        if remapped.is_empty() {
+            break;
+        }
+        state.with_state(idx, |s| {
+            let list = s.as_movable_list_state().unwrap();
+            remapped.retain(|&orig_id, _| {
+                let Some(index) = list.get_index_of_elem(orig_id) else {
+                    return true;
+                };
+                let Some((id, elem)) = list.get_elem_at_given_pos(index, IndexType::ForUser) else {
+                    return true;
+                };
+                if id != orig_id {
+                    return true;
+                }
+                if let LoroValue::Container(child_cid) = &elem.value {
+                    containers.remove(child_cid);
+                    if child_cid.container_type() == loro_common::ContainerType::MovableList {
+                        if let Some(child_idx) = doc.arena.id_to_idx(child_cid) {
+                            pending.push(child_idx);
+                        }
+                    }
+                }
+                false
+            });
+        });
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Element {
     index: usize,

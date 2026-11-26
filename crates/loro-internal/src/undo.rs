@@ -327,7 +327,7 @@ fn transform_cursor(
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
-    element_remap: Mutex<movable_list::ElementRemap>,
+    element_remap: Arc<Mutex<movable_list::ElementRemap>>,
     inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
@@ -1759,6 +1759,8 @@ impl UndoManager {
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_local = remap_containers.clone();
         let remap_containers_clone = remap_containers.clone();
+        let element_remap = Arc::new(Mutex::new(FxHashMap::default()));
+        let element_remap_clone = element_remap.clone();
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
@@ -1804,6 +1806,20 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
+                // Keep the same lock order as `perform` (`container_remap` ->
+                // `element_remap` -> `doc.state`) and drop them before locking
+                // `inner`.
+                if let Some(doc) = doc_weak.upgrade() {
+                    let mut remap = remap_containers_clone.lock();
+                    let mut elem_remap = element_remap_clone.lock();
+                    movable_list::prune_revived_remaps(
+                        &doc,
+                        event.events,
+                        &mut elem_remap,
+                        &mut remap,
+                    );
+                }
+
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 let mut inner = lock.borrow_mut();
 
@@ -1838,17 +1854,20 @@ impl UndoManager {
                     let peer = peer_clone.load(std::sync::atomic::Ordering::Relaxed);
                     doc.oplog.lock().vv().get(&peer).cloned().unwrap_or(0)
                 });
-                let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
-                if lock.borrow().paused {
-                    return;
+                {
+                    let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
+                    if lock.borrow().paused {
+                        return;
+                    }
+                    let mut inner = lock.borrow_mut();
+                    inner.undo_stack.clear();
+                    inner.redo_stack.clear();
+                    inner.group = None;
+                    if let Some(next_counter) = next_counter {
+                        inner.next_counter = next_counter;
+                    }
                 }
-                let mut inner = lock.borrow_mut();
-                inner.undo_stack.clear();
-                inner.redo_stack.clear();
-                inner.group = None;
-                if let Some(next_counter) = next_counter {
-                    inner.next_counter = next_counter;
-                }
+                element_remap_clone.lock().clear();
             }
         }));
 
@@ -1878,7 +1897,7 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
-            element_remap: Mutex::new(FxHashMap::default()),
+            element_remap,
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,

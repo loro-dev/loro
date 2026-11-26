@@ -554,3 +554,137 @@ fn undo_removal_after_concurrent_neighbour_move() {
         converge(&a, &b);
     }
 }
+
+#[test]
+fn undo_deleting_revived_original_element_restores_it() {
+    // Regression for loro-dev/loro#1234 (case a):
+    // Deleting an element, undoing it (creating a replacement and recording
+    // original -> replacement), importing a concurrent remote move that revives
+    // the original, and then deleting the revived original must allow undo to
+    // restore it rather than returning false.
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+
+    let list_a = a.get_movable_list("list");
+    list_a.insert(0, "a").unwrap();
+    list_a.insert(1, "b").unwrap();
+    a.commit();
+    b.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let mut u = UndoManager::new(&a);
+    u.set_merge_interval(0);
+
+    list_a.delete(0, 1).unwrap();
+    a.commit();
+
+    b.get_movable_list("list").mov(0, 1).unwrap();
+    b.commit();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(list(&a), json!(["a", "b"]));
+
+    a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
+    assert_eq!(list(&a), json!(["a", "b", "a"]));
+
+    // Delete the revived original at index 2, leaving the replacement at index 0.
+    list_a.delete(2, 1).unwrap();
+    a.commit();
+    assert_eq!(list(&a), json!(["a", "b"]));
+    assert!(u.can_undo());
+
+    assert!(u.undo().unwrap());
+    assert_eq!(list(&a), json!(["a", "b", "a"]));
+
+    for _ in 0..2 {
+        assert!(u.redo().unwrap());
+        assert_eq!(list(&a), json!(["a", "b"]));
+        assert!(u.undo().unwrap());
+        assert_eq!(list(&a), json!(["a", "b", "a"]));
+    }
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_then_redo_move_anchors_to_revived_original_not_copy() {
+    // Regression for loro-dev/loro#1234 (case b):
+    // After a remote move revives the original "b" alongside its undo copy,
+    // undoing and redoing an earlier move of "a" must anchor to the revived
+    // original "b" rather than its copy, restoring ["b", "b", "a"].
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+
+    let list_a = a.get_movable_list("list");
+    list_a.insert(0, "a").unwrap();
+    list_a.insert(1, "b").unwrap();
+    a.commit();
+    b.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let mut u = UndoManager::new(&a);
+    u.set_merge_interval(0);
+
+    list_a.mov(0, 1).unwrap(); // ["b", "a"]
+    a.commit();
+
+    list_a.delete(0, 1).unwrap(); // ["a"]
+    a.commit();
+    assert!(u.undo().unwrap()); // ["b'", "a"]
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let before = list(&a);
+    assert_eq!(before, json!(["b", "b", "a"]));
+
+    assert!(u.undo().unwrap());
+    assert!(u.redo().unwrap());
+    assert_eq!(list(&a), before);
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_editing_revived_original_child_map_targets_original_not_copy() {
+    let (a, b) = pair(&[-1, 1]);
+    let child = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    child.insert("value", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Edit the revived original map (at index 0) and undo; undo must revert
+    // the original map rather than touching the replacement map (at index 2).
+    let revived_map = a
+        .get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_eq!(revived_map.id(), child.id());
+    revived_map.insert("value", 99).unwrap();
+    a.commit();
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"value":99}, -1, {"value":7}, 1]})
+    );
+
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"value":7}, -1, {"value":7}, 1]}));
+    converge(&a, &b);
+}
