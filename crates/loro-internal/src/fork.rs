@@ -74,6 +74,7 @@ impl LoroDoc {
         if self.auto_commit.load(std::sync::atomic::Ordering::Relaxed) {
             doc.start_auto_commit();
         }
+        self.copy_tree_fractional_index_settings_to(&doc);
         Ok(doc)
     }
 }

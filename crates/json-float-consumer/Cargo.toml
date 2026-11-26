@@ -1,6 +1,6 @@
 [package]
 name = "json-float-consumer"
-version = "1.18.0"
+version = "1.19.0"
 edition = "2021"
 publish = false
 description = "External loro consumer without serde_json float_roundtrip"

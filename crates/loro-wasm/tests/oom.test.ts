@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // OOM in WASM does not go through the panic hook (allocation failure traps
 // directly), so this is verified in a child node process that caps the WASM
 // memory at 64MB via V8's `--wasm-max-mem-pages` flag.
 describe("out-of-memory reporting", () => {
   it("reports the failing allocation size before trapping", (ctx) => {
-    const nodejsEntry = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../nodejs/index.js",
-    );
+    // A file URL: Node rejects an absolute Windows path as a module specifier.
+    const nodejsEntry = pathToFileURL(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../nodejs/index.js",
+      ),
+    ).href;
     const script = `
       import { LoroDoc } from ${JSON.stringify(nodejsEntry)};
       const doc = new LoroDoc();

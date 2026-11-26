@@ -52,3 +52,5 @@ fn size_of() {
     println!("InternalString {}", std::mem::size_of::<InternalString>());
 }
 mod undo_atomicity;
+
+mod replay_order;

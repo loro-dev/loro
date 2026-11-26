@@ -28,6 +28,21 @@ pub const SIZE_OF_U32: usize = std::mem::size_of::<u32>();
 const BLOCK_CACHE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_BLOCK_NUM: u32 = 10_000_000;
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_BLOCK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_test_block_reads() {
+    TEST_BLOCK_READS.with(|n| n.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn test_block_reads() -> usize {
+    TEST_BLOCK_READS.with(|n| n.get())
+}
+
 /// ```log
 /// ┌──────────────────────────────────────────────────────────────────────────────────────────┐
 /// │ Block Meta                                                                               │
@@ -171,6 +186,61 @@ impl BlockMeta {
     }
 }
 
+#[derive(Debug)]
+struct BloomFilter {
+    bits: Box<[u64]>,
+    bit_len: usize,
+}
+
+impl BloomFilter {
+    const BITS_PER_KEY: usize = 10;
+    const NUM_HASHES: usize = 7;
+
+    fn from_hashes(hashes: &[u64]) -> Self {
+        let word_len = hashes
+            .len()
+            .saturating_mul(Self::BITS_PER_KEY)
+            .max(64)
+            .div_ceil(64);
+        let bit_len = word_len * 64;
+        let mut bits = vec![0u64; word_len].into_boxed_slice();
+        for &h in hashes {
+            let h1 = (h as u32) as usize;
+            let h2 = ((h >> 32) as u32 | 1) as usize;
+            for i in 0..Self::NUM_HASHES {
+                let bit = h1.wrapping_add(i.wrapping_mul(h2)) % bit_len;
+                bits[bit / 64] |= 1u64 << (bit % 64);
+            }
+        }
+        Self { bits, bit_len }
+    }
+
+    #[inline]
+    fn hash_key(key: &[u8]) -> u64 {
+        let h1 = xxhash_rust::xxh32::xxh32(key, XXH_SEED) as u64;
+        let h2 = xxhash_rust::xxh32::xxh32(key, XXH_SEED.wrapping_add(0x9E37_79B9)) as u64;
+        h1 | (h2 << 32)
+    }
+
+    #[inline]
+    fn may_contain(&self, key: &[u8]) -> bool {
+        let h = Self::hash_key(key);
+        let h1 = (h as u32) as usize;
+        let h2 = ((h >> 32) as u32 | 1) as usize;
+        for i in 0..Self::NUM_HASHES {
+            let bit = h1.wrapping_add(i.wrapping_mul(h2)) % self.bit_len;
+            if (self.bits[bit / 64] & (1u64 << (bit % 64))) == 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn heap_bytes(&self) -> usize {
+        self.bits.len() * std::mem::size_of::<u64>()
+    }
+}
+
 pub(crate) struct SsTableBuilder {
     block_builder: BlockBuilder,
     first_key: Bytes,
@@ -179,12 +249,23 @@ pub(crate) struct SsTableBuilder {
     meta: Vec<BlockMeta>,
     block_size: usize,
     compression_type: CompressionType,
-    include_none: bool, // TODO: bloom filter
+    include_none: bool,
+    bloom_hashes: Option<Vec<u64>>,
 }
 
 impl SsTableBuilder {
     pub fn new(block_size: usize, compression_type: CompressionType, include_none: bool) -> Self {
         Self::with_capacity(block_size, compression_type, include_none, 0)
+    }
+
+    pub fn new_with_bloom(
+        block_size: usize,
+        compression_type: CompressionType,
+        include_none: bool,
+    ) -> Self {
+        let mut builder = Self::with_capacity(block_size, compression_type, include_none, 0);
+        builder.bloom_hashes = Some(Vec::new());
+        builder
     }
 
     pub fn with_capacity(
@@ -206,6 +287,7 @@ impl SsTableBuilder {
             block_size,
             compression_type,
             include_none,
+            bloom_hashes: None,
         }
     }
 
@@ -216,6 +298,10 @@ impl SsTableBuilder {
 
         if !self.include_none && value.is_empty() {
             return;
+        }
+
+        if let Some(hashes) = self.bloom_hashes.as_mut() {
+            hashes.push(BloomFilter::hash_key(&key));
         }
 
         if self.first_key.is_empty() {
@@ -342,6 +428,10 @@ impl SsTableBuilder {
             .unwrap_or_default();
         let meta: Arc<[BlockMeta]> = Arc::from(self.meta);
         let meta_bytes = calc_meta_bytes(&meta);
+        let bloom = self
+            .bloom_hashes
+            .filter(|hashes| !hashes.is_empty())
+            .map(|hashes| Arc::new(BloomFilter::from_hashes(&hashes)));
         SsTable {
             id: next_table_id(),
             backing: SsTableBacking::Memory(Bytes::from(buf)),
@@ -351,6 +441,7 @@ impl SsTableBuilder {
             meta_bytes,
             meta_offset: meta_offset as usize,
             block_cache: SharedBlockCache::default_per_doc(),
+            bloom,
         }
     }
 
@@ -683,6 +774,9 @@ pub struct SsTable {
     meta_bytes: usize,
     pub(crate) meta_offset: usize,
     block_cache: SharedBlockCache,
+    /// Optional in-memory Bloom filter (not serialized on wire) for fast negative
+    /// point lookups on incremental L0/delta SSTables.
+    bloom: Option<Arc<BloomFilter>>,
 }
 
 impl Clone for SsTable {
@@ -696,6 +790,7 @@ impl Clone for SsTable {
             meta_bytes: self.meta_bytes,
             meta_offset: self.meta_offset,
             block_cache: SharedBlockCache::new(self.block_cache.max_bytes()),
+            bloom: self.bloom.clone(),
         }
     }
 }
@@ -727,7 +822,11 @@ impl SsTable {
             #[cfg(not(target_arch = "wasm32"))]
             SsTableBacking::File(_) => std::mem::size_of::<SpillFile>(),
         };
-        backing_bytes + self.meta_bytes + std::mem::size_of::<Self>()
+        let bloom_bytes = self
+            .bloom
+            .as_ref()
+            .map_or(0, |b| b.heap_bytes() + std::mem::size_of::<BloomFilter>());
+        backing_bytes + self.meta_bytes + bloom_bytes + std::mem::size_of::<Self>()
     }
 
     pub fn spilled_disk_bytes(&self) -> usize {
@@ -858,6 +957,7 @@ impl SsTable {
             meta_bytes,
             meta_offset,
             block_cache,
+            bloom: None,
         };
         Ok(ans)
     }
@@ -976,6 +1076,8 @@ impl SsTable {
     }
 
     pub(crate) fn read_block(&self, block_idx: usize) -> Arc<Block> {
+        #[cfg(test)]
+        TEST_BLOCK_READS.with(|n| n.set(n.get() + 1));
         let offset = self.meta[block_idx].offset;
         let offset_end = self
             .meta
@@ -1011,6 +1113,11 @@ impl SsTable {
         if self.first_key > key || self.last_key < key {
             return false;
         }
+        if let Some(bloom) = &self.bloom {
+            if !bloom.may_contain(key) {
+                return false;
+            }
+        }
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
         let block_iter = BlockIter::new_seek_to_key(block, key);
@@ -1021,6 +1128,11 @@ impl SsTable {
     pub fn get(&self, key: &[u8]) -> Option<Bytes> {
         if self.first_key > key || self.last_key < key {
             return None;
+        }
+        if let Some(bloom) = &self.bloom {
+            if !bloom.may_contain(key) {
+                return None;
+            }
         }
         let idx = self.find_block_idx(key);
         let block = self.read_block_cached(idx);
@@ -1053,6 +1165,7 @@ pub struct SsTableIter<'a> {
     iter: SsTableIterInner,
     next_block_idx: usize,
     back_block_idx: isize,
+    cache_reads: bool,
 }
 
 impl Debug for SsTableIter<'_> {
@@ -1071,7 +1184,26 @@ impl<'a> SsTableIter<'a> {
     }
 
     pub fn new_scan(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
-        let read_block = |idx| table.read_block_cached(idx);
+        Self::new_scan_with_cache(table, start, end, true)
+    }
+
+    pub fn new_scan_uncached(table: &'a SsTable, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Self {
+        Self::new_scan_with_cache(table, start, end, false)
+    }
+
+    fn new_scan_with_cache(
+        table: &'a SsTable,
+        start: Bound<&[u8]>,
+        end: Bound<&[u8]>,
+        cache_reads: bool,
+    ) -> Self {
+        let read_block = |idx| {
+            if cache_reads {
+                table.read_block_cached(idx)
+            } else {
+                table.read_block(idx)
+            }
+        };
         let (table_idx, mut iter, excluded) = match start {
             Bound::Included(start) => {
                 notify_cov("kv-store::SstableIter::new_scan::start included");
@@ -1151,6 +1283,7 @@ impl<'a> SsTableIter<'a> {
                 },
                 next_block_idx: table_idx,
                 back_block_idx: end_idx as isize,
+                cache_reads,
             }
         } else {
             debug_assert!(end_idx == table_idx);
@@ -1159,6 +1292,7 @@ impl<'a> SsTableIter<'a> {
                 iter: SsTableIterInner::Same(iter),
                 next_block_idx: table_idx,
                 back_block_idx: end_idx as isize,
+                cache_reads,
             }
         };
         // the current iter may be empty, but has next iter. we need to skip the empty iter
@@ -1240,12 +1374,20 @@ impl<'a> SsTableIter<'a> {
             if this.next_block_idx == this.back_block_idx as usize && !this.iter.is_same() {
                 this.iter.convert_back_as_same();
             } else if this.next_block_idx < this.table.meta.len() {
-                let block = this.table.read_block_cached(this.next_block_idx);
+                let block = this.read_block(this.next_block_idx);
                 this.iter.reset_front(BlockIter::new(block));
                 this.skip_next_empty();
             } else {
                 unreachable!()
             }
+        }
+    }
+
+    fn read_block(&self, block_idx: usize) -> Arc<Block> {
+        if self.cache_reads {
+            self.table.read_block_cached(block_idx)
+        } else {
+            self.table.read_block(block_idx)
         }
     }
 
@@ -1261,7 +1403,7 @@ impl<'a> SsTableIter<'a> {
         if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
             self.iter.convert_back_as_same();
         } else if self.next_block_idx < self.table.meta.len() {
-            let block = self.table.read_block_cached(self.next_block_idx);
+            let block = self.read_block(self.next_block_idx);
             self.iter.reset_front(BlockIter::new(block));
             self.skip_next_empty();
         } else {
@@ -1280,7 +1422,7 @@ impl<'a> SsTableIter<'a> {
             if self.next_block_idx == self.back_block_idx as usize && !self.iter.is_same() {
                 self.iter.convert_front_as_same();
             } else if self.back_block_idx > 0 {
-                let block = self.table.read_block_cached(self.back_block_idx as usize);
+                let block = self.read_block(self.back_block_idx as usize);
                 self.iter.reset_back(BlockIter::new(block));
                 self.skip_next_back_empty();
             }

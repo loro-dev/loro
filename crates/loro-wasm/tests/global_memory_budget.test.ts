@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   globalMemoryStats,
   getGlobalMemoryBudget,
@@ -191,6 +191,17 @@ describe("Global WASM MemoryBudget & GlobalMemoryStats", () => {
     expect(globalMemoryStats().wasmLinearMemoryBytes).toBe(linearBeforeGiant);
     expect(events).toBe(0);
 
+    // 1b) With only maxHeapBytes set and headroom between 1x and 3x of an ASCII string
+    // (100 KiB ASCII with 256 KiB headroom), LoroText.insert must NOT be falsely rejected
+    // by a 3x worst-case UTF-8 preflight estimate.
+    const fitDoc = new LoroDoc();
+    fitDoc.setPeerId(77);
+    const fitText = fitDoc.getText("fit");
+    fitText.insert(0, "A".repeat(100 * 1024));
+    expect(fitText.length).toBe(100 * 1024);
+    fitText.free();
+    fitDoc.free();
+
     // 2) Oversized local tryCommit fails with GlobalBudget and rolls back atomically.
     const snapBefore = active.toJSON();
     const bigText = active.getText("big");
@@ -261,10 +272,13 @@ describe("Global WASM MemoryBudget & GlobalMemoryStats", () => {
   });
 
   it("prevents OOM WASM trap inside a 64 MiB Durable-Object-style V8 memory cap", (ctx) => {
-    const nodejsEntry = path.resolve(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../nodejs/index.js",
-    );
+    // A file URL: Node rejects an absolute Windows path as a module specifier.
+    const nodejsEntry = pathToFileURL(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../nodejs/index.js",
+      ),
+    ).href;
     const probe = spawnSync(
       process.execPath,
       ["--wasm-max-mem-pages=1024", "-e", ""],

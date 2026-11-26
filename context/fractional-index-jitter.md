@@ -20,6 +20,13 @@ index ends with `0x80`, but a jittered one ends with a random byte, possibly
   (checked against `tests/fixtures/rust-golden.json`, regenerated with
   `pnpm fixtures:generate` from `examples/npm_fixture.rs`) and to
   `loro-js/src/runtime/fractional-index.ts`.
+- The setting (`FractionalIndexSetting`: disabled or a jitter) lives in the
+  `TreeState`, not in the doc `Configure`. Snapshot import replaces the states,
+  so `decode_snapshot_inner` (`encoding/fast_snapshot.rs`) reads the non-default
+  settings of decoded trees first and reapplies them afterwards, also when the
+  import fails. `fork()` / `fork_at()` copy them with
+  `LoroDoc::copy_tree_fractional_index_settings_to`; the fork gets a new RNG,
+  not a copy of the source's (loro-dev/loro#1288).
 - The jitter RNG is a `StdRng` seeded from the tree state's `peer_id`
   (`TreeState::new` and `enable_generate_fractional_index`), so different peers
   draw different bytes and a fixed peer id gives reproducible positions. That
@@ -32,4 +39,5 @@ index ends with `0x80`, but a jittered one ends with a random byte, possibly
 
 `crates/fractional_index/src/lib.rs` (unit tests, random jittered pairs),
 `crates/loro/tests/tree_fractional_index_jitter.rs`,
+`crates/loro/tests/tree_fractional_index_setting.rs`,
 `loro-js/tests/fractional-index.test.ts`, the npm package golden test.
