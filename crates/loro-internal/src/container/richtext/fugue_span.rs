@@ -261,7 +261,9 @@ pub(super) struct FugueSpan {
     pub diff_status: OptionalStatus,
 }
 
-const _: () = assert!(std::mem::size_of::<FugueSpan>() == 64);
+// Bound the hot-path memory footprint without requiring identical Rust layouts:
+// targets with 4-byte alignment for u64 (for example i686 musl) use fewer bytes.
+const _: () = assert!(std::mem::size_of::<FugueSpan>() <= 64);
 
 pub(super) enum DiffStatus {
     NotChanged,

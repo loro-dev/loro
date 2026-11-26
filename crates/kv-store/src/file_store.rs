@@ -129,7 +129,8 @@ impl FileKvStore {
         self.inner.spilled_disk_bytes()
     }
 
-    /// Compacts in-memory entries into a single SSTable and spills it to disk.
+    /// Flushes in-memory entries to a new L0 SSTable, compacts suffixes by size-tiered/count
+    /// thresholds when needed, and spills new tables to disk.
     pub fn flush(&mut self) {
         self.inner.flush();
         self.spill_tables();
@@ -203,6 +204,16 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "sst"))
             .count()
+    }
+
+    fn list_sst_files(dir: &Path) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|entry| entry.path()))
+            .filter(|p| p.extension().is_some_and(|ext| ext == "sst"))
+            .collect();
+        files.sort();
+        files
     }
 
     /// Blocks read back from a spill file are re-verified: a byte changed on disk
@@ -342,5 +353,55 @@ mod tests {
         assert!(!exported.is_empty());
         drop(cloned);
         assert_eq!(count_sst_files(&temp.0), 0);
+    }
+
+    #[test]
+    fn incremental_file_flush_preserves_base_sst_file_across_small_flushes() {
+        let temp = TempDir::new("incremental-spill");
+        let mut store =
+            FileKvStore::new(&temp.0, MemKvConfig::default().should_encode_none(false)).unwrap();
+        for i in 0..400_u32 {
+            let k = format!("base-{i:04}");
+            let v: Vec<u8> = (0..512_u32)
+                .map(|j| ((i.wrapping_mul(2_654_435_761)) ^ (j.wrapping_mul(374_761_393))) as u8)
+                .collect();
+            store.set(k.as_bytes(), Bytes::from(v));
+        }
+        store.flush();
+        let files_after_base = list_sst_files(&temp.0);
+        assert_eq!(files_after_base.len(), 1);
+        let base_sst_path = files_after_base[0].clone();
+
+        for i in 0..16_u32 {
+            store.set(
+                format!("delta-{i:02}").as_bytes(),
+                Bytes::from(format!("value-{i}")),
+            );
+            store.flush();
+            let current_files = list_sst_files(&temp.0);
+            assert!(
+                current_files.contains(&base_sst_path),
+                "small flush #{i} rewrote base spill file {base_sst_path:?}"
+            );
+            assert!(
+                current_files.len() <= 6,
+                "spill file count grew unbounded: {}",
+                current_files.len()
+            );
+        }
+
+        // Deletions written in later flushes continue to shadow the base file.
+        store.remove(b"base-0005");
+        store.flush();
+        assert_eq!(store.get(b"base-0005"), None);
+        assert!(!store.contains_key(b"base-0005"));
+        assert!(list_sst_files(&temp.0).contains(&base_sst_path));
+
+        let exported = store.export_all();
+        assert_eq!(count_sst_files(&temp.0), 1);
+        let mut reloaded = MemKvStore::new(MemKvConfig::default().should_encode_none(false));
+        reloaded.import_all(exported).unwrap();
+        assert_eq!(reloaded.get(b"base-0005"), None);
+        assert_eq!(reloaded.len(), 415);
     }
 }

@@ -132,3 +132,21 @@ on it directly, retreats included. Without this, every undo and every
 checkout to an earlier version rebuilt the tracker from the whole history.
 Shallow documents seed the tracker from the shallow root, so they keep
 rebuilding.
+
+## Concurrent replay order
+
+Verified against code 2026-11-23. `DagCausalIter` in `src/dag/iter.rs`
+keeps causal dependencies and per-peer counter order. Among initial ready
+roots it visits larger peers first. When a node releases several successors,
+it keeps its own peer first for locality, then visits larger peers first.
+The successor heap drains into a LIFO stack, so its ID key must be reversed.
+This is a local scheduling preference, not a global peer sort: dependencies
+and already queued continuations still take precedence.
+
+This order avoids quadratic sibling scans in richtext `CrdtRope::insert`
+(loro-dev/loro#1327): inserting the smaller peer after the larger one stops
+at the first same-origin sibling. It does not change the replay base, diff
+mode, or CRDT tie-break. Regression coverage lives in `src/tests/replay_order.rs`
+(test-only per-thread scan counter), DAG iterator unit tests, and
+`crates/loro/tests/concurrent_replay_order.rs`. The release reproduction is
+`cargo run -p loro --release --example concurrent_replay_bench`.

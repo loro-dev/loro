@@ -668,6 +668,15 @@ impl NodePosition {
     }
 }
 
+/// A tree's fractional-index generation setting without its RNG. It is local
+/// configuration, not part of the document, so it is carried over by hand when
+/// a tree state is replaced (see `DocState::tree_fractional_index_settings`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FractionalIndexSetting {
+    Disabled,
+    Jitter(u8),
+}
+
 pub(crate) enum FiIfNotConfigured {
     UseJitterZero,
     #[allow(unused)]
@@ -1004,6 +1013,22 @@ impl TreeState {
 
     pub(crate) fn disable_generate_fractional_index(&mut self) {
         self.fractional_index_config = TreeFractionalIndexConfigInner::MoveDisabled;
+    }
+
+    pub(crate) fn fractional_index_setting(&self) -> FractionalIndexSetting {
+        match &self.fractional_index_config {
+            TreeFractionalIndexConfigInner::GenerateFractionalIndex { jitter, .. } => {
+                FractionalIndexSetting::Jitter(*jitter)
+            }
+            TreeFractionalIndexConfigInner::MoveDisabled => FractionalIndexSetting::Disabled,
+        }
+    }
+
+    pub(crate) fn set_fractional_index_setting(&mut self, setting: FractionalIndexSetting) {
+        match setting {
+            FractionalIndexSetting::Disabled => self.disable_generate_fractional_index(),
+            FractionalIndexSetting::Jitter(jitter) => self.enable_generate_fractional_index(jitter),
+        }
     }
 
     pub(crate) fn get_position(&self, target: &TreeID) -> Option<FractionalIndex> {

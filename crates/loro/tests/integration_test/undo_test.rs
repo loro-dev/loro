@@ -2042,3 +2042,173 @@ fn import_during_pause_transforms_undo_stack_correctly() -> LoroResult<()> {
 
     Ok(())
 }
+
+#[test]
+fn checkout_to_latest_recovers_undo_manager_for_group_start_and_local_edits() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+    assert_eq!(text.to_string(), "Hello");
+    assert!(undo.can_undo());
+
+    // Checkout to an older version and then return to latest.
+    doc.checkout(&Frontiers::default())?;
+    assert_eq!(text.to_string(), "");
+    assert!(!undo.can_undo());
+
+    doc.checkout_to_latest();
+    assert_eq!(text.to_string(), "Hello");
+    assert!(!doc.is_detached());
+    assert!(!undo.can_undo());
+
+    // 1. First local edit WITHOUT group_start() must be recorded (not silently dropped).
+    text.insert(5, " World")?;
+    doc.commit();
+    assert_eq!(text.to_string(), "Hello World");
+    assert_eq!(undo.undo_count(), 1);
+    assert!(undo.undo()?);
+    assert_eq!(text.to_string(), "Hello");
+    assert!(!undo.can_undo());
+
+    // 2. After another checkout -> checkout_to_latest, group_start() must succeed
+    //    and group subsequent commits into a single undo step.
+    doc.checkout(&Frontiers::default())?;
+    doc.checkout_to_latest();
+    undo.group_start()?;
+    text.insert(5, "!")?;
+    doc.commit();
+    text.insert(6, "?")?;
+    doc.commit();
+    undo.group_end();
+
+    assert_eq!(text.to_string(), "Hello!?");
+    assert_eq!(undo.undo_count(), 1);
+    assert!(undo.undo()?);
+    assert_eq!(text.to_string(), "Hello");
+    assert!(!undo.can_undo());
+
+    Ok(())
+}
+
+#[test]
+fn checkout_clears_active_undo_group_and_rejects_group_start_while_detached() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+
+    // Open a group before checkout.
+    undo.group_start()?;
+    doc.checkout(&Frontiers::default())?;
+    assert!(doc.is_detached());
+
+    // While detached (readonly), group_start() must return EditWhenDetached
+    // rather than UndoGroupAlreadyStarted or Unknown("UndoManager is not ready").
+    assert_eq!(undo.group_start(), Err(LoroError::EditWhenDetached));
+
+    // After re-attaching, group_start() must succeed cleanly.
+    doc.checkout_to_latest();
+    assert!(!doc.is_detached());
+    undo.group_start()?;
+    text.insert(5, "!")?;
+    doc.commit();
+    undo.group_end();
+
+    assert_eq!(text.to_string(), "Hello!");
+    assert!(undo.undo()?);
+    assert_eq!(text.to_string(), "Hello");
+
+    // Plain detach() without checkout() must also reject group_start() consistently.
+    doc.detach();
+    assert_eq!(undo.group_start(), Err(LoroError::EditWhenDetached));
+    doc.attach();
+
+    Ok(())
+}
+
+#[test]
+fn checkout_to_latest_when_already_at_latest_frontiers_recovers_undo_manager() -> LoroResult<()> {
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    let text = doc.get_text("text");
+
+    text.insert(0, "Hello")?;
+    doc.commit();
+    let latest = doc.oplog_frontiers();
+
+    // Checkout to empty, then checkout to `latest` (still detached), then attach.
+    // `checkout_to_latest()` emits no Checkout event here because state_frontiers == latest.
+    doc.checkout(&Frontiers::default())?;
+    doc.checkout(&latest)?;
+    assert!(doc.is_detached());
+    doc.checkout_to_latest();
+    assert!(!doc.is_detached());
+
+    // First local edit without group_start() must be recorded and undoable.
+    text.insert(5, " A")?;
+    doc.commit();
+    assert_eq!(text.to_string(), "Hello A");
+    assert_eq!(undo.undo_count(), 1);
+    assert!(undo.undo()?);
+    assert_eq!(text.to_string(), "Hello");
+
+    // Same sequence followed by group_start().
+    doc.checkout(&Frontiers::default())?;
+    doc.checkout(&doc.oplog_frontiers())?;
+    doc.checkout_to_latest();
+    undo.group_start()?;
+    text.insert(5, " B")?;
+    doc.commit();
+    undo.group_end();
+    assert_eq!(text.to_string(), "Hello B");
+    assert!(undo.undo()?);
+    assert_eq!(text.to_string(), "Hello");
+
+    Ok(())
+}
+
+#[test]
+fn detach_remote_import_attach_recovers_undo_manager() -> LoroResult<()> {
+    let doc_a = LoroDoc::new();
+    doc_a.set_peer_id(1)?;
+    let mut undo = UndoManager::new(&doc_a);
+    undo.set_merge_interval(0);
+    let text_a = doc_a.get_text("text");
+
+    text_a.insert(0, "Hello")?;
+    doc_a.commit();
+
+    let doc_b = LoroDoc::new();
+    doc_b.set_peer_id(2)?;
+    doc_b.import(&doc_a.export(ExportMode::all_updates())?)?;
+    doc_b.get_text("text").insert(5, " Remote")?;
+    doc_b.commit();
+
+    doc_a.detach();
+    doc_a.import(&doc_b.export(ExportMode::updates(&doc_a.oplog_vv()))?)?;
+    doc_a.attach();
+    assert!(!doc_a.is_detached());
+    assert_eq!(text_a.to_string(), "Hello Remote");
+
+    undo.group_start()?;
+    text_a.insert(text_a.len_unicode(), "!")?;
+    doc_a.commit();
+    undo.group_end();
+
+    assert_eq!(text_a.to_string(), "Hello Remote!");
+    assert!(undo.undo()?);
+    assert_eq!(text_a.to_string(), "Hello Remote");
+
+    Ok(())
+}

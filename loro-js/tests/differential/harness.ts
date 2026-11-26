@@ -80,8 +80,6 @@ export class Twin {
   readonly undo: Side<UndoManagerLike> | undefined;
   /** Frontiers reached by this peer, shared by both halves once they agree. */
   readonly history: FrontiersLike[] = [];
-  /** Set while `importBatch` runs; see `canonicalBatch`. */
-  batchImport = false;
   /** List and Text values at the last comparison, to replay event deltas. */
   readonly lists = new Map<string, unknown[] | string>();
 
@@ -99,7 +97,7 @@ export class Twin {
     for (const engine of ENGINES) {
       this.docs[engine].setPeerId(peer);
       this.docs[engine].subscribe((event) => {
-        const batch = canonicalBatch(event, this.batchImport);
+        const batch = canonicalBatch(event);
         if (batch.events.length > 0) this.events[engine].push(batch);
       });
     }
@@ -289,19 +287,13 @@ export function canonicalDiff(diff: unknown): unknown {
  *
  * - Rust labels checkout events with origin `"checkout"`; loro.js leaves the
  *   origin empty.
- * - Rust's multi-blob `importBatch` imports while detached and reattaches with a
- *   checkout, so its events say `by: "checkout"`; loro.js says `"import"`.
  * - Rust commits both undo and redo with origin `"undo"`; loro.js uses
  *   `"redo"` for redo.
  */
-export function canonicalBatch(
-  batch: EventBatchLike,
-  batchImport = false,
-): EventBatchLike {
-  const by = batchImport && batch.by === "checkout" ? "import" : batch.by;
+export function canonicalBatch(batch: EventBatchLike): EventBatchLike {
   const origin = batch.by === "checkout" ? "" : (batch.origin ?? "");
   return {
-    by,
+    by: batch.by,
     origin: origin === "redo" ? "undo" : origin,
     events: batch.events
       .map((event) => ({

@@ -4,6 +4,39 @@ import { expectDefined } from "./helpers";
 
 describe("undo", () => {
   test.each([false, true])(
+    "importBatch preserves undo and redo (redo=%s)",
+    (redo) => {
+      const doc = new LoroDoc();
+      doc.setPeerId(1);
+      const undo = new UndoManager(doc, {});
+      doc.getMap("local").set("value", 1);
+      doc.commit();
+      if (redo) expect(undo.undo()).toBe(true);
+      const events: { by: string; origin?: string }[] = [];
+      doc.subscribe((event) => events.push(event));
+      const blobs = [2, 3].map((peer) => {
+        const remote = new LoroDoc();
+        remote.setPeerId(peer);
+        remote.getMap("remote").set(String(peer), peer);
+        return remote.export({ mode: "update" });
+      });
+      doc.importBatch(blobs);
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ by: "import", origin: "checkout" });
+      if (redo) {
+        expect(undo.canRedo()).toBe(true);
+        expect(undo.redo()).toBe(true);
+        expect(doc.getMap("local").get("value")).toBe(1);
+      } else {
+        expect(undo.canUndo()).toBe(true);
+        expect(undo.undo()).toBe(true);
+        expect(doc.getMap("local").get("value")).toBeUndefined();
+      }
+      expect(doc.getMap("remote").toJSON()).toEqual({ "2": 2, "3": 3 });
+    },
+  );
+
+  test.each([false, true])(
     "no-op undo preserves an earlier item (parent=%s)",
     (parent) => {
       const doc = new LoroDoc();

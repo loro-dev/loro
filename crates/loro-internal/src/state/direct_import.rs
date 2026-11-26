@@ -81,6 +81,7 @@ pub(crate) fn try_apply(
     if rollback_enabled {
         state.store.begin_created_journal();
     }
+    state.advance_access_epoch();
     apply_ops(state, &steps);
     state.frontiers = oplog.frontiers().clone();
     state.alive_containers_cache = None;

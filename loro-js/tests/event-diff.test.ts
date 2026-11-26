@@ -5,6 +5,22 @@ import { LoroDoc } from "../src/runtime";
 import type { Delta, LoroEventBatch } from "../src/runtime/types";
 
 describe("incremental event diffs", () => {
+  test.each([1, 2])("importBatch labels %s blobs like Rust", (count) => {
+    const doc = new LoroDoc();
+    const events: LoroEventBatch[] = [];
+    doc.subscribe((event) => events.push(event));
+    const blobs = [2, 3].slice(0, count).map((peer) => {
+      const source = new LoroDoc();
+      source.setPeerId(peer);
+      source.getMap("remote").set(String(peer), peer);
+      return source.export({ mode: "update" });
+    });
+    doc.importBatch(blobs);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.by).toBe("import");
+    expect(events[0]?.origin).toBe(count === 1 ? undefined : "checkout");
+  });
+
   test("composes randomized text edits against a string model", () => {
     const original = "abcdefghijklmnopqrstuvwxyz";
     const diff = new SequenceEventDiff("text", original.length);
