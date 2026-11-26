@@ -4,7 +4,9 @@
 use std::{collections::BTreeMap, ops::Bound};
 
 use fractional_index::FractionalIndex;
-use loro_common::{CompactIdLp, ContainerID, IdLp, IdSpan, LoroError, LoroResult, LoroValue, ID};
+use loro_common::{
+    CompactIdLp, ContainerID, IdLp, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID,
+};
 use loro_delta::DeltaRopeBuilder;
 use rle::HasLength;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -891,6 +893,7 @@ impl Model {
         containers: &FxHashMap<ContainerID, ContainerID>,
         edits: &mut Vec<Edit>,
         preflight: &mut NativePreflight,
+        local_peer: PeerID,
     ) {
         let before: FxHashMap<_, _> = inverse.before.elements.iter().map(|e| (e.id, e)).collect();
         let after: FxHashMap<_, _> = inverse.after.elements.iter().map(|e| (e.id, e)).collect();
@@ -980,18 +983,26 @@ impl Model {
                 if e.value_id != other.value_id {
                     if let Some(key) = self.keys.get(&id) {
                         let element = self.order.get_mut(key).unwrap();
-                        let value = remap_value(&e.value, containers);
-                        if value != element.value {
-                            if let LoroValue::Container(cid) = &element.value {
-                                preflight.removes.insert(cid.clone());
+                        // Another peer's set after this step won: keep it, as
+                        // map undo keeps a key written after the step
+                        // (context/undo-log.md). Values this peer wrote since
+                        // (e.g. an undo recreating the element) are still undone.
+                        let remote_won = element.value_id != other.value_id
+                            && element.value_id.peer != local_peer;
+                        if !remote_won {
+                            let value = remap_value(&e.value, containers);
+                            if value != element.value {
+                                if let LoroValue::Container(cid) = &element.value {
+                                    preflight.removes.insert(cid.clone());
+                                }
+                                if let LoroValue::Container(cid) = &value {
+                                    preflight.creates.insert(cid.clone());
+                                }
                             }
-                            if let LoroValue::Container(cid) = &value {
-                                preflight.creates.insert(cid.clone());
-                            }
+                            element.value = value;
+                            element.value_id = e.value_id;
+                            edits.push(Edit::Set(id, element.value.clone()));
                         }
-                        element.value = value;
-                        element.value_id = e.value_id;
-                        edits.push(Edit::Set(id, element.value.clone()));
                     }
                 }
             }
@@ -1035,6 +1046,7 @@ pub(crate) fn prepare(
                     containers,
                     &mut Vec::new(),
                     &mut NativePreflight::default(),
+                    doc.peer_id(),
                 );
             }
         }
@@ -1080,7 +1092,14 @@ pub(crate) fn prepare(
         let mut edits = Vec::new();
         let mut preflight = NativePreflight::default();
         for inverse in &inverses {
-            model.undo(inverse, remapped, containers, &mut edits, &mut preflight);
+            model.undo(
+                inverse,
+                remapped,
+                containers,
+                &mut edits,
+                &mut preflight,
+                doc.peer_id(),
+            );
         }
         // This private entry advertises possible child creations to the batch
         // preflight. Positions/removals come from NativePreflight, and actual

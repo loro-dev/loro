@@ -1,6 +1,6 @@
 # Undo Without Checkouts: Recorded Inverses
 
-Verified against code 2026-11-18.
+Verified against code 2026-11-26.
 
 The hot-path optimization stores a text or list insertion run's inverse as
 container ID, event position and length (`CommitInverse::compact_insert`), and
@@ -84,6 +84,33 @@ The inverse must equal what the checkout reports. Rules found by that check:
   subtracting each in op order (`counter_inverses`). Float addition is not
   associative: composing per-op negations newest first turned
   `[1e16, -1e16, 1]` into an undo that changed nothing.
+
+## Map keys written after the step
+
+Step 3 of `undo::undo` rebases the inverse over what happened after the span
+(`DiffBatch::transform_inverse`): later ops between spans, then the stack's
+composed remote diff. Text, list and tree inverses take priority there, but a
+map inverse drops every key the later diff wrote. That key's winner is no
+longer an undone op, so writing it would clobber someone else's value (the
+rule loro-dev/loro#1357 gives text styles: if the winning op is another
+peer's, leave it alone). Before 2026-11-26 maps used the same
+`left_prior = true` as text, so undoing `set("k")` deleted a peer's later
+write to `k`, and redo wrote the undone value back over one.
+
+The rebase of the stack's remote diff over a step just applied
+(`transform_remote_over_step`) keeps map keys for the same reason: `before_diff`
+passes the step's untransformed inverse, and dropping a key both wrote let the
+next item in the same stack row clobber the remote value.
+
+Movable-list `set` follows the same rule in `movable_list::Model::undo`: the
+undone value is restored only while the element's current value id is the
+step's own, or another op of this peer (e.g. an undo that recreated the
+element). Tree metadata is a map, so it is covered by the map rule.
+
+Limit: a concurrent write that *lost* to the undone op is not brought back.
+The undo restores the value at the step's deps (or deletes the key), since the
+map state keeps only winners; reading the loser would need the history the
+recorded inverses avoid. Tests: `crates/loro/tests/undo_map_remote_overwrite.rs`.
 
 ## Movable lists
 

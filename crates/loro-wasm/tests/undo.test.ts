@@ -716,4 +716,24 @@ describe("undo", () => {
     doc.getText("text").insert(0, "hello");
     doc.commit();
   });
+
+  test("undo and redo keep another peer's later map write", () => {
+    const a = new LoroDoc();
+    a.setPeerId(1);
+    const b = new LoroDoc();
+    b.setPeerId(2);
+    const undo = new UndoManager(a, { mergeInterval: 0 });
+    a.getMap("m").set("k", "a");
+    a.getMap("m").set("j", "a");
+    a.commit();
+    b.import(a.export({ mode: "update" }));
+    b.getMap("m").set("k", "b");
+    b.commit();
+    a.import(b.export({ mode: "update", from: a.oplogVersion() }));
+
+    undo.undo();
+    expect(a.toJSON()).toStrictEqual({ m: { k: "b" } });
+    undo.redo();
+    expect(a.toJSON()).toStrictEqual({ m: { k: "b", j: "a" } });
+  });
 });

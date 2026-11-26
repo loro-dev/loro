@@ -421,10 +421,13 @@ fn one_register_collaborative_undo() -> Result<(), LoroError> {
     doc_b.get_map("map").insert("color", "green")?;
     sync(&doc_a, &doc_b);
     undo.record_new_checkpoint()?;
+    // B's later write wins the register, so A's undo leaves it alone: undo
+    // cannot revert changes made by other peers. This used to write "black"
+    // back over "green" (context/undo-log.md, "Map keys written after the step").
     undo.undo()?;
     assert_eq!(
         doc_a.get_deep_value().to_json_value(),
-        json!({"map": {"color": "black"}})
+        json!({"map": {"color": "green"}})
     );
     undo.redo()?;
     assert_eq!(
