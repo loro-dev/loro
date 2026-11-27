@@ -1,7 +1,6 @@
 use fractional_index::FractionalIndex;
-use itertools::Itertools;
 use loro_common::{IdFull, TreeID};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
@@ -50,39 +49,22 @@ impl TreeDiff {
         self
     }
 
-    fn to_hash_map_mut(&mut self) -> FxHashMap<TreeID, usize> {
-        let mut ans = FxHashSet::default();
-        for index in (0..self.diff.len()).rev() {
-            let target = self.diff[index].target;
-            if ans.contains(&target) {
-                self.diff.remove(index);
-                continue;
-            }
-            ans.insert(target);
-        }
-        self.iter()
-            .map(|x| x.target)
-            .enumerate()
-            .map(|(i, x)| (x, i))
-            .collect()
-    }
-
     pub(crate) fn transform(&mut self, b: &TreeDiff, left_prior: bool) {
-        // println!("\ntransform prior {:?} {:?} \nb {:?}", left_prior, self, b);
         if b.is_empty() || self.is_empty() {
             return;
         }
         if !left_prior {
-            let mut self_update = self.to_hash_map_mut();
-            for i in b
-                .iter()
-                .map(|x| x.target)
-                .filter_map(|x| self_update.remove(&x))
-                .sorted()
+            // Keep only the last item for each target, and drop the targets `b`
+            // also changes. One pass from the back, so it stays linear.
+            let in_b: FxHashSet<TreeID> = b.iter().map(|x| x.target).collect();
+            let mut seen = FxHashSet::default();
+            let mut kept: Vec<TreeDiffItem> = std::mem::take(&mut self.diff)
+                .into_iter()
                 .rev()
-            {
-                self.remove(i);
-            }
+                .filter(|x| seen.insert(x.target) && !in_b.contains(&x.target))
+                .collect();
+            kept.reverse();
+            self.diff = kept;
         }
     }
 }
