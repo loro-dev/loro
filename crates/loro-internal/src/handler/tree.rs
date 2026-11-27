@@ -642,6 +642,19 @@ impl TreeHandler {
             return Ok(false);
         }
 
+        // A concurrent move may have put the new parent under the target. The
+        // move can never succeed then, and failing would make undo retry this
+        // item forever, so skip it (see context/undo-atomicity.md).
+        let is_cyclic = a.with_state(|state| {
+            state
+                .as_tree_state()
+                .unwrap()
+                .is_ancestor_of(&target, &parent)
+        });
+        if is_cyclic {
+            return Ok(false);
+        }
+
         // println!(
         //     "move_at_with_target_for_apply_diff: {:?} {:?}",
         //     target, parent
