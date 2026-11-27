@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 use bytes::Bytes;
 use loro_common::LoroError;
@@ -56,15 +56,39 @@ pub fn decompress(
     data: Bytes,
     compression_type: CompressionType,
 ) -> Result<(), LoroError> {
+    decompress_with_limit(out, data, compression_type, usize::MAX)
+}
+
+/// Like [`decompress`], but fails if the data decompresses to more than
+/// `max_len` bytes. It stops decompressing at that point, so `out` grows by at
+/// most `max_len + 1` bytes.
+pub fn decompress_with_limit(
+    out: &mut Vec<u8>,
+    data: Bytes,
+    compression_type: CompressionType,
+    max_len: usize,
+) -> Result<(), LoroError> {
+    let too_large = || {
+        LoroError::DecodeError(format!("Decompressed block is larger than {max_len} bytes").into())
+    };
     match compression_type {
         CompressionType::None => {
+            if data.len() > max_len {
+                return Err(too_large());
+            }
             out.write_all(&data).unwrap();
             Ok(())
         }
         CompressionType::LZ4 => {
-            let mut decoder = lz4_flex::frame::FrameDecoder::new(data.as_ref());
-            io::copy(&mut decoder, out)
+            let decoder = lz4_flex::frame::FrameDecoder::new(data.as_ref());
+            // One byte past the limit tells a block of exactly `max_len` bytes
+            // from a larger one.
+            let limit = u64::try_from(max_len).unwrap_or(u64::MAX).saturating_add(1);
+            let len = io::copy(&mut decoder.take(limit), out)
                 .map_err(|e| LoroError::DecodeError(e.to_string().into()))?;
+            if len > max_len as u64 {
+                return Err(too_large());
+            }
             Ok(())
         }
     }

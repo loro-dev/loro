@@ -79,6 +79,15 @@ impl<T: ?Sized> Mutex<T> {
         self.inner.try_lock().is_err()
     }
 
+    /// Whether a thread panicked while holding the lock. Does not block.
+    pub(crate) fn is_poisoned(&self) -> bool {
+        // loom's mutex is never poisoned and has no `is_poisoned`.
+        #[cfg(loom)]
+        return false;
+        #[cfg(not(loom))]
+        self.inner.is_poisoned()
+    }
+
     /// `None` when the mutex is held or poisoned. Does not panic.
     pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         self.inner.try_lock().ok()

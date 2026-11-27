@@ -701,6 +701,22 @@ patched in after the block's value buffer is filled is checked after the
 patch. `visit_text_insert_block` (the known-history reader) already had the
 text check. Test: `cargo test -p loro --test import_text_insert_length`.
 
+## Decoded size is bounded by the declared ranges
+
+Verified against code 2026-11-23. The op and delete-id columns of a change
+block are run-length encoded, so a few bytes can declare many entries.
+`decode_block` reads both lazily and requires that every op has `len >= 1` and
+that the ops cover each change's counter range exactly: an op may not run past
+the end of its change, and the last op of the block must end at the block's
+counter end. So the ops decoded from a block never outnumber its counter range.
+`visit_text_insert_block` refuses zero-length ops too. In `loro-kv-store`,
+`NormalBlock::decode` decompresses at most `MAX_NORMAL_BLOCK_DECODED_LEN` bytes,
+the largest block its own checks accept. A large-value block holds one value of
+any size, so it has no such limit. The counter range itself can still be large
+(up to `i32::MAX`); a decode budget for imports would bound that. Tests:
+`cargo test -p loro-internal zero_length_ops ops_must_cover import_refuses_update`
+and `cargo test -p loro-kv-store block::tests`.
+
 ## Validation Shortcuts
 
 - Binary malformed input or rollback: `cargo test -p loro-internal import_atomicity`

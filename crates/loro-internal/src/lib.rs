@@ -298,7 +298,12 @@ impl Drop for LoroDoc {
             }
 
             let guard = ReleaseOnUnwind(&mut self.inner);
-            let _ = self.implicit_commit_then_stop();
+            // After a panic inside Loro poisoned one of these locks, the commit
+            // would panic again on it, and abort the process if the doc is being
+            // dropped while unwinding. The doc cannot commit anyway, so skip it.
+            if !(self.txn.is_poisoned() || self.oplog.is_poisoned() || self.state.is_poisoned()) {
+                let _ = self.implicit_commit_then_stop();
+            }
             std::mem::forget(guard);
 
             match self

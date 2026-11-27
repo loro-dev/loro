@@ -10,7 +10,7 @@ use loro_common::{LoroError, LoroResult};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    compress::{compress, decompress, CompressionType},
+    compress::{compress, decompress, decompress_with_limit, CompressionType},
     iter::KvIterator,
     sstable::{get_common_prefix_len_and_strip, SIZE_OF_U32, XXH_SEED},
 };
@@ -19,6 +19,10 @@ use super::sstable::{SIZE_OF_U16, SIZE_OF_U8};
 
 const MAX_NORMAL_BLOCK_DATA_LEN: usize = u16::MAX as usize;
 const MAX_NORMAL_BLOCK_ENTRIES: usize = u16::MAX as usize;
+/// The largest decompressed normal block [`NormalBlock::decode`] accepts: its
+/// data, then a `u16` offset per entry, then the `u16` entry count.
+const MAX_NORMAL_BLOCK_DECODED_LEN: usize =
+    MAX_NORMAL_BLOCK_DATA_LEN + SIZE_OF_U16 * (MAX_NORMAL_BLOCK_ENTRIES + 1);
 
 #[derive(Debug, Clone)]
 pub struct LargeValueBlock {
@@ -58,6 +62,8 @@ impl LargeValueBlock {
     }
 
     fn decode(bytes: Bytes, key: Bytes, compression_type: CompressionType) -> LoroResult<Self> {
+        // A large block holds one value of any size, so its decompressed size
+        // has no format limit, unlike a normal block's.
         let mut value_bytes = vec![];
         decompress(
             &mut value_bytes,
@@ -127,7 +133,13 @@ impl NormalBlock {
 
         let buf = raw_block_and_check.slice(..raw_block_and_check.len() - SIZE_OF_U32);
         let mut data = vec![];
-        decompress(&mut data, buf, compression_type)?;
+        // A larger block fails the checks below anyway; stop decompressing it early.
+        decompress_with_limit(
+            &mut data,
+            buf,
+            compression_type,
+            MAX_NORMAL_BLOCK_DECODED_LEN,
+        )?;
         if data.len() < SIZE_OF_U16 {
             return Err(LoroError::DecodeError("Invalid bytes".into()));
         }
@@ -863,5 +875,73 @@ impl DoubleEndedIterator for BlockIter {
         let value = self.peek_back_curr_value().unwrap();
         self.next_back();
         Some((key, value))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lz4(data: &[u8]) -> Bytes {
+        let mut out = Vec::new();
+        compress(&mut out, data, CompressionType::LZ4);
+        out.into()
+    }
+
+    #[test]
+    fn decompression_stops_at_the_limit() {
+        let frame = lz4(&vec![0; 16 << 20]);
+        assert!(frame.len() < 128 << 10, "{}", frame.len());
+        let mut out = Vec::new();
+        assert!(decompress_with_limit(&mut out, frame, CompressionType::LZ4, 1000).is_err());
+        assert!(out.len() <= 1001, "{}", out.len());
+
+        let mut out = Vec::new();
+        decompress_with_limit(&mut out, lz4(&[7; 1000]), CompressionType::LZ4, 1000).unwrap();
+        assert_eq!(out, [7; 1000]);
+
+        let mut out = Vec::new();
+        let raw = Bytes::from(vec![7; 1001]);
+        assert!(decompress_with_limit(&mut out, raw, CompressionType::None, 1000).is_err());
+    }
+
+    #[test]
+    fn normal_block_larger_than_the_format_allows_is_rejected() {
+        let mut raw = lz4(&vec![0; MAX_NORMAL_BLOCK_DECODED_LEN + 1]).to_vec();
+        raw.extend_from_slice(&[0; SIZE_OF_U32]);
+        let key = Bytes::from_static(b"k");
+        assert!(Block::try_decode(raw.into(), false, key, CompressionType::LZ4).is_err());
+    }
+
+    #[test]
+    fn full_normal_block_round_trips_through_lz4() {
+        let mut builder = BlockBuilder::new(usize::MAX);
+        let mut i = 0u32;
+        while builder.add(&i.to_be_bytes(), &[1; 16]) {
+            i += 1;
+        }
+        let block = builder.build();
+        let mut encoded = Vec::new();
+        let compression_type = block.encode(&mut encoded, CompressionType::LZ4);
+        assert_eq!(compression_type, CompressionType::LZ4);
+        let decoded =
+            Block::try_decode(encoded.into(), false, block.first_key(), compression_type).unwrap();
+        assert_eq!(decoded.data(), block.data());
+        assert_eq!(decoded.len(), block.len());
+    }
+
+    #[test]
+    fn large_value_block_round_trips_through_lz4() {
+        let value = vec![1; 4 << 20];
+        let mut builder = BlockBuilder::new(4096);
+        assert!(builder.add(b"k", &value));
+        let block = builder.build();
+        assert!(block.is_large());
+        let mut encoded = Vec::new();
+        let compression_type = block.encode(&mut encoded, CompressionType::LZ4);
+        assert_eq!(compression_type, CompressionType::LZ4);
+        let decoded =
+            Block::try_decode(encoded.into(), true, block.first_key(), compression_type).unwrap();
+        assert_eq!(decoded.data(), value);
     }
 }
