@@ -42,7 +42,8 @@ A MovableList is two CRDTs glued together
   (`MovableListHistoryCache::last_pos` / `last_value` in
   [`history_cache.rs`](../crates/loro-internal/src/history_cache.rs)).
   On a shallow document, `record_shallow_root_state` seeds each root element's
-  position and value as a candidate for versions at or after the root.
+  position (from its winning move) and value (from its winning set, which may
+  be another peer) as candidates for versions at or after the root.
 - Local ops (`MovableListHandler` in
   [`handler.rs`](../crates/loro-internal/src/handler.rs)) encode **op
   indices**: `insert` at `convert_index(pos, ForUser, ForOp)` (the list end is
@@ -351,12 +352,6 @@ Differences in form, not in effect:
 
 Rust issues found:
 
-- On a shallow document, `checkout(root)` reports `getLastEditorAt` from the
-  root list item's peer: `record_shallow_root_state` (`history_cache.rs`)
-  seeds the value writer with the list item ID. The full history reports the
-  real setter, and so does loro.js. Imports whose diff crosses the root show
-  the same wrong writer (for example the last mover), so the suite does not
-  compare `getLastEditorAt` on shallow documents.
 - `updates-in-range` on a shallow document exports nothing for a span that
   starts in trimmed history: `ChangeStore::iter_blocks` looks up the block at
   the span start and finds none. loro.js exports the part it has. The suite
