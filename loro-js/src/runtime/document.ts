@@ -4325,9 +4325,9 @@ export class LoroDoc<T extends Record<string, Container> = Record<string, Contai
     end: number,
     key: string,
     value: unknown,
+    info: number = textStyleInfoByte(this.#textStyleExpand(key), value == null),
   ): void {
     const encoded = this.#encodeRuntimeValue(value, this.#ensurePending());
-    const info = textStyleInfoByte(this.#textStyleExpand(key), value == null);
     this.#appendAndApply(
       container,
       { type: "text-mark", start, end, key, value: encoded, info },

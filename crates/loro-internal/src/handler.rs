@@ -2140,15 +2140,32 @@ impl TextHandler {
                 self.validate_text_boundary(pos, pos_type)?;
 
                 let mut t = t.lock();
-                let (index, _) = t
+                let (index, _, style_fixes) = t
                     .value
-                    .get_entity_index_for_text_insert(pos, pos_type)
+                    .get_entity_index_for_local_text_insert(pos, pos_type)
                     .unwrap();
                 t.value.insert_at_entity_index(
                     index,
                     BytesSlice::from_bytes(s.as_bytes()),
                     IdFull::NONE_ID,
                 );
+                if !s.is_empty() {
+                    // See `insert_with_txn_and_attr` (loro-dev/loro#1240).
+                    let entity_len = s.chars().count();
+                    for fix in style_fixes {
+                        t.value.mark_with_entity_index(
+                            index..index + entity_len,
+                            Arc::new(StyleOp {
+                                lamport: 0,
+                                peer: 0,
+                                cnt: 0,
+                                key: fix.key,
+                                value: fix.value,
+                                info: fix.info,
+                            }),
+                        );
+                    }
+                }
                 Ok(())
             }
             MaybeDetached::Attached(a) => {
@@ -2269,7 +2286,7 @@ impl TextHandler {
         }
 
         let inner = self.inner.try_attached_state()?;
-        let (entity_index, event_index, styles) = inner.with_state(|state| {
+        let (entity_index, event_index, styles, style_fixes) = inner.with_state(|state| {
             let rt = state.as_richtext_state_mut().unwrap();
 
             // Bounds check
@@ -2354,18 +2371,18 @@ impl TextHandler {
                 if cfg!(not(feature = "wasm"))
                     && matches!(pos_type, PosType::Unicode | PosType::Event)
                 {
-                    return Ok((pos, pos, StyleMeta::empty()));
+                    return Ok((pos, pos, StyleMeta::empty(), Vec::new()));
                 }
                 if cfg!(feature = "wasm") && matches!(pos_type, PosType::Utf16 | PosType::Event) {
                     let (entity_index, _) = rt
                         .get_entity_index_for_text_insert(pos, pos_type)
                         .map_err(|_| LoroError::UTF16InUnicodeCodePoint { pos })?;
-                    return Ok((entity_index, pos, StyleMeta::empty()));
+                    return Ok((entity_index, pos, StyleMeta::empty(), Vec::new()));
                 }
             }
 
-            let ret = rt.get_entity_index_for_text_insert(pos, pos_type);
-            let (entity_index, cursor) = match ret {
+            let ret = rt.get_entity_index_for_local_text_insert(pos, pos_type);
+            let (entity_index, cursor, style_fixes) = match ret {
                 Err(_) => match pos_type {
                     PosType::Bytes => return Err(LoroError::UTF8InUnicodeCodePoint { pos }),
                     PosType::Utf16 | PosType::Event => {
@@ -2394,7 +2411,7 @@ impl TextHandler {
                 0
             };
             let styles = rt.get_styles_at_entity_index(entity_index);
-            Ok((entity_index, event_index, styles))
+            Ok((entity_index, event_index, styles, style_fixes))
         })?;
 
         let mut override_styles = Vec::new();
@@ -2444,6 +2461,30 @@ impl TextHandler {
             },
             &inner.doc,
         )?;
+
+        // No position among the style anchors gives the new text the styles
+        // its displayed neighbours imply (loro-dev/loro#1240). With `attr`,
+        // the caller's overrides already set every key.
+        if attr.is_none() && !style_fixes.is_empty() {
+            let len = match pos_type {
+                PosType::Bytes => s.len(),
+                PosType::Unicode => unicode_len,
+                PosType::Utf16 => utf16_len,
+                PosType::Event => event_len,
+                PosType::Entity => unreachable!("entity inserts get no style fixes"),
+            };
+            for fix in style_fixes {
+                self.mark_with_txn_and_flag(
+                    txn,
+                    pos,
+                    pos + len,
+                    fix.key,
+                    fix.value,
+                    pos_type,
+                    Some(fix.info),
+                )?;
+            }
+        }
 
         Ok(override_styles)
     }
@@ -2651,6 +2692,22 @@ impl TextHandler {
         value: LoroValue,
         pos_type: PosType,
     ) -> LoroResult<()> {
+        self.mark_with_txn_and_flag(txn, start, end, key, value, pos_type, None)
+    }
+
+    /// [`Self::mark_with_txn`] with the expand flag given instead of read from
+    /// the style config when `flag` is `Some`.
+    #[allow(clippy::too_many_arguments)]
+    fn mark_with_txn_and_flag(
+        &self,
+        txn: &mut Transaction,
+        start: usize,
+        end: usize,
+        key: impl Into<InternalString>,
+        value: LoroValue,
+        pos_type: PosType,
+        flag: Option<TextStyleInfoFlag>,
+    ) -> LoroResult<()> {
         if start >= end {
             return Err(loro_common::LoroError::ArgErr(
                 "Start must be less than end".to_string().into_boxed_str(),
@@ -2719,7 +2776,9 @@ impl TextHandler {
         let entity_start = entity_range.start;
         let entity_end = entity_range.end;
         let style_config = doc_state.config.text_style_config.read();
-        let flag = if is_delete {
+        let flag = if let Some(flag) = flag {
+            flag
+        } else if is_delete {
             style_config
                 .get_style_flag_for_unmark(&key)
                 .ok_or_else(|| LoroError::StyleConfigMissing(key.clone()))?

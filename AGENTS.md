@@ -56,7 +56,8 @@ Loro is a Rust CRDT workspace with JS/WASM packaging and a MoonBit codec.
 - Shallow-snapshot dead-style redaction (null-only, both-expand exclusion,
   root-whitelisted latest state):
   [context/shallow-snapshot-style-redaction.md](context/shallow-snapshot-style-redaction.md).
-- Rich-text insert positions next to style anchors, the insert cursor cache,
+- Rich-text insert positions next to style anchors (local inserts take the
+  styles their displayed neighbours imply, #1240), the insert cursor cache,
   and delete `start_id`s: [context/richtext-insert-positions.md](context/richtext-insert-positions.md).
 - Why a checkout across one big text op is linear (coalesced leaf updates in the
   text tracker): [context/large-text-linear-time.md](context/large-text-linear-time.md).

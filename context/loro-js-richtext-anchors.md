@@ -1,6 +1,6 @@
 # loro-js Rich-Text Anchors
 
-Verified against code 2026-09-29.
+Verified against code 2026-11-26.
 
 loro.js keeps rich-text style anchors in the text sequence, as Rust does, so a
 Text op position means the same thing in both runtimes. This article covers the
@@ -55,7 +55,17 @@ stores the anchors in `LoroText._sequence`.
 
 Local edits follow Rust's `TextHandler`:
 
-- **Insert** (`LoroText.#insertPosition`, Rust `find_best_insert_pos`): start
+- **Insert** (`LoroText.#localInsertPlan`, Rust
+  `get_entity_index_for_local_text_insert`, loro-dev/loro#1240): per key, the
+  value both displayed neighbours share, else the left one's if its style
+  expands after, else the right one's if it expands before. It picks a gap of
+  the anchor run that gives exactly that, nearest the legacy position, or
+  writes marks over the new text when none does; see
+  [richtext-insert-positions.md](richtext-insert-positions.md).
+  `tests/richtext-insert-styles.test.ts` mirrors Rust's
+  `crates/loro/tests/richtext_insert_styles.rs`.
+- **Legacy position** (`LoroText.#insertPosition`, Rust
+  `find_best_insert_pos`), used by mark endpoints: start
   right after the scalar that ends at the UTF-16 position (or at 0), then skip
   the anchors there until the first one that must stay after the new text: a
   start anchor of an unmark (`null` or `false` value), a start anchor of a style
@@ -74,9 +84,10 @@ Local edits follow Rust's `TextHandler`:
   already resolves the key to the value, or when it is an unmark and no position
   has the key. `start >= end` throws, as in Rust. Detached texts insert anchors
   with Rust's `TextStyleInfoFlag::BOLD` info.
-- **applyDelta** follows Rust's `apply_delta`: inserted text without an
-  attribute explicitly drops each style it would inherit (the styles shared by
-  both visible neighbors), and all marks run after the whole delta.
+- **applyDelta** follows Rust's `apply_delta`: inserted text goes to the
+  `#localInsertPlan` position but writes no fixes; without an attribute it
+  explicitly drops each style it would inherit there (the styles shared by
+  both physical neighbours), and all marks run after the whole delta.
 
 Remote ops:
 

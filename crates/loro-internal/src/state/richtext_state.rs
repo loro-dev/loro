@@ -1181,6 +1181,25 @@ impl RichtextState {
             .get_entity_index_for_text_insert(index, pos_type)
     }
 
+    /// See `RichtextState::get_entity_index_for_local_text_insert`.
+    #[inline]
+    pub(crate) fn get_entity_index_for_local_text_insert(
+        &mut self,
+        index: usize,
+        pos_type: PosType,
+    ) -> Result<
+        (
+            usize,
+            Option<Cursor>,
+            Vec<crate::container::richtext::richtext_state::InsertStyleFix>,
+        ),
+        LoroError,
+    > {
+        self.state
+            .get_mut()
+            .get_entity_index_for_local_text_insert(index, pos_type)
+    }
+
     #[inline]
     pub(crate) fn get_event_index_by_cursor(&mut self, cursor: Cursor) -> usize {
         self.state.get_mut().cursor_to_event_index_cached(cursor)

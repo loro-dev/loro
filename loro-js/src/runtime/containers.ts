@@ -1542,8 +1542,27 @@ export class LoroText extends LoroContainer {
   }
 
   insert(pos: number, text: string): void {
-    const entity = this.#insertPosition(pos);
-    if (text.length === 0) return;
+    if (text.length === 0) {
+      this.#insertPosition(pos);
+      return;
+    }
+    const { entity, fixes } = this.#localInsertPlan(pos);
+    this.#insertAtEntity(entity, text);
+    if (fixes.length === 0) return;
+    // No position among the anchors gives the text the styles its displayed
+    // neighbors imply; Rust's `insert_with_txn_and_attr` marks it.
+    const start = this.#insertPosition(pos);
+    const end = this.#insertPosition(pos + text.length);
+    for (const fix of fixes) {
+      if (this._doc === undefined) {
+        this.#markDetached(start, end, fix.key, fix.value, fix.info);
+      } else {
+        this._doc._textMark(this, start, end, fix.key, fix.value, fix.info);
+      }
+    }
+  }
+
+  #insertAtEntity(entity: number, text: string): void {
     if (this._doc === undefined) {
       const span = TextSequenceSpan.fromText(
         text,
@@ -1555,9 +1574,9 @@ export class LoroText extends LoroContainer {
       this._detachedCounter += span.length;
       this._sequence.insertSpanAtVisible(entity, span);
       this.#inheritGapStyles(span.idAt(0), span.length);
-      return;
+    } else {
+      this._doc._textInsert(this, entity, text);
     }
-    this._doc._textInsert(this, entity, text);
   }
 
   push(text: string): void {
@@ -1664,8 +1683,11 @@ export class LoroText extends LoroContainer {
           throw new RangeError(`delta position ${position} is out of range`);
         }
         const attributes = operation.attributes ?? {};
-        const overrides = this.#insertOverrides(position, attributes);
-        this.insert(position, operation.insert);
+        // As in Rust, the attributes set every key, so the insert writes no
+        // style fixes of its own.
+        const { entity } = this.#localInsertPlan(position);
+        const overrides = this.#insertOverrides(entity, attributes);
+        this.#insertAtEntity(entity, operation.insert);
         marks.push({ start: position, end: position + length, attributes: overrides });
         position += length;
       } else if ("delete" in operation) {
@@ -2222,6 +2244,127 @@ export class LoroText extends LoroContainer {
   }
 
   /**
+   * Rust's `get_entity_index_for_local_text_insert` (loro-dev/loro#1240):
+   * where a local insert at a UTF-16 position goes, and the styles it must
+   * write on the inserted text.
+   *
+   * The text should take, per key, the value both displayed neighbors share,
+   * else the left neighbor's if its style expands after, else the right
+   * neighbor's if its style expands before, else nothing. Among the positions
+   * in the run of anchors between the neighbors, this picks one whose covering
+   * styles resolve to exactly that, preferring the one closest to
+   * `#insertPosition`; when none does, the position with the fewest wrong keys
+   * and marks that fix them.
+   */
+  #localInsertPlan(position: number): {
+    entity: number;
+    fixes: { key: string; value: RuntimeValue; info: number }[];
+  } {
+    const legacyEntity = this.#insertPosition(position);
+    const sequence = this._sequence;
+    if (sequence.visibleZeroWidthLength === 0) return { entity: legacyEntity, fixes: [] };
+    const first =
+      position === 0 ? 0 : sequence.visibleIndexOfMetricUnit(position - 1, "utf16")! + 1;
+    const anchors: TextAnchor[] = [];
+    sequence.forEachVisibleRange(first, sequence.visibleLength, (element) => {
+      if (element.anchor === undefined) return false;
+      anchors.push(element.anchor);
+      return undefined;
+    });
+    if (anchors.length === 0) return { entity: legacyEntity, fixes: [] };
+    const n = anchors.length;
+    const legacy = legacyEntity - first;
+    const version = this._styleVersion;
+    const applies = (style: TextStyle) =>
+      version === undefined ||
+      style.startId.counter + 1 < (version.get(style.startId.peer) ?? 0);
+    const resolve = (styles: Iterable<TextStyle>): Map<string, TextStyle> => {
+      const winners = new Map<string, TextStyle>();
+      for (const style of styles) {
+        if (!applies(style)) continue;
+        const current = winners.get(style.key);
+        if (current === undefined || styleWins(style, current)) {
+          winners.set(style.key, style);
+        }
+      }
+      for (const [key, style] of winners) if (style.value === null) winners.delete(key);
+      return winners;
+    };
+    const membership = (entity: number): TextStyle[] => {
+      const element = sequence.atVisible(entity);
+      if (element === undefined) return [];
+      const histories = this._styleIndex.membershipAt(element.id);
+      return histories === undefined ? [] : [...histories.values()].flat();
+    };
+    const leftStyles = first > 0 ? membership(first - 1) : [];
+    const rightStyles = first + n < sequence.visibleLength ? membership(first + n) : [];
+    const left = resolve(leftStyles);
+    const right = resolve(rightStyles);
+    const desired = new Map<string, TextStyle>();
+    for (const key of new Set([...left.keys(), ...right.keys()])) {
+      const l = left.get(key);
+      const r = right.get(key);
+      let chosen: TextStyle | undefined;
+      if (l !== undefined && r !== undefined && styleValuesEqual(l.value, r.value)) {
+        chosen = l;
+      } else if (l !== undefined && (l.info & 0b100) !== 0) {
+        chosen = l;
+      } else if (r !== undefined && (r.info & 0b010) !== 0) {
+        chosen = r;
+      }
+      if (chosen !== undefined) desired.set(key, chosen);
+    }
+    const wrongKeys = (resolved: Map<string, TextStyle>): string[] => {
+      const keys: string[] = [];
+      for (const key of new Set([...desired.keys(), ...resolved.keys()])) {
+        const d = desired.get(key);
+        const r = resolved.get(key);
+        if (d === undefined && r === undefined) continue;
+        if (d === undefined || r === undefined || !styleValuesEqual(d.value, r.value)) {
+          keys.push(key);
+        }
+      }
+      return keys;
+    };
+    const cover = new Set<TextStyle>(leftStyles);
+    let best:
+      | { k: number; distance: number; wrong: string[]; resolved: Map<string, TextStyle> }
+      | undefined;
+    for (let k = 0; k <= n; k += 1) {
+      if (k > 0) {
+        const { style, isEnd } = anchors[k - 1]!;
+        if (isEnd) cover.delete(style);
+        else cover.add(style);
+      }
+      const resolved = resolve(cover);
+      const wrong = wrongKeys(resolved);
+      const distance = Math.abs(k - legacy);
+      if (
+        best === undefined ||
+        wrong.length < best.wrong.length ||
+        (wrong.length === best.wrong.length && distance < best.distance)
+      ) {
+        best = { k, distance, wrong, resolved };
+      }
+    }
+    const fixes: { key: string; value: RuntimeValue; info: number }[] = [];
+    for (const key of best!.wrong) {
+      const d = desired.get(key);
+      if (d !== undefined) {
+        fixes.push({ key, value: d.value, info: d.info });
+      } else {
+        fixes.push({
+          key,
+          value: null,
+          info: reverseStyleInfo(best!.resolved.get(key)!.info),
+        });
+      }
+    }
+    fixes.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return { entity: first + best!.k, fixes };
+  }
+
+  /**
    * Whether a mark would change nothing, as Rust checks before writing one:
    * every entity position of the range already resolves the key to the value,
    * or it is an unmark and no position has the key at all.
@@ -2245,13 +2388,19 @@ export class LoroText extends LoroContainer {
   }
 
   /** Detached text marks like Rust's `mark_for_detached`, with local anchors. */
-  #markDetached(start: number, end: number, key: string, value: RuntimeValue): void {
+  #markDetached(
+    start: number,
+    end: number,
+    key: string,
+    value: RuntimeValue,
+    info: number = DETACHED_STYLE_INFO,
+  ): void {
     const counter = this._detachedCounter;
     this._detachedCounter += 2;
     const style: TextStyle = {
       startId: { peer: 0n, counter },
       lamport: counter,
-      info: DETACHED_STYLE_INFO,
+      info,
       value,
       key,
       end,
@@ -2284,15 +2433,14 @@ export class LoroText extends LoroContainer {
   }
 
   /**
-   * Rust's `insert_with_txn_and_attr`: the styles text inserted at a position
-   * would get, compared with the requested attributes. Returns the marks that
-   * make the inserted text carry exactly those attributes.
+   * Rust's `insert_with_txn_and_attr`: the styles text inserted at an entity
+   * position would get, compared with the requested attributes. Returns the
+   * marks that make the inserted text carry exactly those attributes.
    */
   #insertOverrides(
-    position: number,
+    entity: number,
     attributes: Readonly<Record<string, Value>>,
   ): [string, unknown][] {
-    const entity = this.#insertPosition(position);
     const inherited = new Map<string, RuntimeValue>();
     if (entity > 0 && entity < this._sequence.visibleLength) {
       // Rust's `get_styles_for_insert`: the styles shared by both visible
@@ -2470,6 +2618,20 @@ function anchorStaysAfterInsert(anchor: TextAnchor): boolean {
   const { style, isEnd } = anchor;
   if (isEnd) return (style.info & 0b100) !== 0;
   return style.value === null || style.value === false || (style.info & 0b010) === 0;
+}
+
+/** Rust's `StyleOp` order: the greater `(lamport, peer)` wins. */
+function styleWins(a: TextStyleMeta, b: TextStyleMeta): boolean {
+  if (a.lamport !== b.lamport) return a.lamport > b.lamport;
+  return a.startId.peer > b.startId.peer;
+}
+
+/** Rust's `TextStyleInfoFlag::to_delete`: both and none swap. */
+function reverseStyleInfo(info: number): number {
+  const before = (info & 0b010) !== 0;
+  const after = (info & 0b100) !== 0;
+  const bits = before === after ? (before ? 0 : 0b110) : info & 0b110;
+  return 0x80 | bits;
 }
 
 function intersectHistories<Meta>(

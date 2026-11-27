@@ -32,8 +32,9 @@ use self::query::{
 
 use super::{
     style_range_map::{IterAnchorItem, StyleRangeMap, Styles},
-    AnchorType, RichtextSpan, StyleKey, StyleOp,
+    AnchorType, RichtextSpan, StyleKey, StyleOp, TextStyleInfoFlag,
 };
+use loro_common::InternalString;
 
 pub(crate) use crate::cursor::PosType;
 
@@ -1353,6 +1354,54 @@ fn insert_stays_before_anchor(style: &StyleOp, anchor_type: AnchorType) -> bool 
         || style.info.prefer_insert_before(anchor_type)
 }
 
+/// See [`RichtextState::locate_insert_gap`].
+enum InsertGap {
+    Direct(Option<Cursor>, usize),
+    Anchors {
+        left: Cursor,
+        right: Cursor,
+        entity_index: usize,
+    },
+}
+
+/// A style that a local insert must write on the inserted text because no
+/// position among the style anchors gives it the styles its displayed
+/// neighbours imply (see [`RichtextState::get_entity_index_for_local_text_insert`]).
+/// A null `value` removes the key.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InsertStyleFix {
+    pub(crate) key: InternalString,
+    pub(crate) value: LoroValue,
+    pub(crate) info: TextStyleInfoFlag,
+}
+
+/// The value each key resolves to among `styles`: the greatest
+/// `(lamport, peer)`, with null meaning absent. Ops are kept so the expand
+/// setting of the winner can be read.
+fn resolve_styles<'a>(
+    styles: impl IntoIterator<Item = &'a Arc<StyleOp>>,
+) -> FxHashMap<InternalString, &'a Arc<StyleOp>> {
+    let mut ans: FxHashMap<InternalString, &'a Arc<StyleOp>> = FxHashMap::default();
+    for op in styles {
+        match ans.get_mut(&op.key) {
+            Some(cur) => {
+                if **cur < *op {
+                    *cur = op;
+                }
+            }
+            None => {
+                ans.insert(op.key.clone(), op);
+            }
+        }
+    }
+    ans.retain(|_, op| !op.value.is_null());
+    ans
+}
+
+fn all_style_ops(styles: &Styles) -> impl Iterator<Item = &Arc<StyleOp>> + '_ {
+    styles.values().flat_map(|v| v.iter())
+}
+
 impl RichtextState {
     pub(crate) fn estimated_heap_bytes(&self) -> usize {
         let cache = self.tree.root_cache();
@@ -1427,6 +1476,284 @@ impl RichtextState {
         };
         self.check_cache();
         result
+    }
+
+    /// Where a local text insert at `pos` goes, and the styles it must write
+    /// on the inserted text (loro-dev/loro#1240).
+    ///
+    /// The inserted text should take, for each key, what its two displayed
+    /// neighbours imply (see [`Self::desired_insert_styles`]), whatever style
+    /// anchors lie between them. Among the positions in that run of anchors,
+    /// this picks one whose covering styles resolve to exactly those values,
+    /// preferring the one closest to the legacy pick of `find_best_insert_pos`.
+    /// When none does (concurrent anchors in an unlucky order), it picks the
+    /// position with the fewest wrong keys and returns marks that fix them.
+    ///
+    /// `PosType::Entity` names an exact entity position and keeps the legacy
+    /// rule.
+    pub(crate) fn get_entity_index_for_local_text_insert(
+        &mut self,
+        pos: usize,
+        pos_type: PosType,
+    ) -> Result<(usize, Option<Cursor>, Vec<InsertStyleFix>), LoroError> {
+        if pos_type == PosType::Entity || !self.has_styles() || self.tree.is_empty() {
+            let (index, cursor) = self.get_entity_index_for_text_insert(pos, pos_type)?;
+            return Ok((index, cursor, Vec::new()));
+        }
+
+        self.check_cache();
+        let cached = self.try_get_cached_cursor(pos, pos_type).and_then(|c| {
+            let elem = self.tree.get_elem(c.leaf)?;
+            if !matches!(elem, RichtextStateChunk::Text { .. }) {
+                return None;
+            }
+            if c.offset == 0 {
+                // At the start of a text chunk: only safe when no anchor
+                // precedes it.
+                let after_anchor = self.tree.prev_elem(c).is_some_and(|prev| {
+                    matches!(
+                        self.tree.get_elem(prev.leaf),
+                        Some(RichtextStateChunk::Style { .. })
+                    )
+                });
+                return (!after_anchor).then_some((c, None));
+            }
+            if c.offset < elem.rle_len() {
+                return Some((c, None));
+            }
+            match self.tree.next_elem(c) {
+                Some(next)
+                    if matches!(
+                        self.tree.get_elem(next.leaf),
+                        Some(RichtextStateChunk::Style { .. })
+                    ) =>
+                {
+                    Some((c, Some(next)))
+                }
+                _ => Some((c, None)),
+            }
+        });
+
+        let (index, cursor, fixes) = match cached {
+            Some((c, None)) => {
+                let index = self.get_cache_entity_index().unwrap() + c.offset;
+                (index, Some(c), Vec::new())
+            }
+            Some((c, Some(first_anchor))) => {
+                let index = self.get_cache_entity_index().unwrap() + c.offset;
+                let (cursor, index, fixes) = self.plan_insert_in_anchor_run(first_anchor, index);
+                (index, Some(cursor), fixes)
+            }
+            None => {
+                let gap = match pos_type {
+                    PosType::Bytes => self.locate_insert_gap::<ByteQueryT>(pos),
+                    PosType::Unicode => self.locate_insert_gap::<UnicodeQueryT>(pos),
+                    PosType::Utf16 => self.locate_insert_gap::<Utf16QueryT>(pos),
+                    PosType::Event => self.locate_insert_gap::<EventIndexQueryT>(pos),
+                    PosType::Entity => unreachable!(),
+                };
+                match gap {
+                    InsertGap::Direct(cursor, index) => (index, cursor, Vec::new()),
+                    InsertGap::Anchors {
+                        left, entity_index, ..
+                    } => {
+                        let (cursor, index, fixes) =
+                            self.plan_insert_in_anchor_run(left, entity_index);
+                        (index, Some(cursor), fixes)
+                    }
+                }
+            }
+        };
+
+        if let Some(c) = cursor {
+            debug_assert_eq!(
+                self.get_index_from_cursor(c, PosType::Entity).unwrap(),
+                index
+            );
+            self.record_cache(c.leaf, index, PosType::Entity, c.offset, Some(index));
+        }
+        self.check_cache();
+        Ok((index, cursor, fixes))
+    }
+
+    /// The values a character inserted between `left` and `right` (the
+    /// displayed neighbours, `None` at a text end) should have, per key:
+    ///
+    /// - the value both neighbours share;
+    /// - else the left neighbour's value if its style expands after;
+    /// - else the right neighbour's value if its style expands before;
+    /// - else nothing.
+    ///
+    /// The expand setting is the one of the style op the neighbour's value
+    /// comes from. An unmark leaves no value, so it never extends.
+    fn desired_insert_styles<'a>(
+        left: &FxHashMap<InternalString, &'a Arc<StyleOp>>,
+        right: &FxHashMap<InternalString, &'a Arc<StyleOp>>,
+    ) -> FxHashMap<InternalString, &'a Arc<StyleOp>> {
+        let mut ans = FxHashMap::default();
+        for key in left.keys().chain(right.keys()) {
+            if ans.contains_key(key) {
+                continue;
+            }
+            let l = left.get(key).copied();
+            let r = right.get(key).copied();
+            let chosen = match (l, r) {
+                (Some(l), Some(r)) if l.value == r.value => Some(l),
+                _ => l
+                    .filter(|l| l.info.expand_after())
+                    .or_else(|| r.filter(|r| r.info.expand_before())),
+            };
+            if let Some(op) = chosen {
+                ans.insert(key.clone(), op);
+            }
+        }
+        ans
+    }
+
+    /// See [`Self::get_entity_index_for_local_text_insert`]. `first_anchor`
+    /// is the first anchor of the run after the left neighbour (or at the
+    /// text start), at entity index `entity_index`.
+    fn plan_insert_in_anchor_run(
+        &self,
+        first_anchor: Cursor,
+        entity_index: usize,
+    ) -> (Cursor, usize, Vec<InsertStyleFix>) {
+        let mut anchors: Vec<(&Arc<StyleOp>, AnchorType, Cursor)> = Vec::new();
+        let mut iter = Some(first_anchor);
+        let mut has_right = false;
+        while let Some(c) = iter {
+            match self.tree.get_elem(c.leaf) {
+                Some(RichtextStateChunk::Style { style, anchor_type }) => {
+                    anchors.push((style, *anchor_type, c));
+                    iter = self.tree.next_elem(c);
+                }
+                Some(RichtextStateChunk::Text(_)) => {
+                    has_right = true;
+                    break;
+                }
+                None => break,
+            }
+        }
+        let n = anchors.len();
+        debug_assert!(n > 0);
+        let position_cursor = |k: usize| -> Cursor {
+            if k < n {
+                anchors[k].2
+            } else {
+                iter.unwrap_or_else(|| self.tree.end_cursor().unwrap())
+            }
+        };
+
+        // The legacy pick of `find_best_insert_pos`, used to break ties.
+        let legacy = {
+            let (mut k, visited) = match anchors
+                .iter()
+                .position(|(s, t, _)| insert_stays_before_anchor(s, *t))
+            {
+                Some(i) => (i, i + 1),
+                None => (n, n),
+            };
+            for j in (0..visited).rev() {
+                if !anchors[j].0.info.prefer_insert_before(anchors[j].1) {
+                    break;
+                }
+                k = j;
+            }
+            k
+        };
+
+        let style_ranges = self.style_ranges.as_ref().unwrap();
+        let left_styles: &Styles = if entity_index > 0 {
+            style_ranges.styles_at(entity_index - 1)
+        } else {
+            &EMPTY_STYLES
+        };
+        let right_styles: &Styles = if has_right {
+            style_ranges.styles_at(entity_index + n)
+        } else {
+            &EMPTY_STYLES
+        };
+        let desired = Self::desired_insert_styles(
+            &resolve_styles(all_style_ops(left_styles)),
+            &resolve_styles(all_style_ops(right_styles)),
+        );
+
+        let same_op =
+            |a: &StyleOp, b: &StyleOp| a.peer == b.peer && a.cnt == b.cnt && a.lamport == b.lamport;
+        let mismatched_keys =
+            |resolved: &FxHashMap<InternalString, &Arc<StyleOp>>| -> Vec<InternalString> {
+                let mut keys: Vec<InternalString> = Vec::new();
+                for key in desired.keys().chain(resolved.keys()) {
+                    let d = desired.get(key).map(|x| &x.value);
+                    let r = resolved.get(key).map(|x| &x.value);
+                    if d != r && !keys.contains(key) {
+                        keys.push(key.clone());
+                    }
+                }
+                keys
+            };
+
+        // The styles covering each position of the run: start from those of
+        // the left neighbour; a start anchor adds its style, an end anchor
+        // removes it.
+        let mut cover: Vec<&Arc<StyleOp>> = all_style_ops(left_styles).collect();
+        let mut best: Option<(usize, usize, Vec<InternalString>)> = None;
+        for k in 0..=n {
+            if k > 0 {
+                let (style, anchor_type, _) = anchors[k - 1];
+                match anchor_type {
+                    AnchorType::Start => cover.push(style),
+                    AnchorType::End => cover.retain(|x| !same_op(x, style)),
+                }
+            }
+            let resolved = resolve_styles(cover.iter().copied());
+            let wrong = mismatched_keys(&resolved);
+            let distance = k.abs_diff(legacy);
+            let better = match &best {
+                None => true,
+                Some((_, best_distance, best_wrong)) => {
+                    (wrong.len(), distance) < (best_wrong.len(), *best_distance)
+                }
+            };
+            if better {
+                best = Some((k, distance, wrong));
+            }
+        }
+
+        let (k, _, wrong) = best.unwrap();
+        let mut fixes = Vec::new();
+        if !wrong.is_empty() {
+            // Recompute the covering styles at `k` to know what to undo.
+            let mut cover: Vec<&Arc<StyleOp>> = all_style_ops(left_styles).collect();
+            for (style, anchor_type, _) in &anchors[..k] {
+                match anchor_type {
+                    AnchorType::Start => cover.push(style),
+                    AnchorType::End => cover.retain(|x| !same_op(x, style)),
+                }
+            }
+            let resolved = resolve_styles(cover.iter().copied());
+            for key in wrong {
+                match desired.get(&key) {
+                    Some(op) => fixes.push(InsertStyleFix {
+                        key,
+                        value: op.value.clone(),
+                        info: op.info,
+                    }),
+                    None => {
+                        let info = resolved.get(&key).unwrap().info.to_delete();
+                        fixes.push(InsertStyleFix {
+                            key,
+                            value: LoroValue::Null,
+                            info,
+                        });
+                    }
+                }
+            }
+            // Deterministic op order.
+            fixes.sort_by(|a, b| a.key.cmp(&b.key));
+        }
+
+        (position_cursor(k), entity_index + k, fixes)
     }
 
     /// Whether the anchor rules of `find_best_insert_pos` could put an insert
@@ -1801,83 +2128,13 @@ impl RichtextState {
         &self,
         pos: usize,
     ) -> (Option<generic_btree::Cursor>, usize) {
-        type Query<Q> = IndexQueryWithEntityIndex<Q, RichtextTreeTrait>;
-        if self.tree.is_empty() {
-            return (None, 0);
-        }
-
-        // There are a range of elements may share the same unicode index
-        // because style anchors' lengths are zero in unicode index.
-
-        // Find the start and the end of the range, and entity index of left cursor
-        let (left, right, mut entity_index) = if pos == 0 {
-            let left = self.tree.start_cursor().unwrap();
-            let mut right = left;
-            let mut elem = self.tree.get_elem(right.leaf).unwrap();
-            let entity_index = 0;
-            if matches!(elem, RichtextStateChunk::Text { .. }) {
-                return (Some(right), 0);
-            } else {
-                while Q::get_elem_len(elem) == 0 {
-                    match self.tree.next_elem(right) {
-                        Some(r) => {
-                            right = r;
-                            elem = self.tree.get_elem(right.leaf).unwrap();
-                        }
-                        None => {
-                            right.offset = elem.rle_len();
-                            break;
-                        }
-                    }
-                }
-
-                (left, right, entity_index)
-            }
-        } else {
-            // The query prefers right when there are empty elements (style anchors)
-            // So the nodes between (pos-1) and pos are all style anchors.
-            let (q, f) = self.tree.query_with_finder_return::<Query<Q>>(&(pos - 1));
-            let q = q.unwrap();
-            let mut entity_index = f.entity_index();
-
-            let elem = self.tree.get_elem(q.leaf()).unwrap();
-            let mut right = q.cursor;
-            right.offset += 1;
-            entity_index += 1;
-            if elem.rle_len() > right.offset {
-                // The cursor is in the middle of a style anchor
-                return (Some(right), entity_index);
-            }
-
-            match self.tree.next_elem(q.cursor) {
-                // If next is None, we know the range is empty, return directly
-                None => return (self.tree.end_cursor(), entity_index),
-                Some(x) => {
-                    assert_eq!(right.offset, elem.rle_len());
-                    right = x;
-                    let mut elem = self.tree.get_elem(right.leaf).unwrap();
-                    if matches!(elem, RichtextStateChunk::Text { .. }) {
-                        return (Some(right), entity_index);
-                    }
-
-                    let left = x;
-                    while matches!(elem, RichtextStateChunk::Style { .. }) {
-                        match self.tree.next_elem(right) {
-                            Some(r) => {
-                                right = r;
-                                elem = self.tree.get_elem(right.leaf).unwrap();
-                            }
-                            None => {
-                                // this is last element
-                                right.offset = 1;
-                                break;
-                            }
-                        }
-                    }
-
-                    (left, right, entity_index)
-                }
-            }
+        let (left, right, mut entity_index) = match self.locate_insert_gap::<Q>(pos) {
+            InsertGap::Direct(cursor, entity_index) => return (cursor, entity_index),
+            InsertGap::Anchors {
+                left,
+                right,
+                entity_index,
+            } => (left, right, entity_index),
         };
 
         let mut iter = left;
@@ -1918,6 +2175,96 @@ impl RichtextState {
         }
 
         (Some(iter), entity_index)
+    }
+
+    /// Where text inserted at `pos` (in `Q` units) may go: directly at a
+    /// cursor when no style anchor is there, or anywhere in the run of anchors
+    /// from `left` (the first anchor, at `entity_index`) to `right`.
+    fn locate_insert_gap<Q: QueryByLen<RichtextTreeTrait>>(&self, pos: usize) -> InsertGap {
+        type Query<Q> = IndexQueryWithEntityIndex<Q, RichtextTreeTrait>;
+        if self.tree.is_empty() {
+            return InsertGap::Direct(None, 0);
+        }
+
+        // There are a range of elements may share the same unicode index
+        // because style anchors' lengths are zero in unicode index.
+
+        // Find the start and the end of the range, and entity index of left cursor
+        let (left, right, entity_index) = if pos == 0 {
+            let left = self.tree.start_cursor().unwrap();
+            let mut right = left;
+            let mut elem = self.tree.get_elem(right.leaf).unwrap();
+            let entity_index = 0;
+            if matches!(elem, RichtextStateChunk::Text { .. }) {
+                return InsertGap::Direct(Some(right), 0);
+            } else {
+                while Q::get_elem_len(elem) == 0 {
+                    match self.tree.next_elem(right) {
+                        Some(r) => {
+                            right = r;
+                            elem = self.tree.get_elem(right.leaf).unwrap();
+                        }
+                        None => {
+                            right.offset = elem.rle_len();
+                            break;
+                        }
+                    }
+                }
+
+                (left, right, entity_index)
+            }
+        } else {
+            // The query prefers right when there are empty elements (style anchors)
+            // So the nodes between (pos-1) and pos are all style anchors.
+            let (q, f) = self.tree.query_with_finder_return::<Query<Q>>(&(pos - 1));
+            let q = q.unwrap();
+            let mut entity_index = f.entity_index();
+
+            let elem = self.tree.get_elem(q.leaf()).unwrap();
+            let mut right = q.cursor;
+            right.offset += 1;
+            entity_index += 1;
+            if elem.rle_len() > right.offset {
+                // The cursor is in the middle of a style anchor
+                return InsertGap::Direct(Some(right), entity_index);
+            }
+
+            match self.tree.next_elem(q.cursor) {
+                // If next is None, we know the range is empty, return directly
+                None => return InsertGap::Direct(self.tree.end_cursor(), entity_index),
+                Some(x) => {
+                    assert_eq!(right.offset, elem.rle_len());
+                    right = x;
+                    let mut elem = self.tree.get_elem(right.leaf).unwrap();
+                    if matches!(elem, RichtextStateChunk::Text { .. }) {
+                        return InsertGap::Direct(Some(right), entity_index);
+                    }
+
+                    let left = x;
+                    while matches!(elem, RichtextStateChunk::Style { .. }) {
+                        match self.tree.next_elem(right) {
+                            Some(r) => {
+                                right = r;
+                                elem = self.tree.get_elem(right.leaf).unwrap();
+                            }
+                            None => {
+                                // this is last element
+                                right.offset = 1;
+                                break;
+                            }
+                        }
+                    }
+
+                    (left, right, entity_index)
+                }
+            }
+        };
+
+        InsertGap::Anchors {
+            left,
+            right,
+            entity_index,
+        }
     }
 
     fn get_entity_index_from_path(&self, right: generic_btree::Cursor) -> usize {

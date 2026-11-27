@@ -644,11 +644,24 @@ fn shallow_snapshot_keeps_live_both_expand_style_value() -> anyhow::Result<()> {
     b.config_text_style(cfg());
     b.import(&bytes)?;
 
-    // Typing into the collapsed range picks the style back up on both replicas.
-    let vv = a.oplog_vv();
-    ta.insert(1, "x")?;
-    a.commit();
-    b.import(&a.export(ExportMode::updates(&vv))?)?;
+    // An insert op whose entity position lies inside the empty pair (entities:
+    // a=0, start anchor=1, end anchor=2, d=3) takes the style on every replica,
+    // so the shallow replica must still know its value. Local typing no longer
+    // writes such an op (it follows the displayed neighbours, loro-dev/loro#1240),
+    // but older clients do, so forge one from a local insert.
+    let c = a.fork();
+    c.set_peer_id(3)?;
+    let vv = c.oplog_vv();
+    c.get_text("text").insert(1, "x")?;
+    c.commit();
+    let mut json = serde_json::to_value(c.export_json_updates(&vv, &c.oplog_vv())?)?;
+    let op = &mut json["changes"][0]["ops"][0]["content"];
+    assert_eq!(op["type"], "insert");
+    assert_eq!(op["pos"], 1, "local typing stays out of the dead pair");
+    op["pos"] = 2.into();
+    let forged = serde_json::to_string(&json)?;
+    a.import_json_updates(forged.as_str())?;
+    b.import_json_updates(forged.as_str())?;
 
     let rendered_a = format!("{:?}", ta.get_richtext_value());
     let rendered_b = format!("{:?}", b.get_text("text").get_richtext_value());

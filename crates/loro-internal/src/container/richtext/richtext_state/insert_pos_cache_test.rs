@@ -101,8 +101,42 @@ fn cold_lookup(state: &RichtextState, pos: usize, pos_type: PosType) -> usize {
         .0
 }
 
+fn cold_local_lookup(
+    state: &RichtextState,
+    pos: usize,
+    pos_type: PosType,
+) -> (usize, Vec<super::InsertStyleFix>) {
+    let mut cold = state.clone();
+    cold.clear_cache();
+    let (index, _, fixes) = cold
+        .get_entity_index_for_local_text_insert(pos, pos_type)
+        .unwrap();
+    (index, fixes)
+}
+
 fn assert_cache_matches_cold_lookup(state: &mut RichtextState, text: &str, context: &str) {
     for pos_type in POS_TYPES {
+        // Local text inserts (loro-dev/loro#1240) plan from the cache too.
+        let positions = boundaries(text, pos_type, state.len_entity());
+        let mut warm = state.clone();
+        for &pos in &positions {
+            let expected = cold_local_lookup(&warm, pos, pos_type);
+            let (index, cursor, fixes) = warm
+                .get_entity_index_for_local_text_insert(pos, pos_type)
+                .unwrap();
+            assert_eq!(
+                (index, fixes),
+                expected,
+                "{context}: local {pos_type:?} {pos} from the previous position in {text:?}"
+            );
+            if let Some(cursor) = cursor {
+                assert_eq!(
+                    warm.get_index_from_cursor(cursor, PosType::Entity),
+                    Some(index)
+                );
+            }
+        }
+
         let positions = boundaries(text, pos_type, state.len_entity());
         // Starting from the cursor the last edit left behind.
         for &pos in &positions {
