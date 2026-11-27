@@ -3192,7 +3192,7 @@ fn text_len(s: &str, pos_type: PosType) -> Option<usize> {
 
 fn text_pos_to_unicode(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
     match pos_type {
-        PosType::Unicode => (index <= s.chars().count()).then_some(index),
+        PosType::Unicode => unicode_pos_in_range(s, index),
         PosType::Bytes => {
             if index > s.len() {
                 None
@@ -3206,9 +3206,14 @@ fn text_pos_to_unicode(s: &str, index: usize, pos_type: PosType) -> Option<usize
         }
         PosType::Utf16 => utf16_to_unicode_pos(s, index),
         PosType::Event if cfg!(feature = "wasm") => utf16_to_unicode_pos(s, index),
-        PosType::Event => (index <= s.chars().count()).then_some(index),
+        PosType::Event => unicode_pos_in_range(s, index),
         PosType::Entity => None,
     }
+}
+
+/// `Some(index)` if `s` has at least `index` chars. Only scans the first `index` chars.
+fn unicode_pos_in_range(s: &str, index: usize) -> Option<usize> {
+    (index == 0 || s.chars().nth(index - 1).is_some()).then_some(index)
 }
 
 fn unicode_to_text_pos(s: &str, index: usize, pos_type: PosType) -> Option<usize> {
@@ -3291,23 +3296,23 @@ fn text_boundary_error(pos: usize, pos_type: PosType) -> LoroError {
     }
 }
 
+// These read from the cached string value and only scan up to the requested
+// positions. The full length is counted only to report an error.
 fn text_char_at(s: &str, pos: usize, pos_type: PosType) -> LoroResult<char> {
-    let len = text_len(s, pos_type).unwrap_or(0);
-    if pos >= len {
-        return Err(LoroError::OutOfBound {
-            pos,
-            len,
-            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        });
-    }
-
-    let unicode_pos =
-        text_pos_to_unicode(s, pos, pos_type).ok_or_else(|| text_boundary_error(pos, pos_type))?;
-    s.chars().nth(unicode_pos).ok_or(LoroError::OutOfBound {
+    let out_of_bound = || LoroError::OutOfBound {
         pos,
-        len,
+        len: text_len(s, pos_type).unwrap_or(0),
         info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-    })
+    };
+    let Some(unicode_pos) = text_pos_to_unicode(s, pos, pos_type) else {
+        let len = text_len(s, pos_type).unwrap_or(0);
+        return Err(if pos >= len {
+            out_of_bound()
+        } else {
+            text_boundary_error(pos, pos_type)
+        });
+    };
+    s.chars().nth(unicode_pos).ok_or_else(out_of_bound)
 }
 
 fn text_slice(s: &str, start: usize, end: usize, pos_type: PosType) -> LoroResult<String> {
@@ -3318,21 +3323,30 @@ fn text_slice(s: &str, start: usize, end: usize, pos_type: PosType) -> LoroResul
         return Ok(String::new());
     }
 
-    let len = text_len(s, pos_type).unwrap_or(0);
-    if end > len {
-        return Err(LoroError::OutOfBound {
-            pos: end,
-            len,
-            info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
-        });
-    }
-
-    let start = text_pos_to_unicode(s, start, pos_type)
-        .ok_or_else(|| text_boundary_error(start, pos_type))?;
-    let end =
-        text_pos_to_unicode(s, end, pos_type).ok_or_else(|| text_boundary_error(end, pos_type))?;
-    let start = unicode_to_byte_pos(s, start).expect("unicode index must map to a byte boundary");
-    let end = unicode_to_byte_pos(s, end).expect("unicode index must map to a byte boundary");
+    let (Some(start_unicode), Some(end_unicode)) = (
+        text_pos_to_unicode(s, start, pos_type),
+        text_pos_to_unicode(s, end, pos_type),
+    ) else {
+        let len = text_len(s, pos_type).unwrap_or(0);
+        if end > len {
+            return Err(LoroError::OutOfBound {
+                pos: end,
+                len,
+                info: format!("Position: {}:{}", file!(), line!()).into_boxed_str(),
+            });
+        }
+        let bad = if text_pos_to_unicode(s, start, pos_type).is_none() {
+            start
+        } else {
+            end
+        };
+        return Err(text_boundary_error(bad, pos_type));
+    };
+    let start =
+        unicode_to_byte_pos(s, start_unicode).expect("unicode index must map to a byte boundary");
+    let end = start
+        + unicode_to_byte_pos(&s[start..], end_unicode - start_unicode)
+            .expect("unicode index must map to a byte boundary");
     Ok(s[start..end].to_string())
 }
 
