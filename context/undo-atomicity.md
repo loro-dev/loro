@@ -64,6 +64,14 @@ have deleted it again; writing to it then always fails with `ContainerDeleted`
 returning `Ok(false)` when nothing else changed; skipping gives the same result.
 Regression: seed 740 in `crates/loro/tests/movable_list_undo_random.rs`.
 
+## Cyclic tree moves are skipped
+
+The same holds for a tree move that would put a node under itself because a
+concurrent change moved the old parent below it (#1359).
+`move_at_with_target_for_apply_diff` skips that move and leaves the node where it
+is; the other changes of the batch are applied. Regression:
+`crates/loro/tests/undo_tree_cycle_move.rs`.
+
 ## Unknown-container rejection
 
 Keep the existing [unknown-container contract](unknown-containers.md): a

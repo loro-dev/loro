@@ -767,7 +767,7 @@ impl TreeState {
     }
 
     #[inline(never)]
-    fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
+    pub(crate) fn is_ancestor_of(&self, maybe_ancestor: &TreeID, node_id: &TreeParentId) -> bool {
         if !self.trees.contains_key(maybe_ancestor) {
             return false;
         }
