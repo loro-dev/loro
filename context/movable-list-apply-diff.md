@@ -64,17 +64,23 @@ element or anchor in the former unlock/relock window. Stale-plan errors are
 returned as `LoroError`, without an `expect` or successful partial-undo log.
 
 A remotely revived original can coexist with its undo-created replacement.
-On `EventTriggerKind::Import`, `movable_list::prune_revived_remaps` removes any
-revived original element id from `UndoManager::element_remap` (and any revived
-child container id from `container_remap`) once it is live again in the list
-(loro-dev/loro#1234). Without pruning, `remap()` would keep redirecting the
+`UndoManager::element_remap` indexes remapped element ids by their owning
+list container so `EventTriggerKind::Import` checks only lists touched by the
+import (`movable_list::prune_revived_remaps`). When a remote import revives an
+original element, `prune_revived_remaps` drops its entry from `element_remap`
+and walks the entire revived subtree across all container kinds (`Map`, `List`,
+`MovableList`, `Tree` live nodes, etc.) to remove revived descendant container
+ids from `container_remap` and revived child-list elements from `element_remap`
+(loro-dev/loro#1234). Without pruning, `resolve()` would keep redirecting the
 revived original to its undo copy, causing a subsequent delete-undo of the
-revived original to treat the copy as still present (no-op) and causing
-move/redo anchors naming the original to target the copy instead.
-`EventTriggerKind::Checkout` (when not paused) also clears `element_remap`
-alongside the undo/redo stacks. Placement is still classified per original
-entry; a missing move/set without an insertion value is skipped, never
-unwrapped or revived.
+revived original to treat the copy as still present (no-op), causing move/redo
+anchors naming the original to target the copy instead, and causing edits to
+nested containers under the revived original to undo against the copy.
+`EventTriggerKind::Checkout` (when not paused) also clears `container_remap`
+and `element_remap` alongside the undo/redo stacks; paused checkouts preserve
+both remap tables.
+Placement is still classified per original entry; a missing move/set without
+an insertion value is skipped, never unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
 diff path. The saved full-state source, adjusted for earlier spans of the same
 undo group, supplies aliases for the cloned elements after that replay. This

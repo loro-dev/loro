@@ -1766,7 +1766,7 @@ impl UndoManager {
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_local = remap_containers.clone();
         let remap_containers_clone = remap_containers.clone();
-        let element_remap = Arc::new(Mutex::new(FxHashMap::default()));
+        let element_remap = Arc::new(Mutex::new(movable_list::ElementRemap::default()));
         let element_remap_clone = element_remap.clone();
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
@@ -1874,6 +1874,7 @@ impl UndoManager {
                         inner.next_counter = next_counter;
                     }
                 }
+                remap_containers_clone.lock().clear();
                 element_remap_clone.lock().clear();
             }
         }));

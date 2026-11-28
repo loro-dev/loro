@@ -22,16 +22,52 @@ use crate::{
 
 use super::DiffBatch;
 
-pub(crate) type ElementRemap = FxHashMap<CompactIdLp, CompactIdLp>;
+/// Maps deleted MovableList element ids to their undo-recreated replacements,
+/// indexed by the list container each original id belonged to so remote imports
+/// only inspect remaps for lists they actually touched.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ElementRemap {
+    map: FxHashMap<CompactIdLp, CompactIdLp>,
+    by_list: FxHashMap<ContainerID, FxHashSet<CompactIdLp>>,
+}
 
-/// Drop remapped element ids (and any revived child container remaps) when a
-/// remote import brings the original element back to life in its MovableList.
+impl ElementRemap {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.map.clear();
+        self.by_list.clear();
+    }
+
+    pub(crate) fn resolve(&self, mut id: CompactIdLp) -> CompactIdLp {
+        while let Some(&next) = self.map.get(&id) {
+            id = next;
+        }
+        id
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        list_cid: ContainerID,
+        old_id: CompactIdLp,
+        new_id: CompactIdLp,
+    ) {
+        self.map.insert(old_id, new_id);
+        self.by_list.entry(list_cid).or_default().insert(old_id);
+    }
+}
+
+/// Drop remapped element ids (and any revived descendant container/element
+/// remaps across the entire revived subtree) when a remote import brings the
+/// original element back to life in its MovableList.
 ///
-/// Without this, `remap()` keeps following `original -> replacement` even after
-/// the original and replacement coexist as distinct live items, causing a later
-/// delete-undo of the revived original to see the replacement as still present
-/// (no-op) and causing move/redo anchors naming the original to target the copy
-/// instead (loro-dev/loro#1234).
+/// Without this, `resolve()` keeps following `original -> replacement` even
+/// after the original and replacement coexist as distinct live items, causing a
+/// later delete-undo of the revived original to see the replacement as still
+/// present (no-op) and causing move/redo anchors naming the original to target
+/// the copy instead (loro-dev/loro#1234).
 pub(crate) fn prune_revived_remaps(
     doc: &crate::LoroDocInner,
     events: &[&crate::event::ContainerDiff],
@@ -41,41 +77,110 @@ pub(crate) fn prune_revived_remaps(
     if remapped.is_empty() {
         return;
     }
-    let mut pending: Vec<crate::container::idx::ContainerIdx> = events
-        .iter()
-        .filter(|e| e.id.container_type() == loro_common::ContainerType::MovableList)
-        .map(|e| e.idx)
-        .collect();
-    if pending.is_empty() {
+    let mut pending_lists: Vec<(ContainerID, crate::container::idx::ContainerIdx)> = Vec::new();
+    for e in events {
+        if e.id.container_type() == loro_common::ContainerType::MovableList
+            && remapped.by_list.contains_key(&e.id)
+        {
+            pending_lists.push((e.id.clone(), e.idx));
+        }
+    }
+    if pending_lists.is_empty() {
         return;
     }
+
     let mut state = doc.state.lock();
-    while let Some(idx) = pending.pop() {
-        if remapped.is_empty() {
-            break;
+    let mut pending_subtrees: Vec<ContainerID> = Vec::new();
+    let mut visited_subtrees: FxHashSet<ContainerID> = FxHashSet::default();
+
+    loop {
+        while let Some((list_cid, idx)) = pending_lists.pop() {
+            let Some(mut ids) = remapped.by_list.remove(&list_cid) else {
+                continue;
+            };
+            state.with_state(idx, |s| {
+                let list = s.as_movable_list_state().unwrap();
+                ids.retain(|&orig_id| {
+                    let Some(index) = list.get_index_of_elem(orig_id) else {
+                        return true;
+                    };
+                    let Some((id, elem)) = list.get_elem_at_given_pos(index, IndexType::ForUser)
+                    else {
+                        return true;
+                    };
+                    if id != orig_id {
+                        return true;
+                    }
+                    remapped.map.remove(&orig_id);
+                    if let LoroValue::Container(child_cid) = &elem.value {
+                        if visited_subtrees.insert(child_cid.clone()) {
+                            pending_subtrees.push(child_cid.clone());
+                        }
+                    }
+                    false
+                });
+            });
+            if !ids.is_empty() {
+                remapped.by_list.insert(list_cid, ids);
+            }
         }
-        state.with_state(idx, |s| {
-            let list = s.as_movable_list_state().unwrap();
-            remapped.retain(|&orig_id, _| {
-                let Some(index) = list.get_index_of_elem(orig_id) else {
-                    return true;
-                };
-                let Some((id, elem)) = list.get_elem_at_given_pos(index, IndexType::ForUser) else {
-                    return true;
-                };
-                if id != orig_id {
-                    return true;
-                }
-                if let LoroValue::Container(child_cid) = &elem.value {
-                    containers.remove(child_cid);
-                    if child_cid.container_type() == loro_common::ContainerType::MovableList {
-                        if let Some(child_idx) = doc.arena.id_to_idx(child_cid) {
-                            pending.push(child_idx);
+
+        let Some(cid) = pending_subtrees.pop() else {
+            break;
+        };
+        containers.remove(&cid);
+        let Some(idx) = doc.arena.id_to_idx(&cid) else {
+            continue;
+        };
+        if cid.container_type() == loro_common::ContainerType::MovableList
+            && remapped.by_list.contains_key(&cid)
+        {
+            pending_lists.push((cid.clone(), idx));
+        }
+        if containers.is_empty() && remapped.is_empty() {
+            continue;
+        }
+        state.with_state(idx, |s| match s {
+            crate::state::State::MapState(map) => {
+                for (_, v) in map.iter() {
+                    if let Some(LoroValue::Container(child_cid)) = &v.value {
+                        if visited_subtrees.insert(child_cid.clone()) {
+                            pending_subtrees.push(child_cid.clone());
                         }
                     }
                 }
-                false
-            });
+            }
+            crate::state::State::ListState(list) => {
+                for elem in list.iter_with_id() {
+                    if let LoroValue::Container(child_cid) = &elem.v {
+                        if visited_subtrees.insert(child_cid.clone()) {
+                            pending_subtrees.push(child_cid.clone());
+                        }
+                    }
+                }
+            }
+            crate::state::State::MovableListState(list) => {
+                for (_, _, v) in list.iter_with_last_move_id_and_elem_id() {
+                    if let LoroValue::Container(child_cid) = v {
+                        if visited_subtrees.insert(child_cid.clone()) {
+                            pending_subtrees.push(child_cid.clone());
+                        }
+                    }
+                }
+            }
+            crate::state::State::TreeState(tree) => {
+                for node in tree.nodes() {
+                    if !tree.is_node_deleted(&node).unwrap_or(true) {
+                        let child_cid = node.associated_meta_container();
+                        if visited_subtrees.insert(child_cid.clone()) {
+                            pending_subtrees.push(child_cid);
+                        }
+                    }
+                }
+            }
+            crate::state::State::RichtextState(_) | crate::state::State::UnknownState(_) => {}
+            #[cfg(feature = "counter")]
+            crate::state::State::CounterState(_) => {}
         });
     }
 }
@@ -767,7 +872,7 @@ pub(crate) fn complete_anchors(
                             if let Some(e) = search
                                 .candidates
                                 .iter()
-                                .find(|e| element_by_id(list, remap(&e.id, remapped)).is_some())
+                                .find(|e| element_by_id(list, remapped.resolve(e.id)).is_some())
                             {
                                 inverse.before.elements.push(e.clone());
                                 search.done = true;
@@ -824,7 +929,10 @@ enum PlanKind {
         edits: Vec<Edit>,
         preflight: NativePreflight,
     },
-    Recreated(Vec<Element>),
+    Recreated {
+        old_cid: ContainerID,
+        target: Vec<Element>,
+    },
 }
 
 /// The batch preflight needs actual child lifetimes, not a full value delta
@@ -952,7 +1060,7 @@ impl Model {
         let after: FxHashMap<_, _> = inverse.after.elements.iter().map(|e| (e.id, e)).collect();
         for e in &inverse.after.elements {
             if inverse.after.targets.contains(&e.id) && !before.contains_key(&e.id) {
-                let id = remap(&e.id, remapped);
+                let id = remapped.resolve(e.id);
                 if let Some(removed) = self.remove(id) {
                     if let LoroValue::Container(cid) = removed.value {
                         preflight.removes.insert(cid);
@@ -968,7 +1076,7 @@ impl Model {
             .iter()
             .filter(|e| inverse.before.targets.contains(&e.id))
             .filter_map(|e| {
-                let id = remap(&e.id, remapped);
+                let id = remapped.resolve(e.id);
                 match after.get(&e.id) {
                     None if !self.keys.contains_key(&id) => Some(id),
                     Some(other) if e.position != other.position && self.keys.contains_key(&id) => {
@@ -984,14 +1092,14 @@ impl Model {
         let mut next = None;
         for (i, e) in inverse.before.elements.iter().enumerate().rev() {
             right[i] = next;
-            let id = remap(&e.id, remapped);
+            let id = remapped.resolve(e.id);
             if !repositioned.contains(&id) && self.keys.contains_key(&id) {
                 next = Some(id);
             }
         }
         let mut left = None;
         for (i, e) in inverse.before.elements.iter().enumerate() {
-            let id = remap(&e.id, remapped);
+            let id = remapped.resolve(e.id);
             if !inverse.before.targets.contains(&e.id) {
                 if self.keys.contains_key(&id) {
                     left = Some(id);
@@ -1077,9 +1185,10 @@ pub(crate) fn prepare(
     }
     let mut plans = FxHashMap::default();
     for (cid, (span_index, source)) in revivals {
+        let old_cid = remap(&cid, containers);
         let mut elements = source.elements;
         for e in &mut elements {
-            e.id = remap(&e.id, remapped);
+            e.id = remapped.resolve(e.id);
             e.value = remap_value(&e.value, containers);
         }
         let mut model = Model::new(&elements);
@@ -1097,7 +1206,10 @@ pub(crate) fn prepare(
         plans.insert(
             cid,
             Plan {
-                kind: PlanKind::Recreated(model.order.into_values().collect()),
+                kind: PlanKind::Recreated {
+                    old_cid,
+                    target: model.order.into_values().collect(),
+                },
             },
         );
     }
@@ -1110,7 +1222,7 @@ pub(crate) fn prepare(
                 ids: inverses
                     .iter()
                     .flat_map(|i| i.before.elements.iter().chain(&i.after.elements))
-                    .map(|e| remap(&e.id, remapped))
+                    .map(|e| remapped.resolve(e.id))
                     .collect(),
                 full: false,
             };
@@ -1127,7 +1239,7 @@ pub(crate) fn prepare(
             if inverses
                 .iter()
                 .flat_map(|i| &i.after.elements)
-                .any(|e| remap(&e.id, remapped) == e.id && !current_ids.contains(&e.id))
+                .any(|e| remapped.resolve(e.id) == e.id && !current_ids.contains(&e.id))
             {
                 continue;
             }
@@ -1199,7 +1311,7 @@ impl Plan {
         remapped: &mut ElementRemap,
     ) -> LoroResult<()> {
         match self.kind {
-            PlanKind::Recreated(target) => {
+            PlanKind::Recreated { old_cid, target } => {
                 Handler::MovableList(list.clone()).apply_diff(
                     diff,
                     containers,
@@ -1220,9 +1332,9 @@ impl Plan {
                         .all(|((_, value), e)| *value == remap_value(&e.value, containers))
                 {
                     for ((new_id, _), e) in current.into_iter().zip(target) {
-                        let old_id = remap(&e.id, remapped);
+                        let old_id = remapped.resolve(e.id);
                         if old_id != new_id {
-                            remapped.insert(old_id, new_id);
+                            remapped.insert(old_cid.clone(), old_id, new_id);
                         }
                     }
                 }
@@ -1242,7 +1354,7 @@ impl Plan {
         remapped: &mut ElementRemap,
     ) -> LoroResult<()> {
         let index = |id: CompactIdLp, remapped: &ElementRemap| {
-            let id = remap(&id, remapped);
+            let id = remapped.resolve(id);
             list.with_state(|s| {
                 let state = s.as_movable_list_state().unwrap();
                 Ok(state
@@ -1293,7 +1405,7 @@ impl Plan {
                                 .get_elem_id_at(gap, IndexType::ForUser)
                                 .ok_or_else(missing)
                         })?;
-                        remapped.insert(remap(&id, remapped), new_id);
+                        remapped.insert(list.id(), remapped.resolve(id), new_id);
                     } else {
                         let from = index(id, remapped)?.ok_or_else(missing)?;
                         list.move_with_txn(txn, from, gap - usize::from(from < gap))?;
