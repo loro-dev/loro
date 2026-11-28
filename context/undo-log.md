@@ -63,6 +63,10 @@ snapshot (`crates/loro/examples/undo_cold_bench.rs`, before this change):
    elements' history (`movable_list::scopes`). The rest (the transform
    against the stack's composed remote diff, applying it as new ops) is
    unchanged. No checkout happens, so none is undone afterwards.
+   Text styles of a step are then corrected from the state's style ops: a
+   collaborator's winning op is left alone
+   ([undo-text-styles.md](undo-text-styles.md)); a recorded step has no style
+   ops and skips this.
 
 Sealing borrows stored commit diffs. Only a container's first diff is cloned into
 the result; later diffs compose by reference. Compact text insertion inverses

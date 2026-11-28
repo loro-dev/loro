@@ -18,6 +18,9 @@ over graceful degradation.
 - Undo steps use the inverse recorded at commit (`txn.rs` `local_op_inverse`,
   `undo::LocalInverse`) instead of checkouts; `LORO_VERIFY_UNDO_LOG` compares
   both: [../../context/undo-log.md](../../context/undo-log.md).
+- `src/undo/text_styles.rs`: an undo step's text styles come from the
+  state's style ops, so collaborators' marks win:
+  [../../context/undo-text-styles.md](../../context/undo-text-styles.md).
 - `src/loro.rs`: document-level orchestration for commit, import/export,
   checkout, barriers, state/oplog coordination, and event emission.
   `apply_diff`/`revert_to` roll a failed batch back:

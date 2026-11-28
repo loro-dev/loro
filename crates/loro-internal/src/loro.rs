@@ -2181,6 +2181,16 @@ impl LoroDoc {
             self._checkout_without_emitting(&latest_frontiers, false, false)?;
             self.set_detached(false);
         }
+        // Styles come from the state's style ops, not from the positional
+        // transform (loro-dev/loro#1229, #1009)
+        let undone_spans: Vec<IdSpan> = spans.iter().map(|(span, _)| *span).collect();
+        crate::undo::text_styles::restyle_text_diffs(
+            self,
+            &mut diff,
+            &undone_spans,
+            !recorded_used.get(),
+            container_remap,
+        );
         let mut inverse_lists = inverse_lists.take();
         if let Some(inv) = recorded.filter(|_| recorded_used.get()) {
             let mut from_records: Vec<_> = inv

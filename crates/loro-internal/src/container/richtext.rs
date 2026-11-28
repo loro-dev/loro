@@ -165,6 +165,12 @@ const ALIVE_MASK: u8 = 0b1000_0000;
 /// - After: when inserting new text after this style, the new text should inherit this style.
 /// - Both: when inserting new text before or after this style, the new text should inherit this style.
 /// - None: when inserting new text before or after this style, the new text should **not** inherit this style.
+///
+/// The expand setting decides where a peer places its own text next to a style.
+/// Text inserted concurrently with the style at the same boundary is ordered
+/// against the style's anchors like any concurrent list insert (by peer), so it
+/// may land inside the style on merge whatever the setting (loro-dev/loro#1009).
+/// Undoing the mark removes the style from that text too.
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
 pub enum ExpandType {
     Before,

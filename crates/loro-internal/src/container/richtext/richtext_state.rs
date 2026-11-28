@@ -3,7 +3,7 @@ use generic_btree::{
     rle::{CanRemove, HasLength, Mergeable, Sliceable, TryInsert},
     BTree, BTreeTrait, Cursor, LeafIndex,
 };
-use loro_common::{Counter, IdFull, IdSpan, LoroError, LoroResult, LoroValue, ID};
+use loro_common::{Counter, IdFull, IdSpan, LoroError, LoroResult, LoroValue, PeerID, ID};
 use query::{ByteQuery, ByteQueryT};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{ser::SerializeStruct, Serialize};
@@ -36,6 +36,11 @@ use super::{
 };
 
 pub(crate) use crate::cursor::PosType;
+
+/// Event-length runs of the text, each with what an undo step does to its style
+/// keys: `Some` sets the key to that value, `None` leaves it alone. See
+/// [`RichtextState::undo_style_overrides`].
+pub(crate) type UndoStyleOverrides = Vec<(usize, FxHashMap<String, Option<LoroValue>>)>;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RichtextState {
@@ -2573,6 +2578,76 @@ impl RichtextState {
                 None
             }
         })
+    }
+
+    /// The text as runs of event length, each with what an undo step should do
+    /// to its style keys (see `undo::text_styles`): for a key whose winning op
+    /// `undone` selects, `Some` of the value the key takes without those ops
+    /// (`Null` when none is left); for a key whose winning op another peer than
+    /// `local_peer` wrote and `undone` does not select, `None` (leave the key as
+    /// it is). Other keys are not listed. Adjacent runs with equal entries are
+    /// joined.
+    ///
+    /// Returns `None` when no style op of this text is selected.
+    pub(crate) fn undo_style_overrides(
+        &self,
+        undone: &dyn Fn(&StyleOp) -> bool,
+        local_peer: PeerID,
+    ) -> Option<UndoStyleOverrides> {
+        let style_ranges = self.style_ranges.as_ref()?;
+        if !style_ranges
+            .iter()
+            .any(|(_, styles)| styles.values().any(|v| v.contains_any(undone)))
+        {
+            return None;
+        }
+
+        let mut runs: UndoStyleOverrides = Vec::new();
+        let mut entity_index = 0;
+        let mut style_iter = style_ranges.iter();
+        let mut cur_style = style_iter.next();
+        for chunk in self.tree.iter() {
+            let text = match chunk {
+                RichtextStateChunk::Text(text) => text,
+                RichtextStateChunk::Style { .. } => {
+                    entity_index += 1;
+                    continue;
+                }
+            };
+            // A text chunk lies inside one style range: ranges only change at anchors.
+            while cur_style
+                .as_ref()
+                .is_some_and(|(range, _)| range.end <= entity_index)
+            {
+                cur_style = style_iter.next();
+            }
+            let mut attrs = FxHashMap::default();
+            if let Some((range, styles)) = &cur_style {
+                if range.start <= entity_index {
+                    for (key, value) in styles.iter() {
+                        let Some(winner) = value.get() else {
+                            continue;
+                        };
+                        let entry = if undone(winner) {
+                            Some(value.value_without(undone))
+                        } else if winner.peer != local_peer {
+                            None
+                        } else {
+                            continue;
+                        };
+                        let StyleKey::Key(key) = key;
+                        attrs.insert(key.to_string(), entry);
+                    }
+                }
+            }
+            entity_index += text.rle_len();
+            let len = text.event_len() as usize;
+            match runs.last_mut() {
+                Some((last_len, last)) if *last == attrs => *last_len += len,
+                _ => runs.push((len, attrs)),
+            }
+        }
+        Some(runs)
     }
 
     #[inline]

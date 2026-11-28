@@ -280,6 +280,17 @@ impl RichtextState {
         None
     }
 
+    /// See [`InnerState::undo_style_overrides`]; lengths are event lengths.
+    pub(crate) fn undo_style_overrides(
+        &mut self,
+        undone: &dyn Fn(&StyleOp) -> bool,
+        local_peer: loro_common::PeerID,
+    ) -> Option<crate::container::richtext::richtext_state::UndoStyleOverrides> {
+        self.state
+            .get_mut()
+            .undo_style_overrides(undone, local_peer)
+    }
+
     pub(crate) fn get_delta(&mut self) -> Vec<TextDelta> {
         let mut delta = Vec::new();
         for span in self.state.get_mut().iter() {

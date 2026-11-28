@@ -110,6 +110,23 @@ impl StyleValue {
     pub fn get(&self) -> Option<&Arc<StyleOp>> {
         self.set.last()
     }
+
+    /// The value this key takes without the ops `undone` selects: the value of
+    /// the latest op left, or `Null` (no style) if none is.
+    pub(crate) fn value_without(
+        &self,
+        undone: &dyn Fn(&StyleOp) -> bool,
+    ) -> loro_common::LoroValue {
+        self.set
+            .iter()
+            .rev()
+            .find(|op| !undone(op))
+            .map_or(loro_common::LoroValue::Null, |op| op.value.clone())
+    }
+
+    pub(crate) fn contains_any(&self, undone: &dyn Fn(&StyleOp) -> bool) -> bool {
+        self.set.iter().any(|op| undone(op))
+    }
 }
 
 impl Default for StyleRangeMap {
