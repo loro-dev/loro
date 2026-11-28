@@ -262,3 +262,79 @@ fn undo_mark_removes_style_from_remote_text_typed_inside() {
     sync(&a, &b);
     assert_eq!(delta(&b), undone);
 }
+
+/// Only text that took the style is left: a collaborator typed inside the marked
+/// range and deleted everything A marked. The positional undo has no styled
+/// retain left, so the texts to fix come from the undone style ops.
+fn undo_mark_when_only_inherited_text_remains(original: &str, inserted: &str) {
+    let a = styled_doc(1, "bold", ExpandType::After);
+    let b = styled_doc(2, "bold", ExpandType::After);
+    let mut undo = UndoManager::new(&a);
+    undo.set_merge_interval(0);
+    a.get_text("text").insert(0, original).unwrap();
+    a.commit();
+    sync(&a, &b);
+    let len = a.get_text("text").len_unicode();
+    a.get_text("text").mark(0..len, "bold", true).unwrap();
+    a.commit();
+    sync(&a, &b);
+    let text_b = b.get_text("text");
+    let first = original.chars().next().unwrap().to_string();
+    text_b.insert(first.chars().count(), inserted).unwrap();
+    text_b.delete(0, first.chars().count()).unwrap();
+    let rest = len - first.chars().count();
+    text_b.delete(inserted.chars().count(), rest).unwrap();
+    b.commit();
+    sync(&b, &a);
+    assert_eq!(
+        delta(&a),
+        json!([{ "insert": inserted, "attributes": { "bold": true } }])
+    );
+
+    assert!(undo.undo().unwrap());
+    let plain = json!([{ "insert": inserted }]);
+    assert_eq!(delta(&a), plain);
+    assert!(undo.redo().unwrap());
+    assert_eq!(
+        delta(&a),
+        json!([{ "insert": inserted, "attributes": { "bold": true } }])
+    );
+    assert!(undo.undo().unwrap());
+    assert_eq!(delta(&a), plain);
+    sync(&a, &b);
+    assert_eq!(delta(&b), plain);
+}
+
+#[test]
+fn undo_mark_removes_style_when_only_inherited_text_remains() {
+    undo_mark_when_only_inherited_text_remains("ab", "x");
+    undo_mark_when_only_inherited_text_remains("😀a😀", "🎉x🎉");
+}
+
+/// Undo of plain typing reads no history for styles: a step served by its
+/// recorded inverse has no style ops.
+#[test]
+fn typing_undo_next_to_styles_is_unchanged() {
+    let a = styled_doc(1, "bold", ExpandType::After);
+    a.get_text("text").insert(0, "abc").unwrap();
+    a.get_text("text").mark(0..3, "bold", true).unwrap();
+    a.commit();
+    let mut undo = UndoManager::new(&a);
+    undo.set_merge_interval(0);
+    a.get_text("text").insert(3, "de").unwrap();
+    a.commit();
+    assert_eq!(
+        delta(&a),
+        json!([{ "insert": "abcde", "attributes": { "bold": true } }])
+    );
+    assert!(undo.undo().unwrap());
+    assert_eq!(
+        delta(&a),
+        json!([{ "insert": "abc", "attributes": { "bold": true } }])
+    );
+    assert!(undo.redo().unwrap());
+    assert_eq!(
+        delta(&a),
+        json!([{ "insert": "abcde", "attributes": { "bold": true } }])
+    );
+}

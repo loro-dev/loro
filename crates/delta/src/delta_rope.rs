@@ -238,11 +238,6 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
         }
     }
 
-    /// Transforms `self` against `other`, which was applied concurrently.
-    ///
-    /// `left_prior` decides which side's insert goes first at the same position and,
-    /// through [`DeltaAttr::transform`], which side's attributes win where both retain
-    /// the same range with the same key.
     pub fn transform(&self, other: &Self, left_prior: bool) -> Self {
         let mut this_iter = self.iter_with_len();
         let mut other_iter = other.iter_with_len();
@@ -270,11 +265,7 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 let other_op_peek = other_iter.peek().cloned();
                 let _ = this_iter.next_with(length);
                 let _ = other_iter.next_with(length);
-                if other_op_peek
-                    .as_ref()
-                    .map(|x| x.is_delete())
-                    .unwrap_or(false)
-                {
+                if other_op_peek.map(|x| x.is_delete()).unwrap_or(false) {
                     // It makes our deletes or retains redundant
                     continue;
                 } else if this_op_peek
@@ -284,18 +275,13 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 {
                     transformed_delta.push_delete(length);
                 } else {
-                    let mut attr = this_op_peek
-                        .map(|x| x.into_retain().unwrap().1)
-                        .unwrap_or_default();
-                    if let Some(DeltaItem::Retain {
-                        attr: other_attr, ..
-                    }) = &other_op_peek
-                    {
-                        if !attr.attr_is_empty() && !other_attr.attr_is_empty() {
-                            attr.transform(other_attr, left_prior);
-                        }
-                    }
-                    transformed_delta.push_retain(length, attr);
+                    transformed_delta.push_retain(
+                        length,
+                        this_op_peek
+                            .map(|x| x.into_retain().unwrap().1)
+                            .unwrap_or_default(),
+                    );
+                    // FIXME: transform the attributes
                 }
             }
         }

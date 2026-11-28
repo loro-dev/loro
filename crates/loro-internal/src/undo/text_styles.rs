@@ -12,15 +12,17 @@ use loro_delta::DeltaItem;
 use rustc_hash::FxHashMap;
 
 use crate::{
+    container::list::list_op::InnerListOp,
     container::richtext::{richtext_state::UndoStyleOverrides, StyleOp},
     event::{Diff, TextDiff, TextMeta},
+    op::InnerContent,
     undo::DiffBatch,
     LoroDoc,
 };
 
-/// Correct the retain attributes of the text diffs in `diff`, an undo step about
-/// to be applied to the latest state. `spans` are the ops being undone, all
-/// written by one peer. For each character and style key:
+/// Correct the text styles of `diff`, an undo step about to be applied to the
+/// latest state. `spans` are the ops being undone, all written by one peer.
+/// For each text the step's ops mark, and for each character and style key:
 ///
 /// - if the winning op is in `spans`, the key gets the value of the latest op
 ///   covering the character that is not, or `Null` if none is left;
@@ -28,43 +30,89 @@ use crate::{
 /// - otherwise (the step's own peer wrote it later, e.g. text an earlier
 ///   undo/redo re-inserted) the transformed attribute stands.
 ///
-/// Only text diffs that change a style are looked at.
+/// The texts come from the style ops in `spans`, not from `diff`: when a
+/// collaborator deleted the whole marked range, the positional diff has nothing
+/// left to unstyle, but text they inserted inside it still has the style.
+///
+/// A step served by a recorded inverse has no style ops (marks are never
+/// recorded, `txn.rs` `local_op_inverse`); pass `has_style_ops = false` to skip
+/// reading its history.
 pub(crate) fn restyle_text_diffs(
     doc: &LoroDoc,
     diff: &mut DiffBatch,
     spans: &[IdSpan],
+    has_style_ops: bool,
     container_remap: &FxHashMap<ContainerID, ContainerID>,
 ) {
     let Some(local_peer) = spans.first().map(|s| s.peer) else {
         return;
     };
+    if !has_style_ops {
+        return;
+    }
+    let texts = marked_texts(doc, spans);
+    if texts.is_empty() {
+        return;
+    }
     let undone = |op: &StyleOp| spans.iter().any(|s| s.contains(ID::new(op.peer, op.cnt)));
-    for (cid, d) in diff.cid_to_events.iter_mut() {
-        let Diff::Text(text) = d else {
+    for cid in texts {
+        let mut target = &cid;
+        while let Some(next) = container_remap.get(target) {
+            target = next;
+        }
+        let Some(idx) = doc.arena.id_to_idx(target) else {
             continue;
         };
-        if !text
-            .iter()
-            .any(|item| matches!(item, DeltaItem::Retain { attr, .. } if !attr.0.is_empty()))
-        {
-            continue;
-        }
-        let mut cid = cid;
-        while let Some(next) = container_remap.get(cid) {
-            cid = next;
-        }
-        let Some(idx) = doc.arena.id_to_idx(cid) else {
+        let (runs, reachable) = {
+            let mut state = doc.state.lock();
+            let reachable = state.get_reachable(target);
+            let runs = state.with_state_mut(idx, |state| {
+                state
+                    .as_richtext_state_mut()
+                    .and_then(|text| text.undo_style_overrides(&undone, local_peer))
+            });
+            (runs, reachable)
+        };
+        let Some(runs) = runs else {
             continue;
         };
-        let runs = doc.state.lock().with_state_mut(idx, |state| {
-            state
-                .as_richtext_state_mut()
-                .and_then(|text| text.undo_style_overrides(&undone, local_peer))
-        });
-        if let Some(runs) = runs {
-            *text = with_style_overrides(text, runs);
+        match diff.cid_to_events.get_mut(&cid) {
+            Some(Diff::Text(text)) => *text = with_style_overrides(text, runs),
+            Some(_) => {}
+            // A deleted text keeps its state, but the step does not touch it.
+            None if !reachable => {}
+            None => {
+                let text = with_style_overrides(&TextDiff::new(), runs);
+                if !text.is_empty() {
+                    diff.cid_to_events.insert(cid.clone(), Diff::Text(text));
+                    diff.order.push(cid);
+                }
+            }
         }
     }
+}
+
+/// The texts the style ops in `spans` mark, in first-seen order.
+fn marked_texts(doc: &LoroDoc, spans: &[IdSpan]) -> Vec<ContainerID> {
+    let mut texts: Vec<ContainerID> = Vec::new();
+    let oplog = doc.oplog.lock();
+    for span in spans {
+        for op in oplog.iter_ops(*span) {
+            if !matches!(
+                op.op().content,
+                InnerContent::List(InnerListOp::StyleStart { .. })
+            ) {
+                continue;
+            }
+            let Some(cid) = doc.arena.get_container_id(op.container()) else {
+                continue;
+            };
+            if !texts.contains(&cid) {
+                texts.push(cid);
+            }
+        }
+    }
+    texts
 }
 
 type Overrides = FxHashMap<String, Option<LoroValue>>;

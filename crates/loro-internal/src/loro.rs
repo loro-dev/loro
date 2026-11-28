@@ -2188,6 +2188,7 @@ impl LoroDoc {
             self,
             &mut diff,
             &undone_spans,
+            !recorded_used.get(),
             container_remap,
         );
         let mut inverse_lists = inverse_lists.take();

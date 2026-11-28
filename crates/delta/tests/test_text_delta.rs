@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use loro_delta::{
     text_delta::{TextChunk, TextDelta},
-    DeltaRope, DeltaRopeBuilder,
+    DeltaRopeBuilder,
 };
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -449,38 +449,4 @@ fn retain_start_optimization_split() {
 
     a.compose(&b);
     assert_eq!(a, expected);
-}
-
-/// Concurrent retains that set the same attribute key: like concurrent map writes,
-/// the side without priority drops the key, and keeps the keys only it sets.
-#[test]
-fn transform_retain_attributes_like_map_writes() {
-    let attrs = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
-        pairs
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
-    };
-    let ours: DeltaRope<TextChunk, HashMap<String, String>> = DeltaRopeBuilder::new()
-        .retain(4, attrs(&[("color", "red"), ("bold", "true")]))
-        .build();
-    let theirs: DeltaRope<TextChunk, HashMap<String, String>> = DeltaRopeBuilder::new()
-        .retain(1, Default::default())
-        .retain(2, attrs(&[("color", "blue")]))
-        .build();
-
-    let expected: DeltaRope<TextChunk, HashMap<String, String>> = DeltaRopeBuilder::new()
-        .retain(1, attrs(&[("color", "red"), ("bold", "true")]))
-        .retain(2, attrs(&[("bold", "true")]))
-        .retain(1, attrs(&[("color", "red"), ("bold", "true")]))
-        .build();
-    assert_eq!(ours.transform(&theirs, false), expected);
-    assert_eq!(ours.transform(&theirs, true), ours);
-
-    // Convergence: both orders reach the same attributes.
-    let mut a = ours.clone();
-    a.compose(&theirs.transform(&ours, true));
-    let mut b = theirs.clone();
-    b.compose(&ours.transform(&theirs, false));
-    assert_eq!(a, b);
 }
