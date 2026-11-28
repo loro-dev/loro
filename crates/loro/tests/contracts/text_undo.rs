@@ -279,3 +279,306 @@ fn undo_callbacks_metadata_limits_and_excluded_origins_follow_contract() -> Loro
 
     Ok(())
 }
+
+#[test]
+fn undo_text_delete_is_independent_of_remote_import_granularity() -> LoroResult<()> {
+    fn run(split: bool) -> LoroResult<String> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let text = doc.get_text("t");
+        let other = remote.get_text("t");
+
+        text.insert(0, "ab")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+        other.insert(0, "r")?;
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(text.to_string(), "rab");
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+
+        text.delete(1, 1)?; // A deletes "a" -> "rb"
+        doc.commit();
+
+        other.insert(0, "s")?;
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.delete(1, 1)?; // B deletes "r" -> "sab"
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(text.to_string(), "sb");
+
+        assert!(undo.undo()?);
+        Ok(text.to_string())
+    }
+
+    assert_eq!(run(true)?, "sab");
+    assert_eq!(run(false)?, "sab");
+    Ok(())
+}
+
+#[test]
+fn undo_text_and_list_delete_variants_are_independent_of_remote_import_granularity(
+) -> LoroResult<()> {
+    // Variant 1: remote inserts after "r", then deletes "r" (different order from #1297).
+    fn run_insert_after_then_delete(split: bool) -> LoroResult<String> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let text = doc.get_text("t");
+        let other = remote.get_text("t");
+
+        text.insert(0, "rab")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+
+        text.delete(1, 1)?; // "rb"
+        doc.commit();
+
+        other.insert(1, "s")?; // "rsab"
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.delete(0, 1)?; // "sab"
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(text.to_string(), "sb");
+
+        assert!(undo.undo()?);
+        Ok(text.to_string())
+    }
+
+    assert_eq!(run_insert_after_then_delete(true)?, "sab");
+    assert_eq!(run_insert_after_then_delete(false)?, "sab");
+
+    // Variant 2: remote deletes "r" first, then inserts "s" at 0.
+    fn run_delete_then_insert(split: bool) -> LoroResult<String> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let text = doc.get_text("t");
+        let other = remote.get_text("t");
+
+        text.insert(0, "rab")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+
+        text.delete(1, 1)?; // "rb"
+        doc.commit();
+
+        other.delete(0, 1)?; // "ab"
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.insert(0, "s")?; // "sab"
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(text.to_string(), "sb");
+
+        assert!(undo.undo()?);
+        Ok(text.to_string())
+    }
+
+    assert_eq!(run_delete_then_insert(true)?, "sab");
+    assert_eq!(run_delete_then_insert(false)?, "sab");
+
+    // Variant 3: remote inserts multiple styled runs and deletes "r", plus cursor in UndoItemMeta.
+    fn run_styled_with_cursor(split: bool) -> LoroResult<(String, usize)> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let text = doc.get_text("t");
+        let other = remote.get_text("t");
+
+        text.insert(0, "rab")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+        let popped_pos = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let popped_pos_clone = std::sync::Arc::clone(&popped_pos);
+        let text_for_push = text.clone();
+        undo.set_on_push(Some(Box::new(move |_, _, _| {
+            let mut meta = UndoItemMeta::new();
+            if let Some(c) = text_for_push.get_cursor(1, Side::Left) {
+                meta.add_cursor(&c);
+            }
+            meta
+        })));
+        undo.set_on_pop(Some(Box::new(move |_, _, meta| {
+            *popped_pos_clone.lock().unwrap() = meta.cursors.first().map(|c| c.pos.pos);
+        })));
+
+        text.delete(1, 1)?; // "rb"
+        doc.commit();
+
+        other.insert(0, "s")?;
+        other.mark(0..1, "bold", true)?;
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.insert(1, "t")?;
+        other.mark(1..2, "italic", true)?;
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.delete(2, 1)?; // deletes "r"
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(text.to_string(), "stb");
+
+        assert!(undo.undo()?);
+        let pos = popped_pos.lock().unwrap().expect("cursor should be popped");
+        Ok((text.to_string(), pos))
+    }
+
+    assert_eq!(run_styled_with_cursor(true)?, ("stab".to_string(), 2));
+    assert_eq!(run_styled_with_cursor(false)?, ("stab".to_string(), 2));
+
+    // Variant 4: LoroList has the same DeltaRope transform path.
+    fn run_list(split: bool) -> LoroResult<Value> {
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let list = doc.get_list("l");
+        let other = remote.get_list("l");
+
+        list.insert(0, "r")?;
+        list.insert(1, "a")?;
+        list.insert(2, "b")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+
+        list.delete(1, 1)?; // ["r", "b"]
+        doc.commit();
+
+        other.insert(0, "s")?;
+        remote.commit();
+        if split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+        other.delete(1, 1)?; // deletes "r"
+        remote.commit();
+        doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        assert_eq!(list.get_deep_value().to_json_value(), json!(["s", "b"]));
+
+        assert!(undo.undo()?);
+        Ok(list.get_deep_value().to_json_value())
+    }
+
+    assert_eq!(run_list(true)?, json!(["s", "a", "b"]));
+    assert_eq!(run_list(false)?, json!(["s", "a", "b"]));
+
+    Ok(())
+}
+
+#[test]
+fn undo_text_randomized_concurrent_edits_are_independent_of_import_granularity() -> LoroResult<()> {
+    fn next_u64(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        *state
+    }
+
+    fn run(seed: u64, split: bool) -> LoroResult<(String, String)> {
+        let mut rng = seed;
+        let doc = LoroDoc::new();
+        doc.set_peer_id(1)?;
+        let remote = LoroDoc::new();
+        remote.set_peer_id(2)?;
+        let text = doc.get_text("t");
+        let other = remote.get_text("t");
+
+        text.insert(0, "abcdef")?;
+        doc.commit();
+        remote.import(&doc.export(ExportMode::Snapshot)?)?;
+
+        let mut undo = UndoManager::new(&doc);
+        undo.set_merge_interval(0);
+
+        // 1-2 local edits on A
+        let local_steps = 1 + (next_u64(&mut rng) % 2) as usize;
+        for step in 0..local_steps {
+            let len = text.len_unicode();
+            if len > 0 && next_u64(&mut rng) % 2 == 0 {
+                let pos = (next_u64(&mut rng) as usize) % len;
+                let del_len = 1 + ((next_u64(&mut rng) as usize) % (len - pos).min(2));
+                text.delete(pos, del_len)?;
+            } else {
+                let pos = (next_u64(&mut rng) as usize) % (len + 1);
+                let ch = (b'A' + (step as u8 % 26)) as char;
+                text.insert(pos, &ch.to_string())?;
+            }
+            doc.commit();
+        }
+
+        // 2-5 concurrent remote commits on B
+        let remote_steps = 2 + (next_u64(&mut rng) % 4) as usize;
+        for step in 0..remote_steps {
+            let len = other.len_unicode();
+            if len > 0 && next_u64(&mut rng) % 2 == 0 {
+                let pos = (next_u64(&mut rng) as usize) % len;
+                let del_len = 1 + ((next_u64(&mut rng) as usize) % (len - pos).min(2));
+                other.delete(pos, del_len)?;
+            } else {
+                let pos = (next_u64(&mut rng) as usize) % (len + 1);
+                let ch = (b'0' + (step as u8 % 10)) as char;
+                other.insert(pos, &ch.to_string())?;
+            }
+            remote.commit();
+            if split {
+                doc.import(&remote.export(ExportMode::Snapshot)?)?;
+            }
+        }
+        if !split {
+            doc.import(&remote.export(ExportMode::Snapshot)?)?;
+        }
+
+        while undo.can_undo() {
+            let _ = undo.undo()?;
+        }
+        let after_undo = text.to_string();
+
+        while undo.can_redo() {
+            let _ = undo.redo()?;
+        }
+        let after_redo = text.to_string();
+
+        Ok((after_undo, after_redo))
+    }
+
+    for seed in 1..=100 {
+        assert_eq!(
+            run(seed, false)?,
+            run(seed, true)?,
+            "mismatch for seed {seed}"
+        );
+    }
+
+    Ok(())
+}
