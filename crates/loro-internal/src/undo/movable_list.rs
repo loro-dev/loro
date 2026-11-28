@@ -88,7 +88,38 @@ pub(crate) fn prune_revived_remaps(
     if pending_lists.is_empty() {
         return;
     }
+    prune_pending_lists(doc, pending_lists, remapped, containers);
+}
 
+/// Reconcile all lists currently tracked in `ElementRemap` against live state
+/// (used when a paused `UndoManager` returns to the attached latest version
+/// after a detached checkout during which remote imports may have revived
+/// elements without firing `EventTriggerKind::Import`).
+pub(crate) fn prune_all_revived_remaps(
+    doc: &crate::LoroDocInner,
+    remapped: &mut ElementRemap,
+    containers: &mut FxHashMap<ContainerID, ContainerID>,
+) {
+    if remapped.is_empty() {
+        return;
+    }
+    let pending_lists: Vec<(ContainerID, crate::container::idx::ContainerIdx)> = remapped
+        .by_list
+        .keys()
+        .filter_map(|cid| doc.arena.id_to_idx(cid).map(|idx| (cid.clone(), idx)))
+        .collect();
+    if pending_lists.is_empty() {
+        return;
+    }
+    prune_pending_lists(doc, pending_lists, remapped, containers);
+}
+
+fn prune_pending_lists(
+    doc: &crate::LoroDocInner,
+    mut pending_lists: Vec<(ContainerID, crate::container::idx::ContainerIdx)>,
+    remapped: &mut ElementRemap,
+    containers: &mut FxHashMap<ContainerID, ContainerID>,
+) {
     let mut state = doc.state.lock();
     let mut pending_subtrees: Vec<ContainerID> = Vec::new();
     let mut visited_subtrees: FxHashSet<ContainerID> = FxHashSet::default();
@@ -129,6 +160,9 @@ pub(crate) fn prune_revived_remaps(
             break;
         };
         containers.remove(&cid);
+        if containers.is_empty() && remapped.is_empty() {
+            break;
+        }
         let Some(idx) = doc.arena.id_to_idx(&cid) else {
             continue;
         };
@@ -137,15 +171,19 @@ pub(crate) fn prune_revived_remaps(
         {
             pending_lists.push((cid.clone(), idx));
         }
-        if containers.is_empty() && remapped.is_empty() {
-            continue;
-        }
         state.with_state(idx, |s| match s {
             crate::state::State::MapState(map) => {
-                for (_, v) in map.iter() {
-                    if let Some(LoroValue::Container(child_cid)) = &v.value {
-                        if visited_subtrees.insert(child_cid.clone()) {
-                            pending_subtrees.push(child_cid.clone());
+                for (k, v) in map.iter() {
+                    if let Some(value) = &v.value {
+                        let child_cid = match value {
+                            LoroValue::Container(child_cid) => Some(child_cid.clone()),
+                            _ => loro_common::parse_mergeable_marker(&cid, k.as_str(), value)
+                                .map(|kind| ContainerID::new_mergeable(&cid, k.as_str(), kind)),
+                        };
+                        if let Some(child_cid) = child_cid {
+                            if visited_subtrees.insert(child_cid.clone()) {
+                                pending_subtrees.push(child_cid);
+                            }
                         }
                     }
                 }
@@ -169,8 +207,14 @@ pub(crate) fn prune_revived_remaps(
                 }
             }
             crate::state::State::TreeState(tree) => {
-                for node in tree.nodes() {
-                    if !tree.is_node_deleted(&node).unwrap_or(true) {
+                // Walk top-down once from live roots so deep chains stay O(N).
+                let mut stack = vec![crate::state::TreeParentId::Root];
+                while let Some(parent) = stack.pop() {
+                    let Some(children) = tree.get_children(&parent) else {
+                        continue;
+                    };
+                    for node in children {
+                        stack.push(crate::state::TreeParentId::Node(node));
                         let child_cid = node.associated_meta_container();
                         if visited_subtrees.insert(child_cid.clone()) {
                             pending_subtrees.push(child_cid);

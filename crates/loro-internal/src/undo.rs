@@ -1861,21 +1861,43 @@ impl UndoManager {
                     let peer = peer_clone.load(std::sync::atomic::Ordering::Relaxed);
                     doc.oplog.lock().vv().get(&peer).cloned().unwrap_or(0)
                 });
-                {
+                let paused = {
                     let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                     if lock.borrow().paused {
-                        return;
+                        true
+                    } else {
+                        let mut inner = lock.borrow_mut();
+                        inner.undo_stack.clear();
+                        inner.redo_stack.clear();
+                        inner.group = None;
+                        if let Some(next_counter) = next_counter {
+                            inner.next_counter = next_counter;
+                        }
+                        false
                     }
-                    let mut inner = lock.borrow_mut();
-                    inner.undo_stack.clear();
-                    inner.redo_stack.clear();
-                    inner.group = None;
-                    if let Some(next_counter) = next_counter {
-                        inner.next_counter = next_counter;
+                };
+                if !paused {
+                    remap_containers_clone.lock().clear();
+                    element_remap_clone.lock().clear();
+                } else if let Some(doc) = doc_weak.upgrade() {
+                    // Only reconcile when returning to the attached latest
+                    // state; a detached historical checkout can temporarily
+                    // show elements that are still deleted at latest.
+                    if !doc.detached.load(std::sync::atomic::Ordering::Acquire) {
+                        let mut remap = remap_containers_clone.lock();
+                        let mut elem_remap = element_remap_clone.lock();
+                        movable_list::prune_all_revived_remaps(&doc, &mut elem_remap, &mut remap);
+                        for e in event.events {
+                            if let Diff::Tree(tree) = &e.diff {
+                                for item in &tree.diff {
+                                    if let TreeExternalDiff::Create { .. } = &item.action {
+                                        remap.remove(&item.target.associated_meta_container());
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                remap_containers_clone.lock().clear();
-                element_remap_clone.lock().clear();
             }
         }));
 

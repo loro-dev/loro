@@ -96,3 +96,48 @@ fn import_into_unrelated_lists_with_many_remaps() {
     let p90 = timings[(timings.len() * 9) / 10];
     println!("import 8 unrelated lists with 10k remaps: median={median:?}, p90={p90:?}");
 }
+
+#[test]
+#[ignore]
+fn revive_deep_chain_tree_under_movable_list() {
+    use loro::ExportMode;
+
+    const N: usize = 4_000;
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let list = doc.get_movable_list("list");
+    list.push(0).unwrap();
+    let tree = list.insert_container(1, loro::LoroTree::new()).unwrap();
+    let mut parent = None;
+    for _ in 0..N {
+        parent = Some(tree.create(parent).unwrap());
+    }
+    doc.commit();
+
+    let remote = LoroDoc::new();
+    remote.set_peer_id(2).unwrap();
+    remote
+        .import(&doc.export(ExportMode::Snapshot).unwrap())
+        .unwrap();
+    let from = remote.oplog_vv();
+    remote.get_movable_list("list").mov(1, 0).unwrap();
+    remote.commit();
+    let revive_update = remote.export(ExportMode::updates(&from)).unwrap();
+
+    let mut undo = UndoManager::new(&doc);
+    undo.set_merge_interval(0);
+    list.delete(1, 1).unwrap();
+    doc.commit();
+    assert!(undo.undo().unwrap());
+
+    let start = Instant::now();
+    doc.import(&revive_update).unwrap();
+    let elapsed = start.elapsed();
+    println!("revive {N}-node chain tree with UndoManager: {elapsed:?}");
+    if !cfg!(debug_assertions) {
+        assert!(
+            elapsed < Duration::from_millis(15),
+            "reviving {N}-node chain tree took {elapsed:?}"
+        );
+    }
+}

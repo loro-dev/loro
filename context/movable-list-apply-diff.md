@@ -68,19 +68,23 @@ A remotely revived original can coexist with its undo-created replacement.
 list container so `EventTriggerKind::Import` checks only lists touched by the
 import (`movable_list::prune_revived_remaps`). When a remote import revives an
 original element, `prune_revived_remaps` drops its entry from `element_remap`
-and walks the entire revived subtree across all container kinds (`Map`, `List`,
-`MovableList`, `Tree` live nodes, etc.) to remove revived descendant container
-ids from `container_remap` and revived child-list elements from `element_remap`
-(loro-dev/loro#1234). Without pruning, `resolve()` would keep redirecting the
-revived original to its undo copy, causing a subsequent delete-undo of the
-revived original to treat the copy as still present (no-op), causing move/redo
-anchors naming the original to target the copy instead, and causing edits to
-nested containers under the revived original to undo against the copy.
-`EventTriggerKind::Checkout` (when not paused) also clears `container_remap`
-and `element_remap` alongside the undo/redo stacks; paused checkouts preserve
-both remap tables.
-Placement is still classified per original entry; a missing move/set without
-an insertion value is skipped, never unwrapped or revived.
+and walks the entire revived subtree across all container kinds (`Map`,
+including mergeable children resolved from binary markers, `List`,
+`MovableList`, and `Tree` walked once top-down from live roots so deep chains
+stay O(N)) to remove revived descendant container ids from `container_remap`
+and revived child-list elements from `element_remap` (loro-dev/loro#1234).
+Without pruning, `resolve()` would keep redirecting the revived original to
+its undo copy, causing a subsequent delete-undo of the revived original to
+treat the copy as still present (no-op), causing move/redo anchors naming the
+original to target the copy instead, and causing edits to nested containers
+under the revived original to undo against the copy.
+`EventTriggerKind::Checkout` clears `container_remap` and `element_remap`
+alongside the undo/redo stacks when not paused; when paused, returning to the
+attached latest state reconciles revived identities (`prune_all_revived_remaps`)
+while preserving mappings still needed by older undo items (detached
+historical checkouts do not prune). Placement is still classified per original
+entry; a missing move/set without an insertion value is skipped, never
+unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
 diff path. The saved full-state source, adjusted for earlier spans of the same
 undo group, supplies aliases for the cloned elements after that replay. This
