@@ -309,7 +309,7 @@ fn lz4_compress_block(input : BytesView) -> Bytes raise EncodeError {
 ///|
 pub fn lz4_compress_frame(bytes : Bytes) -> Bytes raise EncodeError {
   // Emit a minimal LZ4 frame (block independent, no checksums/content size),
-  // compatible with Rust's `lz4_flex::frame::FrameDecoder`.
+  // compatible with Rust's `lz4rip::frame::FrameDecoder`.
   let flg = b'\x60' // version=1, block_independence=1
   let bd = b'\x40' // block_max_size=64KB
 

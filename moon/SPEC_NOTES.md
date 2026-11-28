@@ -48,7 +48,7 @@ See Rust: `crates/loro-internal/src/state/container_store/container_wrapper.rs`.
 
 ## LZ4 Frame (SSTable compression)
 
-- SSTable blocks may be compressed using **LZ4 Frame**, as in Rust (`lz4_flex::frame`).
+- SSTable blocks may be compressed using **LZ4 Frame**, as in Rust (`lz4rip::frame`).
 - Moon supports:
   - decoding frames (`lz4_decompress_frame`)
   - encoding frames (`lz4_compress_frame`) using block-independence and BD=64KB

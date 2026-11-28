@@ -36,8 +36,8 @@ identified by the exact version in `Cargo.lock`.
 | `columnar(T)` | serde_columnar 0.3.14 serialization of `T`, built on postcard |
 
 The locked implementations are postcard 1.1.3, serde_columnar 0.3.14,
-lz4_flex 0.11.5, and xxhash-rust 0.8.15. See
-[`Cargo.lock`](../Cargo.lock#L1938-L1944),
+lz4rip 0.12.8, and xxhash-rust 0.8.15. See
+[`Cargo.lock`](../Cargo.lock#L2086-L2120),
 [`Cargo.lock`](../Cargo.lock#L2304-L2313),
 [`Cargo.lock`](../Cargo.lock#L2704-L2713), and
 [`Cargo.lock`](../Cargo.lock#L3738-L3742).
@@ -46,8 +46,8 @@ For source-level dependency tracing, the published crate archives record these
 VCS revisions in `.cargo_vcs_info.json`: postcard
 `718aa6a6850456017c19eeff67303c633f875736`, serde_columnar
 `06663cfc569c6c770b28688f015f8a87fc04e156`, serde_columnar_derive
-`82588626dfa4332971c1e98f2839eb6d1c3dae1d`, lz4_flex
-`4c4ba15a4ce3ba3f0125177a0e4bba39f3d3a1e7`, and xxhash-rust
+`82588626dfa4332971c1e98f2839eb6d1c3dae1d`, lz4rip
+`260fdbfadb66355f28370469699eef3645e78eb3`, and xxhash-rust
 `7026cd705195f502283f97aafc9ea41930099c68`.
 
 Do not interchange `sleb` and postcard signed integers. For example, `-1` is

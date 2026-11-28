@@ -1,8 +1,6 @@
 # LZ4 frames in current Loro snapshots
 
-Verified against code 2026-07-17 at commit
-`fd5a1fdab79142302f0c0fbceb8807128ec6d9cd` and locked dependency
-`lz4_flex 0.11.5`.
+Verified against code 2026-11-26 and locked dependency `lz4rip 0.12.8`.
 
 LZ4 is used only for individual SSTable block bodies inside mode-3 snapshot
 sections. Mode-4 FastUpdates change blocks are never LZ4-compressed. The
@@ -46,7 +44,7 @@ outside the LZ4 frame and must be removed before passing the frame to an LZ4
 decoder.
 
 Compression enum, `FrameEncoder::new`, and `FrameDecoder::new`:
-[`compress.rs`](../crates/kv-store/src/compress.rs#L7-L69).
+[`compress.rs`](../crates/kv-store/src/compress.rs#L7-L73).
 Normal/large fallback and outer checksum:
 [`block.rs`](../crates/kv-store/src/block.rs#L25-L116).
 Outer checksum verification:
@@ -54,9 +52,10 @@ Outer checksum verification:
 
 ## 2. Canonical frame profile written by Loro
 
-Loro calls `lz4_flex::frame::FrameEncoder::new`, performs one `write_all` with
-the whole candidate body, and calls `finish`. With lz4_flex 0.11.5 defaults,
-the resulting frame uses:
+Loro calls `lz4rip::frame::FrameEncoder::new(w).ratio_profile()`, performs one
+`write_all` with the whole candidate body, and calls `finish`. The ratio profile
+changes only which matches the compressor picks. With the default `FrameInfo`
+of lz4rip 0.12.8, the resulting frame uses:
 
 | Frame property | Canonical value |
 |---|---|
@@ -84,14 +83,14 @@ Auto does not choose the 1 MiB code `0x60`. Inputs above 4 MiB are split into
 multiple independent data blocks of at most 4 MiB.
 
 Dependency pin:
-[`Cargo.lock`](../Cargo.lock#L1938-L1944).
+[`Cargo.lock`](../Cargo.lock#L2086-L2120).
 The crate archive's `.cargo_vcs_info.json` pins source revision
-`4c4ba15a4ce3ba3f0125177a0e4bba39f3d3a1e7`.
+`260fdbfadb66355f28370469699eef3645e78eb3`.
 Locked dependency source symbols:
-`lz4_flex-0.11.5/src/frame/header.rs::{BlockSize::from_buf_length,
+`lz4rip-0.12.8/src/frame/header.rs::{BlockSize::from_buf_length,
 FrameInfo::default, FrameInfo::write}` and
-`src/frame/compress.rs::{FrameEncoder::new, begin_frame, Write::write,
-write_block, end_frame}`.
+`src/frame/compress.rs::{FrameEncoder::new, FrameEncoder::ratio_profile,
+begin_frame, Write::write, write_block, end_frame}`.
 
 ## 3. Exact frame grammar
 
@@ -138,11 +137,11 @@ This seed is zero and the stored value is one byte. It must not be confused
 with Loro's four-byte SSTable checksum using seed `0x4f524f4c`.
 
 Locked source:
-`lz4_flex-0.11.5/src/frame/header.rs::FrameInfo::{write,read}`.
+`lz4rip-0.12.8/src/frame/header.rs::FrameInfo::{write,read}`.
 
 ### 3.2 Compressed versus raw LZ4 data blocks
 
-For each frame data block, lz4_flex first attempts raw LZ4 block compression.
+For each frame data block, lz4rip first attempts raw LZ4 block compression.
 It writes compressed data only when:
 
 ```text
@@ -155,7 +154,7 @@ fallback in section 1. A frame can therefore contain a mixture of compressed
 and raw LZ4 data blocks and still have SSTable compression type 1.
 
 Locked source:
-`lz4_flex-0.11.5/src/frame/compress.rs::FrameEncoder::write_block`.
+`lz4rip-0.12.8/src/frame/compress.rs::FrameEncoder::write_block`.
 
 ## 4. Raw LZ4 block payload
 
@@ -193,7 +192,7 @@ must reject a zero offset, an offset beyond the available prefix for an
 independent block, truncated extension/literal/offset bytes, integer overflow,
 or output beyond the BD maximum.
 
-The canonical lz4_flex compressor follows the LZ4 terminal restrictions:
+The canonical lz4rip compressor follows the LZ4 terminal restrictions:
 
 - the last sequence contains literals only;
 - the last five uncompressed bytes are literals; and
@@ -203,10 +202,10 @@ Consequently an independent block shorter than 13 bytes cannot be emitted in
 compressed form. It is stored as a raw LZ4 data block, after which Loro may
 still discard the entire frame because of whole-frame overhead.
 
-Locked dependency source:
-`lz4_flex-0.11.5/src/block/{mod.rs,compress.rs,decompress.rs}`, specifically
-`MFLIMIT`, `LAST_LITERALS`, `handle_last_literals`, `read_integer_ptr`, and
-`decompress_internal`.
+Locked dependency source: `lz4rip-core-0.6.2/src/lib.rs::{MFLIMIT,
+LAST_LITERALS}`, `lz4rip-encode-0.10.17/src/compress.rs::handle_last_literals`
+and `lz4rip-decode-0.11.2/src/decompress.rs::{read_integer,
+decompress_internal}`.
 
 ## 5. Decoder validation
 
@@ -230,47 +229,37 @@ For a canonical Loro SSTable block:
 7. Apply the normal- or large-SSTable-block validation from encoding.md to the
    decompressed bytes.
 
-The locked `FrameDecoder` parses optional content size and validates per-block
-checksums while reading each block. Only when it reaches a valid end mark does
-it compare the content size and validate an optional content checksum. It also
-supports linked blocks and rejects dictionary IDs. The early-EOF paths below
-bypass those end-mark content-size and content-checksum checks. These paths
-matter only if an implementation deliberately accepts non-canonical frames.
+The locked `FrameDecoder` parses an optional content size and validates
+per-block checksums while reading each block. At a valid end mark it compares
+the content size and validates an optional content checksum. It also supports
+linked blocks and rejects dictionary IDs and skippable frames. Loro reads the
+whole body with `read_to_end`.
 
 The current dependency reader is wider in the following observable ways:
 
-- it accepts legacy magic `0x184c2102` and selects the legacy 8 MiB block
-  profile;
-- an empty stored body is accepted as empty decompressed output. For a slice
-  input of exactly four bytes, all byte values are also accepted as empty
-  output: a non-legacy value reaches EOF while fetching the descriptor before
-  magic validation, while legacy magic is accepted and then reaches EOF before
-  a block;
-- if reading the next four-byte block-info word returns `UnexpectedEof`, it
-  returns decoder EOF. Consequently, after a complete data block it accepts a
-  missing `u32le(0)` end mark, and it also swallows a one- to three-byte partial
-  block-info tail; and
-- any successfully decoded data block that produces zero bytes makes
-  `Read::read` report EOF immediately, so Loro accepts the output and ignores
-  any remaining frame bytes. Examples include uncompressed block-info
-  `0x80000000`, and a compressed block of length one whose sole token is
-  `00..0f`; and
-- after a valid end mark it clears the current frame and returns EOF. Loro's
-  `io::copy` stops at that first EOF and performs no remaining-input check, so
-  arbitrary trailing bytes or a concatenated second frame are ignored.
+- an empty stored body is accepted as empty decompressed output;
+- a data block that decodes to zero bytes does not end decoding. Examples
+  include uncompressed block-info `0x80000000`, and a compressed block of
+  length one whose sole token is `00..0f`; and
+- after a valid end mark it reads on, so a concatenated second frame is
+  decoded and appended to the output.
+
+It rejects legacy magic `0x184c2102`, a body shorter than a frame header
+(including any four-byte body), a missing end mark, a one- to three-byte
+partial block-info tail, and trailing bytes after the end mark that do not
+start a frame. lz4_flex 0.11.5, the reader before lz4rip, accepted all of
+these. Loro only ever wrote canonical frames, so stored data reads the same.
 
 These are current-reader tolerances, not canonical writer rules. A strict
 canonical decoder should still enforce steps 4 through 6 above.
 
 Locked dependency reader source:
-`lz4_flex-0.11.5/src/frame/header.rs::FrameInfo::read` lines 275-300 and
-`src/frame/decompress.rs::{read_frame_info,read_block,read_more,Read::read}`
-lines 109-145, 220-239, and 305-365 at revision
-`4c4ba15a4ce3ba3f0125177a0e4bba39f3d3a1e7`.
-Zero-output compressed-block path:
-`lz4_flex-0.11.5/src/block/decompress.rs` lines 240-365 at the same revision.
+`lz4rip-0.12.8/src/frame/header.rs::FrameInfo::read` lines 265-352 and
+`src/frame/decompress.rs::{read_frame_info,read_block,read_more,Read::read_to_end}`
+lines 176-228, 269-397, 431-449 and 468-486 at revision
+`260fdbfadb66355f28370469699eef3645e78eb3`.
 Loro call site:
-[`compress.rs::CompressionType::decompress`](../crates/kv-store/src/compress.rs#L54-L69).
+[`compress.rs::decompress`](../crates/kv-store/src/compress.rs#L56-L73).
 
 ### 5.1 Checksum domains
 
@@ -281,7 +270,7 @@ Loro call site:
 | LZ4 content checksum | no | 0 | concatenated uncompressed frame content |
 | Loro SSTable block checksum | yes | `0x4f524f4c` | the complete stored body: raw bytes or complete LZ4 frame |
 
-The first three are LZ4-frame mechanisms implemented by lz4_flex/twox-hash.
+The first three are LZ4-frame mechanisms implemented by lz4rip/twox-hash.
 The last is Loro's xxhash-rust checksum and is specified in
 [encoding-xxhash32.md](./encoding-xxhash32.md).
 
@@ -301,5 +290,7 @@ A writer reproducing the current format should:
 8. append the Loro-seeded checksum over exactly the selected stored body.
 
 For byte-for-byte reproduction rather than wire-compatible output, use the
-locked lz4_flex 0.11.5 compressor; valid LZ4 encoders are free to choose
-different matches and therefore need not produce identical compressed bytes.
+locked lz4rip 0.12.8 compressor with `ratio_profile`; valid LZ4 encoders are
+free to choose different matches and therefore need not produce identical
+compressed bytes. Snapshots written before lz4rip used lz4_flex 0.11.5 and have
+the same frame profile.
