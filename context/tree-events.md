@@ -1,6 +1,6 @@
 # Tree Events
 
-Verified against code 2026-11-18.
+Verified against code 2026-11-23.
 
 Tree events (`TreeExternalDiff::{Create, Move, Delete}`) describe only the
 alive tree, the nodes reachable from the root. Applied in order, the events of
@@ -110,16 +110,24 @@ a deleted ancestor. It moves that node back
 node keeps its id, its metadata map and its children. When the destination
 parent is deleted it does nothing, since the node would stay deleted.
 
-The batch's entries for those metadata maps are full states (a checkout sends
-the whole metadata of each node it creates), but the maps still hold their old
-state. `LoroDoc::apply_diff_with_movable_undo` collects them in
-`revived_full_state` and aligns each entry with the current state
-(`align_full_state`, as for revived mergeable children) instead of appending
-it; a map or kept child with no entry is cleared. The local event carries the
-metadata (`EventHint::TreeRevive`), so a doc that applies the events, which may
-hold the same deleted node, gets the same state
+A `Create` that brings a deleted node back carries the metadata as a full
+state (a checkout sends the whole metadata of each node it creates), but the
+map still holds its old state. `Handler::apply_diff` records that map in
+`revived_full_state`. `LoroDoc::apply_diff_with_movable_undo` aligns each entry
+with the current state (`align_full_state`, as for revived mergeable children)
+instead of appending it; a map or kept child with no entry is cleared. The
+local event carries the metadata (`EventHint::TreeRevive`), so a doc that
+applies the events, which may hold the same deleted node, gets the same state
 (`undo_event_of_revived_node_carries_its_data` in
 `crates/loro/tests/undo_tree_node_identity.rs`).
+
+A `Move` that brings a deleted node back does not. The inverse of a move
+between live parents is only that move (`local_op_inverse_diff` in `txn.rs`);
+the metadata never changed, so the batch has no map entry. The map still holds
+what the node had when a later remote delete removed it. Treating that missing
+entry as an empty full state cleared the map and left the node live with no
+data (`crates/loro/tests/undo_tree_empty_node.rs`, loro-dev/loro#1311). The
+move keeps the stored metadata.
 
 Before 2026-11-18 it created a new node with a new id and remapped the old
 metadata container to it. Apps that key data by `TreeID` then lost it on
