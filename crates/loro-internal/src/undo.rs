@@ -190,13 +190,34 @@ impl DiffBatch {
     }
 
     pub fn transform(&mut self, other: &Self, left_priority: bool) {
+        self.transform_with(other, |_| left_priority);
+    }
+
+    /// Step 3 of [`undo`]: rebase an inverse over `later`, the changes made
+    /// after the span it undoes. Text, list and tree inverses take priority. A
+    /// map key `later` wrote no longer holds the undone value, so the inverse
+    /// leaves it alone: undo must not clobber another peer's write.
+    /// See context/undo-log.md, "Map keys written after the step".
+    fn transform_inverse(&mut self, later: &Self) {
+        self.transform_with(later, |diff| !matches!(diff, Diff::Map(_)));
+    }
+
+    /// Rebase a stack's remote diff over the inverse of an undo/redo step just
+    /// applied. Map keys stay: the step left a key the remote also wrote to
+    /// the remote ([`Self::transform_inverse`]), so it is still the remote's
+    /// write for the items below in the same row.
+    fn transform_remote_over_step(&mut self, step: &Self) {
+        self.transform_with(step, |diff| matches!(diff, Diff::Map(_)));
+    }
+
+    fn transform_with(&mut self, other: &Self, left_priority: impl Fn(&Diff) -> bool) {
         if other.cid_to_events.is_empty() || self.cid_to_events.is_empty() {
             return;
         }
 
         for (idx, diff) in self.cid_to_events.iter_mut() {
             if let Some(b_diff) = other.cid_to_events.get(idx) {
-                diff.transform(b_diff, left_priority);
+                diff.transform(b_diff, left_priority(diff));
             }
         }
     }
@@ -1324,7 +1345,7 @@ impl Stack {
         }
         self.cached_bytes = None;
         let remote_diff = &mut self.stack.back_mut().unwrap().1;
-        remote_diff.lock().transform(diff, false);
+        remote_diff.lock().transform_remote_over_step(diff);
     }
 
     pub fn clear(&mut self) {
@@ -1885,7 +1906,7 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
-            element_remap: Mutex::new(FxHashMap::default()),
+            element_remap: Mutex::new(Default::default()),
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
@@ -2432,7 +2453,7 @@ pub(crate) fn undo(
             // 3. Transform event A'_i based on B_i, call it C_i
             // --------------------------------------------------
             if let Some(event_b_i) = event_b_i {
-                event_a_prime.transform(event_b_i, true);
+                event_a_prime.transform_inverse(event_b_i);
             }
 
             // println!("event_a_prime: {:?}", event_a_prime);
