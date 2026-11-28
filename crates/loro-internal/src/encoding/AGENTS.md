@@ -28,6 +28,10 @@ schema, and validation entry points.
 - Top-level `OutdatedRle = 1` and `OutdatedSnapshot = 2` are compatibility
   detections, not formats to extend.
 - Malformed bytes or JSON schema should return `Err`, not partially import.
+- Do not decode `serde_columnar` tables from untrusted bytes with
+  `serde_columnar::from_bytes`: run-length columns expand before they are
+  checked. See "Run-length columns in change blocks" in
+  [../../../../context/internal-encoding.md](../../../../context/internal-encoding.md).
 - Snapshot import/export must preserve rollback and attached/detached state
   invariants.
 - Unknown container types must block shallow/state snapshot export rather than

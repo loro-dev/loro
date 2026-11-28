@@ -1607,7 +1607,14 @@ impl UndoManagerInner {
             .as_ref()
             .is_some_and(|g| previous != g.start_counter);
 
-        let should_merge = !this.undo_stack.is_empty() && (in_merge_interval || group_should_merge);
+        // An open group decides on its own: its first push starts a new item
+        // even inside the merge interval, as `group_start` promises.
+        let should_merge = !this.undo_stack.is_empty()
+            && if this.group.is_some() {
+                group_should_merge
+            } else {
+                in_merge_interval
+            };
 
         let previous_len = this.undo_stack.len();
         if should_merge {
