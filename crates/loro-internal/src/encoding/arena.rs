@@ -244,7 +244,44 @@ impl<'a> PositionArena<'a> {
     }
 
     pub fn decode<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
-        Ok(serde_columnar::from_bytes(bytes)?)
+        Self::decode_columns(bytes)
+    }
+
+    /// Decode the arena one row at a time instead of expanding each column in
+    /// full.
+    ///
+    /// `common_prefix_length` is run-length encoded, so a few bytes can declare
+    /// up to `serde_columnar`'s `MAX_RLE_COUNT` (10^9) rows, and the eager
+    /// decoder (`serde_columnar::from_bytes`) materialized all of them before
+    /// zipping the columns (16 GiB from a 207-byte update, loro-dev/loro#1349).
+    /// Every `rest` row is a length-prefixed byte string, so it takes at least
+    /// one input byte, and decoding both columns in lockstep bounds the row
+    /// count by the input length. The columns must end together; the eager
+    /// decoder silently dropped the rows of the longer one.
+    fn decode_columns<'de: 'a>(bytes: &'de [u8]) -> LoroResult<Self> {
+        let IterablePositionDelta {
+            mut common_prefix_length,
+            mut rest,
+        } = serde_columnar::iter_from_bytes::<PositionArena<'de>>(bytes)?.positions;
+        let mut positions = Vec::new();
+        loop {
+            match (
+                common_prefix_length.next().transpose()?,
+                rest.next().transpose()?,
+            ) {
+                (Some(common_prefix_length), Some(rest)) => positions.push(PositionDelta {
+                    common_prefix_length,
+                    rest,
+                }),
+                (None, None) => break,
+                _ => {
+                    return Err(LoroError::DecodeError(
+                        "Decode position arena failed: column lengths differ".into(),
+                    ))
+                }
+            }
+        }
+        Ok(Self { positions })
     }
 
     pub fn encode_v2(&self) -> Vec<u8> {
@@ -260,7 +297,7 @@ impl<'a> PositionArena<'a> {
             return Ok(Self::default());
         }
 
-        Ok(serde_columnar::from_bytes(bytes)?)
+        Self::decode_columns(bytes)
     }
 }
 
@@ -284,5 +321,62 @@ mod tests {
         };
 
         assert!(arena.try_parse_to_positions().is_err());
+    }
+
+    /// A `PositionArena` table with hand-written columns: a single run of
+    /// `run_len` copies of `common_prefix_length = 0`, and one `rest` per
+    /// entry of `rests`.
+    fn arena_bytes(run_len: isize, rests: &[&[u8]]) -> Vec<u8> {
+        let common_prefix_length = postcard::to_allocvec(&(run_len, 0usize)).unwrap();
+        let rest = postcard::to_allocvec(rests).unwrap();
+        postcard::to_allocvec(&(
+            1u8,
+            [common_prefix_length.as_slice(), rest.as_slice()].as_slice(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn position_arena_round_trips() {
+        let positions: [&[u8]; 3] = [b"\x10", b"\x10\x80", b"\x20"];
+        let bytes = PositionArena::from_positions(positions).encode_v2();
+        let decoded = PositionArena::decode_v2(&bytes)
+            .unwrap()
+            .try_parse_to_positions()
+            .unwrap();
+        assert_eq!(decoded, positions.map(|p| p.to_vec()));
+        let decoded = PositionArena::decode(&bytes)
+            .unwrap()
+            .try_parse_to_positions()
+            .unwrap();
+        assert_eq!(decoded, positions.map(|p| p.to_vec()));
+
+        let bytes = arena_bytes(2, &[b"a", b"b"]);
+        let decoded = PositionArena::decode_v2(&bytes).unwrap().positions;
+        assert_eq!(decoded.len(), 2);
+    }
+
+    /// loro-dev/loro#1349: a run of 10^9 prefix lengths next to one `rest` was
+    /// expanded in full (16 GiB) before the columns were zipped.
+    #[test]
+    fn position_arena_rejects_a_run_longer_than_its_rest_column() {
+        let bytes = arena_bytes(1_000_000_000, &[b"a"]);
+        assert!(bytes.len() < 32);
+        assert!(PositionArena::decode_v2(&bytes).is_err());
+        assert!(PositionArena::decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn position_arena_rejects_columns_of_different_lengths() {
+        for (run_len, rests) in [
+            (1, &[b"a".as_slice(), b"b"][..]),
+            (2, &[b"a".as_slice()][..]),
+        ] {
+            let bytes = arena_bytes(run_len, rests);
+            assert!(
+                PositionArena::decode_v2(&bytes).is_err(),
+                "{run_len} {rests:?}"
+            );
+        }
     }
 }

@@ -949,17 +949,20 @@ fn decode_block_from_doc(
     let mut value_reader = ValueReader::new(doc.values.as_ref());
     let encoded_ops_iters = serde_columnar::iter_from_bytes::<EncodedOps>(doc.ops.as_ref())?;
     let op_iter = encoded_ops_iters.ops;
-    let encoded_delete_id_starts: EncodedDeleteStartIds = if doc.delete_start_ids.is_empty() {
-        EncodedDeleteStartIds {
-            delete_start_ids: Vec::new(),
-        }
+    // Read delete ids lazily, like the ops: a run-length column can declare far
+    // more entries than its bytes, and only the delete ops consume them.
+    let mut del_iter = if doc.delete_start_ids.is_empty() {
+        None
     } else {
-        serde_columnar::from_bytes(doc.delete_start_ids.as_ref())?
-    };
-    let mut del_iter = encoded_delete_id_starts
-        .delete_start_ids
-        .into_iter()
-        .map(Ok);
+        Some(
+            serde_columnar::iter_from_bytes::<EncodedDeleteStartIds>(
+                doc.delete_start_ids.as_ref(),
+            )?
+            .delete_start_ids,
+        )
+    }
+    .into_iter()
+    .flatten();
     for i in 0..n_changes {
         let commit_msg: Option<Arc<str>> = {
             let len = *commit_msg_lens
