@@ -327,7 +327,8 @@ fn transform_cursor(
 pub struct UndoManager {
     peer: Arc<AtomicU64>,
     container_remap: Arc<Mutex<FxHashMap<ContainerID, ContainerID>>>,
-    element_remap: Mutex<movable_list::ElementRemap>,
+    element_remap: Arc<Mutex<movable_list::ElementRemap>>,
+    needs_reconcile: Arc<std::sync::atomic::AtomicBool>,
     inner: Arc<parking_lot::ReentrantMutex<RefCell<UndoManagerInner>>>,
     _peer_id_change_sub: Subscription,
     _undo_sub: Subscription,
@@ -1766,8 +1767,28 @@ impl UndoManager {
         let remap_containers = Arc::new(Mutex::new(FxHashMap::default()));
         let remap_containers_local = remap_containers.clone();
         let remap_containers_clone = remap_containers.clone();
+        let element_remap = Arc::new(Mutex::new(movable_list::ElementRemap::default()));
+        let element_remap_clone = element_remap.clone();
+        let needs_reconcile = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let needs_reconcile_clone = needs_reconcile.clone();
         let undo_sub = doc.subscribe_root(Arc::new(move |event| match event.event_meta.by {
             EventTriggerKind::Local => {
+                if needs_reconcile_clone.load(std::sync::atomic::Ordering::Acquire) {
+                    if let Some(doc) = doc_weak.upgrade() {
+                        if !doc.detached.load(std::sync::atomic::Ordering::Acquire)
+                            && needs_reconcile_clone
+                                .swap(false, std::sync::atomic::Ordering::AcqRel)
+                        {
+                            let mut remap = remap_containers_clone.lock();
+                            let mut elem_remap = element_remap_clone.lock();
+                            movable_list::prune_all_revived_remaps(
+                                &doc,
+                                &mut elem_remap,
+                                &mut remap,
+                            );
+                        }
+                    }
+                }
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 if lock.borrow().processing_undo {
                     // The undo/redo's own commit: its inverse is the opposite
@@ -1811,6 +1832,20 @@ impl UndoManager {
                 }
             }
             EventTriggerKind::Import => {
+                // Keep the same lock order as `perform` (`container_remap` ->
+                // `element_remap` -> `doc.state`) and drop them before locking
+                // `inner`.
+                if let Some(doc) = doc_weak.upgrade() {
+                    let mut remap = remap_containers_clone.lock();
+                    let mut elem_remap = element_remap_clone.lock();
+                    movable_list::prune_revived_remaps(
+                        &doc,
+                        event.events,
+                        &mut elem_remap,
+                        &mut remap,
+                    );
+                }
+
                 let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
                 let mut inner = lock.borrow_mut();
 
@@ -1845,16 +1880,52 @@ impl UndoManager {
                     let peer = peer_clone.load(std::sync::atomic::Ordering::Relaxed);
                     doc.oplog.lock().vv().get(&peer).cloned().unwrap_or(0)
                 });
-                let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
-                if lock.borrow().paused {
-                    return;
-                }
-                let mut inner = lock.borrow_mut();
-                inner.undo_stack.clear();
-                inner.redo_stack.clear();
-                inner.group = None;
-                if let Some(next_counter) = next_counter {
-                    inner.next_counter = next_counter;
+                let paused = {
+                    let lock = MarkedUndoGuard::lock(&inner_clone, &dirty);
+                    if lock.borrow().paused {
+                        true
+                    } else {
+                        let mut inner = lock.borrow_mut();
+                        inner.undo_stack.clear();
+                        inner.redo_stack.clear();
+                        inner.group = None;
+                        if let Some(next_counter) = next_counter {
+                            inner.next_counter = next_counter;
+                        }
+                        false
+                    }
+                };
+                if !paused {
+                    remap_containers_clone.lock().clear();
+                    element_remap_clone.lock().clear();
+                    needs_reconcile_clone.store(false, std::sync::atomic::Ordering::Release);
+                } else if let Some(doc) = doc_weak.upgrade() {
+                    // Reconcile once the state reaches the latest oplog
+                    // frontiers (including a detached `checkout(&oplog_frontiers())`
+                    // that a subsequent `attach()` short-circuits without another
+                    // checkout event). A historical checkout marks reconciliation
+                    // pending until the doc is next observed at latest.
+                    let at_latest = !doc.detached.load(std::sync::atomic::Ordering::Acquire) || {
+                        let latest = doc.oplog.lock().frontiers().clone();
+                        doc.state.lock().frontiers == latest
+                    };
+                    if at_latest {
+                        needs_reconcile_clone.store(false, std::sync::atomic::Ordering::Release);
+                        let mut remap = remap_containers_clone.lock();
+                        let mut elem_remap = element_remap_clone.lock();
+                        movable_list::prune_all_revived_remaps(&doc, &mut elem_remap, &mut remap);
+                        for e in event.events {
+                            if let Diff::Tree(tree) = &e.diff {
+                                for item in &tree.diff {
+                                    if let TreeExternalDiff::Create { .. } = &item.action {
+                                        remap.remove(&item.target.associated_meta_container());
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        needs_reconcile_clone.store(true, std::sync::atomic::Ordering::Release);
+                    }
                 }
             }
         }));
@@ -1885,7 +1956,8 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
-            element_remap: Mutex::new(FxHashMap::default()),
+            element_remap,
+            needs_reconcile,
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,
@@ -2070,6 +2142,7 @@ impl UndoManager {
         // Because users may change the selections during the undo/redo loop, it's
         // more stable to keep the selection stored in the last stack item
         // rather than using the current selection directly.
+        self.reconcile_revived_remaps_if_needed();
         self.record_new_checkpoint()?;
         let end_counter = get_counter_end(doc, self.peer());
         let top = {
@@ -2320,6 +2393,27 @@ impl UndoManager {
     /// Resume the UndoManager after a [`Self::pause`].
     pub fn resume(&self) {
         self.lock_inner().borrow_mut().paused = false;
+        self.reconcile_revived_remaps_if_needed();
+    }
+
+    fn reconcile_revived_remaps_if_needed(&self) {
+        if !self
+            .needs_reconcile
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
+        if self.doc.is_detached() {
+            return;
+        }
+        if self
+            .needs_reconcile
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            let mut remap = self.container_remap.lock();
+            let mut elem_remap = self.element_remap.lock();
+            movable_list::prune_all_revived_remaps(&self.doc.inner, &mut elem_remap, &mut remap);
+        }
     }
 
     /// Returns whether the UndoManager is currently paused.

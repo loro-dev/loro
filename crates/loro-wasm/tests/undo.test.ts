@@ -716,4 +716,72 @@ describe("undo", () => {
     doc.getText("text").insert(0, "hello");
     doc.commit();
   });
+
+  test("undo deleting a MovableList element revived by a remote move (#1234)", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const remote = new LoroDoc();
+    remote.setPeerId("2");
+
+    const list = doc.getMovableList("sequence");
+    list.insert(0, "a");
+    list.insert(1, "b");
+    doc.commit();
+    remote.import(doc.export({ mode: "snapshot" }));
+
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+
+    list.delete(0, 1);
+    doc.commit();
+
+    remote.getMovableList("sequence").move(0, 1);
+    remote.commit();
+
+    expect(undo.undo()).toBe(true);
+    expect(list.toArray()).toEqual(["a", "b"]);
+
+    doc.import(remote.export({ mode: "snapshot" }));
+    expect(list.toArray()).toEqual(["a", "b", "a"]);
+
+    list.delete(2, 1);
+    doc.commit();
+    expect(list.toArray()).toEqual(["a", "b"]);
+    expect(undo.canUndo()).toBe(true);
+
+    expect(undo.undo()).toBe(true);
+    expect(list.toArray()).toEqual(["a", "b", "a"]);
+  });
+
+  test("undo then redo MovableList move after remote move revives original anchor (#1234)", () => {
+    const doc = new LoroDoc();
+    doc.setPeerId("1");
+    const remote = new LoroDoc();
+    remote.setPeerId("2");
+
+    const list = doc.getMovableList("sequence");
+    list.insert(0, "a");
+    list.insert(1, "b");
+    doc.commit();
+    remote.import(doc.export({ mode: "snapshot" }));
+
+    const undo = new UndoManager(doc, { mergeInterval: 0 });
+
+    list.move(0, 1);
+    doc.commit();
+
+    list.delete(0, 1);
+    doc.commit();
+    expect(undo.undo()).toBe(true);
+
+    remote.getMovableList("sequence").move(1, 0);
+    remote.commit();
+    doc.import(remote.export({ mode: "snapshot" }));
+
+    const before = list.toArray();
+    expect(before).toEqual(["b", "b", "a"]);
+
+    expect(undo.undo()).toBe(true);
+    expect(undo.redo()).toBe(true);
+    expect(list.toArray()).toEqual(before);
+  });
 });

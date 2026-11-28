@@ -1,6 +1,6 @@
 # Movable List `apply_diff` and Undo
 
-Verified against code 2026-11-12.
+Verified against code 2026-11-26.
 
 `MovableListHandler::apply_delta`
 (`crates/loro-internal/src/handler/movable_list_apply_delta.rs`) turns a list
@@ -64,9 +64,32 @@ element or anchor in the former unlock/relock window. Stale-plan errors are
 returned as `LoroError`, without an `expect` or successful partial-undo log.
 
 A remotely revived original can coexist with its undo-created replacement.
-Several historical ids may therefore resolve to one current alias. Placement
-is classified per original entry; a missing move/set without an insertion
-value is skipped, never unwrapped or revived.
+`UndoManager::element_remap` indexes remapped element ids by their owning
+list container so `EventTriggerKind::Import` checks only lists touched by the
+import (`movable_list::prune_revived_remaps`). When a remote import revives an
+original element, `prune_revived_remaps` drops its entry from `element_remap`
+and walks the entire revived subtree across all container kinds (`Map`,
+including mergeable children resolved from binary markers, `List`,
+`MovableList`, and `Tree` walked once top-down from live roots so deep chains
+stay O(N)) to remove revived descendant container ids from `container_remap`
+and revived child-list elements from `element_remap` (loro-dev/loro#1234).
+Without pruning, `resolve()` would keep redirecting the revived original to
+its undo copy, causing a subsequent delete-undo of the revived original to
+treat the copy as still present (no-op), causing move/redo anchors naming the
+original to target the copy instead, and causing edits to nested containers
+under the revived original to undo against the copy.
+`EventTriggerKind::Checkout` clears `container_remap` and `element_remap`
+alongside the undo/redo stacks when not paused. While paused, the invariant is:
+reconcile revived identities whenever `UndoManager` observes the doc at the
+latest oplog frontiers (or next observes it attached at latest — on checkout
+reaching latest frontiers even if still detached before a short-circuiting
+`try_attach()`, or via `needs_reconcile` on `resume()`, `perform()`, or local
+commit), always skipping dead containers (`DocState::is_deleted`) so deleted
+lists that still retain old elements in state are never misclassified as
+revived. Historical checkouts behind latest never prune, preserving mappings
+still needed by older undo items. Placement is still classified per original
+entry; a missing move/set without an insertion value is skipped, never
+unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
 diff path. The saved full-state source, adjusted for earlier spans of the same
 undo group, supplies aliases for the cloned elements after that replay. This

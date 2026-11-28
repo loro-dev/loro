@@ -554,3 +554,783 @@ fn undo_removal_after_concurrent_neighbour_move() {
         converge(&a, &b);
     }
 }
+
+#[test]
+fn undo_deleting_revived_original_element_restores_it() {
+    // Regression for loro-dev/loro#1234 (case a):
+    // Deleting an element, undoing it (creating a replacement and recording
+    // original -> replacement), importing a concurrent remote move that revives
+    // the original, and then deleting the revived original must allow undo to
+    // restore it rather than returning false.
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+
+    let list_a = a.get_movable_list("list");
+    list_a.insert(0, "a").unwrap();
+    list_a.insert(1, "b").unwrap();
+    a.commit();
+    b.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let mut u = UndoManager::new(&a);
+    u.set_merge_interval(0);
+
+    list_a.delete(0, 1).unwrap();
+    a.commit();
+
+    b.get_movable_list("list").mov(0, 1).unwrap();
+    b.commit();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(list(&a), json!(["a", "b"]));
+
+    a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
+    assert_eq!(list(&a), json!(["a", "b", "a"]));
+
+    // Delete the revived original at index 2, leaving the replacement at index 0.
+    list_a.delete(2, 1).unwrap();
+    a.commit();
+    assert_eq!(list(&a), json!(["a", "b"]));
+    assert!(u.can_undo());
+
+    assert!(u.undo().unwrap());
+    assert_eq!(list(&a), json!(["a", "b", "a"]));
+
+    for _ in 0..2 {
+        assert!(u.redo().unwrap());
+        assert_eq!(list(&a), json!(["a", "b"]));
+        assert!(u.undo().unwrap());
+        assert_eq!(list(&a), json!(["a", "b", "a"]));
+    }
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_then_redo_move_anchors_to_revived_original_not_copy() {
+    // Regression for loro-dev/loro#1234 (case b):
+    // After a remote move revives the original "b" alongside its undo copy,
+    // undoing and redoing an earlier move of "a" must anchor to the revived
+    // original "b" rather than its copy, restoring ["b", "b", "a"].
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let b = LoroDoc::new();
+    b.set_peer_id(2).unwrap();
+
+    let list_a = a.get_movable_list("list");
+    list_a.insert(0, "a").unwrap();
+    list_a.insert(1, "b").unwrap();
+    a.commit();
+    b.import(&a.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let mut u = UndoManager::new(&a);
+    u.set_merge_interval(0);
+
+    list_a.mov(0, 1).unwrap(); // ["b", "a"]
+    a.commit();
+
+    list_a.delete(0, 1).unwrap(); // ["a"]
+    a.commit();
+    assert!(u.undo().unwrap()); // ["b'", "a"]
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    a.import(&b.export(ExportMode::Snapshot).unwrap()).unwrap();
+
+    let before = list(&a);
+    assert_eq!(before, json!(["b", "b", "a"]));
+
+    assert!(u.undo().unwrap());
+    assert!(u.redo().unwrap());
+    assert_eq!(list(&a), before);
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_editing_revived_original_child_map_targets_original_not_copy() {
+    let (a, b) = pair(&[-1, 1]);
+    let child = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    child.insert("value", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Edit the revived original map (at index 0) and undo; undo must revert
+    // the original map rather than touching the replacement map (at index 2).
+    let revived_map = a
+        .get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_eq!(revived_map.id(), child.id());
+    revived_map.insert("value", 99).unwrap();
+    a.commit();
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"value":99}, -1, {"value":7}, 1]})
+    );
+
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"value":7}, -1, {"value":7}, 1]}));
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_editing_revived_nested_map_targets_original_and_keeps_copy() {
+    // MovableList -> Map -> Map:
+    // After a remote move revives the original element, collaborator edits the
+    // COPY's nested map to 42 while locally the ORIGINAL's nested map changes
+    // 7 -> 99. Undo must restore the original to 7 and leave the copy at 42.
+    let (a, b) = pair(&[-1, 1]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let inner = outer
+        .insert_container("nested", loro::LoroMap::new())
+        .unwrap();
+    inner.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Index 0 is the revived original; index 2 is the undo-created copy.
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(2)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let copy_inner_b = copy_outer_b
+        .get("nested")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_ne!(copy_inner_b.id(), inner.id());
+    copy_inner_b.insert("v", 42).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    let orig_outer_a = a
+        .get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let orig_inner_a = orig_outer_a
+        .get("nested")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_eq!(orig_inner_a.id(), inner.id());
+    orig_inner_a.insert("v", 99).unwrap();
+    a.commit();
+
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"nested":{"v":99}}, -1, {"nested":{"v":42}}, 1]})
+    );
+
+    assert!(u.undo().unwrap());
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"nested":{"v":7}}, -1, {"nested":{"v":42}}, 1]})
+    );
+    converge(&a, &b);
+}
+
+#[test]
+fn undo_editing_revived_nested_containers_prunes_whole_subtree() {
+    // Verify subtree pruning across List, Tree, and nested MovableList inside a
+    // revived MovableList element.
+    let (a, b) = pair(&[0]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let nested_list = outer
+        .insert_container("items", loro::LoroList::new())
+        .unwrap();
+    let list_map = nested_list
+        .insert_container(0, loro::LoroMap::new())
+        .unwrap();
+    list_map.insert("x", 1).unwrap();
+
+    let nested_tree = outer
+        .insert_container("tree", loro::LoroTree::new())
+        .unwrap();
+    let tree_node = nested_tree.create(None).unwrap();
+    nested_tree
+        .get_meta(tree_node)
+        .unwrap()
+        .insert("t", "orig")
+        .unwrap();
+
+    let nested_mlist = outer
+        .insert_container("mlist", loro::LoroMovableList::new())
+        .unwrap();
+    nested_mlist.push("m0").unwrap();
+    a.commit();
+    converge(&a, &b);
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Collaborator edits the copy's nested containers at index 2.
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(2)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    copy_outer_b
+        .get("items")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_list()
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap()
+        .insert("x", 100)
+        .unwrap();
+    let copy_tree_b = copy_outer_b
+        .get("tree")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_tree()
+        .unwrap();
+    let copy_node = copy_tree_b.roots()[0];
+    copy_tree_b
+        .get_meta(copy_node)
+        .unwrap()
+        .insert("t", "copy")
+        .unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Locally edit the revived original's nested List->Map, Tree meta, and
+    // nested MovableList element, then undo each.
+    list_map.insert("x", 2).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(list_map.get("x").unwrap().into_value().unwrap(), 1.into());
+
+    nested_tree
+        .get_meta(tree_node)
+        .unwrap()
+        .insert("t", "edited")
+        .unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(
+        nested_tree
+            .get_meta(tree_node)
+            .unwrap()
+            .get("t")
+            .unwrap()
+            .into_value()
+            .unwrap(),
+        "orig".into()
+    );
+
+    nested_mlist.delete(0, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(nested_mlist.get_value().to_json_value(), json!(["m0"]));
+
+    // Copy's nested containers remain untouched by all three undos.
+    let copy_outer_a = a
+        .get_movable_list("list")
+        .get(2)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_eq!(
+        copy_outer_a
+            .get("items")
+            .unwrap()
+            .into_container()
+            .unwrap()
+            .into_list()
+            .unwrap()
+            .get(0)
+            .unwrap()
+            .into_container()
+            .unwrap()
+            .into_map()
+            .unwrap()
+            .get("x")
+            .unwrap()
+            .into_value()
+            .unwrap(),
+        100.into()
+    );
+    let copy_tree_a = copy_outer_a
+        .get("tree")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_tree()
+        .unwrap();
+    assert_eq!(
+        copy_tree_a
+            .get_meta(copy_tree_a.roots()[0])
+            .unwrap()
+            .get("t")
+            .unwrap()
+            .into_value()
+            .unwrap(),
+        "copy".into()
+    );
+    converge(&a, &b);
+}
+
+#[test]
+fn unpaused_checkout_clears_element_and_container_remaps() {
+    let (a, b) = pair(&[20]);
+    let child = a
+        .get_movable_list("list")
+        .insert_container(0, loro::LoroMap::new())
+        .unwrap();
+    child.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+    let initial = a.oplog_frontiers();
+    let mut u = undo(&a);
+
+    // Populate both element_remap and container_remap.
+    a.get_movable_list("list").delete(0, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    // Checkout to an earlier version (unpaused): clears stacks and both remaps.
+    a.checkout(&initial).unwrap();
+    assert!(!u.can_undo());
+    assert!(!u.can_redo());
+
+    // While detached, import a remote move that revives the original element
+    // and its child map.
+    b.get_movable_list("list").mov(0, 1).unwrap();
+    b.commit();
+    send(&b, &a);
+
+    // Re-attach to latest: emits Checkout (unpaused), ensuring both remaps are
+    // clear even though Import did not fire while detached.
+    a.try_checkout_to_latest().unwrap();
+    assert_eq!(state(&a), json!({"list":[{"v":7}, 20, {"v":7}]}));
+
+    // Edit the revived original child map at index 2 and undo; must target the
+    // original map rather than the copy at index 0.
+    child.insert("v", 99).unwrap();
+    a.commit();
+    assert_eq!(state(&a), json!({"list":[{"v":7}, 20, {"v":99}]}));
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"v":7}, 20, {"v":7}]}));
+
+    // Delete the revived original element at index 2 and undo; must succeed.
+    a.get_movable_list("list").delete(2, 1).unwrap();
+    a.commit();
+    assert_eq!(state(&a), json!({"list":[{"v":7}, 20]}));
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"v":7}, 20, {"v":7}]}));
+    converge(&a, &b);
+}
+
+#[test]
+fn paused_checkout_preserves_element_and_container_remaps() {
+    let a = LoroDoc::new();
+    a.set_peer_id(1).unwrap();
+    let list_a = a.get_movable_list("list");
+    let map = list_a.insert_container(0, loro::LoroMap::new()).unwrap();
+    map.insert("k", 1).unwrap();
+    list_a.push(10).unwrap();
+    a.commit();
+    let initial = a.oplog_frontiers();
+
+    let mut u = undo(&a);
+    // Step 1: edit child map (references original map cid).
+    map.insert("k", 2).unwrap();
+    a.commit();
+    // Step 2: move scalar element 10 to index 0 (references original elem id).
+    list_a.mov(1, 0).unwrap();
+    a.commit();
+    // Step 3: delete both elements, then undo to populate element_remap and container_remap.
+    list_a.delete(0, 2).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[10, {"k":2}]}));
+
+    // Pause undo manager and perform a checkout round-trip; both stacks and both
+    // remap tables must survive.
+    u.pause();
+    a.checkout(&initial).unwrap();
+    a.try_checkout_to_latest().unwrap();
+    u.resume();
+
+    // Undo Step 2 (move of 10): requires element_remap to find recreated 10'.
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"k":2}, 10]}));
+
+    // Undo Step 1 (map edit k: 1 -> 2): requires container_remap to find recreated map'.
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&a), json!({"list":[{"k":1}, 10]}));
+}
+
+#[test]
+fn undo_editing_revived_mergeable_child_map_targets_original_and_keeps_copy() {
+    // MovableList -> Map -> ensure_mergeable_map:
+    // Mergeable children are stored as binary markers in the parent Map.
+    // After a remote move revives the original element, collaborator edits the
+    // COPY's mergeable child map to 42 while locally the ORIGINAL's mergeable
+    // child map changes 7 -> 99. Undo must restore the original to 7 and leave
+    // the copy at 42.
+    let (a, b) = pair(&[-1, 1]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let inner = outer.ensure_mergeable_map("nested").unwrap();
+    inner.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+
+    b.get_movable_list("list").mov(1, 0).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    // Index 0 is the revived original; index 2 is the undo-created copy.
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(2)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let copy_inner_b = copy_outer_b.ensure_mergeable_map("nested").unwrap();
+    assert_ne!(copy_inner_b.id(), inner.id());
+    copy_inner_b.insert("v", 42).unwrap();
+    b.commit();
+    converge(&a, &b);
+
+    let orig_outer_a = a
+        .get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let orig_inner_a = orig_outer_a.ensure_mergeable_map("nested").unwrap();
+    assert_eq!(orig_inner_a.id(), inner.id());
+    orig_inner_a.insert("v", 99).unwrap();
+    a.commit();
+
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"nested":{"v":99}}, -1, {"nested":{"v":42}}, 1]})
+    );
+
+    assert!(u.undo().unwrap());
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"nested":{"v":7}}, -1, {"nested":{"v":42}}, 1]})
+    );
+    converge(&a, &b);
+}
+
+#[test]
+fn paused_checkout_reconciles_revived_nested_map_on_return_to_latest() {
+    // Pause undo, checkout history, import a remote move that revives an
+    // original element (plus a collaborator edit to the copy's nested map),
+    // checkout back to latest, and resume. Returning to latest must prune
+    // revived identities while keeping still-dead remaps for older undo items.
+    let (a, b) = pair(&[-1, 1]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let inner = outer
+        .insert_container("nested", loro::LoroMap::new())
+        .unwrap();
+    inner.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+    let c = LoroDoc::new();
+    c.set_peer_id(3).unwrap();
+    send(&a, &c);
+    let history = a.oplog_frontiers();
+
+    let mut u = undo(&a);
+    // Earlier undo step on element `-1` (at index 0): move it to the end.
+    a.get_movable_list("list").mov(0, 2).unwrap();
+    a.commit();
+    // Delete both the outer map (now at index 0) and `-1` (now at index 2),
+    // then undo to populate remaps for both.
+    a.get_movable_list("list").delete(0, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    a.get_movable_list("list").delete(2, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    // Sync the undo-created copies to B so B can edit the copy's nested map.
+    send(&a, &b);
+
+    // Pause undo and detach to historical frontiers.
+    u.pause();
+    a.checkout(&history).unwrap();
+
+    // While A is detached, C (which hasn't seen A's delete) moves the original
+    // outer map (reviving it), and B edits the copy's nested map to 42.
+    c.get_movable_list("list").mov(1, 0).unwrap();
+    c.commit();
+
+    // Edit the copy's nested map on B to 42.
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(0)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let copy_inner_b = copy_outer_b
+        .get("nested")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_ne!(copy_inner_b.id(), inner.id());
+    copy_inner_b.insert("v", 42).unwrap();
+    b.commit();
+
+    // Import both B's edit to the copy and C's reviving move while A is detached.
+    send(&b, &a);
+    send(&c, &a);
+
+    // Return to latest while paused: must prune the revived outer/inner map
+    // remaps while keeping the still-dead `-1` element remap intact.
+    a.try_checkout_to_latest().unwrap();
+    u.resume();
+
+    // Locate the revived original nested map (same cid as `inner`) and edit it 7 -> 99.
+    inner.insert("v", 99).unwrap();
+    a.commit();
+
+    assert!(u.undo().unwrap());
+    // Original nested map reverted to 7; copy's nested map remains 42.
+    assert_eq!(inner.get("v").unwrap().into_value().unwrap(), 7.into());
+    let copy_inner_a = (0..a.get_movable_list("list").len())
+        .filter_map(|i| {
+            a.get_movable_list("list")
+                .get(i)?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()?
+                .get("nested")?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()
+        })
+        .find(|m| m.id() == copy_inner_b.id())
+        .expect("copy nested map should still exist");
+    assert_eq!(
+        copy_inner_a.get("v").unwrap().into_value().unwrap(),
+        42.into()
+    );
+
+    // Older undo step (moving `-1` from before `outer` to the end) still works
+    // via its preserved element remap and anchors `-1` immediately before the
+    // revived original `outer`.
+    assert!(u.undo().unwrap());
+    assert_eq!(
+        state(&a),
+        json!({"list":[{"nested":{"v":42}}, -1, {"nested":{"v":7}}, 1]})
+    );
+    converge(&a, &b);
+    converge(&a, &c);
+}
+
+#[test]
+fn paused_checkout_roundtrip_skips_dead_deleted_list_and_keeps_child_undo() {
+    // Regression: editing a Map inside a MovableList element 7 -> 99, deleting
+    // the whole parent list, undoing the delete (creating a copy), pausing
+    // undo, checking out a historical version, returning to latest, resuming,
+    // and undoing the 7 -> 99 edit must restore 7 on the visible copy.
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let root = doc.get_map("root");
+    let list = root
+        .insert_container("list", loro::LoroMovableList::new())
+        .unwrap();
+    let item = list.insert_container(0, loro::LoroMap::new()).unwrap();
+    item.insert("v", 7).unwrap();
+    doc.commit();
+    let history = doc.oplog_frontiers();
+
+    let mut u = undo(&doc);
+    item.insert("v", 99).unwrap();
+    doc.commit();
+
+    root.delete("list").unwrap();
+    doc.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&doc), json!({"root":{"list":[{"v":99}]}}));
+
+    u.pause();
+    doc.checkout(&history).unwrap();
+    doc.try_checkout_to_latest().unwrap();
+    u.resume();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&doc), json!({"root":{"list":[{"v":7}]}}));
+}
+
+#[test]
+fn paused_checkout_to_latest_frontiers_then_attach_reconciles_revived_remaps() {
+    // Regression: pause, detach to history, import a remote move that revives
+    // the original element (plus a collaborator edit to the copy's nested map),
+    // call `checkout(&oplog_frontiers())` (still detached) followed by
+    // `try_attach()` (which short-circuits without a checkout event), resume,
+    // edit the original 7 -> 99, and undo. Must revert original to 7 and leave
+    // copy at 42.
+    let (a, b) = pair(&[-1, 1]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let inner = outer
+        .insert_container("nested", loro::LoroMap::new())
+        .unwrap();
+    inner.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+    let c = LoroDoc::new();
+    c.set_peer_id(3).unwrap();
+    send(&a, &c);
+    let history = a.oplog_frontiers();
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    send(&a, &b);
+
+    u.pause();
+    a.checkout(&history).unwrap();
+
+    // C revives the original element; B edits the copy's nested map to 42.
+    c.get_movable_list("list").mov(1, 0).unwrap();
+    c.commit();
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(1)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let copy_inner_b = copy_outer_b
+        .get("nested")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_ne!(copy_inner_b.id(), inner.id());
+    copy_inner_b.insert("v", 42).unwrap();
+    b.commit();
+
+    send(&b, &a);
+    send(&c, &a);
+
+    // Reach latest frontiers while still detached, then re-attach (no-op event).
+    let latest = a.oplog_frontiers();
+    a.checkout(&latest).unwrap();
+    assert!(a.is_detached());
+    a.try_attach().unwrap();
+    assert!(!a.is_detached());
+    u.resume();
+
+    inner.insert("v", 99).unwrap();
+    a.commit();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(inner.get("v").unwrap().into_value().unwrap(), 7.into());
+    let copy_inner_a = (0..a.get_movable_list("list").len())
+        .filter_map(|i| {
+            a.get_movable_list("list")
+                .get(i)?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()?
+                .get("nested")?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()
+        })
+        .find(|m| m.id() == copy_inner_b.id())
+        .expect("copy nested map should still exist");
+    assert_eq!(
+        copy_inner_a.get("v").unwrap().into_value().unwrap(),
+        42.into()
+    );
+    converge(&a, &b);
+    converge(&a, &c);
+}
