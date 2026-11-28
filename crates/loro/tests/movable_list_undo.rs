@@ -1204,3 +1204,133 @@ fn paused_checkout_reconciles_revived_nested_map_on_return_to_latest() {
     converge(&a, &b);
     converge(&a, &c);
 }
+
+#[test]
+fn paused_checkout_roundtrip_skips_dead_deleted_list_and_keeps_child_undo() {
+    // Regression: editing a Map inside a MovableList element 7 -> 99, deleting
+    // the whole parent list, undoing the delete (creating a copy), pausing
+    // undo, checking out a historical version, returning to latest, resuming,
+    // and undoing the 7 -> 99 edit must restore 7 on the visible copy.
+    let doc = LoroDoc::new();
+    doc.set_peer_id(1).unwrap();
+    let root = doc.get_map("root");
+    let list = root
+        .insert_container("list", loro::LoroMovableList::new())
+        .unwrap();
+    let item = list.insert_container(0, loro::LoroMap::new()).unwrap();
+    item.insert("v", 7).unwrap();
+    doc.commit();
+    let history = doc.oplog_frontiers();
+
+    let mut u = undo(&doc);
+    item.insert("v", 99).unwrap();
+    doc.commit();
+
+    root.delete("list").unwrap();
+    doc.commit();
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&doc), json!({"root":{"list":[{"v":99}]}}));
+
+    u.pause();
+    doc.checkout(&history).unwrap();
+    doc.try_checkout_to_latest().unwrap();
+    u.resume();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(state(&doc), json!({"root":{"list":[{"v":7}]}}));
+}
+
+#[test]
+fn paused_checkout_to_latest_frontiers_then_attach_reconciles_revived_remaps() {
+    // Regression: pause, detach to history, import a remote move that revives
+    // the original element (plus a collaborator edit to the copy's nested map),
+    // call `checkout(&oplog_frontiers())` (still detached) followed by
+    // `try_attach()` (which short-circuits without a checkout event), resume,
+    // edit the original 7 -> 99, and undo. Must revert original to 7 and leave
+    // copy at 42.
+    let (a, b) = pair(&[-1, 1]);
+    let outer = a
+        .get_movable_list("list")
+        .insert_container(1, loro::LoroMap::new())
+        .unwrap();
+    let inner = outer
+        .insert_container("nested", loro::LoroMap::new())
+        .unwrap();
+    inner.insert("v", 7).unwrap();
+    a.commit();
+    converge(&a, &b);
+    let c = LoroDoc::new();
+    c.set_peer_id(3).unwrap();
+    send(&a, &c);
+    let history = a.oplog_frontiers();
+
+    let mut u = undo(&a);
+    a.get_movable_list("list").delete(1, 1).unwrap();
+    a.commit();
+    assert!(u.undo().unwrap());
+    send(&a, &b);
+
+    u.pause();
+    a.checkout(&history).unwrap();
+
+    // C revives the original element; B edits the copy's nested map to 42.
+    c.get_movable_list("list").mov(1, 0).unwrap();
+    c.commit();
+    let copy_outer_b = b
+        .get_movable_list("list")
+        .get(1)
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    let copy_inner_b = copy_outer_b
+        .get("nested")
+        .unwrap()
+        .into_container()
+        .unwrap()
+        .into_map()
+        .unwrap();
+    assert_ne!(copy_inner_b.id(), inner.id());
+    copy_inner_b.insert("v", 42).unwrap();
+    b.commit();
+
+    send(&b, &a);
+    send(&c, &a);
+
+    // Reach latest frontiers while still detached, then re-attach (no-op event).
+    let latest = a.oplog_frontiers();
+    a.checkout(&latest).unwrap();
+    assert!(a.is_detached());
+    a.try_attach().unwrap();
+    assert!(!a.is_detached());
+    u.resume();
+
+    inner.insert("v", 99).unwrap();
+    a.commit();
+
+    assert!(u.undo().unwrap());
+    assert_eq!(inner.get("v").unwrap().into_value().unwrap(), 7.into());
+    let copy_inner_a = (0..a.get_movable_list("list").len())
+        .filter_map(|i| {
+            a.get_movable_list("list")
+                .get(i)?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()?
+                .get("nested")?
+                .into_container()
+                .ok()?
+                .into_map()
+                .ok()
+        })
+        .find(|m| m.id() == copy_inner_b.id())
+        .expect("copy nested map should still exist");
+    assert_eq!(
+        copy_inner_a.get("v").unwrap().into_value().unwrap(),
+        42.into()
+    );
+    converge(&a, &b);
+    converge(&a, &c);
+}

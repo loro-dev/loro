@@ -126,6 +126,11 @@ fn prune_pending_lists(
 
     loop {
         while let Some((list_cid, idx)) = pending_lists.pop() {
+            // A deleted list can still retain its old elements in state; skip
+            // dead containers so a history round-trip never treats them as revived.
+            if state.is_deleted(idx) {
+                continue;
+            }
             let Some(mut ids) = remapped.by_list.remove(&list_cid) else {
                 continue;
             };
@@ -159,13 +164,16 @@ fn prune_pending_lists(
         let Some(cid) = pending_subtrees.pop() else {
             break;
         };
+        let Some(idx) = doc.arena.id_to_idx(&cid) else {
+            continue;
+        };
+        if state.is_deleted(idx) {
+            continue;
+        }
         containers.remove(&cid);
         if containers.is_empty() && remapped.is_empty() {
             break;
         }
-        let Some(idx) = doc.arena.id_to_idx(&cid) else {
-            continue;
-        };
         if cid.container_type() == loro_common::ContainerType::MovableList
             && remapped.by_list.contains_key(&cid)
         {

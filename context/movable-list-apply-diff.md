@@ -79,10 +79,15 @@ treat the copy as still present (no-op), causing move/redo anchors naming the
 original to target the copy instead, and causing edits to nested containers
 under the revived original to undo against the copy.
 `EventTriggerKind::Checkout` clears `container_remap` and `element_remap`
-alongside the undo/redo stacks when not paused; when paused, returning to the
-attached latest state reconciles revived identities (`prune_all_revived_remaps`)
-while preserving mappings still needed by older undo items (detached
-historical checkouts do not prune). Placement is still classified per original
+alongside the undo/redo stacks when not paused. While paused, the invariant is:
+reconcile revived identities whenever `UndoManager` observes the doc at the
+latest oplog frontiers (or next observes it attached at latest — on checkout
+reaching latest frontiers even if still detached before a short-circuiting
+`try_attach()`, or via `needs_reconcile` on `resume()`, `perform()`, or local
+commit), always skipping dead containers (`DocState::is_deleted`) so deleted
+lists that still retain old elements in state are never misclassified as
+revived. Historical checkouts behind latest never prune, preserving mappings
+still needed by older undo items. Placement is still classified per original
 entry; a missing move/set without an insertion value is skipped, never
 unwrapped or revived.
 Lists whose parent changes their lifetime retain the existing child revival
