@@ -377,3 +377,111 @@ fn undoing_two_local_items_keeps_a_remote_write_after_both() {
     undo.redo().unwrap();
     assert_eq!(a.get_deep_value().to_json_value(), json!({"m": {"k": "b"}}));
 }
+
+// An undo that restores another peer's value writes it with a new op of this
+// peer. Later undos must still treat it as the other peer's write.
+
+fn list_values(doc: &LoroDoc) -> serde_json::Value {
+    doc.get_deep_value().to_json_value()["l"].clone()
+}
+
+#[test]
+fn undo_twice_keeps_a_remote_movable_list_set_an_undo_restored() {
+    let a = peer(1);
+    let b = peer(2);
+    let list = a.get_movable_list("l");
+    list.push("old").unwrap();
+    a.commit();
+    let mut undo = undo_manager(&a);
+    list.set(0, "a1").unwrap();
+    a.commit();
+    sync(&a, &b);
+    b.get_movable_list("l").set(0, "b").unwrap();
+    b.commit();
+    sync(&b, &a);
+    list.set(0, "a2").unwrap();
+    a.commit();
+
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    // A no-op: the value is B's, even though the first undo wrote it.
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    // The no-op pushed no redo item (context/undo-history-boundaries.md).
+    undo.redo().unwrap();
+    assert_eq!(list_values(&a), json!(["a2"]));
+    assert!(!undo.can_redo());
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    assert!(!undo.can_undo());
+}
+
+#[test]
+fn undo_twice_keeps_a_remote_movable_list_value_an_undo_recreated() {
+    let a = peer(1);
+    let b = peer(2);
+    let list = a.get_movable_list("l");
+    list.push("old").unwrap();
+    a.commit();
+    let mut undo = undo_manager(&a);
+    list.set(0, "a1").unwrap();
+    a.commit();
+    sync(&a, &b);
+    b.get_movable_list("l").set(0, "b").unwrap();
+    b.commit();
+    sync(&b, &a);
+    list.delete(0, 1).unwrap();
+    a.commit();
+
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    undo.redo().unwrap();
+    assert_eq!(list_values(&a), json!([]));
+    assert!(!undo.can_redo());
+    undo.undo().unwrap();
+    assert_eq!(list_values(&a), json!(["b"]));
+    assert!(!undo.can_undo());
+}
+
+#[test]
+fn undo_twice_keeps_a_remote_map_value_an_undo_restored() {
+    for delete_instead in [false, true] {
+        let a = peer(1);
+        let b = peer(2);
+        let map = a.get_map("m");
+        map.insert("k", "old").unwrap();
+        a.commit();
+        let mut undo = undo_manager(&a);
+        map.insert("k", "a1").unwrap();
+        a.commit();
+        sync(&a, &b);
+        b.get_map("m").insert("k", "b").unwrap();
+        b.commit();
+        sync(&b, &a);
+        if delete_instead {
+            map.delete("k").unwrap();
+        } else {
+            map.insert("k", "a2").unwrap();
+        }
+        a.commit();
+        let last = if delete_instead {
+            json!({"m": {}})
+        } else {
+            json!({"m": {"k": "a2"}})
+        };
+        let kept = json!({"m": {"k": "b"}});
+
+        undo.undo().unwrap();
+        assert_eq!(a.get_deep_value().to_json_value(), kept);
+        undo.undo().unwrap();
+        assert_eq!(a.get_deep_value().to_json_value(), kept);
+        undo.redo().unwrap();
+        assert_eq!(a.get_deep_value().to_json_value(), last);
+        assert!(!undo.can_redo());
+        undo.undo().unwrap();
+        assert_eq!(a.get_deep_value().to_json_value(), kept);
+        assert!(!undo.can_undo());
+    }
+}

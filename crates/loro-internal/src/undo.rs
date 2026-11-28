@@ -1906,7 +1906,7 @@ impl UndoManager {
         UndoManager {
             peer,
             container_remap: remap_containers,
-            element_remap: Mutex::new(FxHashMap::default()),
+            element_remap: Mutex::new(Default::default()),
             inner,
             _peer_id_change_sub: sub,
             _undo_sub: undo_sub,

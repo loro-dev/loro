@@ -1,6 +1,6 @@
 # Undo Without Checkouts: Recorded Inverses
 
-Verified against code 2026-11-26.
+Verified against code 2026-11-28.
 
 The hot-path optimization stores a text or list insertion run's inverse as
 container ID, event position and length (`CommitInverse::compact_insert`), and
@@ -102,10 +102,25 @@ The rebase of the stack's remote diff over a step just applied
 passes the step's untransformed inverse, and dropping a key both wrote let the
 next item in the same stack row clobber the remote value.
 
-Movable-list `set` follows the same rule in `movable_list::Model::undo`: the
-undone value is restored only while the element's current value id is the
-step's own, or another op of this peer (e.g. an undo that recreated the
-element). Tree metadata is a map, so it is covered by the map rule.
+Movable-list `set` follows the same rule in `movable_list::Model::undo`, but
+it compares writers, not value ids. An undo that restores another peer's value
+(a `Set`, or a `Place` that recreates a deleted element) writes it with a new
+op of this peer, so the current value id alone would make that value look like
+this peer's own and the next undo would overwrite it (A sets a1, B sets b, A
+sets a2 or deletes the element, A undoes twice: the second undo wrote the
+pre-a1 value back). `ElementRemap::value_origins` maps each value id an
+undo/redo wrote to the value id it restored (resolved, so lookups are one hash
+probe), recorded in `Plan::apply_native` and for recreated lists in
+`Plan::apply`. The undone value is restored only when the current value's
+origin is the step's own (`value_origin(after.value_id)`) or another op of this
+peer. The map lives with the element id map in `UndoManager::element_remap`,
+grows by one entry per restored value, and is rolled back with it when a step
+fails.
+
+Maps need no such record: they decide from the stack rows' remote diffs (which
+keys another peer wrote), not from who wrote the current value, and an undo's
+own writes never enter those diffs. Tree metadata is a map, so it is covered
+by the map rule.
 
 Limit: a concurrent write that *lost* to the undone op is not brought back.
 The undo restores the value at the step's deps (or deletes the key), since the

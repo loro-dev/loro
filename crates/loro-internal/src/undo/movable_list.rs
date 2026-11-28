@@ -24,7 +24,49 @@ use crate::{
 
 use super::DiffBatch;
 
-pub(crate) type ElementRemap = FxHashMap<CompactIdLp, CompactIdLp>;
+/// What the undo manager's earlier steps changed in movable lists. Derefs to
+/// the element id map, which most of this module reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ElementRemap {
+    /// Removed element id -> the element an undo/redo recreated for it.
+    ids: FxHashMap<CompactIdLp, CompactIdLp>,
+    /// Value id an undo/redo wrote -> value id of the write it restored, so
+    /// a restored value keeps its writer: a later step must still see another
+    /// peer's value as that peer's (context/undo-log.md).
+    value_origins: FxHashMap<IdLp, IdLp>,
+}
+
+impl std::ops::Deref for ElementRemap {
+    type Target = FxHashMap<CompactIdLp, CompactIdLp>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ids
+    }
+}
+
+impl std::ops::DerefMut for ElementRemap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ids
+    }
+}
+
+impl ElementRemap {
+    /// The write a value id stands for: itself, unless an undo/redo wrote it
+    /// to restore an earlier one.
+    fn value_origin(&self, value_id: IdLp) -> IdLp {
+        self.value_origins
+            .get(&value_id)
+            .copied()
+            .unwrap_or(value_id)
+    }
+
+    fn record_value(&mut self, written: IdLp, restored: IdLp) {
+        let origin = self.value_origin(restored);
+        if written != origin {
+            self.value_origins.insert(written, origin);
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 struct Element {
@@ -757,8 +799,11 @@ enum Edit {
         insert: Option<LoroValue>,
         left: Option<CompactIdLp>,
         right: Option<CompactIdLp>,
+        /// The value id an inserted copy restores.
+        value_id: IdLp,
     },
-    Set(CompactIdLp, LoroValue),
+    /// Element, value, and the value id it restores.
+    Set(CompactIdLp, LoroValue, IdLp),
 }
 
 pub(crate) struct Plan {
@@ -977,6 +1022,7 @@ impl Model {
                     insert,
                     left,
                     right: right[i],
+                    value_id: e.value_id,
                 });
             }
             if let Some(other) = after.get(&e.id) {
@@ -985,10 +1031,12 @@ impl Model {
                         let element = self.order.get_mut(key).unwrap();
                         // Another peer's set after this step won: keep it, as
                         // map undo keeps a key written after the step
-                        // (context/undo-log.md). Values this peer wrote since
-                        // (e.g. an undo recreating the element) are still undone.
-                        let remote_won = element.value_id != other.value_id
-                            && element.value_id.peer != local_peer;
+                        // (context/undo-log.md). Compare writers, not value
+                        // ids: an undo that restored or recreated a value wrote
+                        // it with a new op of this peer.
+                        let current = remapped.value_origin(element.value_id);
+                        let remote_won = current != remapped.value_origin(other.value_id)
+                            && current.peer != local_peer;
                         if !remote_won {
                             let value = remap_value(&e.value, containers);
                             if value != element.value {
@@ -1001,7 +1049,7 @@ impl Model {
                             }
                             element.value = value;
                             element.value_id = e.value_id;
-                            edits.push(Edit::Set(id, element.value.clone()));
+                            edits.push(Edit::Set(id, element.value.clone(), e.value_id));
                         }
                     }
                 }
@@ -1170,22 +1218,24 @@ impl Plan {
                     &mut Default::default(),
                 )?;
                 let current = list.with_state(|s| {
-                    Ok(s.as_movable_list_state()
-                        .unwrap()
+                    let state = s.as_movable_list_state().unwrap();
+                    Ok(state
                         .iter_with_last_move_id_and_elem_id()
-                        .map(|(_, id, value)| (id, value.clone()))
+                        .map(|(_, id, value)| (id, value.clone(), state.elements()[&id].value_id))
                         .collect::<Vec<_>>())
                 })?;
                 if current.len() == target.len()
                     && current
                         .iter()
                         .zip(&target)
-                        .all(|((_, value), e)| *value == remap_value(&e.value, containers))
+                        .all(|((_, value, _), e)| *value == remap_value(&e.value, containers))
                 {
-                    for ((new_id, _), e) in current.into_iter().zip(target) {
+                    for ((new_id, _, written), e) in current.into_iter().zip(target) {
                         let old_id = remap(&e.id, remapped);
                         if old_id != new_id {
                             remapped.insert(old_id, new_id);
+                            // A recreated element's value is this step's write.
+                            remapped.record_value(written, e.value_id);
                         }
                     }
                 }
@@ -1225,6 +1275,7 @@ impl Plan {
                     insert,
                     left,
                     right,
+                    value_id,
                 } => {
                     let gap = if let Some(left) = left {
                         index(left, remapped)?.ok_or_else(missing)? + 1
@@ -1250,20 +1301,30 @@ impl Plan {
                             }
                             value => list.insert_with_txn(txn, gap, value)?,
                         }
-                        let new_id = list.with_state(|s| {
-                            s.as_movable_list_state()
-                                .unwrap()
+                        let (new_id, written) = list.with_state(|s| {
+                            let state = s.as_movable_list_state().unwrap();
+                            let new_id = state
                                 .get_elem_id_at(gap, IndexType::ForUser)
-                                .ok_or_else(missing)
+                                .ok_or_else(missing)?;
+                            Ok((new_id, state.elements()[&new_id].value_id))
                         })?;
-                        remapped.insert(remap(&id, remapped), new_id);
+                        let old_id = remap(&id, remapped);
+                        remapped.insert(old_id, new_id);
+                        remapped.record_value(written, value_id);
                     } else {
                         let from = index(id, remapped)?.ok_or_else(missing)?;
                         list.move_with_txn(txn, from, gap - usize::from(from < gap))?;
                     }
                 }
-                Edit::Set(id, value) => {
+                Edit::Set(id, value, restored) => {
                     let index = index(id, remapped)?.ok_or_else(missing)?;
+                    let elem = remap(&id, remapped);
+                    let value_id = || {
+                        list.with_state(|s| {
+                            Ok(s.as_movable_list_state().unwrap().elements()[&elem].value_id)
+                        })
+                    };
+                    let before = value_id()?;
                     match remap_value(&value, containers) {
                         LoroValue::Container(cid) => {
                             if list.get(index) != Some(LoroValue::Container(cid.clone())) {
@@ -1276,6 +1337,10 @@ impl Plan {
                             }
                         }
                         value => list.set_with_txn(txn, index, value)?,
+                    }
+                    let written = value_id()?;
+                    if written != before {
+                        remapped.record_value(written, restored);
                     }
                 }
             }
