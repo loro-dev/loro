@@ -299,11 +299,15 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
             match op {
                 CanonicalOp::Retain(len, _) => {
                     let len = *len;
-                    iter.consume_len(len);
                     index += len;
+                    // Decide the early return before consuming the Retain:
+                    // `consume_len` advances `CanonicalIter` into the next run,
+                    // so a following delete run is only scanned if the cursor
+                    // continues past this unmodified prefix.
                     if index > pos || (index == pos && !left_prior) {
                         return pos;
                     }
+                    iter.consume_len(len);
                 }
                 CanonicalOp::Insert(value, _) => {
                     if index == pos && !left_prior {
@@ -317,12 +321,11 @@ impl<V: DeltaValue, Attr: DeltaAttr> DeltaRope<V, Attr> {
                 }
                 CanonicalOp::Delete(delete) => {
                     let delete = *delete;
-                    iter.consume_len(delete);
                     pos = pos.saturating_sub(delete);
                     if pos < index {
-                        pos = index;
-                        return pos;
+                        return index;
                     }
+                    iter.consume_len(delete);
                 }
             }
         }
@@ -703,5 +706,97 @@ impl<V: DeltaValue, Attr: DeltaAttr> Default for DeltaRopeBuilder<V, Attr> {
 impl<V: DeltaValue, Attr: DeltaAttr> Debug for DeltaRope<V, Attr> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use generic_btree::rle::{HasLength, Mergeable, Sliceable, TryInsert};
+
+    use super::*;
+
+    thread_local! {
+        static VALUE_LEN_READS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[derive(Debug, Clone, Default)]
+    struct CountingValue(usize);
+
+    impl HasLength for CountingValue {
+        fn rle_len(&self) -> usize {
+            VALUE_LEN_READS.with(|reads| reads.set(reads.get() + 1));
+            self.0
+        }
+    }
+
+    impl Sliceable for CountingValue {
+        fn _slice(&self, range: std::ops::Range<usize>) -> Self {
+            Self(range.len())
+        }
+    }
+
+    impl Mergeable for CountingValue {
+        fn can_merge(&self, _: &Self) -> bool {
+            false
+        }
+
+        fn merge_right(&mut self, other: &Self) {
+            self.0 += other.0;
+        }
+
+        fn merge_left(&mut self, other: &Self) {
+            self.0 += other.0;
+        }
+    }
+
+    impl TryInsert for CountingValue {
+        fn try_insert(&mut self, _: usize, other: Self) -> Result<(), Self> {
+            Err(other)
+        }
+    }
+
+    impl DeltaValue for CountingValue {}
+
+    #[test]
+    fn transform_pos_prefix_cursor_does_not_scan_following_delete_run() {
+        let mut rope: DeltaRope<CountingValue, ()> = DeltaRope::new();
+        rope.tree.push(DeltaItem::Retain { len: 10, attr: () });
+        for _ in 0..4096 {
+            rope.tree.push(DeltaItem::new_delete(1));
+        }
+        assert!(rope.node_len() >= 4096);
+
+        VALUE_LEN_READS.with(|reads| reads.set(0));
+        assert_eq!(rope.transform_pos(5, false), 5);
+        assert_eq!(rope.transform_pos(5, true), 5);
+        assert_eq!(rope.transform_pos(10, false), 10);
+        assert_eq!(
+            VALUE_LEN_READS.with(Cell::get),
+            0,
+            "early return in Retain prefix must not scan following delete leaves"
+        );
+
+        // When left_prior is true at the boundary (pos == 10), the following delete run must be read.
+        assert_eq!(rope.transform_pos(10, true), 10);
+        assert!(VALUE_LEN_READS.with(Cell::get) >= 4096);
+    }
+
+    #[test]
+    fn transform_pos_delete_early_return_does_not_scan_following_leaves() {
+        let mut rope: DeltaRope<CountingValue, ()> = DeltaRope::new();
+        rope.tree.push(DeltaItem::Retain { len: 2, attr: () });
+        rope.tree.push(DeltaItem::new_delete(5));
+        rope.tree.push(DeltaItem::Retain { len: 1, attr: () });
+        for _ in 0..4096 {
+            rope.tree.push(DeltaItem::new_delete(1));
+        }
+
+        VALUE_LEN_READS.with(|reads| reads.set(0));
+        assert_eq!(rope.transform_pos(4, false), 2);
+        assert_eq!(rope.transform_pos(4, true), 2);
+        // Only the single Delete(5) leaf before the second Retain should have been read (once per call).
+        assert_eq!(VALUE_LEN_READS.with(Cell::get), 2);
     }
 }
